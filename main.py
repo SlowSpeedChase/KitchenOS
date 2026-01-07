@@ -117,6 +117,39 @@ def print_transcript(video_id):
         print("- There's a network connectivity issue")
         return False
 
+def get_transcript(video_id):
+    """Fetch transcript and return as string with source indicator.
+
+    Returns:
+        dict with keys:
+            - text: The transcript text as a string, or None if unavailable
+            - source: 'youtube' if successful, None if failed
+            - error: Error message string, or None if successful
+    """
+    try:
+        api = YouTubeTranscriptApi()
+
+        # Try English first
+        try:
+            transcript_data = api.fetch(video_id, languages=['en'])
+            text = '\n'.join(segment.text for segment in transcript_data)
+            return {'text': text, 'source': 'youtube', 'error': None}
+        except:
+            pass
+
+        # Try any available transcript
+        try:
+            transcript_data = api.fetch(video_id)
+            text = '\n'.join(segment.text for segment in transcript_data)
+            return {'text': text, 'source': 'youtube', 'error': None}
+        except:
+            pass
+
+        return {'text': None, 'source': None, 'error': 'No transcript available'}
+
+    except Exception as e:
+        return {'text': None, 'source': None, 'error': str(e)}
+
 def download_audio(video_id):
     """Download audio from YouTube video and return file path"""
     try:
