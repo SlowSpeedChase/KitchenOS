@@ -421,6 +421,44 @@ Body:
 
 ## Future Enhancements (Out of Scope)
 
+### Recipe Link Detection (Priority)
+
+Before running AI extraction, parse the video description for existing recipe links:
+
+1. **Detect recipe URLs** - Look for links to common recipe sites (allrecipes, food network, bonappetit, etc.) or creator's own site
+2. **Fetch the linked page** - Use web scraping to get the recipe content
+3. **Convert to template** - Parse the fetched recipe into the standard markdown format
+4. **Skip AI extraction** - If a valid recipe is found, no need to process transcript
+
+This optimization:
+- Produces higher quality recipes (written by humans, not inferred)
+- Reduces API/compute costs
+- Faster processing
+
+**Flow modification:**
+```
+Get transcript + description
+        ↓
+Parse description for recipe URLs
+        ↓
+    ┌───┴───┐
+    │ Found │
+    └───┬───┘
+   Yes  │  No
+    ↓   │   ↓
+Fetch   │  AI extraction
+recipe  │  (current flow)
+    ↓   │
+Convert │
+to MD   │
+    ↓   │
+    └───┴───┐
+            ↓
+    Write to Obsidian
+```
+
+### Other Future Enhancements
+
 - Push notification when recipe is saved
 - Image extraction from video thumbnails
 - Ingredient linking with `[[wikilinks]]`
