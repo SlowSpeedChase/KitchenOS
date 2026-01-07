@@ -1,66 +1,53 @@
-# YouTube Video Info Fetcher
+# KitchenOS
 
-This script fetches YouTube video transcripts and descriptions using the YouTube API.
+A YouTube-to-Obsidian recipe extraction pipeline. Captures cooking videos, extracts structured recipe data using AI, and saves formatted markdown to your Obsidian vault.
+
+## Features
+
+- Extracts video transcripts (YouTube captions or Whisper fallback)
+- AI-powered recipe extraction (Ollama local, Claude API fallback)
+- Structured markdown output with Dataview-compatible frontmatter
+- Multiple input paths: Share Sheet, Apple Reminders, CLI
+- n8n workflow automation
 
 ## Setup
 
-1. **Virtual Environment**: Make sure you're using the virtual environment:
+1. **Virtual Environment**:
    ```bash
    source .venv/bin/activate
    ```
 
-2. **API Key**: Set your YouTube API key as an environment variable:
+2. **API Keys** (in `.env` file):
    ```bash
-   export YOUTUBE_API_KEY="your_api_key_here"
+   YOUTUBE_API_KEY="your_youtube_api_key"
+   OPENAI_API_KEY="your_openai_api_key"  # For Whisper fallback
    ```
-   Or modify the API_KEY variable in the script directly.
 
 ## Usage
 
-Run the script with a YouTube video ID or URL:
+### CLI Mode
 
 ```bash
-/Users/chaseeasterling/Documents/GitHub/yt_vid_info/.venv/bin/python main.py "VIDEO_ID_HERE"
-# or
-/Users/chaseeasterling/Documents/GitHub/yt_vid_info/.venv/bin/python main.py "https://www.youtube.com/watch?v=VIDEO_ID_HERE"
+# Text output (original)
+.venv/bin/python main.py "VIDEO_ID_OR_URL"
+
+# JSON output (for automation)
+.venv/bin/python main.py --json "VIDEO_ID_OR_URL"
 ```
 
-### Examples:
-```bash
-/Users/chaseeasterling/Documents/GitHub/yt_vid_info/.venv/bin/python main.py "dQw4w9WgXcQ"
-/Users/chaseeasterling/Documents/GitHub/yt_vid_info/.venv/bin/python main.py "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-```
+### Automation (n8n)
 
-## Features
-
-- ✅ Extracts video descriptions using YouTube Data API
-- ✅ Attempts to fetch transcripts in multiple languages
-- ✅ Handles errors gracefully
-- ✅ Supports both video IDs and full YouTube URLs
-- ✅ Improved error messages
-
-## Common Issues
-
-### 1. "No readable transcripts found"
-This means:
-- The video doesn't have captions/transcripts available
-- The video is private or restricted
-- Transcripts are disabled by the creator
-
-### 2. "Error fetching video description"
-This could mean:
-- Invalid API key
-- API quota exceeded
-- Invalid video ID
-- Network connectivity issue
-
-### 3. SSL Warning
-The urllib3 warning is harmless and doesn't affect functionality. It's just a compatibility notice.
+See `docs/plans/2026-01-07-youtube-recipe-extraction-design.md` for full pipeline design.
 
 ## Dependencies
 
-- `youtube-transcript-api` - For fetching transcripts
-- `google-api-python-client` - For YouTube Data API
-- `argparse` - For command line arguments
+- `youtube-transcript-api` - Fetches video transcripts
+- `google-api-python-client` - YouTube Data API
+- `yt-dlp` - Audio download for Whisper
+- `openai` - Whisper transcription
+- `python-dotenv` - Environment variables
 
-All dependencies are installed in the virtual environment.
+## Documentation
+
+- Design: `docs/plans/2026-01-07-youtube-recipe-extraction-design.md`
+- Implementation: `docs/plans/2026-01-07-recipe-extraction-implementation.md`

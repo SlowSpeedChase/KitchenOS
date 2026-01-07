@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import sys
-sys.path.insert(0, '/Users/chaseeasterling/Documents/Documents - Chase's MacBook Air - 1/GitHub/YT-Vid-Recipie/.venv/lib/python3.9/site-packages')
+sys.path.insert(0, '/Users/chaseeasterling/Documents/Documents - Chase's MacBook Air - 1/GitHub/KitchenOS/.venv/lib/python3.9/site-packages')
 
 import argparse
 from youtube_transcript_api import YouTubeTranscriptApi
