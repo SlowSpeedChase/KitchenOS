@@ -60,6 +60,29 @@ def get_video_description(video_id):
         print("- Network connectivity issue")
         return None
 
+def get_video_metadata(video_id):
+    """Fetch video title, channel, and description from YouTube API"""
+    try:
+        youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
+        request = youtube.videos().list(
+            part='snippet',
+            id=video_id
+        )
+        response = request.execute()
+
+        if 'items' in response and len(response['items']) > 0:
+            snippet = response['items'][0]['snippet']
+            return {
+                'title': snippet.get('title', ''),
+                'channel': snippet.get('channelTitle', ''),
+                'description': snippet.get('description', '')
+            }
+        else:
+            return None
+    except Exception as e:
+        print(f"Error fetching video metadata: {e}", file=sys.stderr)
+        return None
+
 def print_transcript(video_id):
     try:
         # Create API instance
