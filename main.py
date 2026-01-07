@@ -164,6 +164,7 @@ def transcribe_with_whisper(audio_file_path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Fetch YouTube video transcript and description.")
     parser.add_argument('video_id_in', type=str, help='The ID or URL of the YouTube video')
+    parser.add_argument('--json', action='store_true', help='Output JSON instead of formatted text')
     args = parser.parse_args()
 
     video_id = youtube_parser(args.video_id_in)
