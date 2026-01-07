@@ -1,0 +1,83 @@
+# Basic Keyboard Maestro Test Macro
+
+## Create this macro in Keyboard Maestro Editor:
+
+**Macro Name:** KM-Test-Basic
+
+**Trigger:** 
+- Type: "Script" 
+- Script Name: "KM-Test-Basic"
+
+**Actions:**
+1. **Display Text in Window**
+   - Title: "Keyboard Maestro Test"
+   - Text: "✅ Success! Keyboard Maestro received the trigger from AppleScript.
+
+Current Time: %ICUDateTime%
+Test Variable: %Variable%TestVariable%
+
+This confirms that:
+• AppleScript can trigger KM macros
+• Variables are passed correctly  
+• You're ready for full integration!"
+
+2. **Pause Until** (optional)
+   - Condition: "User clicks OK"
+
+## How to Create:
+
+1. Open **Keyboard Maestro Editor**
+2. Click **"New Macro"**
+3. Set name to: **KM-Test-Basic**
+4. Click **"New Trigger"** → Choose **"Script"**
+5. Set Script Name to: **KM-Test-Basic** 
+6. Click **"New Action"** → Choose **"Display Text in Window"**
+7. Copy the text above into the text field
+8. **Save** the macro
+9. Run the test script: `test_km_integration.applescript`
+
+## Advanced Test Macro (Optional)
+
+**Macro Name:** KM-Test-Advanced
+
+**Actions:**
+1. **Get Variable** "TestVariable" → Store in clipboard
+2. **Activate Application** "TextEdit"
+3. **New Document** (⌘N)
+4. **Type Text:** "Keyboard Maestro Integration Test\n\n"
+5. **Paste from Clipboard**
+6. **Type Text:** "\n\nTime: %ICUDateTime%"
+
+This tests:
+- Variable retrieval
+- Application switching  
+- Text manipulation
+- File operations
+
+## Production Macro Template
+
+**Macro Name:** YouTube-to-ChatGPT
+
+**Trigger:** Script trigger "YouTube-to-ChatGPT"
+
+**Actions:**
+1. **Get Variable** "YouTubeVideoInfo" → Store in clipboard
+2. **Activate Application** "Google Chrome" 
+3. **Press Key** ⌘T (new tab)
+4. **Type Text** "https://chat.openai.com"
+5. **Press Key** Return
+6. **Pause** 3 seconds
+7. **Click at Found Image** [Screenshot of ChatGPT input area]
+   - Alternative: **Click at Coordinates** (center-bottom of window)
+8. **Type Text** "Please analyze this YouTube video information:\n\n"
+9. **Paste from Clipboard**
+10. **Optional: Press Key** Return (to submit)
+
+## Troubleshooting
+
+If macros don't trigger:
+1. Check Keyboard Maestro Engine is running
+2. Verify macro names match exactly
+3. Ensure macros are enabled
+4. Check script trigger spelling
+5. Try manual trigger first

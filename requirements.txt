@@ -1,0 +1,19 @@
+# Core dependencies for YouTube Video Info Fetcher
+youtube-transcript-api>=0.6.0
+google-api-python-client>=2.0.0
+google-auth-httplib2>=0.1.0
+google-auth-oauthlib>=1.0.0
+
+# Environment configuration
+python-dotenv>=1.0.0
+
+# Audio processing (for Whisper fallback)
+yt-dlp>=2023.0.0
+openai>=1.0.0
+
+# HTTP and networking
+requests>=2.28.0
+urllib3>=1.26.0
+
+# API server
+flask>=2.0.0
