@@ -58,6 +58,16 @@ cd /Users/chaseeasterling/KitchenOS
 .venv/bin/python main.py --json "VIDEO_ID_OR_URL"
 ```
 
+### Migrate Recipes to New Schema
+
+```bash
+# Preview what would change
+.venv/bin/python migrate_recipes.py --dry-run
+
+# Apply migrations
+.venv/bin/python migrate_recipes.py
+```
+
 ## Architecture
 
 ### Pipeline Flow
@@ -90,6 +100,18 @@ YouTube URL → extract_recipe.py → main.py (fetch data) → Ollama (extract) 
 **templates/recipe_template.py:**
 - `format_recipe_markdown()` - Converts recipe JSON to Obsidian markdown
 - `generate_filename()` - Creates `YYYY-MM-DD-recipe-slug.md` filename
+
+**lib/backup.py:**
+- `create_backup()` - Creates timestamped backup in .history/ folder
+
+**lib/recipe_parser.py:**
+- `parse_recipe_file()` - Parses frontmatter and body from recipe markdown
+- `extract_my_notes()` - Extracts content from ## My Notes section
+- `find_existing_recipe()` - Finds recipe file by video ID
+
+**migrate_recipes.py:**
+- `migrate_recipe_file()` - Updates single recipe to current schema
+- `run_migration()` - Batch migrates all recipes
 
 ## AI Configuration
 
