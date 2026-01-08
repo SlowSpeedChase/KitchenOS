@@ -209,3 +209,181 @@ class TestInstructionSpacing:
         }
         result = format_recipe_markdown(recipe, "http://test.com", "Test", "Channel")
         assert "1. Only step" in result
+
+
+# ============================================================================
+# Tests for ingredient table migration
+# ============================================================================
+
+
+class TestIngredientTableParsing:
+    """Tests for parsing ingredient tables from recipe markdown"""
+
+    def test_parses_old_2column_table(self):
+        """Parses old 2-column ingredient table"""
+        from lib.recipe_parser import parse_ingredient_table
+
+        table = '''| Amount | Ingredient |
+|--------|------------|
+| 500 g | Chicken Breasts |
+| a sprinkle | Salt |
+|  | Lavash bread |'''
+
+        result = parse_ingredient_table(table)
+
+        assert len(result) == 3
+        assert result[0]["amount"] == "500"
+        assert result[0]["unit"] == "g"
+        assert result[0]["item"] == "chicken breasts"
+
+    def test_parses_new_3column_table(self):
+        """Parses new 3-column ingredient table unchanged"""
+        from lib.recipe_parser import parse_ingredient_table
+
+        table = '''| Amount | Unit | Ingredient |
+|--------|------|------------|
+| 500 | g | chicken breasts |
+| 1 | a sprinkle | salt |'''
+
+        result = parse_ingredient_table(table)
+
+        assert len(result) == 2
+        assert result[0]["amount"] == "500"
+        assert result[0]["unit"] == "g"
+        assert result[0]["item"] == "chicken breasts"
+        assert result[1]["unit"] == "a sprinkle"
+
+    def test_handles_empty_amount(self):
+        """Handles empty amount field by defaulting to 1"""
+        from lib.recipe_parser import parse_ingredient_table
+
+        table = '''| Amount | Ingredient |
+|--------|------------|
+|  | Lavash bread |'''
+
+        result = parse_ingredient_table(table)
+
+        assert len(result) == 1
+        assert result[0]["amount"] == "1"
+        assert result[0]["unit"] == "whole"
+        assert result[0]["item"] == "lavash bread"
+
+
+class TestIngredientTableMigration:
+    """Tests for migrating ingredient tables"""
+
+    def test_converts_to_3column_format(self):
+        """Migration rewrites table to 3 columns"""
+        from migrate_recipes import migrate_ingredient_table
+
+        old_table = '''| Amount | Ingredient |
+|--------|------------|
+| 500 g | Chicken |'''
+
+        new_table = migrate_ingredient_table(old_table)
+
+        assert "| Amount | Unit | Ingredient |" in new_table
+        assert "| 500 | g | chicken |" in new_table
+
+    def test_preserves_informal_units(self):
+        """Migration preserves informal units like 'a pinch'"""
+        from migrate_recipes import migrate_ingredient_table
+
+        old_table = '''| Amount | Ingredient |
+|--------|------------|
+| a pinch | Salt |'''
+
+        new_table = migrate_ingredient_table(old_table)
+
+        assert "| 1 | a pinch | salt |" in new_table
+
+    def test_migrate_recipe_content_detects_old_table(self):
+        """migrate_recipe_content identifies and replaces 2-column table"""
+        from migrate_recipes import migrate_recipe_content
+
+        content = '''---
+title: "Test Recipe"
+---
+
+## Ingredients
+
+| Amount | Ingredient |
+|--------|------------|
+| 2 cups | Flour |
+| 1 tsp | Salt |
+
+## Instructions
+
+1. Mix ingredients.
+'''
+
+        new_content, changes = migrate_recipe_content(content)
+
+        assert "| Amount | Unit | Ingredient |" in new_content
+        assert "| 2 | cup | flour |" in new_content
+        assert "Converted ingredient table" in changes[0]
+
+    def test_migrate_recipe_content_skips_3column(self):
+        """migrate_recipe_content does not modify 3-column tables"""
+        from migrate_recipes import migrate_recipe_content
+
+        content = '''---
+title: "Test Recipe"
+---
+
+## Ingredients
+
+| Amount | Unit | Ingredient |
+|--------|------|------------|
+| 2 | cup | flour |
+
+## Instructions
+
+1. Mix ingredients.
+'''
+
+        new_content, changes = migrate_recipe_content(content)
+
+        assert new_content == content
+        assert len(changes) == 0
+
+    def test_run_migration_converts_ingredient_table(self):
+        """run_migration triggers ingredient table conversion"""
+        from migrate_recipes import run_migration
+        from templates.recipe_template import RECIPE_SCHEMA
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = Path(tmpdir)
+            recipe = recipes_dir / "test.md"
+
+            # Create recipe with all required frontmatter but old table format
+            frontmatter_lines = ['---', 'title: "Test"', 'source_url: "https://youtube.com/watch?v=abc123"']
+            for field in RECIPE_SCHEMA.keys():
+                if field not in ['title', 'source_url']:
+                    frontmatter_lines.append(f"{field}: null")
+            frontmatter_lines.append('---')
+
+            content = '\n'.join(frontmatter_lines) + '''
+
+## Ingredients
+
+| Amount | Ingredient |
+|--------|------------|
+| 2 cups | Flour |
+
+## Instructions
+
+1. Mix ingredients.
+'''
+            recipe.write_text(content)
+
+            results = run_migration(recipes_dir, dry_run=False)
+
+            # Should have updated the file
+            assert len(results['updated']) == 1
+            assert 'Converted ingredient table' in str(results['updated'][0])
+
+            # Check file was actually converted
+            new_content = recipe.read_text()
+            assert '| Amount | Unit | Ingredient |' in new_content
+            assert '| 2 | cup | flour |' in new_content

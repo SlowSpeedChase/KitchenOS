@@ -1,7 +1,9 @@
 """Parser for existing recipe markdown files"""
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
+
+from lib.ingredient_parser import parse_ingredient
 
 
 def parse_recipe_file(content: str) -> dict:
@@ -150,3 +152,55 @@ def find_existing_recipe(recipes_dir: Path, video_id: str) -> Optional[Path]:
             continue
 
     return None
+
+
+def parse_ingredient_table(table_text: str) -> List[dict]:
+    """
+    Parse a markdown ingredient table into structured data.
+
+    Handles both old 2-column (Amount | Ingredient) and
+    new 3-column (Amount | Unit | Ingredient) formats.
+
+    Args:
+        table_text: Markdown table text
+
+    Returns:
+        List of ingredient dicts with 'amount', 'unit', 'item' keys
+    """
+    lines = table_text.strip().split('\n')
+    ingredients = []
+
+    for line in lines:
+        # Skip non-table lines
+        if not line.startswith('|'):
+            continue
+        # Skip separator lines
+        if '---' in line:
+            continue
+        # Skip header lines
+        if 'Amount' in line and 'Ingredient' in line:
+            continue
+
+        # Parse table row - split by | and remove empty first/last cells
+        cells = [c.strip() for c in line.split('|')]
+        # Remove empty strings at start/end caused by leading/trailing |
+        cells = [c for c in cells if c or cells.index(c) not in (0, len(cells)-1)]
+        # Actually just slice off first and last empty
+        cells = line.split('|')[1:-1]
+        cells = [c.strip() for c in cells]
+
+        if len(cells) == 2:
+            # Old format: Amount | Ingredient
+            amount_cell, ingredient_cell = cells
+            combined = f"{amount_cell} {ingredient_cell}".strip()
+            parsed = parse_ingredient(combined)
+            ingredients.append(parsed)
+        elif len(cells) == 3:
+            # New format: Amount | Unit | Ingredient
+            ingredients.append({
+                "amount": cells[0] if cells[0] else "1",
+                "unit": cells[1] if cells[1] else "whole",
+                "item": cells[2].lower(),
+            })
+
+    return ingredients

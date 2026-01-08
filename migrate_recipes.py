@@ -8,6 +8,7 @@ Usage:
 """
 
 import argparse
+import re
 import sys
 import os
 from pathlib import Path
@@ -16,29 +17,93 @@ from typing import List, Tuple
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from lib.backup import create_backup
-from lib.recipe_parser import parse_recipe_file, extract_my_notes
+from lib.recipe_parser import parse_recipe_file, extract_my_notes, parse_ingredient_table
 from templates.recipe_template import RECIPE_SCHEMA
 
 OBSIDIAN_RECIPES_PATH = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS/Recipes")
 
 
+def migrate_ingredient_table(table_text: str) -> str:
+    """Convert 2-column ingredient table to 3-column format.
+
+    Args:
+        table_text: Markdown table text (2-column format)
+
+    Returns:
+        New markdown table in 3-column format
+    """
+    ingredients = parse_ingredient_table(table_text)
+
+    lines = ["| Amount | Unit | Ingredient |", "|--------|------|------------|"]
+    for ing in ingredients:
+        lines.append(f"| {ing['amount']} | {ing['unit']} | {ing['item']} |")
+
+    return '\n'.join(lines)
+
+
+def migrate_recipe_content(content: str) -> Tuple[str, List[str]]:
+    """
+    Migrate recipe markdown content to new format.
+
+    Finds 2-column ingredient tables and converts them to 3-column format.
+
+    Args:
+        content: Full markdown file content
+
+    Returns:
+        Tuple of (new_content, list_of_changes)
+    """
+    changes = []
+
+    # Find and replace ingredient table
+    # Pattern matches: ## Ingredients\n\n followed by table rows
+    table_pattern = r'(## Ingredients\n\n)(\|[^\n]+\n\|[-|\s]+\n(?:\|[^\n]+\n)*)'
+
+    def replace_table(match):
+        header = match.group(1)
+        old_table = match.group(2)
+        # Check if already 3-column format
+        if '| Amount | Unit | Ingredient |' in old_table:
+            return match.group(0)
+        new_table = migrate_ingredient_table(old_table)
+        changes.append("Converted ingredient table to 3-column format")
+        return f"{header}{new_table}\n"
+
+    new_content = re.sub(table_pattern, replace_table, content)
+    return new_content, changes
+
+
 def migrate_recipe_file(filepath: Path) -> List[str]:
-    """Migrate a single recipe file to current schema."""
+    """Migrate a single recipe file to current schema.
+
+    Handles:
+    - Adding missing frontmatter fields
+    - Converting 2-column ingredient tables to 3-column format
+    """
     changes = []
     content = filepath.read_text(encoding='utf-8')
     parsed = parse_recipe_file(content)
     frontmatter = parsed['frontmatter']
 
+    # Track missing frontmatter fields
     missing_fields = []
     for field in RECIPE_SCHEMA.keys():
         if field not in frontmatter:
             missing_fields.append(field)
             changes.append(f"Added field '{field}'")
 
+    # Migrate ingredient table content
+    new_content, content_changes = migrate_recipe_content(content)
+    changes.extend(content_changes)
+
+    # If no frontmatter changes needed, just apply content changes
     if not missing_fields:
+        if content_changes:
+            filepath.write_text(new_content, encoding='utf-8')
         return changes
 
-    lines = content.split('\n')
+    # Add missing frontmatter fields
+    lines = new_content.split('\n')
     new_lines = []
     in_frontmatter = False
 
@@ -59,9 +124,20 @@ def migrate_recipe_file(filepath: Path) -> List[str]:
         else:
             new_lines.append(line)
 
-    new_content = '\n'.join(new_lines)
-    filepath.write_text(new_content, encoding='utf-8')
+    final_content = '\n'.join(new_lines)
+    filepath.write_text(final_content, encoding='utf-8')
     return changes
+
+
+def needs_content_migration(content: str) -> bool:
+    """Check if content needs ingredient table migration.
+
+    Returns True if there's a 2-column ingredient table that needs conversion.
+    """
+    # Look for 2-column table header (Amount | Ingredient) without Unit
+    if '| Amount | Ingredient |' in content:
+        return True
+    return False
 
 
 def run_migration(recipes_dir: Path, dry_run: bool = False) -> dict:
@@ -84,14 +160,21 @@ def run_migration(recipes_dir: Path, dry_run: bool = False) -> dict:
                 results['skipped'].append((md_file.name, 'no source_url'))
                 continue
 
+            # Check for frontmatter fields that need migration
             missing = [f for f in RECIPE_SCHEMA.keys() if f not in parsed['frontmatter']]
 
-            if not missing:
+            # Check for content that needs migration
+            needs_content = needs_content_migration(content)
+
+            if not missing and not needs_content:
                 results['skipped'].append((md_file.name, 'already up to date'))
                 continue
 
             if dry_run:
-                results['updated'].append((md_file.name, [f"Would add '{f}'" for f in missing]))
+                changes = [f"Would add '{f}'" for f in missing]
+                if needs_content:
+                    changes.append("Would convert ingredient table to 3-column format")
+                results['updated'].append((md_file.name, changes))
             else:
                 backup_path = create_backup(md_file)
                 changes = migrate_recipe_file(md_file)
