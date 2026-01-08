@@ -147,6 +147,7 @@ template → Obsidian
 | `batch_extract.py` | Batch processor - reads from iOS Reminders, extracts in bulk |
 | `prompts/recipe_extraction.py` | AI prompt templates for structured extraction |
 | `templates/recipe_template.py` | Markdown formatter with YAML frontmatter |
+| `lib/ingredient_parser.py` | Parses ingredient strings into amount/unit/item |
 
 ### Key Functions
 
@@ -182,6 +183,12 @@ template → Obsidian
 - `migrate_recipe_file()` - Updates single recipe to current schema
 - `run_migration()` - Batch migrates all recipes
 
+**lib/ingredient_parser.py:**
+- `parse_ingredient()` - Splits ingredient string into amount, unit, item
+- `normalize_unit()` - Standardizes unit abbreviations
+- `is_informal_measurement()` - Detects "a pinch", "to taste", etc.
+- `parse_amount()` - Parses fractions, ranges, word numbers
+
 ## AI Configuration
 
 ### Ollama Settings
@@ -208,7 +215,7 @@ The AI extracts this structure:
   "dish_type": "string",
   "dietary": ["array"],
   "equipment": ["array"],
-  "ingredients": [{"quantity": "string", "item": "string", "inferred": boolean}],
+  "ingredients": [{"amount": "number/string", "unit": "string", "item": "string", "inferred": boolean}],
   "instructions": [{"step": number, "text": "string", "time": "string or null"}],
   "storage": "string or null",
   "variations": ["array"],
