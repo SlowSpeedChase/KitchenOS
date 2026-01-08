@@ -2,6 +2,7 @@
 
 from fractions import Fraction
 import re
+from typing import Dict
 
 # Unit normalization map
 UNIT_ABBREVIATIONS = {
@@ -144,3 +145,121 @@ def _format_decimal(value: float) -> str:
     if value == int(value):
         return str(int(value))
     return f"{value:.2f}".rstrip('0').rstrip('.')
+
+
+# Units that are definitely units (not item descriptors)
+KNOWN_UNITS = set(UNIT_ABBREVIATIONS.keys()) | {
+    "knob", "pinch", "dash", "splash",
+}
+
+
+def parse_ingredient(text: str) -> Dict[str, str]:
+    """
+    Parse an ingredient string into amount, unit, and item.
+
+    Returns:
+        {"amount": str, "unit": str, "item": str}
+    """
+    if not text:
+        return {"amount": "1", "unit": "whole", "item": ""}
+
+    text = text.strip()
+
+    # Handle comma format: "Chicken Breasts, 500 g"
+    if ", " in text:
+        parts = text.rsplit(", ", 1)
+        if len(parts) == 2:
+            potential_item, potential_qty = parts
+            # Check if second part looks like quantity
+            if re.match(r'^[\d/\s]+\s*\w*$', potential_qty) or _starts_with_informal(potential_qty):
+                qty_parsed = _parse_quantity_unit(potential_qty)
+                return {
+                    "amount": qty_parsed["amount"],
+                    "unit": qty_parsed["unit"],
+                    "item": potential_item.lower().strip(),
+                }
+
+    # Check for informal measurement at start
+    text_lower = text.lower()
+    for informal in INFORMAL_UNITS:
+        if text_lower.startswith(informal):
+            remainder = text[len(informal):].strip()
+            return {
+                "amount": "1",
+                "unit": informal,
+                "item": remainder.lower() if remainder else "",
+            }
+
+    # Check for "X to taste" at end
+    if text_lower.endswith(" to taste"):
+        item = text[:-9].strip()
+        return {"amount": "1", "unit": "to taste", "item": item.lower()}
+
+    # Parse standard format: "amount unit item" or "amount item"
+    return _parse_standard_format(text)
+
+
+def _starts_with_informal(text: str) -> bool:
+    """Check if text starts with an informal measurement."""
+    text_lower = text.lower().strip()
+    return any(text_lower.startswith(inf) for inf in INFORMAL_UNITS)
+
+
+def _parse_quantity_unit(text: str) -> Dict[str, str]:
+    """Parse just the quantity/unit part (no item)."""
+    text = text.strip()
+
+    # Handle informal
+    for informal in INFORMAL_UNITS:
+        if text.lower() == informal:
+            return {"amount": "1", "unit": informal}
+
+    # Try to extract number and unit
+    match = re.match(r'^([\d/.\s-]+)\s*(.*)$', text)
+    if match:
+        amount_part, unit_part = match.groups()
+        amount = parse_amount(amount_part.strip())
+        unit = normalize_unit(unit_part.strip()) if unit_part.strip() else "whole"
+        return {"amount": amount, "unit": unit}
+
+    return {"amount": "1", "unit": "whole"}
+
+
+def _parse_standard_format(text: str) -> Dict[str, str]:
+    """Parse 'amount unit item' or 'amount item' format."""
+    # Handle inch notation: 1" knob -> 1 knob
+    text = re.sub(r'(\d+)\s*["\'\u201c\u201d]', r'\1 ', text)
+
+    # Try to match: number + optional unit + item
+    pattern = r'^([\d/.\s-]+)?\s*(.*)$'
+    match = re.match(pattern, text.strip())
+
+    if not match:
+        return {"amount": "1", "unit": "whole", "item": text.lower()}
+
+    amount_part, remainder = match.groups()
+    amount_part = (amount_part or "").strip()
+    remainder = (remainder or "").strip()
+
+    # Parse the amount
+    if amount_part:
+        amount = parse_amount(amount_part)
+    else:
+        amount = "1"
+
+    # Now try to extract unit from remainder
+    if not remainder:
+        return {"amount": amount, "unit": "whole", "item": ""}
+
+    # Check if first word is a known unit
+    words = remainder.split(None, 1)
+    first_word = words[0].lower() if words else ""
+
+    # Check against known units
+    if first_word in KNOWN_UNITS or first_word in UNIT_ABBREVIATIONS:
+        unit = normalize_unit(first_word)
+        item = words[1] if len(words) > 1 else ""
+        return {"amount": amount, "unit": unit, "item": item.lower().strip()}
+
+    # No unit found - use "whole"
+    return {"amount": amount, "unit": "whole", "item": remainder.lower()}

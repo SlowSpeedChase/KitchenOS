@@ -1,7 +1,7 @@
 """Tests for ingredient parser module"""
 
 import pytest
-from lib.ingredient_parser import normalize_unit, is_informal_measurement, INFORMAL_UNITS, parse_amount
+from lib.ingredient_parser import normalize_unit, is_informal_measurement, INFORMAL_UNITS, parse_amount, parse_ingredient
 
 
 class TestNormalizeUnit:
@@ -146,3 +146,86 @@ class TestParseAmount:
         """Empty/None returns '1' as default"""
         assert parse_amount("") == "1"
         assert parse_amount(None) == "1"
+
+
+class TestParseIngredient:
+    """Tests for main ingredient parsing"""
+
+    def test_standard_format(self):
+        """Parses 'amount unit item' format"""
+        result = parse_ingredient("2 cups flour")
+        assert result == {"amount": "2", "unit": "cup", "item": "flour"}
+
+    def test_fraction_amount(self):
+        """Handles fractions"""
+        result = parse_ingredient("1/2 cup sugar")
+        assert result == {"amount": "0.5", "unit": "cup", "item": "sugar"}
+
+    def test_informal_measurement(self):
+        """Handles informal measurements"""
+        result = parse_ingredient("a pinch salt")
+        assert result == {"amount": "1", "unit": "a pinch", "item": "salt"}
+
+        result = parse_ingredient("to taste pepper")
+        assert result == {"amount": "1", "unit": "to taste", "item": "pepper"}
+
+    def test_no_unit(self):
+        """Uses 'whole' for unitless items"""
+        result = parse_ingredient("2 eggs")
+        assert result == {"amount": "2", "unit": "whole", "item": "eggs"}
+
+        result = parse_ingredient("1/2 lemon")
+        assert result == {"amount": "0.5", "unit": "whole", "item": "lemon"}
+
+    def test_no_amount(self):
+        """Defaults amount to 1 when missing"""
+        result = parse_ingredient("Lavash bread")
+        assert result == {"amount": "1", "unit": "whole", "item": "lavash bread"}
+
+    def test_metric_units(self):
+        """Handles metric units"""
+        result = parse_ingredient("500 g chicken")
+        assert result == {"amount": "500", "unit": "g", "item": "chicken"}
+
+        result = parse_ingredient("250 ml milk")
+        assert result == {"amount": "250", "unit": "ml", "item": "milk"}
+
+    def test_count_units(self):
+        """Handles count units"""
+        result = parse_ingredient("3 cloves garlic")
+        assert result == {"amount": "3", "unit": "clove", "item": "garlic"}
+
+        result = parse_ingredient("1 head lettuce")
+        assert result == {"amount": "1", "unit": "head", "item": "lettuce"}
+
+    def test_knob_measurement(self):
+        """Handles knob measurement"""
+        result = parse_ingredient("1 knob fresh ginger")
+        assert result == {"amount": "1", "unit": "knob", "item": "fresh ginger"}
+
+    def test_inch_notation(self):
+        """Handles inch notation"""
+        result = parse_ingredient('1" knob ginger')
+        assert result == {"amount": "1", "unit": "knob", "item": "ginger"}
+
+    def test_comma_format(self):
+        """Handles 'item, amount unit' format from some sources"""
+        result = parse_ingredient("Chicken Breasts, 500 g")
+        assert result == {"amount": "500", "unit": "g", "item": "chicken breasts"}
+
+    def test_range_amounts(self):
+        """Preserves ranges"""
+        result = parse_ingredient("3-4 cloves garlic")
+        assert result == {"amount": "3-4", "unit": "clove", "item": "garlic"}
+
+    def test_complex_item_descriptions(self):
+        """Handles complex item descriptions"""
+        result = parse_ingredient("1/2 cup flat leaf parsley, finely chopped")
+        assert result["amount"] == "0.5"
+        assert result["unit"] == "cup"
+        assert "parsley" in result["item"].lower()
+
+    def test_salt_and_pepper_to_taste(self):
+        """Handles 'salt and pepper to taste'"""
+        result = parse_ingredient("Salt and pepper to taste")
+        assert result == {"amount": "1", "unit": "to taste", "item": "salt and pepper"}
