@@ -123,7 +123,7 @@ def get_transcript(video_id):
     Returns:
         dict with keys:
             - text: The transcript text as a string, or None if unavailable
-            - source: 'youtube' if successful, None if failed
+            - source: 'youtube' or 'whisper' if successful, None if failed
             - error: Error message string, or None if successful
     """
     try:
@@ -144,6 +144,14 @@ def get_transcript(video_id):
             return {'text': text, 'source': 'youtube', 'error': None}
         except:
             pass
+
+        # Fallback to Whisper
+        if OPENAI_API_KEY:
+            audio_file = download_audio(video_id)
+            if audio_file:
+                whisper_result = transcribe_with_whisper_text(audio_file)
+                if whisper_result:
+                    return {'text': whisper_result, 'source': 'whisper', 'error': None}
 
         return {'text': None, 'source': None, 'error': 'No transcript available'}
 
@@ -211,6 +219,35 @@ def transcribe_with_whisper(audio_file_path):
         try:
             os.remove(audio_file_path)
             # Also remove the temp directory if it's empty
+            temp_dir = os.path.dirname(audio_file_path)
+            if os.path.exists(temp_dir) and not os.listdir(temp_dir):
+                os.rmdir(temp_dir)
+        except:
+            pass
+
+def transcribe_with_whisper_text(audio_file_path):
+    """Transcribe audio file using OpenAI Whisper API, return text only"""
+    if not OPENAI_API_KEY:
+        return None
+
+    try:
+        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+
+        with open(audio_file_path, "rb") as audio_file:
+            transcript = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file,
+                response_format="text"
+            )
+
+        return transcript
+
+    except Exception as e:
+        print(f"Whisper error: {e}", file=sys.stderr)
+        return None
+    finally:
+        try:
+            os.remove(audio_file_path)
             temp_dir = os.path.dirname(audio_file_path)
             if os.path.exists(temp_dir) and not os.listdir(temp_dir):
                 os.rmdir(temp_dir)
