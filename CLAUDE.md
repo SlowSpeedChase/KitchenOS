@@ -181,6 +181,38 @@ Output files use: `{YYYY-MM-DD}-{recipe-name-slugified}.md`
 
 Example: `2026-01-07-pasta-aglio-e-olio.md`
 
+## Completing Work
+
+When finishing a feature or fix, follow this checklist:
+
+### 1. Verify
+- [ ] Run `extract_recipe.py --dry-run` with a test video
+- [ ] Check for Python errors or warnings
+- [ ] Verify Ollama is responding correctly
+
+### 2. Test End-to-End (if applicable)
+- [ ] Run full extraction: `.venv/bin/python extract_recipe.py "VIDEO_URL"`
+- [ ] Check recipe file was created in Obsidian vault
+- [ ] Open in Obsidian - verify frontmatter and content look correct
+
+### 3. Update Documentation
+- [ ] If architecture changed → update "Architecture" section above
+- [ ] If new functions added → update "Key Functions" section
+- [ ] If new config options → update "AI Configuration" section
+- [ ] If new constraints discovered → add to "Constraints" section
+
+### 4. Commit
+```bash
+git add -A
+git commit -m "feat/fix/docs: description
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
+```
+
+### 5. Update Future Enhancements
+- [ ] Mark completed features as done (move to "Completed" or remove)
+- [ ] Add any new ideas discovered during implementation
+
 ## Future Enhancements
 
 These features are planned but not yet implemented:
