@@ -75,7 +75,8 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel):
 
     # Format equipment as YAML list
     equipment = recipe_data.get('equipment', [])
-    equipment_yaml = f"[{', '.join(f'\"' + e + '\"' for e in equipment)}]" if equipment else "[]"
+    quote = '"'
+    equipment_yaml = f"[{', '.join(quote + e + quote for e in equipment)}]" if equipment else "[]"
 
     # Format tags
     tags = []
