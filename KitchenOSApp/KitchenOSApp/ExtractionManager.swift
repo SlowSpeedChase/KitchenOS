@@ -46,52 +46,59 @@ class ExtractionManager: ObservableObject {
 
         currentProcess = process
 
-        do {
-            try process.run()
+        // Run blocking work off MainActor
+        let result: (status: Int32, stdout: String, stderr: String) = await Task.detached {
+            do {
+                try process.run()
 
-            // Wait with timeout
-            let timeoutTask = Task {
-                try await Task.sleep(for: .seconds(300)) // 5 minutes
-                process.terminate()
-            }
-
-            process.waitUntilExit()
-            timeoutTask.cancel()
-
-            let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-            let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-            let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
-            let stderr = String(data: stderrData, encoding: .utf8) ?? ""
-
-            if process.terminationStatus == 0, let savedLine = stdout.components(separatedBy: "\n").first(where: { $0.hasPrefix("SAVED:") }) {
-                let filePath = String(savedLine.dropFirst(6))
-                let recipeName = extractRecipeName(from: filePath)
-
-                let item = HistoryItem(recipeName: recipeName, filePath: filePath, extractedAt: Date())
-                history.insert(item, at: 0)
-                if history.count > 10 {
-                    history.removeLast()
-                }
-
-                status = .success(recipeName)
-                sendNotification(title: "Recipe Saved", body: recipeName)
-
-                // Reset to idle after 3 seconds
-                Task {
-                    try? await Task.sleep(for: .seconds(3))
-                    if case .success = self.status {
-                        self.status = .idle
+                // Timeout handling
+                let timeoutTask = Task {
+                    try await Task.sleep(for: .seconds(300))
+                    if process.isRunning {
+                        process.terminate()
                     }
                 }
-            } else {
-                let errorMessage = stderr.isEmpty ? "Extraction failed" : stderr.components(separatedBy: "\n").first ?? "Extraction failed"
-                status = .error(errorMessage)
+
+                process.waitUntilExit()
+                timeoutTask.cancel()
+
+                let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
+                let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+
+                return (process.terminationStatus, stdout, stderr)
+            } catch {
+                return (-1, "", "Failed to start: \(error.localizedDescription)")
             }
-        } catch {
-            status = .error("Failed to start extraction: \(error.localizedDescription)")
-        }
+        }.value
 
         currentProcess = nil
+
+        // Now back on MainActor, update UI safely
+        if result.status == 0, let savedLine = result.stdout.components(separatedBy: "\n").first(where: { $0.hasPrefix("SAVED:") }) {
+            let filePath = String(savedLine.dropFirst(6))
+            let recipeName = extractRecipeName(from: filePath)
+
+            let item = HistoryItem(recipeName: recipeName, filePath: filePath, extractedAt: Date())
+            history.insert(item, at: 0)
+            if history.count > 10 {
+                history.removeLast()
+            }
+
+            status = .success(recipeName)
+            sendNotification(title: "Recipe Saved", body: recipeName)
+
+            Task {
+                try? await Task.sleep(for: .seconds(3))
+                if case .success = self.status {
+                    self.status = .idle
+                }
+            }
+        } else {
+            let errorMessage = result.stderr.isEmpty ? "Extraction failed" : result.stderr.components(separatedBy: "\n").first ?? "Extraction failed"
+            status = .error(errorMessage)
+        }
     }
 
     private func extractRecipeName(from filePath: String) -> String {
