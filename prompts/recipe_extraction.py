@@ -109,3 +109,46 @@ def build_description_prompt(title: str, channel: str, description: str) -> str:
         channel=channel or "Unknown",
         description=description or "",
     )
+
+
+# Prompts for extracting cooking tips from video transcripts
+TIPS_EXTRACTION_PROMPT = """You are extracting cooking tips from a video transcript.
+Given a recipe and the video transcript, find practical tips mentioned in the video
+that are NOT already in the written recipe.
+
+Focus on:
+- Visual/sensory cues ("when you see it turning brown")
+- Timing guidance ("this only takes 30 seconds")
+- Technique details ("stir constantly")
+- Warnings ("be careful not to burn")
+- Substitutions mentioned
+
+Exclude:
+- Ingredients already listed
+- Steps already in instructions
+- Banter, jokes, personal stories
+- Sponsorships, outros
+
+Return a JSON array of 3-5 short tip strings. If no useful tips found, return [].
+
+Example output:
+["Watch for the garlic to turn golden, not brown - it burns quickly",
+ "Reserve pasta water before draining - you'll need about 1/4 cup",
+ "Let the pan cool slightly before adding the pasta to avoid splattering"]"""
+
+TIPS_USER_TEMPLATE = """Extract cooking tips from this video that aren't in the recipe.
+
+RECIPE:
+{recipe_json}
+
+TRANSCRIPT:
+{transcript}"""
+
+
+def build_tips_prompt(recipe: dict, transcript: str) -> str:
+    """Build prompt for tips extraction"""
+    import json
+    return TIPS_USER_TEMPLATE.format(
+        recipe_json=json.dumps(recipe, indent=2),
+        transcript=transcript or "No transcript available",
+    )

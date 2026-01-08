@@ -256,3 +256,19 @@ Mix and bake.
         """Returns False for descriptions without recipe"""
         description = "Thanks for watching! Subscribe for more."
         assert has_recipe_in_description(description) is False
+
+
+class TestExtractCookingTips:
+    """Tests for extract_cooking_tips function"""
+
+    def test_returns_empty_list_for_no_transcript(self):
+        """Returns empty list when no transcript"""
+        from recipe_sources import extract_cooking_tips
+        result = extract_cooking_tips("", {"recipe_name": "Test"})
+        assert result == []
+
+    def test_returns_list_type(self):
+        """Always returns a list"""
+        from recipe_sources import extract_cooking_tips
+        result = extract_cooking_tips("", {})
+        assert isinstance(result, list)

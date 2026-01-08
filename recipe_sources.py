@@ -10,6 +10,8 @@ from bs4 import BeautifulSoup
 from prompts.recipe_extraction import (
     DESCRIPTION_EXTRACTION_PROMPT,
     build_description_prompt,
+    TIPS_EXTRACTION_PROMPT,
+    build_tips_prompt,
 )
 
 
@@ -366,3 +368,37 @@ def parse_recipe_from_description(
     except Exception as e:
         print(f"  -> Description parsing failed: {e}")
         return None
+
+
+def extract_cooking_tips(transcript: str, recipe: Dict[str, Any]) -> List[str]:
+    """Extract practical cooking tips from video transcript."""
+    if not transcript:
+        return []
+
+    prompt = "{}\n\n{}".format(
+        TIPS_EXTRACTION_PROMPT,
+        build_tips_prompt(recipe, transcript)
+    )
+
+    try:
+        response = requests.post(
+            OLLAMA_URL,
+            json={
+                "model": OLLAMA_MODEL,
+                "prompt": prompt,
+                "stream": False,
+                "format": "json"
+            },
+            timeout=120
+        )
+        response.raise_for_status()
+        result = response.json()
+        tips_json = result.get("response", "[]")
+        tips = json.loads(tips_json)
+
+        if isinstance(tips, list):
+            return [str(t) for t in tips if t][:5]
+        return []
+    except Exception as e:
+        print(f"  -> Tips extraction failed: {e}")
+        return []
