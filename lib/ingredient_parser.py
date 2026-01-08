@@ -28,6 +28,11 @@ UNIT_ABBREVIATIONS = {
 }
 
 
+def _clean_item(item: str) -> str:
+    """Clean an ingredient item string - lowercase, strip whitespace and trailing punctuation."""
+    return item.lower().strip().rstrip(',.;:')
+
+
 def normalize_unit(unit: str) -> str:
     """Normalize a unit string to its standard abbreviation.
 
@@ -176,7 +181,7 @@ def parse_ingredient(text: str) -> Dict[str, str]:
                 return {
                     "amount": qty_parsed["amount"],
                     "unit": qty_parsed["unit"],
-                    "item": potential_item.lower().strip(),
+                    "item": _clean_item(potential_item),
                 }
 
     # Check for informal measurement at start
@@ -187,13 +192,13 @@ def parse_ingredient(text: str) -> Dict[str, str]:
             return {
                 "amount": "1",
                 "unit": informal,
-                "item": remainder.lower() if remainder else "",
+                "item": _clean_item(remainder) if remainder else "",
             }
 
     # Check for "X to taste" at end
     if text_lower.endswith(" to taste"):
         item = text[:-9].strip()
-        return {"amount": "1", "unit": "to taste", "item": item.lower()}
+        return {"amount": "1", "unit": "to taste", "item": _clean_item(item)}
 
     # Parse standard format: "amount unit item" or "amount item"
     return _parse_standard_format(text)
@@ -235,7 +240,7 @@ def _parse_standard_format(text: str) -> Dict[str, str]:
     match = re.match(pattern, text.strip())
 
     if not match:
-        return {"amount": "1", "unit": "whole", "item": text.lower()}
+        return {"amount": "1", "unit": "whole", "item": _clean_item(text)}
 
     amount_part, remainder = match.groups()
     amount_part = (amount_part or "").strip()
@@ -259,7 +264,7 @@ def _parse_standard_format(text: str) -> Dict[str, str]:
     if first_word in KNOWN_UNITS or first_word in UNIT_ABBREVIATIONS:
         unit = normalize_unit(first_word)
         item = words[1] if len(words) > 1 else ""
-        return {"amount": amount, "unit": unit, "item": item.lower().strip()}
+        return {"amount": amount, "unit": unit, "item": _clean_item(item)}
 
     # No unit found - use "whole"
-    return {"amount": amount, "unit": "whole", "item": remainder.lower()}
+    return {"amount": amount, "unit": "whole", "item": _clean_item(remainder)}
