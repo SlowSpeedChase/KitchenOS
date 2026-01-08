@@ -1,7 +1,7 @@
 """Tests for ingredient parser module"""
 
 import pytest
-from lib.ingredient_parser import normalize_unit
+from lib.ingredient_parser import normalize_unit, is_informal_measurement, INFORMAL_UNITS
 
 
 class TestNormalizeUnit:
@@ -55,3 +55,52 @@ class TestNormalizeUnit:
         """Handles mixed case"""
         assert normalize_unit("Tablespoon") == "tbsp"
         assert normalize_unit("CUP") == "cup"
+
+    def test_single_letter_abbreviations(self):
+        """Handles T/t convention"""
+        assert normalize_unit("T") == "tbsp"
+        assert normalize_unit("t") == "tsp"
+
+
+class TestInformalMeasurements:
+    """Tests for informal measurement handling"""
+
+    def test_pinch_variants(self):
+        """Detects pinch-type measurements"""
+        assert is_informal_measurement("a pinch") is True
+        assert is_informal_measurement("a smidge") is True
+        assert is_informal_measurement("a dash") is True
+        assert is_informal_measurement("a sprinkle") is True
+
+    def test_handful_variants(self):
+        """Detects handful-type measurements"""
+        assert is_informal_measurement("a handful") is True
+        assert is_informal_measurement("a splash") is True
+
+    def test_taste_variants(self):
+        """Detects taste-type measurements"""
+        assert is_informal_measurement("to taste") is True
+        assert is_informal_measurement("as needed") is True
+
+    def test_vague_quantities(self):
+        """Detects vague quantities"""
+        assert is_informal_measurement("some") is True
+        assert is_informal_measurement("a few") is True
+        assert is_informal_measurement("a couple") is True
+
+    def test_case_insensitive(self):
+        """Handles mixed case"""
+        assert is_informal_measurement("A Pinch") is True
+        assert is_informal_measurement("TO TASTE") is True
+
+    def test_rejects_standard_units(self):
+        """Rejects standard measurement units"""
+        assert is_informal_measurement("cup") is False
+        assert is_informal_measurement("tablespoon") is False
+        assert is_informal_measurement("1/2 cup") is False
+
+    def test_informal_units_list(self):
+        """INFORMAL_UNITS contains expected entries"""
+        assert "a pinch" in INFORMAL_UNITS
+        assert "to taste" in INFORMAL_UNITS
+        assert "a sprinkle" in INFORMAL_UNITS
