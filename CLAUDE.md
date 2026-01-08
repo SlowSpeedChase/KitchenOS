@@ -342,6 +342,7 @@ These features are planned but not yet implemented:
 | ~~Recipe link detection~~ | ~~High~~ | **Completed** - Priority chain: webpage → description → AI |
 | ~~iOS Shortcut~~ | ~~Medium~~ | **Completed** - /extract endpoint + Tailscale, see iOS_SHORTCUT_SETUP.md |
 | ~~Batch processing~~ | ~~Medium~~ | **Completed** - Processes URLs from iOS Reminders list |
+| YouTube Shorts support | Medium | YouTube API can't fetch Shorts metadata; need yt-dlp fallback |
 | Claude API fallback | Low | Use Claude when Ollama fails |
 | Image extraction | Low | Get video thumbnails for recipes |
 
