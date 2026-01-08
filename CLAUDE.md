@@ -217,7 +217,11 @@ When finishing a feature or fix, follow this checklist:
 - [ ] Check recipe file was created in Obsidian vault
 - [ ] Open in Obsidian - verify frontmatter and content look correct
 
-### 3. Update Documentation
+### 3. Update Documentation (Required)
+
+- [ ] Review changes against table below - identify which docs need updates
+- [ ] Make required documentation updates
+- [ ] If no docs need updating, confirm why (e.g., "refactor only, no API changes")
 
 **Which doc to update:**
 
@@ -239,6 +243,9 @@ When finishing a feature or fix, follow this checklist:
 - Update the JSON schema if recipe structure changes
 
 ### 4. Commit
+
+**Do not commit until step 3 is complete.**
+
 ```bash
 git add -A
 git commit -m "feat/fix/docs: description
