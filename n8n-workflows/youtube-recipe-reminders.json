@@ -1,5 +1,6 @@
 {
   "name": "YouTube Recipe - Reminders",
+  "active": true,
   "nodes": [
     {
       "parameters": {
@@ -40,7 +41,7 @@
     },
     {
       "parameters": {
-        "command": "={{ '/Users/chaseeasterling/Documents/Documents - Chase\\'s MacBook Air - 1/GitHub/KitchenOS/.venv/bin/python' }} '{{ '/Users/chaseeasterling/Documents/Documents - Chase\\'s MacBook Air - 1/GitHub/KitchenOS/main.py' }}' --json \"{{ $json.url }}\""
+        "command": "/tmp/kitchenos/run-recipe.sh '{{$json.url}}'"
       },
       "id": "fetch-transcript",
       "name": "Fetch Transcript",
@@ -260,7 +261,7 @@
     "executionOrder": "v1"
   },
   "staticData": null,
-  "tags": [],
+  "tags": [{"name": "KitchenOS"}],
   "triggerCount": 0,
   "updatedAt": "2026-01-07T00:00:00.000Z",
   "versionId": "1"
