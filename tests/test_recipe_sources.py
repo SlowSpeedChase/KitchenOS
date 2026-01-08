@@ -258,6 +258,68 @@ Mix and bake.
         assert has_recipe_in_description(description) is False
 
 
+class TestIngredientParsing:
+    """Tests for ingredient parsing from JSON-LD"""
+
+    def test_parses_to_new_format(self):
+        """Outputs amount/unit/item format"""
+        from recipe_sources import _parse_ingredients
+        ingredients = ["500 g chicken", "2 cups flour"]
+        result = _parse_ingredients(ingredients)
+
+        assert result[0]["amount"] == "500"
+        assert result[0]["unit"] == "g"
+        assert result[0]["item"] == "chicken"
+
+        assert result[1]["amount"] == "2"
+        assert result[1]["unit"] == "cup"
+
+    def test_handles_comma_format(self):
+        """Handles 'Item, amount unit' format"""
+        from recipe_sources import _parse_ingredients
+        ingredients = ["Chicken Breasts, 500 g"]
+        result = _parse_ingredients(ingredients)
+
+        assert result[0]["amount"] == "500"
+        assert result[0]["unit"] == "g"
+        assert "chicken" in result[0]["item"].lower()
+
+    def test_handles_dict_with_amount(self):
+        """Handles dict input with amount field"""
+        from recipe_sources import _parse_ingredients
+        ingredients = [{"amount": "2", "unit": "cups", "name": "flour"}]
+        result = _parse_ingredients(ingredients)
+
+        assert result[0]["amount"] == "2"
+        assert result[0]["unit"] == "cups"
+        assert result[0]["item"] == "flour"
+
+    def test_handles_legacy_dict_format(self):
+        """Handles legacy dict with quantity field"""
+        from recipe_sources import _parse_ingredients
+        ingredients = [{"quantity": "2 cups", "name": "flour"}]
+        result = _parse_ingredients(ingredients)
+
+        assert result[0]["amount"] == "2"
+        assert result[0]["unit"] == "cup"
+        assert result[0]["item"] == "flour"
+
+    def test_handles_empty_list(self):
+        """Returns empty list for empty input"""
+        from recipe_sources import _parse_ingredients
+        assert _parse_ingredients([]) == []
+        assert _parse_ingredients(None) == []
+
+    def test_all_have_inferred_false(self):
+        """All parsed ingredients have inferred=False"""
+        from recipe_sources import _parse_ingredients
+        ingredients = ["1 cup sugar", "2 eggs"]
+        result = _parse_ingredients(ingredients)
+
+        for ing in result:
+            assert ing["inferred"] is False
+
+
 class TestExtractCookingTips:
     """Tests for extract_cooking_tips function"""
 
