@@ -93,7 +93,7 @@ def get_uncompleted_reminders(store, calendar):
         )
 
     if reminders[0] is None:
-        print("Error: Reminders access request timed out (60s).", file=sys.stderr)
+        print("Error: Fetching reminders timed out (30s).", file=sys.stderr)
 
     return list(reminders[0]) if reminders[0] else []
 
