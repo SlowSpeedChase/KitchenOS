@@ -157,8 +157,24 @@ Output files use: `{YYYY-MM-DD}-{recipe-name-slugified}.md`
 
 Example: `2026-01-07-pasta-aglio-e-olio.md`
 
+## Future Enhancements
+
+These features are planned but not yet implemented:
+
+| Feature | Priority | Notes |
+|---------|----------|-------|
+| Recipe link detection | High | Check description for existing recipe URLs before AI extraction |
+| iOS Shortcut | Medium | Call script via SSH or local API wrapper |
+| Batch processing | Medium | Process multiple URLs from a file |
+| Claude API fallback | Low | Use Claude when Ollama fails |
+| Image extraction | Low | Get video thumbnails for recipes |
+
 ## Documentation
 
-- **User Guide**: `README.md`
-- **Design Doc**: `docs/plans/2026-01-07-youtube-recipe-extraction-design.md`
-- **Implementation Plan**: `docs/plans/2026-01-07-recipe-extraction-implementation.md`
+| Document | Purpose |
+|----------|---------|
+| `README.md` | User guide - installation, usage, configuration |
+| `docs/IMPLEMENTATION_SUMMARY.md` | What was built vs planned, lessons learned |
+| `docs/plans/2026-01-07-youtube-recipe-extraction-design.md` | Original design (n8n-based, **superseded** by standalone script) |
+
+**Note:** The original design proposed n8n orchestration, but we built a simpler standalone Python solution. See `IMPLEMENTATION_SUMMARY.md` for details on this decision.
