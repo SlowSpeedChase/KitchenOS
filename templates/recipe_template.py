@@ -2,6 +2,60 @@
 
 from datetime import date
 import re
+from fractions import Fraction
+
+
+def convert_quantity_to_decimal(quantity_str):
+    """Convert quantity string with fractions to decimal format.
+
+    Examples:
+        "1/2 cup" → "0.5 cup"
+        "1 1/2 cups" → "1.5 cups"
+        "2" → "2"
+        "3/4" → "0.75"
+        "1 /2 cup" → "0.5 cup" (handles space before slash)
+    """
+    if not quantity_str:
+        return ""
+
+    # Normalize spaces around slashes in fractions (e.g., "1 /2" → "1/2")
+    normalized = re.sub(r'(\d)\s*/\s*(\d)', r'\1/\2', quantity_str.strip())
+
+    # Try to match mixed number: "1 1/2 cups" -> whole=1, frac=1/2, rest=cups
+    mixed_pattern = r'^(\d+)\s+(\d+/\d+)\s*(.*)$'
+    mixed_match = re.match(mixed_pattern, normalized)
+
+    if mixed_match:
+        whole, frac, rest = mixed_match.groups()
+        total = float(whole) + float(Fraction(frac))
+    else:
+        # Try to match simple fraction: "1/2 cup" -> frac=1/2, rest=cup
+        frac_pattern = r'^(\d+/\d+)\s*(.*)$'
+        frac_match = re.match(frac_pattern, normalized)
+
+        if frac_match:
+            frac, rest = frac_match.groups()
+            total = float(Fraction(frac))
+        else:
+            # Try to match whole number: "2 cups" -> whole=2, rest=cups
+            whole_pattern = r'^(\d+)\s*(.*)$'
+            whole_match = re.match(whole_pattern, normalized)
+
+            if whole_match:
+                whole, rest = whole_match.groups()
+                total = float(whole)
+            else:
+                # No numeric pattern found, return original
+                return quantity_str
+
+    # Format: remove trailing zeros, keep reasonable precision
+    if total == int(total):
+        decimal_str = str(int(total))
+    else:
+        decimal_str = f"{total:.2f}".rstrip('0').rstrip('.')
+
+    rest = rest.strip() if rest else ""
+    return f"{decimal_str} {rest}".strip() if rest else decimal_str
 
 RECIPE_TEMPLATE = '''---
 title: "{title}"
@@ -54,11 +108,14 @@ confidence_notes: "{confidence_notes}"
 def format_recipe_markdown(recipe_data, video_url, video_title, channel):
     """Format recipe data into markdown string"""
 
-    # Format ingredients
-    ingredients_lines = []
+    # Format ingredients as table
+    ingredients_lines = ["| Amount | Ingredient |", "|--------|------------|"]
     for ing in recipe_data.get('ingredients', []):
-        inferred = " *(inferred)*" if ing.get('inferred') else ""
-        ingredients_lines.append(f"- {ing.get('quantity', '')} {ing.get('item', '')}{inferred}")
+        quantity = convert_quantity_to_decimal(ing.get('quantity', ''))
+        item = ing.get('item', '')
+        if ing.get('inferred'):
+            item = f"{item} *(inferred)*"
+        ingredients_lines.append(f"| {quantity} | {item} |")
 
     # Format instructions
     instructions_lines = []
