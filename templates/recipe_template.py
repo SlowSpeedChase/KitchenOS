@@ -82,7 +82,12 @@ def convert_quantity_to_decimal(quantity_str):
         decimal_str = f"{total:.2f}".rstrip('0').rstrip('.')
 
     rest = rest.strip() if rest else ""
-    return f"{decimal_str} {rest}".strip() if rest else decimal_str
+    if not rest:
+        return decimal_str
+    # Don't add space before quote marks (inch/foot notation like 1" or 2')
+    if rest.startswith('"') or rest.startswith("'"):
+        return f"{decimal_str}{rest}"
+    return f"{decimal_str} {rest}"
 
 RECIPE_TEMPLATE = '''---
 title: "{title}"
@@ -150,10 +155,24 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel):
         ingredients_lines.append(f"| {quantity} | {item} |")
 
     # Format instructions
-    instructions_lines = []
+    # Multi-paragraph steps need continuation paragraphs indented for proper markdown
+    instruction_blocks = []
     for inst in recipe_data.get('instructions', []):
         time_note = f" ({inst['time']})" if inst.get('time') else ""
-        instructions_lines.append(f"{inst.get('step', '')}. {inst.get('text', '')}{time_note}")
+        text = inst.get('text', '').strip()
+
+        # Split into paragraphs and format for markdown numbered list
+        paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+        if paragraphs:
+            # First paragraph gets the step number
+            step_lines = [f"{inst.get('step', '')}. {paragraphs[0]}{time_note}"]
+            # Continuation paragraphs get indented (3 spaces for alignment)
+            for para in paragraphs[1:]:
+                step_lines.append(f"   {para}")
+            # Join paragraphs within a step with single newline
+            instruction_blocks.append('\n\n'.join(step_lines))
+        else:
+            instruction_blocks.append(f"{inst.get('step', '')}. {text}{time_note}")
 
     # Format equipment list
     equipment_list = '\n'.join(f"- {e}" for e in recipe_data.get('equipment', []))
@@ -235,7 +254,7 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel):
         confidence_notes=recipe_data.get('confidence_notes', ''),
         description=recipe_data.get('description', ''),
         ingredients='\n'.join(ingredients_lines),
-        instructions='\n'.join(instructions_lines),
+        instructions='\n\n'.join(instruction_blocks),
         equipment_list=equipment_list,
         video_tips_section=video_tips_section,
         notes_section=notes_section
@@ -245,4 +264,4 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel):
 def generate_filename(recipe_name):
     """Generate filename from recipe name"""
     slug = re.sub(r'[^a-z0-9]+', '-', recipe_name.lower()).strip('-')
-    return f"{date.today().isoformat()}-{slug}.md"
+    return f"{slug}.md"

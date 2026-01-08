@@ -167,6 +167,48 @@ def _parse_dietary(diets) -> List[str]:
     return result
 
 
+def _split_ingredient_string(ing_str: str) -> tuple:
+    """
+    Split a combined ingredient string into (quantity, item).
+
+    Handles formats like:
+    - "Chicken Breasts, 500 g" → ("500 g", "Chicken Breasts")
+    - "Salt, 5 g" → ("5 g", "Salt")
+    - "Garlic, 3 cloves" → ("3 cloves", "Garlic")
+    - "Heavy cream, to taste" → ("to taste", "Heavy cream")
+    - "Lavash bread" → ("", "Lavash bread")
+    - "2 cups flour" → ("2 cups", "flour")
+    - "Fresh ginger, 1" knob" → ("1\" knob", "Fresh ginger")
+    """
+    ing_str = ing_str.strip()
+
+    # Remove trailing comma if present (edge case from some sources)
+    if ing_str.endswith(','):
+        ing_str = ing_str[:-1].strip()
+
+    # Pattern 1: "Item, quantity" (comma-separated with quantity at end)
+    # Look for ", " followed by a quantity pattern at the end
+    comma_pattern = r'^(.+?),\s+(\d+.*|to taste|a (?:pinch|dash|sprinkle|handful|spoonful).*)$'
+    comma_match = re.match(comma_pattern, ing_str, re.IGNORECASE)
+    if comma_match:
+        item, quantity = comma_match.groups()
+        # Normalize inch/quote marks: '1" knob' or '1 " knob' → '1" knob'
+        # Also handle Unicode curly quotes ("" '')
+        quantity = re.sub(r'(\d)\s*(["\'\u201c\u201d\u2018\u2019])', r'\1"', quantity)
+        return (quantity.strip(), item.strip())
+
+    # Pattern 2: "quantity Item" (quantity at start)
+    # Match: number + optional fraction + unit + rest
+    qty_first_pattern = r'^(\d+(?:\s*/?\s*\d+)?(?:\s*(?:g|kg|ml|l|oz|lb|cup|cups|tbsp|tsp|clove|cloves|bunch|head|inch|"|\'))?)\s+(.+)$'
+    qty_match = re.match(qty_first_pattern, ing_str, re.IGNORECASE)
+    if qty_match:
+        quantity, item = qty_match.groups()
+        return (quantity.strip(), item.strip())
+
+    # No quantity found, return as item only
+    return ("", ing_str)
+
+
 def _parse_ingredients(ingredients) -> List[Dict[str, Any]]:
     """Parse ingredients from recipeIngredient field."""
     if not ingredients:
@@ -174,7 +216,8 @@ def _parse_ingredients(ingredients) -> List[Dict[str, Any]]:
     result = []
     for ing in ingredients:
         if isinstance(ing, str):
-            result.append({"quantity": "", "item": ing, "inferred": False})
+            quantity, item = _split_ingredient_string(ing)
+            result.append({"quantity": quantity, "item": item, "inferred": False})
         elif isinstance(ing, dict):
             result.append({
                 "quantity": ing.get("amount", ""),

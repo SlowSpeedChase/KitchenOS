@@ -257,9 +257,9 @@ Falls back to Whisper (requires OpenAI key) or proceeds with description only.
 
 ## File Naming Convention
 
-Output files use: `{YYYY-MM-DD}-{recipe-name-slugified}.md`
+Output files use: `{recipe-name-slugified}.md`
 
-Example: `2026-01-07-pasta-aglio-e-olio.md`
+Example: `pasta-aglio-e-olio.md`
 
 ## Completing Work
 
