@@ -68,6 +68,46 @@ cd /Users/chaseeasterling/KitchenOS
 .venv/bin/python migrate_recipes.py
 ```
 
+## API Server (iOS Shortcut Integration)
+
+The API server enables recipe extraction from iOS via Share Sheet. It runs as a LaunchAgent and is accessible via Tailscale from anywhere.
+
+### Server Management
+
+```bash
+# Check if running
+curl http://localhost:5001/health
+
+# View logs
+tail -f /Users/chaseeasterling/KitchenOS/server.log
+
+# Restart service
+launchctl unload ~/Library/LaunchAgents/com.kitchenos.api.plist
+launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist
+
+# Stop service
+launchctl unload ~/Library/LaunchAgents/com.kitchenos.api.plist
+
+# Start service
+launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist
+```
+
+### Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/health` | GET | Health check |
+| `/transcript` | GET/POST | Returns transcript + description (no extraction) |
+| `/extract` | POST | Full extraction, saves to Obsidian |
+
+### Configuration
+
+- **Port**: 5001 (configured in LaunchAgent)
+- **Tailscale IP**: `100.111.6.10`
+- **LaunchAgent**: `~/Library/LaunchAgents/com.kitchenos.api.plist`
+
+See `iOS_SHORTCUT_SETUP.md` for iOS Shortcut configuration.
+
 ## Architecture
 
 ### Pipeline Flow
@@ -93,6 +133,7 @@ template → Obsidian
 |------|---------|
 | `extract_recipe.py` | **Main entry point** - orchestrates entire pipeline |
 | `main.py` | Video data fetcher (transcript, metadata, `--json` mode) |
+| `api_server.py` | Flask API for iOS Shortcut integration |
 | `prompts/recipe_extraction.py` | AI prompt templates for structured extraction |
 | `templates/recipe_template.py` | Markdown formatter with YAML frontmatter |
 
