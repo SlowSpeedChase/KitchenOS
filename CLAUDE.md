@@ -73,8 +73,15 @@ Entry points:
 
 ## Documentation
 
+- **Session Summary**: `docs/SESSION_SUMMARY.md` ← **Read this first if continuing work**
 - **Design**: `docs/plans/2026-01-07-youtube-recipe-extraction-design.md`
 - **Implementation**: `docs/plans/2026-01-07-recipe-extraction-implementation.md`
+
+## n8n Workflows
+
+Import these into n8n (http://localhost:5678):
+- `n8n-workflows/youtube-recipe-webhook.json` - iOS Share Sheet trigger
+- `n8n-workflows/youtube-recipe-reminders.json` - Daily Apple Reminders poll
 
 ## Worktree Convention
 
