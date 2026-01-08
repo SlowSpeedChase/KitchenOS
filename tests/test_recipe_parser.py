@@ -1,5 +1,7 @@
 """Tests for recipe parser module"""
-from lib.recipe_parser import parse_recipe_file, extract_my_notes, extract_video_id
+import tempfile
+from pathlib import Path
+from lib.recipe_parser import parse_recipe_file, extract_my_notes, extract_video_id, find_existing_recipe
 
 
 def test_parse_recipe_file_extracts_frontmatter():
@@ -109,3 +111,42 @@ def test_extract_video_id_with_extra_params():
     video_id = extract_video_id(url)
 
     assert video_id == "bJUiWdM__Qw"
+
+
+def test_find_existing_recipe_finds_match():
+    """Should find recipe file with matching video ID"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        recipes_dir = Path(tmpdir)
+        recipe = recipes_dir / "2026-01-07-pasta.md"
+        recipe.write_text('''---
+title: "Pasta"
+source_url: "https://www.youtube.com/watch?v=bJUiWdM__Qw"
+---
+
+# Pasta
+''')
+        result = find_existing_recipe(recipes_dir, "bJUiWdM__Qw")
+        assert result == recipe
+
+
+def test_find_existing_recipe_returns_none_when_not_found():
+    """Should return None when no matching recipe exists"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        recipes_dir = Path(tmpdir)
+        result = find_existing_recipe(recipes_dir, "nonexistent123")
+        assert result is None
+
+
+def test_find_existing_recipe_ignores_history_folder():
+    """Should not search in .history directory"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        recipes_dir = Path(tmpdir)
+        history_dir = recipes_dir / ".history"
+        history_dir.mkdir()
+        backup = history_dir / "2026-01-07-pasta.md"
+        backup.write_text('''---
+source_url: "https://www.youtube.com/watch?v=bJUiWdM__Qw"
+---
+''')
+        result = find_existing_recipe(recipes_dir, "bJUiWdM__Qw")
+        assert result is None

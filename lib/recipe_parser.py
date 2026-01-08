@@ -1,5 +1,6 @@
 """Parser for existing recipe markdown files"""
 import re
+from pathlib import Path
 from typing import Optional
 
 
@@ -112,5 +113,40 @@ def extract_video_id(url: str) -> Optional[str]:
     match = re.search(r'youtube\.com/embed/([^?&]+)', url)
     if match:
         return match.group(1)
+
+    return None
+
+
+def find_existing_recipe(recipes_dir: Path, video_id: str) -> Optional[Path]:
+    """Find an existing recipe file by video ID.
+
+    Scans all .md files in recipes_dir (excluding .history) and checks
+    if their source_url contains the given video ID.
+
+    Args:
+        recipes_dir: Path to the recipes directory
+        video_id: YouTube video ID to search for
+
+    Returns:
+        Path to matching recipe file, or None if not found
+    """
+    recipes_dir = Path(recipes_dir)
+
+    if not recipes_dir.exists():
+        return None
+
+    for md_file in recipes_dir.glob("*.md"):
+        if md_file.name.startswith('.'):
+            continue
+
+        try:
+            content = md_file.read_text(encoding='utf-8')
+            parsed = parse_recipe_file(content)
+            source_url = parsed['frontmatter'].get('source_url', '')
+
+            if source_url and video_id in source_url:
+                return md_file
+        except Exception:
+            continue
 
     return None
