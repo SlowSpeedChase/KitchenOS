@@ -1,7 +1,7 @@
 """Tests for ingredient parser module"""
 
 import pytest
-from lib.ingredient_parser import normalize_unit, is_informal_measurement, INFORMAL_UNITS
+from lib.ingredient_parser import normalize_unit, is_informal_measurement, INFORMAL_UNITS, parse_amount
 
 
 class TestNormalizeUnit:
@@ -104,3 +104,45 @@ class TestInformalMeasurements:
         assert "a pinch" in INFORMAL_UNITS
         assert "to taste" in INFORMAL_UNITS
         assert "a sprinkle" in INFORMAL_UNITS
+
+
+class TestParseAmount:
+    """Tests for amount parsing"""
+
+    def test_whole_numbers(self):
+        """Parses whole numbers"""
+        assert parse_amount("1") == "1"
+        assert parse_amount("12") == "12"
+
+    def test_fractions(self):
+        """Parses fractions as decimals"""
+        assert parse_amount("1/2") == "0.5"
+        assert parse_amount("1/4") == "0.25"
+        assert parse_amount("3/4") == "0.75"
+
+    def test_mixed_fractions(self):
+        """Parses mixed fractions"""
+        assert parse_amount("1 1/2") == "1.5"
+        assert parse_amount("2 1/4") == "2.25"
+
+    def test_decimals_passthrough(self):
+        """Decimal strings pass through"""
+        assert parse_amount("0.5") == "0.5"
+        assert parse_amount("1.25") == "1.25"
+
+    def test_ranges(self):
+        """Ranges preserved as strings"""
+        assert parse_amount("3-4") == "3-4"
+        assert parse_amount("2-3") == "2-3"
+
+    def test_word_numbers(self):
+        """Converts word numbers to digits"""
+        assert parse_amount("one") == "1"
+        assert parse_amount("two") == "2"
+        assert parse_amount("three") == "3"
+        assert parse_amount("One") == "1"
+
+    def test_empty_returns_one(self):
+        """Empty/None returns '1' as default"""
+        assert parse_amount("") == "1"
+        assert parse_amount(None) == "1"
