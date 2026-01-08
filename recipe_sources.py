@@ -1,7 +1,11 @@
 """Recipe source extraction: webpage scraping, description parsing, tips extraction"""
 
+import json
 import re
-from typing import Optional
+from typing import Optional, Dict, Any, List
+
+import requests
+from bs4 import BeautifulSoup
 
 
 # Known recipe domains (no keyword needed)
@@ -101,3 +105,171 @@ def _is_known_recipe_domain(url: str) -> bool:
     """Check if URL is from a known recipe domain"""
     url_lower = url.lower()
     return any(domain in url_lower for domain in KNOWN_RECIPE_DOMAINS)
+
+
+def parse_iso_duration(iso_duration: str) -> Optional[str]:
+    """Parse ISO 8601 duration to human-readable string."""
+    if not iso_duration:
+        return None
+    match = re.match(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?', iso_duration)
+    if not match:
+        return iso_duration
+    hours, minutes, seconds = match.groups()
+    parts = []
+    if hours:
+        h = int(hours)
+        parts.append(f"{h} hour" + ("s" if h != 1 else ""))
+    if minutes:
+        m = int(minutes)
+        parts.append(f"{m} minute" + ("s" if m != 1 else ""))
+    if seconds:
+        s = int(seconds)
+        parts.append(f"{s} second" + ("s" if s != 1 else ""))
+    return " ".join(parts) if parts else None
+
+
+def _parse_servings(yield_str) -> Optional[int]:
+    """Parse servings from recipeYield field."""
+    if not yield_str:
+        return None
+    if isinstance(yield_str, int):
+        return yield_str
+    if isinstance(yield_str, list):
+        yield_str = yield_str[0] if yield_str else ""
+    match = re.search(r'(\d+)', str(yield_str))
+    return int(match.group(1)) if match else None
+
+
+def _parse_dietary(diets) -> List[str]:
+    """Parse dietary information from suitableForDiet field."""
+    if not diets:
+        return []
+    if isinstance(diets, str):
+        diets = [diets]
+    result = []
+    for diet in diets:
+        diet_lower = diet.lower()
+        if "vegan" in diet_lower:
+            result.append("vegan")
+        elif "vegetarian" in diet_lower:
+            result.append("vegetarian")
+        elif "gluten" in diet_lower:
+            result.append("gluten-free")
+        elif "dairy" in diet_lower:
+            result.append("dairy-free")
+    return result
+
+
+def _parse_ingredients(ingredients) -> List[Dict[str, Any]]:
+    """Parse ingredients from recipeIngredient field."""
+    if not ingredients:
+        return []
+    result = []
+    for ing in ingredients:
+        if isinstance(ing, str):
+            result.append({"quantity": "", "item": ing, "inferred": False})
+        elif isinstance(ing, dict):
+            result.append({
+                "quantity": ing.get("amount", ""),
+                "item": ing.get("name", str(ing)),
+                "inferred": False,
+            })
+    return result
+
+
+def _parse_instructions(instructions) -> List[Dict[str, Any]]:
+    """Parse instructions from recipeInstructions field."""
+    if not instructions:
+        return []
+    if isinstance(instructions, str):
+        return [{"step": 1, "text": instructions, "time": None}]
+    result = []
+    for i, inst in enumerate(instructions, 1):
+        if isinstance(inst, str):
+            result.append({"step": i, "text": inst, "time": None})
+        elif isinstance(inst, dict):
+            text = inst.get("text", inst.get("name", ""))
+            result.append({"step": i, "text": text, "time": None})
+    return result
+
+
+def _parse_nutrition(nutrition) -> Optional[str]:
+    """Parse nutrition info from nutrition field."""
+    if not nutrition or not isinstance(nutrition, dict):
+        return None
+    parts = []
+    if nutrition.get("calories"):
+        parts.append(f"Calories: {nutrition['calories']}")
+    if nutrition.get("proteinContent"):
+        parts.append(f"Protein: {nutrition['proteinContent']}")
+    if nutrition.get("carbohydrateContent"):
+        parts.append(f"Carbs: {nutrition['carbohydrateContent']}")
+    return ", ".join(parts) if parts else None
+
+
+def parse_json_ld_recipe(json_ld: Dict[str, Any]) -> Dict[str, Any]:
+    """Parse a Schema.org Recipe JSON-LD object into our recipe format."""
+    recipe = {
+        "recipe_name": json_ld.get("name", "Untitled Recipe"),
+        "description": json_ld.get("description"),
+        "prep_time": parse_iso_duration(json_ld.get("prepTime")),
+        "cook_time": parse_iso_duration(json_ld.get("cookTime")),
+        "total_time": parse_iso_duration(json_ld.get("totalTime")),
+        "servings": _parse_servings(json_ld.get("recipeYield")),
+        "difficulty": None,
+        "cuisine": json_ld.get("recipeCuisine"),
+        "protein": None,
+        "dish_type": json_ld.get("recipeCategory"),
+        "dietary": _parse_dietary(json_ld.get("suitableForDiet", [])),
+        "equipment": [],
+        "ingredients": _parse_ingredients(json_ld.get("recipeIngredient", [])),
+        "instructions": _parse_instructions(json_ld.get("recipeInstructions", [])),
+        "storage": None,
+        "variations": [],
+        "nutritional_info": _parse_nutrition(json_ld.get("nutrition")),
+        "needs_review": False,
+        "confidence_notes": "Extracted from structured JSON-LD data on recipe webpage.",
+    }
+    return recipe
+
+
+def _find_recipe_in_json_ld(data) -> Optional[Dict[str, Any]]:
+    """Find Recipe object in JSON-LD data (handles @graph arrays)"""
+    if isinstance(data, dict):
+        if data.get("@type") == "Recipe":
+            return data
+        if "@graph" in data:
+            for item in data["@graph"]:
+                if isinstance(item, dict) and item.get("@type") == "Recipe":
+                    return item
+    elif isinstance(data, list):
+        for item in data:
+            result = _find_recipe_in_json_ld(item)
+            if result:
+                return result
+    return None
+
+
+def scrape_recipe_from_url(url: str) -> Optional[Dict[str, Any]]:
+    """Fetch a URL and extract recipe data from JSON-LD."""
+    try:
+        response = requests.get(url, timeout=10, headers={
+            "User-Agent": "Mozilla/5.0 (compatible; KitchenOS/1.0)"
+        })
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        print(f"  -> Failed to fetch {url}: {e}")
+        return None
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    scripts = soup.find_all("script", type="application/ld+json")
+
+    for script in scripts:
+        try:
+            data = json.loads(script.string)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        recipe = _find_recipe_in_json_ld(data)
+        if recipe:
+            return parse_json_ld_recipe(recipe)
+    return None

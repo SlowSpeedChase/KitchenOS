@@ -1,7 +1,9 @@
 """Tests for recipe_sources module"""
 
 import pytest
-from recipe_sources import find_recipe_link
+from unittest.mock import patch, Mock
+import requests
+from recipe_sources import find_recipe_link, scrape_recipe_from_url, parse_json_ld_recipe
 
 
 class TestFindRecipeLink:
@@ -67,3 +69,151 @@ https://twitter.com/chef"""
 Recipe: https://second.com/recipe"""
         result = find_recipe_link(description)
         assert result == "https://first.com/recipe"
+
+
+class TestParseJsonLdRecipe:
+    """Tests for JSON-LD recipe parsing"""
+
+    def test_parses_basic_recipe(self):
+        """Parses standard Schema.org Recipe"""
+        json_ld = {
+            "@type": "Recipe",
+            "name": "Pasta Aglio e Olio",
+            "description": "A simple garlic pasta",
+            "prepTime": "PT10M",
+            "cookTime": "PT15M",
+            "recipeYield": "4 servings",
+            "recipeIngredient": [
+                "1/2 lb linguine",
+                "4 cloves garlic",
+            ],
+            "recipeInstructions": [
+                {"@type": "HowToStep", "text": "Boil pasta"},
+                {"@type": "HowToStep", "text": "Saute garlic"},
+            ],
+            "recipeCuisine": "Italian",
+        }
+        result = parse_json_ld_recipe(json_ld)
+        assert result["recipe_name"] == "Pasta Aglio e Olio"
+        assert result["description"] == "A simple garlic pasta"
+        assert result["prep_time"] == "10 minutes"
+        assert result["cook_time"] == "15 minutes"
+        assert result["cuisine"] == "Italian"
+        assert len(result["ingredients"]) == 2
+        assert len(result["instructions"]) == 2
+
+    def test_handles_string_instructions(self):
+        """Handles instructions as plain strings"""
+        json_ld = {
+            "@type": "Recipe",
+            "name": "Simple Recipe",
+            "recipeInstructions": ["Step one", "Step two"],
+        }
+        result = parse_json_ld_recipe(json_ld)
+        assert result["instructions"][0]["text"] == "Step one"
+        assert result["instructions"][1]["step"] == 2
+
+    def test_handles_single_instruction_string(self):
+        """Handles single instruction as string"""
+        json_ld = {
+            "@type": "Recipe",
+            "name": "Simple Recipe",
+            "recipeInstructions": "Mix everything and bake.",
+        }
+        result = parse_json_ld_recipe(json_ld)
+        assert result["instructions"][0]["text"] == "Mix everything and bake."
+
+    def test_parses_iso_duration(self):
+        """Parses ISO 8601 duration format"""
+        json_ld = {
+            "@type": "Recipe",
+            "name": "Test",
+            "prepTime": "PT1H30M",
+            "cookTime": "PT45M",
+        }
+        result = parse_json_ld_recipe(json_ld)
+        assert result["prep_time"] == "1 hour 30 minutes"
+        assert result["cook_time"] == "45 minutes"
+
+    def test_handles_missing_fields(self):
+        """Returns None for missing optional fields"""
+        json_ld = {"@type": "Recipe", "name": "Minimal Recipe"}
+        result = parse_json_ld_recipe(json_ld)
+        assert result["recipe_name"] == "Minimal Recipe"
+        assert result["prep_time"] is None
+        assert result["ingredients"] == []
+
+
+class TestScrapeRecipeFromUrl:
+    """Tests for scrape_recipe_from_url function"""
+
+    def test_extracts_json_ld_recipe(self):
+        """Extracts recipe from JSON-LD script tag"""
+        html = '''
+        <html>
+        <head>
+        <script type="application/ld+json">
+        {"@type": "Recipe", "name": "Test Recipe", "recipeIngredient": ["1 cup flour"]}
+        </script>
+        </head>
+        </html>
+        '''
+        with patch('recipe_sources.requests.get') as mock_get:
+            mock_response = Mock()
+            mock_response.text = html
+            mock_response.raise_for_status = Mock()
+            mock_get.return_value = mock_response
+
+            result = scrape_recipe_from_url("https://example.com/recipe")
+            assert result is not None
+            assert result["recipe_name"] == "Test Recipe"
+            assert len(result["ingredients"]) == 1
+
+    def test_handles_graph_json_ld(self):
+        """Handles JSON-LD with @graph array"""
+        html = '''
+        <html>
+        <script type="application/ld+json">
+        {"@graph": [
+            {"@type": "WebPage", "name": "Page"},
+            {"@type": "Recipe", "name": "Graph Recipe"}
+        ]}
+        </script>
+        </html>
+        '''
+        with patch('recipe_sources.requests.get') as mock_get:
+            mock_response = Mock()
+            mock_response.text = html
+            mock_response.raise_for_status = Mock()
+            mock_get.return_value = mock_response
+
+            result = scrape_recipe_from_url("https://example.com/recipe")
+            assert result["recipe_name"] == "Graph Recipe"
+
+    def test_returns_none_on_timeout(self):
+        """Returns None on request timeout"""
+        with patch('recipe_sources.requests.get') as mock_get:
+            mock_get.side_effect = requests.exceptions.Timeout()
+            result = scrape_recipe_from_url("https://example.com/recipe")
+            assert result is None
+
+    def test_returns_none_on_404(self):
+        """Returns None on HTTP error"""
+        with patch('recipe_sources.requests.get') as mock_get:
+            mock_response = Mock()
+            mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError()
+            mock_get.return_value = mock_response
+            result = scrape_recipe_from_url("https://example.com/recipe")
+            assert result is None
+
+    def test_returns_none_when_no_recipe_schema(self):
+        """Returns None when page has no recipe JSON-LD"""
+        html = '<html><body><h1>Not a recipe</h1></body></html>'
+        with patch('recipe_sources.requests.get') as mock_get:
+            mock_response = Mock()
+            mock_response.text = html
+            mock_response.raise_for_status = Mock()
+            mock_get.return_value = mock_response
+
+            result = scrape_recipe_from_url("https://example.com/page")
+            assert result is None
