@@ -9,6 +9,9 @@ Rules:
 - If a field cannot be determined, use null
 - Set needs_review: true if significant inference was required
 - List confidence_notes explaining what was inferred vs explicit
+- For ingredients: use standard unit abbreviations (tbsp, tsp, cup, oz, lb, g, ml)
+- For informal amounts (a pinch, to taste), set amount to 1 and use the phrase as unit
+- For unitless items (eggs, lemons), use "whole" as unit
 
 Output valid JSON matching this schema:
 {
@@ -24,7 +27,7 @@ Output valid JSON matching this schema:
   "dietary": ["array of tags"],
   "equipment": ["array of items"],
   "ingredients": [
-    {"quantity": "string", "item": "string", "inferred": boolean}
+    {"amount": "number or string", "unit": "string", "item": "string", "inferred": boolean}
   ],
   "instructions": [
     {"step": number, "text": "string", "time": "string or null"}
@@ -67,6 +70,9 @@ Rules:
 - Parse quantities and ingredients precisely
 - Number the instructions in order
 - Set needs_review: false (this is explicit text)
+- For ingredients: use standard unit abbreviations (tbsp, tsp, cup, oz, lb, g, ml)
+- For informal amounts (a pinch, to taste), set amount to 1 and use the phrase as unit
+- For unitless items (eggs, lemons), use "whole" as unit
 
 Output valid JSON matching this schema:
 {
@@ -82,7 +88,7 @@ Output valid JSON matching this schema:
   "dietary": ["array of tags"],
   "equipment": ["array of items"],
   "ingredients": [
-    {"quantity": "string", "item": "string", "inferred": false}
+    {"amount": "number or string", "unit": "string", "item": "string", "inferred": false}
   ],
   "instructions": [
     {"step": number, "text": "string", "time": "string or null"}
