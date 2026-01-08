@@ -4,6 +4,8 @@ from datetime import date
 import re
 from fractions import Fraction
 
+from lib.ingredient_parser import parse_ingredient
+
 # Schema definition for recipe frontmatter
 # Used by migration to add missing fields
 RECIPE_SCHEMA = {
@@ -145,14 +147,32 @@ confidence_notes: "{confidence_notes}"
 def format_recipe_markdown(recipe_data, video_url, video_title, channel):
     """Format recipe data into markdown string"""
 
-    # Format ingredients as table
-    ingredients_lines = ["| Amount | Ingredient |", "|--------|------------|"]
+    # Format ingredients as 3-column table
+    ingredients_lines = ["| Amount | Unit | Ingredient |", "|--------|------|------------|"]
     for ing in recipe_data.get('ingredients', []):
-        quantity = convert_quantity_to_decimal(ing.get('quantity', ''))
-        item = ing.get('item', '')
+        # Handle new format (amount, unit, item)
+        if 'amount' in ing and 'unit' in ing:
+            amount = ing.get('amount', '1')
+            unit = ing.get('unit', 'whole')
+            item = ing.get('item', '')
+        # Handle old format (quantity, item) - parse it
+        elif 'quantity' in ing:
+            quantity = ing.get('quantity', '')
+            item_raw = ing.get('item', '')
+            # Combine and re-parse
+            combined = f"{quantity} {item_raw}".strip()
+            parsed = parse_ingredient(combined)
+            amount = parsed['amount']
+            unit = parsed['unit']
+            item = parsed['item']
+        else:
+            amount = '1'
+            unit = 'whole'
+            item = str(ing.get('item', ''))
+
         if ing.get('inferred'):
             item = f"{item} *(inferred)*"
-        ingredients_lines.append(f"| {quantity} | {item} |")
+        ingredients_lines.append(f"| {amount} | {unit} | {item} |")
 
     # Format instructions
     # Multi-paragraph steps need continuation paragraphs indented for proper markdown
@@ -254,7 +274,8 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel):
         confidence_notes=recipe_data.get('confidence_notes', ''),
         description=recipe_data.get('description', ''),
         ingredients='\n'.join(ingredients_lines),
-        instructions='\n\n'.join(instruction_blocks),
+        # Join instructions with extra blank line between steps for better readability
+        instructions='\n\n\n'.join(instruction_blocks),
         equipment_list=equipment_list,
         video_tips_section=video_tips_section,
         notes_section=notes_section
