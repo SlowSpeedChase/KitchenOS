@@ -281,7 +281,7 @@ These features are planned but not yet implemented:
 | Feature | Priority | Notes |
 |---------|----------|-------|
 | ~~Recipe link detection~~ | ~~High~~ | **Completed** - Priority chain: webpage → description → AI |
-| iOS Shortcut | Medium | Call script via SSH or local API wrapper |
+| ~~iOS Shortcut~~ | ~~Medium~~ | **Completed** - /extract endpoint + Tailscale, see iOS_SHORTCUT_SETUP.md |
 | Batch processing | Medium | Process multiple URLs from a file |
 | Claude API fallback | Low | Use Claude when Ollama fails |
 | Image extraction | Low | Get video thumbnails for recipes |
