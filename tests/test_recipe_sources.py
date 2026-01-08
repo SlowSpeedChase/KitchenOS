@@ -217,3 +217,21 @@ class TestScrapeRecipeFromUrl:
 
             result = scrape_recipe_from_url("https://example.com/page")
             assert result is None
+
+    def test_handles_type_as_array(self):
+        """Handles @type as array"""
+        html = '''
+        <html>
+        <script type="application/ld+json">
+        {"@type": ["Recipe", "HowTo"], "name": "Array Type Recipe"}
+        </script>
+        </html>
+        '''
+        with patch('recipe_sources.requests.get') as mock_get:
+            mock_response = Mock()
+            mock_response.text = html
+            mock_response.raise_for_status = Mock()
+            mock_get.return_value = mock_response
+
+            result = scrape_recipe_from_url("https://example.com/recipe")
+            assert result["recipe_name"] == "Array Type Recipe"

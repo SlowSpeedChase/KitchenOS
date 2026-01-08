@@ -233,14 +233,23 @@ def parse_json_ld_recipe(json_ld: Dict[str, Any]) -> Dict[str, Any]:
     return recipe
 
 
-def _find_recipe_in_json_ld(data) -> Optional[Dict[str, Any]]:
-    """Find Recipe object in JSON-LD data (handles @graph arrays)"""
+def _is_recipe_type(type_value: Any) -> bool:
+    """Check if @type value indicates a Recipe (handles string or array)"""
+    if type_value == "Recipe":
+        return True
+    if isinstance(type_value, list) and "Recipe" in type_value:
+        return True
+    return False
+
+
+def _find_recipe_in_json_ld(data: Any) -> Optional[Dict[str, Any]]:
+    """Find Recipe object in JSON-LD data (handles @graph arrays and @type arrays)"""
     if isinstance(data, dict):
-        if data.get("@type") == "Recipe":
+        if _is_recipe_type(data.get("@type")):
             return data
         if "@graph" in data:
             for item in data["@graph"]:
-                if isinstance(item, dict) and item.get("@type") == "Recipe":
+                if isinstance(item, dict) and _is_recipe_type(item.get("@type")):
                     return item
     elif isinstance(data, list):
         for item in data:
