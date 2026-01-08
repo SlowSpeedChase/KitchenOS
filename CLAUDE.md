@@ -63,7 +63,18 @@ cd /Users/chaseeasterling/KitchenOS
 ### Pipeline Flow
 
 ```
-YouTube URL → extract_recipe.py → main.py (fetch data) → Ollama (extract) → template → Obsidian
+YouTube URL → extract_recipe.py
+    ↓
+main.py (fetch metadata + transcript)
+    ↓
+recipe_sources.py:
+  1. find_recipe_link() → scrape_recipe_from_url()
+  2. parse_recipe_from_description()
+  3. extract_recipe_with_ollama() (fallback)
+    ↓
+extract_cooking_tips() (if webpage/description source)
+    ↓
+template → Obsidian
 ```
 
 ### Core Components
@@ -90,6 +101,12 @@ YouTube URL → extract_recipe.py → main.py (fetch data) → Ollama (extract) 
 **templates/recipe_template.py:**
 - `format_recipe_markdown()` - Converts recipe JSON to Obsidian markdown
 - `generate_filename()` - Creates `YYYY-MM-DD-recipe-slug.md` filename
+
+**recipe_sources.py:**
+- `find_recipe_link()` - Detects recipe URLs in video descriptions
+- `scrape_recipe_from_url()` - Fetches and parses JSON-LD from recipe websites
+- `parse_recipe_from_description()` - Extracts inline recipes from descriptions
+- `extract_cooking_tips()` - Pulls practical tips from transcripts
 
 ## AI Configuration
 
@@ -234,7 +251,7 @@ These features are planned but not yet implemented:
 
 | Feature | Priority | Notes |
 |---------|----------|-------|
-| Recipe link detection | High | Check description for existing recipe URLs before AI extraction |
+| ~~Recipe link detection~~ | ~~High~~ | **Completed** - Priority chain: webpage → description → AI |
 | iOS Shortcut | Medium | Call script via SSH or local API wrapper |
 | Batch processing | Medium | Process multiple URLs from a file |
 | Claude API fallback | Low | Use Claude when Ollama fails |

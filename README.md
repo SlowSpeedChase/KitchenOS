@@ -87,6 +87,16 @@ The recipe will be saved to your Obsidian vault.
 - Short URL: `https://youtu.be/VIDEO_ID`
 - Video ID only: `VIDEO_ID`
 
+## Recipe Sources
+
+KitchenOS extracts recipes using a priority chain:
+
+1. **Webpage** - If description contains a recipe link, scrapes JSON-LD structured data
+2. **Description** - If description has inline recipe (ingredients + method), parses it
+3. **Transcript** - Falls back to AI extraction from video transcript
+
+When using webpage or description sources, KitchenOS also extracts practical cooking tips from the video that aren't in the written recipe.
+
 ## Architecture
 
 ```
