@@ -23,14 +23,18 @@ YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
 def youtube_parser(input_str):
-    # Check if input is a URL
+    # Check for standard YouTube URL with v= parameter
     match = re.search(r'v=([^&]+)', input_str)
     if match:
-        video_id = match.group(1)
-        return video_id
-    else:
-        # Assume input is a video ID
-        return input_str
+        return match.group(1)
+
+    # Check for youtu.be short URL format
+    match = re.search(r'youtu\.be/([^?&]+)', input_str)
+    if match:
+        return match.group(1)
+
+    # Assume input is a video ID
+    return input_str
 
 def print_virtual_env():
     if hasattr(sys, 'real_prefix') or (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix):
