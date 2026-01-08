@@ -1,4 +1,5 @@
 import argparse
+import json
 from youtube_transcript_api import YouTubeTranscriptApi
 from googleapiclient.discovery import build
 import sys
@@ -261,34 +262,67 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     video_id = youtube_parser(args.video_id_in)
-    print(f"Processing video ID: {video_id}")
 
-    # Print the transcript
-    print("\n" + "="*50)
-    print("TRANSCRIPT:")
-    print("="*50)
-    transcript_success = print_transcript(video_id)
-    
-    # If YouTube transcript failed, try Whisper as fallback
-    if not transcript_success:
-        print("\nNo YouTube transcript available. Trying Whisper transcription...")
-        audio_file = download_audio(video_id)
-        if audio_file:
-            whisper_success = transcribe_with_whisper(audio_file)
-            if not whisper_success:
-                print("Whisper transcription also failed.")
+    if args.json:
+        # JSON output mode for n8n integration
+        output = {
+            'success': False,
+            'video_id': video_id,
+            'title': None,
+            'channel': None,
+            'transcript': None,
+            'description': None,
+            'transcript_source': None,
+            'error': None
+        }
+
+        # Get metadata
+        metadata = get_video_metadata(video_id)
+        if metadata:
+            output['title'] = metadata['title']
+            output['channel'] = metadata['channel']
+            output['description'] = metadata['description']
+
+        # Get transcript
+        transcript_result = get_transcript(video_id)
+        output['transcript'] = transcript_result['text']
+        output['transcript_source'] = transcript_result['source']
+
+        if transcript_result['error'] and not metadata:
+            output['error'] = transcript_result['error']
         else:
-            print("Could not download audio for Whisper transcription.")
-    
-    # Print the video description
-    print("\n" + "="*50)
-    print("VIDEO DESCRIPTION:")
-    print("="*50)
-    description = get_video_description(video_id)
-    if description:
-        print(description)
+            output['success'] = True
+
+        print(json.dumps(output, ensure_ascii=False))
     else:
-        print("No description found for the video.")
+        # Original text output mode (keep existing behavior)
+        print(f"Processing video ID: {video_id}")
+
+        print("\n" + "="*50)
+        print("TRANSCRIPT:")
+        print("="*50)
+        transcript_success = print_transcript(video_id)
+
+        # If YouTube transcript failed, try Whisper as fallback
+        if not transcript_success:
+            print("\nNo YouTube transcript available. Trying Whisper transcription...")
+            audio_file = download_audio(video_id)
+            if audio_file:
+                whisper_success = transcribe_with_whisper(audio_file)
+                if not whisper_success:
+                    print("Whisper transcription also failed.")
+            else:
+                print("Could not download audio for Whisper transcription.")
+
+        # Print the video description
+        print("\n" + "="*50)
+        print("VIDEO DESCRIPTION:")
+        print("="*50)
+        description = get_video_description(video_id)
+        if description:
+            print(description)
+        else:
+            print("No description found for the video.")
 
 
 # Running script requires exact path to venv to work; otherwise it throws an errror that it cannot find the youtube api
