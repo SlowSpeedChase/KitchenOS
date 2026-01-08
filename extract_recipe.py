@@ -231,6 +231,7 @@ def main():
         # Save to Obsidian
         filepath = save_recipe_to_obsidian(recipe_data, video_url, title, channel, video_id)
         print(f"\nSaved to: {filepath}")
+        print(f"SAVED:{filepath}")
 
     print("\nDone!")
 
