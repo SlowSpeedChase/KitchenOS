@@ -39,27 +39,11 @@ def print_virtual_env():
         print("No virtual environment detected")
 
 def get_video_description(video_id):
-    try:
-        youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
-        request = youtube.videos().list(
-            part='snippet',
-            id=video_id
-        )
-        response = request.execute()
-        
-        if 'items' in response and len(response['items']) > 0:
-            description = response['items'][0]['snippet']['description']
-            return description
-        else:
-            return None
-    except Exception as e:
-        print(f"Error fetching video description: {e}")
-        print("This could mean:")
-        print("- Invalid API key")
-        print("- API quota exceeded")
-        print("- Invalid video ID")
-        print("- Network connectivity issue")
-        return None
+    """Backwards compatible wrapper - returns description string only"""
+    metadata = get_video_metadata(video_id)
+    if metadata:
+        return metadata['description']
+    return None
 
 def get_video_metadata(video_id):
     """Fetch video title, channel, and description from YouTube API"""
