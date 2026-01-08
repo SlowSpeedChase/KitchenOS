@@ -119,6 +119,127 @@ def save_recipe_to_obsidian(recipe_data, video_url, video_title, channel, video_
     return filepath
 
 
+def extract_single_recipe(url: str, dry_run: bool = False) -> dict:
+    """Extract recipe from a YouTube URL.
+
+    Args:
+        url: YouTube video URL or ID
+        dry_run: If True, don't save to Obsidian
+
+    Returns:
+        dict with keys:
+            success: bool
+            title: str (video title)
+            recipe_name: str (extracted recipe name)
+            filepath: Path or None (where saved)
+            error: str or None (error message if failed)
+            skipped: bool (True if already existed)
+    """
+    from main import youtube_parser, get_video_metadata, get_transcript
+
+    result = {
+        "success": False,
+        "title": None,
+        "recipe_name": None,
+        "filepath": None,
+        "error": None,
+        "skipped": False,
+        "source": None,
+    }
+
+    try:
+        # Parse video ID
+        video_id = youtube_parser(url)
+        video_url = f"https://www.youtube.com/watch?v={video_id}"
+
+        # Check for existing recipe first
+        existing = find_existing_recipe(OBSIDIAN_RECIPES_PATH, video_id)
+        if existing and not dry_run:
+            result["success"] = True
+            result["skipped"] = True
+            result["filepath"] = existing
+            # Try to get title from existing file
+            try:
+                content = existing.read_text(encoding='utf-8')
+                from lib.recipe_parser import parse_recipe_file
+                parsed = parse_recipe_file(content)
+                result["title"] = parsed['frontmatter'].get('video_title', existing.stem)
+                result["recipe_name"] = parsed['frontmatter'].get('recipe_name', existing.stem)
+            except Exception:
+                result["title"] = existing.stem
+                result["recipe_name"] = existing.stem
+            return result
+
+        # Get video metadata
+        metadata = get_video_metadata(video_id)
+        if not metadata:
+            result["error"] = "Could not fetch video metadata"
+            return result
+
+        title = metadata['title']
+        channel = metadata['channel']
+        description = metadata['description']
+        result["title"] = title
+
+        # Get transcript
+        transcript_result = get_transcript(video_id)
+        transcript = transcript_result['text']
+
+        # === PRIORITY CHAIN ===
+        recipe_data = None
+        source = None
+        recipe_link = None
+
+        # 1. Check for recipe link in description
+        recipe_link = find_recipe_link(description)
+
+        if recipe_link:
+            recipe_data = scrape_recipe_from_url(recipe_link)
+            if recipe_data:
+                source = "webpage"
+
+        # 2. Try parsing recipe from description
+        if not recipe_data:
+            recipe_data = parse_recipe_from_description(description, title, channel)
+            if recipe_data:
+                source = "description"
+
+        # 3. Fall back to AI extraction from transcript
+        if not recipe_data:
+            recipe_data, error = extract_recipe_with_ollama(title, channel, description, transcript)
+            if error:
+                result["error"] = error
+                return result
+            source = "ai_extraction"
+
+        # 4. Extract cooking tips if we got recipe from webpage or description
+        if source in ("webpage", "description") and transcript:
+            tips = extract_cooking_tips(transcript, recipe_data)
+            recipe_data['video_tips'] = tips
+
+        # Add source metadata
+        recipe_data['source'] = source
+        recipe_data['source_url'] = recipe_link
+
+        recipe_name = recipe_data.get('recipe_name', 'Unknown Recipe')
+        result["recipe_name"] = recipe_name
+        result["source"] = source
+
+        if dry_run:
+            result["success"] = True
+            return result
+
+        # Save to Obsidian
+        filepath = save_recipe_to_obsidian(recipe_data, video_url, title, channel, video_id)
+        result["success"] = True
+        result["filepath"] = filepath
+        return result
+
+    except Exception as e:
+        result["error"] = str(e)
+        return result
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Extract recipes from YouTube cooking videos"
@@ -135,103 +256,26 @@ def main():
     )
     args = parser.parse_args()
 
-    # Parse video ID
     video_id = youtube_parser(args.url)
-    video_url = f"https://www.youtube.com/watch?v={video_id}"
-
     print(f"Fetching video data for: {video_id}")
 
-    # Get video metadata
-    metadata = get_video_metadata(video_id)
-    if not metadata:
-        print("Error: Could not fetch video metadata", file=sys.stderr)
+    result = extract_single_recipe(args.url, dry_run=args.dry_run)
+
+    if not result["success"]:
+        print(f"Error: {result['error']}", file=sys.stderr)
         sys.exit(1)
 
-    title = metadata['title']
-    channel = metadata['channel']
-    description = metadata['description']
-
-    print(f"Title: {title}")
-    print(f"Channel: {channel}")
-
-    # Get transcript
-    transcript_result = get_transcript(video_id)
-    transcript = transcript_result['text']
-
-    if not transcript:
-        print(f"Warning: No transcript available ({transcript_result.get('error', 'unknown error')})")
-        print("Proceeding with description only...")
+    if result["skipped"]:
+        print(f"Recipe already exists: {result['filepath']}")
+    elif args.dry_run:
+        # For dry run, we need to regenerate the markdown for display
+        # Re-fetch and display (simplified)
+        print(f"Would extract: {result['recipe_name']}")
+        print("(Use without --dry-run to save)")
     else:
-        print(f"Transcript source: {transcript_result['source']}")
-        print(f"Transcript length: {len(transcript)} characters")
-
-    # === PRIORITY CHAIN ===
-    recipe_data = None
-    source = None
-    recipe_link = None
-
-    # 1. Check for recipe link in description
-    print("\nChecking for recipe link...")
-    recipe_link = find_recipe_link(description)
-
-    if recipe_link:
-        print(f"  -> Found: {recipe_link}")
-        print("  -> Fetching recipe from webpage...")
-        recipe_data = scrape_recipe_from_url(recipe_link)
-        if recipe_data:
-            source = "webpage"
-            print("  -> Recipe extracted from webpage")
-        else:
-            print("  -> Webpage scraping failed, trying description...")
-
-    # 2. Try parsing recipe from description
-    if not recipe_data:
-        print("Checking description for inline recipe...")
-        recipe_data = parse_recipe_from_description(description, title, channel)
-        if recipe_data:
-            source = "description"
-            print("  -> Recipe extracted from description")
-        else:
-            print("  -> No inline recipe found")
-
-    # 3. Fall back to AI extraction from transcript
-    if not recipe_data:
-        print(f"\nExtracting recipe via Ollama ({OLLAMA_MODEL})...")
-        recipe_data, error = extract_recipe_with_ollama(title, channel, description, transcript)
-        if error:
-            print(f"Error: {error}", file=sys.stderr)
-            sys.exit(1)
-        source = "ai_extraction"
-
-    # 4. Extract cooking tips if we got recipe from webpage or description
-    if source in ("webpage", "description") and transcript:
-        print("Extracting cooking tips from video...")
-        tips = extract_cooking_tips(transcript, recipe_data)
-        recipe_data['video_tips'] = tips
-        if tips:
-            print(f"  -> Found {len(tips)} tips")
-        else:
-            print("  -> No additional tips found")
-
-    # Add source metadata
-    recipe_data['source'] = source
-    recipe_data['source_url'] = recipe_link
-
-    recipe_name = recipe_data.get('recipe_name', 'Unknown Recipe')
-    print(f"\nExtracted: {recipe_name} (source: {source})")
-
-    if args.dry_run:
-        # Print markdown to stdout
-        markdown = format_recipe_markdown(recipe_data, video_url, title, channel)
-        print("\n" + "="*50)
-        print("RECIPE MARKDOWN:")
-        print("="*50)
-        print(markdown)
-    else:
-        # Save to Obsidian
-        filepath = save_recipe_to_obsidian(recipe_data, video_url, title, channel, video_id)
-        print(f"\nSaved to: {filepath}")
-        print(f"SAVED:{filepath}")
+        print(f"Title: {result['title']}")
+        print(f"Extracted: {result['recipe_name']} (source: {result['source']})")
+        print(f"Saved to: {result['filepath']}")
 
     print("\nDone!")
 
