@@ -90,6 +90,7 @@ source_url: "{source_url}"
 source_channel: "{source_channel}"
 date_added: {date_added}
 video_title: "{video_title}"
+recipe_source: "{recipe_source}"
 
 prep_time: {prep_time}
 cook_time: {cook_time}
@@ -126,7 +127,7 @@ confidence_notes: "{confidence_notes}"
 ## Equipment
 
 {equipment_list}
-{notes_section}
+{video_tips_section}{notes_section}
 ## My Notes
 
 <!-- Your personal notes, ratings, and modifications go here -->
@@ -188,6 +189,18 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel):
 
     notes_section = "\n\n## Notes\n\n" + "\n\n".join(notes_parts) + "\n" if notes_parts else ""
 
+    # Format video tips section
+    video_tips = recipe_data.get('video_tips', [])
+    if video_tips:
+        tips_lines = ["## Tips from the Video", ""]
+        tips_lines.extend(f"- {tip}" for tip in video_tips)
+        video_tips_section = "\n".join(tips_lines) + "\n\n"
+    else:
+        video_tips_section = ""
+
+    # Get recipe source
+    recipe_source = recipe_data.get('source', 'ai_extraction')
+
     # Get time values
     prep = recipe_data.get('prep_time')
     cook = recipe_data.get('cook_time')
@@ -206,6 +219,7 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel):
         source_channel=channel or "Unknown",
         date_added=date.today().isoformat(),
         video_title=video_title or "Unknown Video",
+        recipe_source=recipe_source,
         prep_time=quote_or_null(prep),
         cook_time=quote_or_null(cook),
         total_time=quote_or_null(total or prep or cook),
@@ -223,6 +237,7 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel):
         ingredients='\n'.join(ingredients_lines),
         instructions='\n'.join(instructions_lines),
         equipment_list=equipment_list,
+        video_tips_section=video_tips_section,
         notes_section=notes_section
     )
 
