@@ -196,10 +196,25 @@ When finishing a feature or fix, follow this checklist:
 - [ ] Open in Obsidian - verify frontmatter and content look correct
 
 ### 3. Update Documentation
-- [ ] If architecture changed → update "Architecture" section above
-- [ ] If new functions added → update "Key Functions" section
-- [ ] If new config options → update "AI Configuration" section
-- [ ] If new constraints discovered → add to "Constraints" section
+
+**Which doc to update:**
+
+| Change Type | Update This |
+|-------------|-------------|
+| New feature/function | CLAUDE.md → "Key Functions" |
+| Architecture change | CLAUDE.md → "Architecture" |
+| New config option | CLAUDE.md → "AI Configuration" |
+| New constraint/gotcha | CLAUDE.md → "Constraints" or "Common Issues" |
+| New design principle | CLAUDE.md → "Design Principles" |
+| User-facing change | README.md → relevant section |
+| Major feature complete | Future Enhancements → mark done or remove |
+| Lessons learned | docs/IMPLEMENTATION_SUMMARY.md → "Lessons Learned" |
+
+**Documentation standards:**
+- Keep CLAUDE.md concise - it's loaded every session
+- Use tables for structured data
+- Include code examples for commands
+- Update the JSON schema if recipe structure changes
 
 ### 4. Commit
 ```bash
