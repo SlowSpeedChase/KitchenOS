@@ -7,6 +7,11 @@ from typing import Optional, Dict, Any, List
 import requests
 from bs4 import BeautifulSoup
 
+from prompts.recipe_extraction import (
+    DESCRIPTION_EXTRACTION_PROMPT,
+    build_description_prompt,
+)
+
 
 # Known recipe domains (no keyword needed)
 KNOWN_RECIPE_DOMAINS = [
@@ -259,6 +264,39 @@ def _find_recipe_in_json_ld(data: Any) -> Optional[Dict[str, Any]]:
     return None
 
 
+def has_recipe_in_description(description: str) -> bool:
+    """
+    Check if a video description appears to contain a recipe.
+
+    Looks for:
+    - "Ingredients" header
+    - Multiple lines with quantities
+    - "Method", "Instructions", or "Directions" header
+    """
+    if not description:
+        return False
+
+    desc_lower = description.lower()
+
+    # Check for ingredients header
+    has_ingredients = any(marker in desc_lower for marker in [
+        "ingredients", "*ingredients*", "**ingredients**"
+    ])
+
+    # Check for method/instructions header
+    has_method = any(marker in desc_lower for marker in [
+        "method", "instructions", "directions",
+        "*method*", "**method**",
+        "*instructions*", "**instructions**",
+    ])
+
+    # Check for quantity patterns (numbers followed by units)
+    quantity_pattern = r'\d+\s*(?:cup|tbsp|tsp|oz|lb|g|kg|ml|clove|bunch|head)'
+    has_quantities = len(re.findall(quantity_pattern, desc_lower)) >= 2
+
+    return has_ingredients and (has_method or has_quantities)
+
+
 def scrape_recipe_from_url(url: str) -> Optional[Dict[str, Any]]:
     """Fetch a URL and extract recipe data from JSON-LD."""
     try:
@@ -282,3 +320,49 @@ def scrape_recipe_from_url(url: str) -> Optional[Dict[str, Any]]:
         if recipe:
             return parse_json_ld_recipe(recipe)
     return None
+
+
+# Ollama configuration (same as extract_recipe.py)
+OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_MODEL = "mistral:7b"
+
+
+def parse_recipe_from_description(
+    description: str,
+    title: str = "",
+    channel: str = ""
+) -> Optional[Dict[str, Any]]:
+    """
+    Extract recipe from a video description using Ollama.
+
+    Only called if has_recipe_in_description() returns True.
+
+    Returns:
+        Recipe dict if extraction succeeds, None on error
+    """
+    if not has_recipe_in_description(description):
+        return None
+
+    prompt = "{}\n\n{}".format(
+        DESCRIPTION_EXTRACTION_PROMPT,
+        build_description_prompt(title, channel, description)
+    )
+
+    try:
+        response = requests.post(
+            OLLAMA_URL,
+            json={
+                "model": OLLAMA_MODEL,
+                "prompt": prompt,
+                "stream": False,
+                "format": "json"
+            },
+            timeout=120
+        )
+        response.raise_for_status()
+        result = response.json()
+        recipe_json = result.get("response", "")
+        return json.loads(recipe_json)
+    except Exception as e:
+        print(f"  -> Description parsing failed: {e}")
+        return None

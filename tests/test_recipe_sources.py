@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import patch, Mock
 import requests
-from recipe_sources import find_recipe_link, scrape_recipe_from_url, parse_json_ld_recipe
+from recipe_sources import find_recipe_link, scrape_recipe_from_url, parse_json_ld_recipe, has_recipe_in_description
 
 
 class TestFindRecipeLink:
@@ -235,3 +235,24 @@ class TestScrapeRecipeFromUrl:
 
             result = scrape_recipe_from_url("https://example.com/recipe")
             assert result["recipe_name"] == "Array Type Recipe"
+
+
+class TestParseRecipeFromDescription:
+    """Tests for parse_recipe_from_description function"""
+
+    def test_detects_recipe_in_description(self):
+        """Returns True when description looks like a recipe"""
+        description = """
+*Ingredients*
+1/2 cup flour
+2 eggs
+
+*Method*
+Mix and bake.
+"""
+        assert has_recipe_in_description(description) is True
+
+    def test_rejects_non_recipe_description(self):
+        """Returns False for descriptions without recipe"""
+        description = "Thanks for watching! Subscribe for more."
+        assert has_recipe_in_description(description) is False

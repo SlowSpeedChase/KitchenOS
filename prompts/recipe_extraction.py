@@ -56,3 +56,56 @@ def build_user_prompt(title, channel, description, transcript):
         description=description or "No description",
         transcript=transcript or "No transcript"
     )
+
+
+# Prompts for extracting recipes from video descriptions
+DESCRIPTION_EXTRACTION_PROMPT = """You are extracting a recipe from a YouTube video description.
+The description contains a written recipe - parse it accurately.
+
+Rules:
+- Extract EXACTLY what is written (no inference needed)
+- Parse quantities and ingredients precisely
+- Number the instructions in order
+- Set needs_review: false (this is explicit text)
+
+Output valid JSON matching this schema:
+{
+  "recipe_name": "string",
+  "description": "string (1-2 sentences)",
+  "prep_time": "string or null",
+  "cook_time": "string or null",
+  "servings": "number or null",
+  "difficulty": "easy|medium|hard or null",
+  "cuisine": "string or null",
+  "protein": "string or null",
+  "dish_type": "string or null",
+  "dietary": ["array of tags"],
+  "equipment": ["array of items"],
+  "ingredients": [
+    {"quantity": "string", "item": "string", "inferred": false}
+  ],
+  "instructions": [
+    {"step": number, "text": "string", "time": "string or null"}
+  ],
+  "storage": "string or null",
+  "variations": ["array of strings"],
+  "needs_review": false,
+  "confidence_notes": "Extracted from video description text."
+}"""
+
+DESCRIPTION_USER_TEMPLATE = """Extract the recipe from this video description.
+
+VIDEO TITLE: {title}
+CHANNEL: {channel}
+
+DESCRIPTION:
+{description}"""
+
+
+def build_description_prompt(title: str, channel: str, description: str) -> str:
+    """Build prompt for description recipe extraction"""
+    return DESCRIPTION_USER_TEMPLATE.format(
+        title=title or "Unknown",
+        channel=channel or "Unknown",
+        description=description or "",
+    )
