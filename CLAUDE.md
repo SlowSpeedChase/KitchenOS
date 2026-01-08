@@ -68,6 +68,16 @@ cd /Users/chaseeasterling/KitchenOS
 .venv/bin/python migrate_recipes.py
 ```
 
+### Batch Extract from Reminders
+
+```bash
+# Process all uncompleted reminders from "Recipies to Process" list
+.venv/bin/python batch_extract.py
+
+# Preview what would be processed
+.venv/bin/python batch_extract.py --dry-run
+```
+
 ## API Server (iOS Shortcut Integration)
 
 The API server enables recipe extraction from iOS via Share Sheet. It runs as a LaunchAgent and is accessible via Tailscale from anywhere.
@@ -134,6 +144,7 @@ template → Obsidian
 | `extract_recipe.py` | **Main entry point** - orchestrates entire pipeline |
 | `main.py` | Video data fetcher (transcript, metadata, `--json` mode) |
 | `api_server.py` | Flask API for iOS Shortcut integration |
+| `batch_extract.py` | Batch processor - reads from iOS Reminders, extracts in bulk |
 | `prompts/recipe_extraction.py` | AI prompt templates for structured extraction |
 | `templates/recipe_template.py` | Markdown formatter with YAML frontmatter |
 
@@ -323,7 +334,7 @@ These features are planned but not yet implemented:
 |---------|----------|-------|
 | ~~Recipe link detection~~ | ~~High~~ | **Completed** - Priority chain: webpage → description → AI |
 | ~~iOS Shortcut~~ | ~~Medium~~ | **Completed** - /extract endpoint + Tailscale, see iOS_SHORTCUT_SETUP.md |
-| Batch processing | Medium | Process multiple URLs from a file |
+| ~~Batch processing~~ | ~~Medium~~ | **Completed** - Processes URLs from iOS Reminders list |
 | Claude API fallback | Low | Use Claude when Ollama fails |
 | Image extraction | Low | Get video thumbnails for recipes |
 

@@ -104,6 +104,41 @@ When the template changes (new fields added), update all existing recipes:
 
 Backups are stored in `Recipes/.history/` and can be used to recover previous versions.
 
+### Batch Processing
+
+Process multiple YouTube URLs at once using iOS Reminders as your queue.
+
+#### Setup
+
+1. **Create Reminders list**: Open the Reminders app and create a list named exactly `Recipies to Process` (note: the typo is intentional for compatibility)
+
+2. **Add URLs**: Save YouTube URLs as reminder titles in this list - you can share videos directly from YouTube to Reminders
+
+3. **Grant permissions**: On first run, macOS will prompt for Reminders access - click "OK" to allow
+
+#### Usage
+
+```bash
+# Process all uncompleted reminders
+.venv/bin/python batch_extract.py
+
+# Preview what would be processed (no changes)
+.venv/bin/python batch_extract.py --dry-run
+```
+
+#### What Happens
+
+- Each URL is extracted using the standard pipeline
+- **Success**: Reminder is marked complete, recipe saved to Obsidian
+- **Failure**: Reminder stays uncompleted, error logged to console
+- Processing continues even if individual URLs fail
+
+#### Tips
+
+- Add URLs throughout the week, then run batch extraction when convenient
+- Check console output for any failed extractions
+- Failed reminders remain in the list for retry
+
 ### Supported URL Formats
 
 - Full URL: `https://www.youtube.com/watch?v=VIDEO_ID`
