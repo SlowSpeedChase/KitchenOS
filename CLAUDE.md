@@ -58,6 +58,16 @@ cd /Users/chaseeasterling/KitchenOS
 .venv/bin/python main.py --json "VIDEO_ID_OR_URL"
 ```
 
+### Migrate Recipes to New Schema
+
+```bash
+# Preview what would change
+.venv/bin/python migrate_recipes.py --dry-run
+
+# Apply migrations
+.venv/bin/python migrate_recipes.py
+```
+
 ## Architecture
 
 ### Pipeline Flow
@@ -107,6 +117,18 @@ template → Obsidian
 - `scrape_recipe_from_url()` - Fetches and parses JSON-LD from recipe websites
 - `parse_recipe_from_description()` - Extracts inline recipes from descriptions
 - `extract_cooking_tips()` - Pulls practical tips from transcripts
+
+**lib/backup.py:**
+- `create_backup()` - Creates timestamped backup in .history/ folder
+
+**lib/recipe_parser.py:**
+- `parse_recipe_file()` - Parses frontmatter and body from recipe markdown
+- `extract_my_notes()` - Extracts content from ## My Notes section
+- `find_existing_recipe()` - Finds recipe file by video ID
+
+**migrate_recipes.py:**
+- `migrate_recipe_file()` - Updates single recipe to current schema
+- `run_migration()` - Batch migrates all recipes
 
 ## AI Configuration
 
@@ -212,7 +234,11 @@ When finishing a feature or fix, follow this checklist:
 - [ ] Check recipe file was created in Obsidian vault
 - [ ] Open in Obsidian - verify frontmatter and content look correct
 
-### 3. Update Documentation
+### 3. Update Documentation (Required)
+
+- [ ] Review changes against table below - identify which docs need updates
+- [ ] Make required documentation updates
+- [ ] If no docs need updating, confirm why (e.g., "refactor only, no API changes")
 
 **Which doc to update:**
 
@@ -234,6 +260,9 @@ When finishing a feature or fix, follow this checklist:
 - Update the JSON schema if recipe structure changes
 
 ### 4. Commit
+
+**Do not commit until step 3 is complete.**
+
 ```bash
 git add -A
 git commit -m "feat/fix/docs: description
