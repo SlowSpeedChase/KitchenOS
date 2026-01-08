@@ -23,7 +23,6 @@ from EventKit import (
 from Foundation import NSRunLoop, NSDate
 
 from extract_recipe import extract_single_recipe
-from main import youtube_parser
 
 # Configuration
 REMINDERS_LIST_NAME = "Recipies to Process"
@@ -53,6 +52,9 @@ def request_reminders_access(store):
             NSRunLoop.currentRunLoop().runUntilDate_(
                 NSDate.dateWithTimeIntervalSinceNow_(0.1)
             )
+
+        if granted[0] is None:
+            print("Error: Reminders access request timed out (60s).", file=sys.stderr)
 
         return granted[0] == True
 
@@ -90,14 +92,18 @@ def get_uncompleted_reminders(store, calendar):
             NSDate.dateWithTimeIntervalSinceNow_(0.1)
         )
 
+    if reminders[0] is None:
+        print("Error: Reminders access request timed out (60s).", file=sys.stderr)
+
     return list(reminders[0]) if reminders[0] else []
 
 
 def mark_reminder_complete(store, reminder):
     """Mark a reminder as completed."""
     reminder.setCompleted_(True)
-    error = None
-    success = store.saveReminder_commit_error_(reminder, True, error)
+    success, error = store.saveReminder_commit_error_(reminder, True, None)
+    if not success and error:
+        print(f"       Warning: Failed to save reminder: {error}", file=sys.stderr)
     return success
 
 
@@ -179,7 +185,15 @@ def main():
             print("\n\nInterrupted by user.")
             break
         except Exception as e:
-            result = {"success": False, "error": str(e)}
+            result = {
+                "success": False,
+                "title": None,
+                "recipe_name": None,
+                "filepath": None,
+                "error": str(e),
+                "skipped": False,
+                "source": None,
+            }
 
         if result["success"]:
             if result.get("skipped"):
