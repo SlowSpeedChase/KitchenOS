@@ -6,6 +6,30 @@ Development guide for Claude Code when working with this repository.
 
 **KitchenOS** is a YouTube-to-Obsidian recipe extraction pipeline. It captures cooking videos, extracts structured recipe data using AI (Ollama local), and saves formatted markdown files to an Obsidian vault for browsing with Dataview.
 
+### User Context
+
+- **Primary user**: Home cook who watches YouTube cooking videos
+- **Use case**: Save recipes from videos that don't have written recipes
+- **Workflow**: Watch video → run command → recipe appears in Obsidian
+- **Browsing**: Uses Obsidian + Dataview to search/filter recipes
+
+### Design Principles
+
+| Principle | Rationale |
+|-----------|-----------|
+| **Local-first** | Privacy, no cloud dependency, works offline (except YouTube fetch) |
+| **Simple over complex** | Standalone script beats n8n orchestration |
+| **Obsidian-native** | YAML frontmatter for Dataview, flat folder structure |
+| **Honest about inference** | Mark uncertain data, set `needs_review` flag |
+| **Graceful degradation** | Missing transcript → try Whisper → use description only |
+
+### Constraints
+
+- **Python 3.9** - No backslashes in f-string expressions
+- **Ollama local** - Must be running for extraction to work
+- **YouTube API key required** - For metadata fetching
+- **iCloud path** - Obsidian vault is in iCloud, path has spaces (escaped)
+
 ## Key Paths
 
 | Path | Purpose |
