@@ -24,7 +24,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# lib/ - commented out to allow our source lib/ directory
+# lib/
 lib64/
 parts/
 sdist/

@@ -4,6 +4,33 @@ from datetime import date
 import re
 from fractions import Fraction
 
+# Schema definition for recipe frontmatter
+# Used by migration to add missing fields
+RECIPE_SCHEMA = {
+    "title": str,
+    "source_url": str,
+    "source_channel": str,
+    "date_added": str,
+    "video_title": str,
+    "prep_time": str,
+    "cook_time": str,
+    "total_time": str,
+    "servings": int,
+    "difficulty": str,
+    "cuisine": str,
+    "protein": str,
+    "dish_type": str,
+    "dietary": list,
+    "equipment": list,
+    "needs_review": bool,
+    "confidence_notes": str,
+}
+
+# Section renames for migration
+SECTION_RENAMES = {
+    # "Old Section Name": "New Section Name",
+}
+
 
 def convert_quantity_to_decimal(quantity_str):
     """Convert quantity string with fractions to decimal format.
@@ -100,6 +127,10 @@ confidence_notes: "{confidence_notes}"
 
 {equipment_list}
 {notes_section}
+## My Notes
+
+<!-- Your personal notes, ratings, and modifications go here -->
+
 ---
 *Extracted from [{video_title}]({source_url}) on {date_added}*
 '''

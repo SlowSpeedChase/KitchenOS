@@ -81,6 +81,29 @@ The recipe will be saved to your Obsidian vault.
 .venv/bin/python main.py --json "VIDEO_ID_OR_URL"
 ```
 
+### Update Existing Recipes
+
+Re-running extraction on a previously extracted video will update the existing file instead of creating a duplicate. Your personal notes in the "## My Notes" section are preserved.
+
+```bash
+# Re-extract (updates existing file, creates backup)
+.venv/bin/python extract_recipe.py "https://www.youtube.com/watch?v=VIDEO_ID"
+```
+
+### Migrate Recipes to New Template
+
+When the template changes (new fields added), update all existing recipes:
+
+```bash
+# Preview changes
+.venv/bin/python migrate_recipes.py --dry-run
+
+# Apply changes (creates backups first)
+.venv/bin/python migrate_recipes.py
+```
+
+Backups are stored in `Recipes/.history/` and can be used to recover previous versions.
+
 ### Supported URL Formats
 
 - Full URL: `https://www.youtube.com/watch?v=VIDEO_ID`
