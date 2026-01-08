@@ -135,8 +135,6 @@ def extract_single_recipe(url: str, dry_run: bool = False) -> dict:
             error: str or None (error message if failed)
             skipped: bool (True if already existed)
     """
-    from main import youtube_parser, get_video_metadata, get_transcript
-
     result = {
         "success": False,
         "title": None,
@@ -161,11 +159,11 @@ def extract_single_recipe(url: str, dry_run: bool = False) -> dict:
             # Try to get title from existing file
             try:
                 content = existing.read_text(encoding='utf-8')
-                from lib.recipe_parser import parse_recipe_file
                 parsed = parse_recipe_file(content)
                 result["title"] = parsed['frontmatter'].get('video_title', existing.stem)
                 result["recipe_name"] = parsed['frontmatter'].get('recipe_name', existing.stem)
-            except Exception:
+            except Exception as e:
+                print(f"Warning: Could not parse existing recipe metadata: {e}", file=sys.stderr)
                 result["title"] = existing.stem
                 result["recipe_name"] = existing.stem
             return result
@@ -276,6 +274,7 @@ def main():
         print(f"Title: {result['title']}")
         print(f"Extracted: {result['recipe_name']} (source: {result['source']})")
         print(f"Saved to: {result['filepath']}")
+        print(f"SAVED:{result['filepath']}")
 
     print("\nDone!")
 
