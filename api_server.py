@@ -6,7 +6,9 @@ from youtube_transcript_api import YouTubeTranscriptApi
 from googleapiclient.discovery import build
 import os
 import re
+import subprocess
 import warnings
+from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -105,6 +107,40 @@ def get_video_info():
 def health():
     """Health check endpoint."""
     return jsonify({'status': 'ok'})
+
+
+@app.route('/extract', methods=['POST'])
+def extract_recipe():
+    """Run full recipe extraction and save to Obsidian."""
+    data = request.get_json(force=True, silent=True) or {}
+    url = data.get('url')
+
+    if not url:
+        return jsonify({'error': 'No URL provided'}), 400
+
+    try:
+        result = subprocess.run(
+            ['.venv/bin/python', 'extract_recipe.py', url],
+            capture_output=True,
+            text=True,
+            cwd='/Users/chaseeasterling/KitchenOS',
+            timeout=300  # 5 min timeout
+        )
+
+        # Parse output for "SAVED: /path/to/file.md"
+        if result.returncode == 0 and 'SAVED:' in result.stdout:
+            saved_line = [l for l in result.stdout.split('\n') if 'SAVED:' in l][0]
+            filepath = saved_line.split('SAVED:')[1].strip()
+            recipe_name = Path(filepath).stem
+            return jsonify({'status': 'success', 'recipe': recipe_name})
+        else:
+            error_msg = result.stderr.strip() if result.stderr else 'Extraction failed'
+            return jsonify({'status': 'error', 'message': error_msg}), 500
+
+    except subprocess.TimeoutExpired:
+        return jsonify({'status': 'error', 'message': 'Extraction timed out (5 min)'}), 504
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
 if __name__ == '__main__':
