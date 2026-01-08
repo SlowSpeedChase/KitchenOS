@@ -20,3 +20,6 @@ beautifulsoup4>=4.12.0
 
 # API server
 flask>=2.0.0
+
+# macOS Reminders integration (batch processing)
+pyobjc-framework-EventKit>=10.0
