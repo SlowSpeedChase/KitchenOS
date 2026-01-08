@@ -23,18 +23,30 @@ YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
 def youtube_parser(input_str):
+    """Parse YouTube URL and return video ID with format info.
+
+    Returns:
+        dict with keys:
+            - video_id: str
+            - is_short: bool (True if /shorts/ URL)
+    """
+    # Check for Shorts URL: youtube.com/shorts/VIDEO_ID
+    match = re.search(r'youtube\.com/shorts/([^?&/]+)', input_str)
+    if match:
+        return {'video_id': match.group(1), 'is_short': True}
+
     # Check for standard YouTube URL with v= parameter
     match = re.search(r'v=([^&]+)', input_str)
     if match:
-        return match.group(1)
+        return {'video_id': match.group(1), 'is_short': False}
 
     # Check for youtu.be short URL format
     match = re.search(r'youtu\.be/([^?&]+)', input_str)
     if match:
-        return match.group(1)
+        return {'video_id': match.group(1), 'is_short': False}
 
     # Assume input is a video ID
-    return input_str
+    return {'video_id': input_str, 'is_short': False}
 
 def print_virtual_env():
     if hasattr(sys, 'real_prefix') or (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix):
@@ -42,15 +54,59 @@ def print_virtual_env():
     else:
         print("No virtual environment detected")
 
-def get_video_description(video_id):
+def get_video_description(video_id, is_short=False):
     """Backwards compatible wrapper - returns description string only"""
-    metadata = get_video_metadata(video_id)
+    metadata = get_video_metadata(video_id, is_short=is_short)
     if metadata:
         return metadata['description']
     return None
 
-def get_video_metadata(video_id):
-    """Fetch video title, channel, and description from YouTube API"""
+
+def get_video_metadata_ytdlp(video_id, is_short=False):
+    """Fetch video metadata using yt-dlp (for Shorts and fallback).
+
+    Returns same structure as get_video_metadata():
+        {'title': str, 'channel': str, 'description': str}
+        or None on failure
+    """
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'skip_download': True,
+        'extract_flat': False,
+    }
+
+    # Use appropriate URL format
+    if is_short:
+        url = f"https://www.youtube.com/shorts/{video_id}"
+    else:
+        url = f"https://www.youtube.com/watch?v={video_id}"
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            return {
+                'title': info.get('title', ''),
+                'channel': info.get('channel', '') or info.get('uploader', ''),
+                'description': info.get('description', '')
+            }
+    except yt_dlp.utils.DownloadError as e:
+        print(f"yt-dlp error: {e}", file=sys.stderr)
+        return None
+    except Exception as e:
+        print(f"Unexpected error fetching metadata: {e}", file=sys.stderr)
+        return None
+
+
+def get_video_metadata(video_id, is_short=False):
+    """Fetch video title, channel, and description.
+
+    Uses YouTube API for regular videos, yt-dlp for Shorts.
+    """
+    if is_short:
+        return get_video_metadata_ytdlp(video_id, is_short=True)
+
+    # Use YouTube API for regular videos
     try:
         youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
         request = youtube.videos().list(
@@ -249,13 +305,16 @@ if __name__ == "__main__":
     parser.add_argument('--json', action='store_true', help='Output JSON instead of formatted text')
     args = parser.parse_args()
 
-    video_id = youtube_parser(args.video_id_in)
+    parsed = youtube_parser(args.video_id_in)
+    video_id = parsed['video_id']
+    is_short = parsed['is_short']
 
     if args.json:
         # JSON output mode for n8n integration
         output = {
             'success': False,
             'video_id': video_id,
+            'is_short': is_short,
             'title': None,
             'channel': None,
             'transcript': None,
@@ -264,8 +323,8 @@ if __name__ == "__main__":
             'error': None
         }
 
-        # Get metadata
-        metadata = get_video_metadata(video_id)
+        # Get metadata (uses yt-dlp for Shorts)
+        metadata = get_video_metadata(video_id, is_short=is_short)
         if metadata:
             output['title'] = metadata['title']
             output['channel'] = metadata['channel']
@@ -284,7 +343,8 @@ if __name__ == "__main__":
         print(json.dumps(output, ensure_ascii=False))
     else:
         # Original text output mode (keep existing behavior)
-        print(f"Processing video ID: {video_id}")
+        video_type = "Short" if is_short else "video"
+        print(f"Processing {video_type} ID: {video_id}")
 
         print("\n" + "="*50)
         print("TRANSCRIPT:")
@@ -306,7 +366,7 @@ if __name__ == "__main__":
         print("\n" + "="*50)
         print("VIDEO DESCRIPTION:")
         print("="*50)
-        description = get_video_description(video_id)
+        description = get_video_description(video_id, is_short=is_short)
         if description:
             print(description)
         else:

@@ -25,7 +25,7 @@ Development guide for Claude Code when working with this repository.
 
 ### Constraints
 
-- **Python 3.9** - No backslashes in f-string expressions
+- **Python 3.11** - Full f-string support including backslashes
 - **Ollama local** - Must be running for extraction to work
 - **YouTube API key required** - For metadata fetching
 - **iCloud path** - Obsidian vault is in iCloud, path has spaces (escaped)
@@ -226,7 +226,7 @@ The AI extracts this structure:
 
 ## Development Environment
 
-- **Python Version**: 3.9
+- **Python Version**: 3.11
 - **Virtual Environment**: `.venv/` (required for all Python operations)
 - **API Keys**: In `.env` file
   - `YOUTUBE_API_KEY` - YouTube Data API
@@ -261,13 +261,6 @@ Test with a cooking video that has captions:
 ```bash
 ollama serve  # Start in background
 curl http://localhost:11434/api/tags  # Verify running
-```
-
-### Python 3.9 f-string limitations
-Backslashes are not allowed in f-string expressions. Use:
-```python
-quote = '"'
-result = f"[{', '.join(quote + x + quote for x in items)}]"
 ```
 
 ### Transcript unavailable
@@ -342,7 +335,7 @@ These features are planned but not yet implemented:
 | ~~Recipe link detection~~ | ~~High~~ | **Completed** - Priority chain: webpage → description → AI |
 | ~~iOS Shortcut~~ | ~~Medium~~ | **Completed** - /extract endpoint + Tailscale, see iOS_SHORTCUT_SETUP.md |
 | ~~Batch processing~~ | ~~Medium~~ | **Completed** - Processes URLs from iOS Reminders list |
-| YouTube Shorts support | Medium | YouTube API can't fetch Shorts metadata; need yt-dlp fallback |
+| ~~YouTube Shorts support~~ | ~~Medium~~ | **Completed** - yt-dlp fetches metadata for /shorts/ URLs |
 | Claude API fallback | Low | Use Claude when Ollama fails |
 | Image extraction | Low | Get video thumbnails for recipes |
 

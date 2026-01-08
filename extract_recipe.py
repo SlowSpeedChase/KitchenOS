@@ -146,9 +146,16 @@ def extract_single_recipe(url: str, dry_run: bool = False) -> dict:
     }
 
     try:
-        # Parse video ID
-        video_id = youtube_parser(url)
-        video_url = f"https://www.youtube.com/watch?v={video_id}"
+        # Parse video ID and detect Shorts
+        parsed = youtube_parser(url)
+        video_id = parsed['video_id']
+        is_short = parsed['is_short']
+
+        # Use correct URL format
+        if is_short:
+            video_url = f"https://www.youtube.com/shorts/{video_id}"
+        else:
+            video_url = f"https://www.youtube.com/watch?v={video_id}"
 
         # Check for existing recipe first
         existing = find_existing_recipe(OBSIDIAN_RECIPES_PATH, video_id)
@@ -168,8 +175,8 @@ def extract_single_recipe(url: str, dry_run: bool = False) -> dict:
                 result["recipe_name"] = existing.stem
             return result
 
-        # Get video metadata
-        metadata = get_video_metadata(video_id)
+        # Get video metadata (uses yt-dlp for Shorts)
+        metadata = get_video_metadata(video_id, is_short=is_short)
         if not metadata:
             result["error"] = "Could not fetch video metadata"
             return result
@@ -254,8 +261,11 @@ def main():
     )
     args = parser.parse_args()
 
-    video_id = youtube_parser(args.url)
-    print(f"Fetching video data for: {video_id}")
+    parsed = youtube_parser(args.url)
+    video_id = parsed['video_id']
+    is_short = parsed['is_short']
+    video_type = "Short" if is_short else "video"
+    print(f"Fetching {video_type} data for: {video_id}")
 
     result = extract_single_recipe(args.url, dry_run=args.dry_run)
 

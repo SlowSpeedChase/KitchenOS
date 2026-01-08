@@ -20,20 +20,33 @@ app = Flask(__name__)
 
 
 def youtube_parser(input_str):
-    """Extract video ID from URL or return as-is."""
+    """Extract video ID from URL and detect Shorts.
+
+    Returns:
+        dict with keys:
+            - video_id: str
+            - is_short: bool (True if /shorts/ URL)
+    """
+    # Handle Shorts URLs
+    match = re.search(r'youtube\.com/shorts/([^?&/]+)', input_str)
+    if match:
+        return {'video_id': match.group(1), 'is_short': True}
     # Handle youtu.be short URLs
     match = re.search(r'youtu\.be/([^?&]+)', input_str)
     if match:
-        return match.group(1)
+        return {'video_id': match.group(1), 'is_short': False}
     # Handle standard YouTube URLs
     match = re.search(r'v=([^&]+)', input_str)
     if match:
-        return match.group(1)
-    return input_str
+        return {'video_id': match.group(1), 'is_short': False}
+    return {'video_id': input_str, 'is_short': False}
 
 
-def get_video_description(video_id):
-    """Fetch video description from YouTube API."""
+def get_video_description(video_id, is_short=False):
+    """Fetch video description. Uses yt-dlp for Shorts, YouTube API for regular videos."""
+    if is_short:
+        return get_video_description_ytdlp(video_id, is_short=True)
+
     try:
         youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
         request = youtube.videos().list(part='snippet', id=video_id)
@@ -42,6 +55,30 @@ def get_video_description(video_id):
         if 'items' in response and len(response['items']) > 0:
             return response['items'][0]['snippet']['description']
         return None
+    except Exception as e:
+        return f"[Error fetching description: {e}]"
+
+
+def get_video_description_ytdlp(video_id, is_short=False):
+    """Fetch video description using yt-dlp (for Shorts)."""
+    import yt_dlp
+
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'skip_download': True,
+        'extract_flat': False,
+    }
+
+    if is_short:
+        url = f"https://www.youtube.com/shorts/{video_id}"
+    else:
+        url = f"https://www.youtube.com/watch?v={video_id}"
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            return info.get('description', '')
     except Exception as e:
         return f"[Error fetching description: {e}]"
 
@@ -72,7 +109,9 @@ def get_video_info():
     if not url:
         return jsonify({'error': 'No URL provided'}), 400
 
-    video_id = youtube_parser(url)
+    parsed = youtube_parser(url)
+    video_id = parsed['video_id']
+    is_short = parsed['is_short']
 
     # Build the output blob
     output_parts = []
@@ -87,8 +126,8 @@ def get_video_info():
 
     output_parts.append("")  # blank line
 
-    # Get description
-    description = get_video_description(video_id)
+    # Get description (uses yt-dlp for Shorts)
+    description = get_video_description(video_id, is_short=is_short)
     if description:
         output_parts.append("DESCRIPTION:")
         output_parts.append(description)
@@ -99,7 +138,8 @@ def get_video_info():
 
     return jsonify({
         'text': combined_text,
-        'video_id': video_id
+        'video_id': video_id,
+        'is_short': is_short
     })
 
 
