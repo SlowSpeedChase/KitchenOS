@@ -523,3 +523,49 @@ def search_for_recipe_url(
     except Exception as e:
         print(f"  -> DuckDuckGo search failed: {e}")
         return None
+
+
+def search_creator_website(channel: str, title: str) -> Optional[str]:
+    """
+    Attempt to find recipe URL on creator's website.
+
+    1. Load channel → website mapping
+    2. If mapped to null → return None (creator has no site)
+    3. If mapped to domain → search that domain
+    4. If not mapped → search DuckDuckGo without site restriction
+
+    Args:
+        channel: YouTube channel name
+        title: Video title
+
+    Returns:
+        Recipe URL if found, None otherwise
+    """
+    # Normalize channel name for lookup
+    channel_key = channel.lower().strip()
+
+    # Load mapping
+    mapping = load_creator_mapping()
+
+    # Check if channel is in mapping
+    if channel_key in mapping:
+        site = mapping[channel_key]
+
+        # null means creator has no recipe site - don't search
+        if site is None:
+            print(f"  -> {channel} has no recipe website (skipping search)")
+            return None
+
+        print(f"  -> Searching {site} for \"{title}\"...")
+    else:
+        site = None
+        print(f"  -> Searching web for \"{channel}\" \"{title}\"...")
+
+    url = search_for_recipe_url(channel=channel, title=title, site=site)
+
+    if url:
+        print(f"  -> Found: {url}")
+    else:
+        print(f"  -> No recipe URL found")
+
+    return url

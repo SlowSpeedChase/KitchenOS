@@ -123,3 +123,72 @@ class TestSearchForRecipeUrl:
         result = search_for_recipe_url(channel="test", title="test")
 
         assert result is None
+
+
+class TestSearchCreatorWebsite:
+    """Tests for search_creator_website orchestrator."""
+
+    def test_uses_mapped_domain_for_known_creator(self, mocker):
+        """Should use domain from mapping for known creators."""
+        from recipe_sources import search_creator_website
+
+        # Mock the mapping
+        mocker.patch("recipe_sources.load_creator_mapping", return_value={
+            "feelgoodfoodie": "feelgoodfoodie.net"
+        })
+        mock_search = mocker.patch("recipe_sources.search_for_recipe_url")
+        mock_search.return_value = "https://feelgoodfoodie.net/recipe/test/"
+
+        result = search_creator_website("Feelgoodfoodie", "Test Recipe")
+
+        mock_search.assert_called_once_with(
+            channel="Feelgoodfoodie",
+            title="Test Recipe",
+            site="feelgoodfoodie.net"
+        )
+        assert result == "https://feelgoodfoodie.net/recipe/test/"
+
+    def test_skips_search_for_null_mapped_creators(self, mocker):
+        """Should return None without searching for creators mapped to null."""
+        from recipe_sources import search_creator_website
+
+        mocker.patch("recipe_sources.load_creator_mapping", return_value={
+            "adam ragusea": None
+        })
+        mock_search = mocker.patch("recipe_sources.search_for_recipe_url")
+
+        result = search_creator_website("Adam Ragusea", "Some Recipe")
+
+        mock_search.assert_not_called()
+        assert result is None
+
+    def test_searches_without_site_for_unknown_creators(self, mocker):
+        """Should search without site restriction for unmapped creators."""
+        from recipe_sources import search_creator_website
+
+        mocker.patch("recipe_sources.load_creator_mapping", return_value={})
+        mock_search = mocker.patch("recipe_sources.search_for_recipe_url")
+        mock_search.return_value = "https://example.com/recipe/"
+
+        result = search_creator_website("Unknown Creator", "Test Recipe")
+
+        mock_search.assert_called_once_with(
+            channel="Unknown Creator",
+            title="Test Recipe",
+            site=None
+        )
+
+    def test_normalizes_channel_name_for_lookup(self, mocker):
+        """Should normalize channel name (lowercase, strip) for mapping lookup."""
+        from recipe_sources import search_creator_website
+
+        mocker.patch("recipe_sources.load_creator_mapping", return_value={
+            "feelgoodfoodie": "feelgoodfoodie.net"
+        })
+        mock_search = mocker.patch("recipe_sources.search_for_recipe_url")
+
+        # Test with different casing and whitespace
+        search_creator_website("  FeelGoodFoodie  ", "Test")
+
+        mock_search.assert_called_once()
+        assert mock_search.call_args[1]["site"] == "feelgoodfoodie.net"
