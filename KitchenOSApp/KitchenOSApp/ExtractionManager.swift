@@ -1,32 +1,38 @@
 import Foundation
 import UserNotifications
 
-enum ExtractionStatus: Equatable {
-    case idle
-    case extracting
-    case success(String)
-    case error(String)
-}
-
+/// Manages the Python script execution for recipe extraction
 @MainActor
 class ExtractionManager: ObservableObject {
-    @Published var status: ExtractionStatus = .idle
+    @Published var isExtracting = false
+    @Published var status: String = "Ready"
+    @Published var statusIsError = false
     @Published var history: [HistoryItem] = []
+
+    private var currentProcess: Process?
+    private let maxHistoryItems = 10
+    private let timeoutSeconds: TimeInterval = 300 // 5 minutes
 
     private let pythonPath = "/Users/chaseeasterling/KitchenOS/.venv/bin/python"
     private let scriptPath = "/Users/chaseeasterling/KitchenOS/extract_recipe.py"
-    private let workingDir = "/Users/chaseeasterling/KitchenOS"
+    private let workingDirectory = "/Users/chaseeasterling/KitchenOS"
 
-    private var currentProcess: Process?
+    init() {
+        // Request notification permission
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
 
     func extract(url: String) {
-        guard case .idle = status else { return }
-        guard !url.isEmpty else {
-            status = .error("Please enter a URL")
+        guard !isExtracting else { return }
+        guard isValidYouTubeURL(url) else {
+            status = "Error: Invalid YouTube URL"
+            statusIsError = true
             return
         }
 
-        status = .extracting
+        isExtracting = true
+        status = "Extracting..."
+        statusIsError = false
 
         Task {
             await runExtraction(url: url)
@@ -37,77 +43,116 @@ class ExtractionManager: ObservableObject {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: pythonPath)
         process.arguments = [scriptPath, url]
-        process.currentDirectoryURL = URL(fileURLWithPath: workingDir)
+        process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
 
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
 
         currentProcess = process
 
-        // Run blocking work off MainActor
-        let result: (status: Int32, stdout: String, stderr: String) = await Task.detached {
-            do {
-                try process.run()
-
-                // Timeout handling
-                let timeoutTask = Task {
-                    try await Task.sleep(for: .seconds(300))
-                    if process.isRunning {
-                        process.terminate()
-                    }
-                }
-
-                process.waitUntilExit()
-                timeoutTask.cancel()
-
-                let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
-                let stderr = String(data: stderrData, encoding: .utf8) ?? ""
-
-                return (process.terminationStatus, stdout, stderr)
-            } catch {
-                return (-1, "", "Failed to start: \(error.localizedDescription)")
+        // Set up timeout
+        let timeoutTask = Task {
+            try await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
+            if process.isRunning {
+                process.terminate()
             }
-        }.value
+        }
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            timeoutTask.cancel()
+
+            let outputData = stdout.fileHandleForReading.readDataToEndOfFile()
+            let errorData = stderr.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: outputData, encoding: .utf8) ?? ""
+            let errorOutput = String(data: errorData, encoding: .utf8) ?? ""
+
+            handleResult(exitCode: process.terminationStatus, output: output, error: errorOutput)
+        } catch {
+            status = "Error: \(error.localizedDescription)"
+            statusIsError = true
+            isExtracting = false
+        }
 
         currentProcess = nil
+    }
 
-        // Now back on MainActor, update UI safely
-        if result.status == 0, let savedLine = result.stdout.components(separatedBy: "\n").first(where: { $0.hasPrefix("SAVED:") }) {
-            let filePath = String(savedLine.dropFirst(6))
-            let recipeName = extractRecipeName(from: filePath)
+    private func handleResult(exitCode: Int32, output: String, error: String) {
+        isExtracting = false
 
-            let item = HistoryItem(recipeName: recipeName, filePath: filePath, extractedAt: Date())
+        if exitCode == 0, let savedPath = parseSavedPath(from: output) {
+            let recipeName = extractRecipeName(from: output, path: savedPath)
+
+            let item = HistoryItem(
+                recipeName: recipeName,
+                filePath: savedPath,
+                extractedAt: Date()
+            )
+
             history.insert(item, at: 0)
-            if history.count > 10 {
+            if history.count > maxHistoryItems {
                 history.removeLast()
             }
 
-            status = .success(recipeName)
-            sendNotification(title: "Recipe Saved", body: recipeName)
+            status = "Extracted: \(recipeName)"
+            statusIsError = false
 
-            Task {
-                try? await Task.sleep(for: .seconds(3))
-                if case .success = self.status {
-                    self.status = .idle
-                }
-            }
+            sendNotification(title: "Recipe Extracted", body: recipeName)
         } else {
-            let errorMessage = result.stderr.isEmpty ? "Extraction failed" : result.stderr.components(separatedBy: "\n").first ?? "Extraction failed"
-            status = .error(errorMessage)
+            // Check for specific error messages
+            if error.contains("Ollama") || output.contains("Ollama") {
+                status = "Error: Ollama not running"
+            } else if error.isEmpty {
+                status = "Error: Extraction failed"
+            } else {
+                // Extract first line of error
+                let firstLine = error.components(separatedBy: .newlines).first ?? "Unknown error"
+                status = "Error: \(firstLine)"
+            }
+            statusIsError = true
         }
     }
 
-    private func extractRecipeName(from filePath: String) -> String {
-        let filename = URL(fileURLWithPath: filePath).deletingPathExtension().lastPathComponent
-        // Remove date prefix (YYYY-MM-DD-)
-        if filename.count > 11 && filename.prefix(4).allSatisfy({ $0.isNumber }) {
-            return String(filename.dropFirst(11)).replacingOccurrences(of: "-", with: " ").capitalized
+    private func parseSavedPath(from output: String) -> String? {
+        let lines = output.components(separatedBy: .newlines)
+        for line in lines {
+            if line.hasPrefix("SAVED: ") {
+                return String(line.dropFirst(7))
+            }
         }
-        return filename.replacingOccurrences(of: "-", with: " ").capitalized
+        return nil
+    }
+
+    private func extractRecipeName(from output: String, path: String) -> String {
+        // Try to get recipe name from "Extracted: Name" line
+        let lines = output.components(separatedBy: .newlines)
+        for line in lines {
+            if line.hasPrefix("Extracted: ") {
+                let rest = String(line.dropFirst(11))
+                // Remove "(source: xxx)" suffix if present
+                if let parenIndex = rest.firstIndex(of: "(") {
+                    return String(rest[..<parenIndex]).trimmingCharacters(in: .whitespaces)
+                }
+                return rest
+            }
+        }
+
+        // Fallback: use filename
+        return URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+            .replacingOccurrences(of: "-", with: " ")
+            .capitalized
+    }
+
+    private func isValidYouTubeURL(_ url: String) -> Bool {
+        let patterns = [
+            "youtube.com/watch",
+            "youtu.be/",
+            "youtube.com/shorts/"
+        ]
+        return patterns.contains { url.contains($0) }
     }
 
     private func sendNotification(title: String, body: String) {
@@ -116,20 +161,20 @@ class ExtractionManager: ObservableObject {
         content.body = body
         content.sound = .default
 
-        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        let request = UNNotificationRequest(
+            identifier: UUID().uuidString,
+            content: content,
+            trigger: nil
+        )
+
         UNUserNotificationCenter.current().add(request)
     }
 
-    func openInObsidian(item: HistoryItem) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        process.arguments = [item.filePath]
-        try? process.run()
-    }
-
-    func resetError() {
-        if case .error = status {
-            status = .idle
-        }
+    func cancelExtraction() {
+        currentProcess?.terminate()
+        currentProcess = nil
+        isExtracting = false
+        status = "Cancelled"
+        statusIsError = false
     }
 }

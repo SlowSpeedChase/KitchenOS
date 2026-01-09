@@ -1,35 +1,37 @@
 import SwiftUI
 import ServiceManagement
-import UserNotifications
 
 struct ContentView: View {
     @StateObject private var manager = ExtractionManager()
-    @State private var urlInput = ""
+    @State private var urlInput: String = ""
     @AppStorage("launchAtLogin") private var launchAtLogin = true
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 12) {
             // URL Input
             HStack {
                 TextField("YouTube URL", text: $urlInput)
                     .textFieldStyle(.roundedBorder)
-                    .onSubmit(extract)
+                    .onSubmit {
+                        extract()
+                    }
+                    .disabled(manager.isExtracting)
             }
 
             // Extract Button
             Button(action: extract) {
                 HStack {
-                    if case .extracting = manager.status {
+                    if manager.isExtracting {
                         ProgressView()
-                            .scaleEffect(0.7)
-                            .frame(width: 16, height: 16)
+                            .controlSize(.small)
+                            .padding(.trailing, 4)
                     }
-                    Text("Extract Recipe")
+                    Text(manager.isExtracting ? "Extracting..." : "Extract Recipe")
                 }
                 .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .disabled(isExtracting)
+            .disabled(manager.isExtracting || urlInput.isEmpty)
 
             Divider()
 
@@ -37,8 +39,9 @@ struct ContentView: View {
             HStack {
                 Text("Status:")
                     .foregroundColor(.secondary)
-                Spacer()
-                statusText
+                Text(manager.status)
+                    .foregroundColor(manager.statusIsError ? .red : .primary)
+                    .lineLimit(1)
             }
             .font(.caption)
 
@@ -46,77 +49,60 @@ struct ContentView: View {
             if !manager.history.isEmpty {
                 Divider()
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Recent:")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                Text("Recent:")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
 
-                    ForEach(manager.history) { item in
-                        Button(action: { manager.openInObsidian(item: item) }) {
-                            HStack {
-                                Text(item.recipeName)
-                                    .lineLimit(1)
-                                Spacer()
-                                Text(item.timeAgo)
-                                    .foregroundColor(.secondary)
-                            }
+                ForEach(manager.history) { item in
+                    Button(action: { item.openInObsidian() }) {
+                        HStack {
+                            Image(systemName: "doc.text")
+                                .foregroundColor(.secondary)
+                            Text(item.recipeName)
+                                .lineLimit(1)
+                            Spacer()
+                            Text(item.timeAgo)
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
                         }
-                        .buttonStyle(.plain)
-                        .font(.caption)
                     }
+                    .buttonStyle(.plain)
                 }
             }
 
             Divider()
 
             // Settings
-            Toggle("Launch at Login", isOn: $launchAtLogin)
-                .font(.caption)
-                .onChange(of: launchAtLogin) { newValue in
-                    updateLoginItem(enabled: newValue)
+            HStack {
+                Toggle("Launch at Login", isOn: $launchAtLogin)
+                    .toggleStyle(.checkbox)
+                    .font(.caption)
+                    .onChange(of: launchAtLogin) { _, newValue in
+                        updateLaunchAtLogin(enabled: newValue)
+                    }
+
+                Spacer()
+
+                Button("Quit") {
+                    NSApplication.shared.terminate(nil)
                 }
+                .buttonStyle(.plain)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            }
         }
         .padding()
-        .frame(width: 280)
-        .onAppear {
-            requestNotificationPermission()
-        }
-    }
-
-    private var isExtracting: Bool {
-        if case .extracting = manager.status { return true }
-        return false
-    }
-
-    @ViewBuilder
-    private var statusText: some View {
-        switch manager.status {
-        case .idle:
-            Text("Ready")
-                .foregroundColor(.secondary)
-        case .extracting:
-            Text("Extracting...")
-                .foregroundColor(.orange)
-        case .success(let name):
-            Text("Saved: \(name)")
-                .foregroundColor(.green)
-                .lineLimit(1)
-        case .error(let message):
-            Text(message)
-                .foregroundColor(.red)
-                .lineLimit(1)
-                .onTapGesture {
-                    manager.resetError()
-                }
-        }
+        .frame(width: 300)
     }
 
     private func extract() {
-        manager.extract(url: urlInput)
+        guard !urlInput.isEmpty else { return }
+        let url = urlInput
         urlInput = ""
+        manager.extract(url: url)
     }
 
-    private func updateLoginItem(enabled: Bool) {
+    private func updateLaunchAtLogin(enabled: Bool) {
         do {
             if enabled {
                 try SMAppService.mainApp.register()
@@ -124,11 +110,11 @@ struct ContentView: View {
                 try SMAppService.mainApp.unregister()
             }
         } catch {
-            print("Failed to update login item: \(error)")
+            print("Failed to update launch at login: \(error)")
         }
     }
+}
 
-    private func requestNotificationPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
-    }
+#Preview {
+    ContentView()
 }
