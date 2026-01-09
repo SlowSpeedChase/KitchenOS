@@ -2,10 +2,14 @@
 
 import json
 import re
+from pathlib import Path
 from typing import Optional, Dict, Any, List
 
 import requests
 from bs4 import BeautifulSoup
+
+# Config directory
+CONFIG_DIR = Path(__file__).parent / "config"
 
 from lib.ingredient_parser import parse_ingredient
 from prompts.recipe_extraction import (
@@ -438,3 +442,28 @@ def extract_cooking_tips(transcript: str, recipe: Dict[str, Any]) -> List[str]:
     except Exception as e:
         print(f"  -> Tips extraction failed: {e}")
         return []
+
+
+def load_creator_mapping() -> Dict[str, Optional[str]]:
+    """
+    Load channel → website mapping from config file.
+
+    Returns:
+        Dict mapping lowercase channel names to website domains.
+        Value is None for channels known to have no recipe site.
+        Returns empty dict if config file is missing.
+    """
+    config_path = CONFIG_DIR / "creator_websites.json"
+
+    if not config_path.exists():
+        print(f"  -> Warning: Creator mapping not found at {config_path}")
+        return {}
+
+    try:
+        with open(config_path, 'r') as f:
+            data = json.load(f)
+        # Filter out comments
+        return {k: v for k, v in data.items() if not k.startswith('_')}
+    except (json.JSONDecodeError, IOError) as e:
+        print(f"  -> Warning: Could not load creator mapping: {e}")
+        return {}
