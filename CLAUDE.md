@@ -207,7 +207,8 @@ main.py (fetch metadata + transcript)
 recipe_sources.py:
   1. find_recipe_link() → scrape_recipe_from_url()
   2. parse_recipe_from_description()
-  3. extract_recipe_with_ollama() (fallback)
+  3. search_creator_website() → scrape_recipe_from_url()
+  4. extract_recipe_with_ollama() (fallback)
     ↓
 extract_cooking_tips() (if webpage/description source)
     ↓
@@ -257,6 +258,9 @@ template → Obsidian
 - `scrape_recipe_from_url()` - Fetches and parses JSON-LD from recipe websites
 - `parse_recipe_from_description()` - Extracts inline recipes from descriptions
 - `extract_cooking_tips()` - Pulls practical tips from transcripts
+- `load_creator_mapping()` - Loads channel → website mapping from config
+- `search_for_recipe_url()` - Searches DuckDuckGo for recipe URL
+- `search_creator_website()` - Orchestrates creator website search
 
 **lib/backup.py:**
 - `create_backup()` - Creates timestamped backup in .history/ folder
@@ -316,6 +320,22 @@ The AI extracts this structure:
 }
 ```
 
+### Creator Website Mapping
+
+**File:** `config/creator_websites.json`
+
+Maps YouTube channel names to their recipe website domains. Used to search creator websites when video description is empty (common with Shorts).
+
+```json
+{
+  "feelgoodfoodie": "feelgoodfoodie.net",
+  "adam ragusea": null
+}
+```
+
+- `null` value means creator has no recipe website (skip search)
+- Add new creators as you discover them
+
 ## Development Environment
 
 - **Python Version**: 3.11
@@ -333,6 +353,7 @@ yt-dlp                    # Audio download for Whisper
 openai                    # Whisper API transcription
 python-dotenv             # Environment variables
 requests                  # HTTP requests to Ollama
+duckduckgo-search         # Web search for creator websites
 ```
 
 ## Testing
