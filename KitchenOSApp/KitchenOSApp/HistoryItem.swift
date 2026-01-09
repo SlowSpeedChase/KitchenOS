@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 /// Model for a single recipe extraction history entry
 struct HistoryItem: Identifiable {

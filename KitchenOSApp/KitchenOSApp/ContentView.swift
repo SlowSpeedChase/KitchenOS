@@ -15,7 +15,7 @@ struct ContentView: View {
                     .onSubmit {
                         extract()
                     }
-                    .disabled(manager.isExtracting)
+                    .disabled(manager.isAnyExtracting)
             }
 
             // Extract Button
@@ -31,7 +31,22 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .disabled(manager.isExtracting || urlInput.isEmpty)
+            .disabled(manager.isAnyExtracting || urlInput.isEmpty)
+
+            // Batch Process Button
+            Button(action: { manager.batchExtract() }) {
+                HStack {
+                    if manager.isBatchExtracting {
+                        ProgressView()
+                            .controlSize(.small)
+                            .padding(.trailing, 4)
+                    }
+                    Text(batchButtonText)
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .disabled(manager.isAnyExtracting)
 
             Divider()
 
@@ -77,7 +92,7 @@ struct ContentView: View {
                 Toggle("Launch at Login", isOn: $launchAtLogin)
                     .toggleStyle(.checkbox)
                     .font(.caption)
-                    .onChange(of: launchAtLogin) { _, newValue in
+                    .onChange(of: launchAtLogin) { newValue in
                         updateLaunchAtLogin(enabled: newValue)
                     }
 
@@ -93,6 +108,16 @@ struct ContentView: View {
         }
         .padding()
         .frame(width: 300)
+    }
+
+    private var batchButtonText: String {
+        if manager.isBatchExtracting {
+            if manager.batchTotal > 0 {
+                return "Processing \(manager.batchCurrent)/\(manager.batchTotal)..."
+            }
+            return "Starting..."
+        }
+        return "Process Queue"
     }
 
     private func extract() {
