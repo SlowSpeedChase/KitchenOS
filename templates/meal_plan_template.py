@@ -39,9 +39,16 @@ def generate_meal_plan_markdown(year: int, week: int) -> str:
         Formatted markdown string
     """
     start_date, end_date = get_week_date_range(year, week)
+    week_id = f"{year}-W{week:02d}"
 
     lines = [
         f"# Meal Plan - Week {week:02d} ({format_date_short(start_date)} - {format_date_short(end_date)}, {year})",
+        "",
+        "```button",
+        "name Generate Shopping List",
+        "type link",
+        f"action kitchenos://generate-shopping-list?week={week_id}",
+        "```",
         "",
     ]
 
