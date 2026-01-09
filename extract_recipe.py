@@ -31,6 +31,7 @@ from recipe_sources import (
     scrape_recipe_from_url,
     parse_recipe_from_description,
     extract_cooking_tips,
+    search_creator_website,
 )
 
 # Configuration
@@ -300,7 +301,16 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False) 
             if recipe_data:
                 source = "description"
 
-        # 3. Fall back to AI extraction from transcript
+        # 3. Search creator's website for full recipe
+        if not recipe_data:
+            creator_url = search_creator_website(channel, title)
+            if creator_url:
+                recipe_data = scrape_recipe_from_url(creator_url)
+                if recipe_data:
+                    source = "creator_website"
+                    recipe_link = creator_url  # For metadata
+
+        # 4. Fall back to AI extraction from transcript
         if not recipe_data:
             recipe_data, error = extract_recipe_with_ollama(title, channel, description, transcript)
             if error:
@@ -308,8 +318,8 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False) 
                 return result
             source = "ai_extraction"
 
-        # 4. Extract cooking tips if we got recipe from webpage or description
-        if source in ("webpage", "description") and transcript:
+        # 5. Extract cooking tips if we got recipe from webpage, description, or creator website
+        if source in ("webpage", "description", "creator_website") and transcript:
             tips = extract_cooking_tips(transcript, recipe_data)
             recipe_data['video_tips'] = tips
 
