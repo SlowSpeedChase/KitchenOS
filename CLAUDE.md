@@ -134,6 +134,8 @@ recipe_sources.py:
     ↓
 extract_cooking_tips() (if webpage/description source)
     ↓
+validate_ingredients() (repair AI extraction errors)
+    ↓
 template → Obsidian
 ```
 
@@ -148,6 +150,7 @@ template → Obsidian
 | `prompts/recipe_extraction.py` | AI prompt templates for structured extraction |
 | `templates/recipe_template.py` | Markdown formatter with YAML frontmatter |
 | `lib/ingredient_parser.py` | Parses ingredient strings into amount/unit/item |
+| `lib/ingredient_validator.py` | Validates/repairs AI extraction errors in ingredients |
 
 ### Key Functions
 
@@ -188,6 +191,11 @@ template → Obsidian
 - `normalize_unit()` - Standardizes unit abbreviations
 - `is_informal_measurement()` - Detects "a pinch", "to taste", etc.
 - `parse_amount()` - Parses fractions, ranges, word numbers
+
+**lib/ingredient_validator.py:**
+- `validate_ingredients()` - Validates/repairs list of ingredients from AI extraction
+- `is_malformed_ingredient()` - Detects AI errors (unit in amount, empty item, etc.)
+- `repair_ingredient()` - Re-parses malformed ingredient using ingredient_parser
 
 ## AI Configuration
 
