@@ -17,6 +17,7 @@ from pathlib import Path
 from lib.backup import create_backup
 from lib.recipe_parser import find_existing_recipe, parse_recipe_file, extract_my_notes
 from lib.ingredient_validator import validate_ingredients
+from lib.ingredient_parser import parse_ingredient
 
 # Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -36,6 +37,88 @@ from recipe_sources import (
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "mistral:7b"
 OBSIDIAN_RECIPES_PATH = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS/Recipes")
+
+
+def normalize_instructions(instructions: list) -> list:
+    """Normalize instructions to {step, text, time} format.
+
+    Handles AI responses that return instructions as plain strings
+    instead of the requested {step, text, time} dicts.
+    """
+    if not instructions:
+        return []
+
+    normalized = []
+    for i, inst in enumerate(instructions, 1):
+        if isinstance(inst, str):
+            # Plain string - convert to dict
+            normalized.append({
+                "step": i,
+                "text": inst,
+                "time": None
+            })
+        elif isinstance(inst, dict):
+            # Already a dict - ensure it has required keys
+            normalized.append({
+                "step": inst.get("step", i),
+                "text": inst.get("text", inst.get("description", "")),
+                "time": inst.get("time")
+            })
+        else:
+            # Unknown format - skip
+            continue
+
+    return normalized
+
+
+def normalize_ingredients(ingredients: list) -> list:
+    """Normalize ingredients to {amount, unit, item, inferred} format.
+
+    Handles AI responses that use old format (name, quantity) instead of
+    the requested (amount, unit, item) schema.
+    """
+    if not ingredients:
+        return []
+
+    normalized = []
+    for ing in ingredients:
+        if not isinstance(ing, dict):
+            continue
+
+        # Already in correct format?
+        if 'amount' in ing and 'unit' in ing and 'item' in ing:
+            normalized.append(ing)
+            continue
+
+        # Old format: {name: "...", quantity: "..."}
+        if 'name' in ing:
+            name = str(ing.get('name', ''))
+            quantity = str(ing.get('quantity', ''))
+            # Combine quantity and name for re-parsing
+            combined = f"{quantity} {name}".strip() if quantity else name
+            parsed = parse_ingredient(combined)
+            parsed['inferred'] = ing.get('inferred', False)
+            normalized.append(parsed)
+            continue
+
+        # Legacy format: {quantity: "...", item: "..."}
+        if 'quantity' in ing:
+            quantity = str(ing.get('quantity', ''))
+            item = str(ing.get('item', ''))
+            combined = f"{quantity} {item}".strip()
+            parsed = parse_ingredient(combined)
+            parsed['inferred'] = ing.get('inferred', False)
+            normalized.append(parsed)
+            continue
+
+        # Unknown format - try to make sense of it
+        item = str(ing.get('item', ing.get('name', '')))
+        if item:
+            parsed = parse_ingredient(item)
+            parsed['inferred'] = ing.get('inferred', False)
+            normalized.append(parsed)
+
+    return normalized
 
 
 def extract_recipe_with_ollama(title, channel, description, transcript):
@@ -233,6 +316,14 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False) 
         # Add source metadata
         recipe_data['source'] = source
         recipe_data['source_url'] = recipe_link
+
+        # Normalize AI output to standard formats (handles schema variations)
+        recipe_data['ingredients'] = normalize_ingredients(
+            recipe_data.get('ingredients', [])
+        )
+        recipe_data['instructions'] = normalize_instructions(
+            recipe_data.get('instructions', [])
+        )
 
         # Validate and repair ingredients (fixes AI extraction errors)
         recipe_data['ingredients'] = validate_ingredients(
