@@ -21,7 +21,7 @@ No way to automatically generate weekly meal plan templates. User must manually 
 ```markdown
 # Meal Plan - Week 03 (Jan 13 - Jan 19, 2026)
 
-## Monday
+## Monday (Jan 13)
 ### Breakfast
 
 ### Lunch
@@ -31,7 +31,7 @@ No way to automatically generate weekly meal plan templates. User must manually 
 ### Notes
 
 
-## Tuesday
+## Tuesday (Jan 14)
 ### Breakfast
 
 ### Lunch
@@ -41,7 +41,7 @@ No way to automatically generate weekly meal plan templates. User must manually 
 ### Notes
 
 
-## Wednesday
+## Wednesday (Jan 15)
 ### Breakfast
 
 ### Lunch
@@ -51,7 +51,7 @@ No way to automatically generate weekly meal plan templates. User must manually 
 ### Notes
 
 
-## Thursday
+## Thursday (Jan 16)
 ### Breakfast
 
 ### Lunch
@@ -61,7 +61,7 @@ No way to automatically generate weekly meal plan templates. User must manually 
 ### Notes
 
 
-## Friday
+## Friday (Jan 17)
 ### Breakfast
 
 ### Lunch
@@ -71,7 +71,7 @@ No way to automatically generate weekly meal plan templates. User must manually 
 ### Notes
 
 
-## Saturday
+## Saturday (Jan 18)
 ### Breakfast
 
 ### Lunch
@@ -81,7 +81,7 @@ No way to automatically generate weekly meal plan templates. User must manually 
 ### Notes
 
 
-## Sunday
+## Sunday (Jan 19)
 ### Breakfast
 
 ### Lunch

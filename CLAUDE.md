@@ -78,6 +78,63 @@ cd /Users/chaseeasterling/KitchenOS
 .venv/bin/python batch_extract.py --dry-run
 ```
 
+### Generate Meal Plan
+
+```bash
+# Generate meal plan for 2 weeks ahead (normal operation)
+.venv/bin/python generate_meal_plan.py
+
+# Generate for specific week
+.venv/bin/python generate_meal_plan.py --week 2026-W05
+
+# Dry run (preview without creating)
+.venv/bin/python generate_meal_plan.py --dry-run
+```
+
+### Generate Shopping List
+
+```bash
+# Auto-detect current week's plan
+.venv/bin/python shopping_list.py
+
+# Use specific week's plan
+.venv/bin/python shopping_list.py --week 2026-W03
+
+# Preview without adding to Reminders
+.venv/bin/python shopping_list.py --dry-run
+
+# Clear existing items first
+.venv/bin/python shopping_list.py --clear
+```
+
+## Meal Plan Generator (LaunchAgent)
+
+Auto-generates weekly meal plan templates 2 weeks in advance. Runs daily at 6am.
+
+### Management
+
+```bash
+# Install the LaunchAgent
+cp com.kitchenos.mealplan.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.kitchenos.mealplan.plist
+
+# View logs
+tail -f /Users/chaseeasterling/KitchenOS/meal_plan_generator.log
+
+# Restart service
+launchctl unload ~/Library/LaunchAgents/com.kitchenos.mealplan.plist
+launchctl load ~/Library/LaunchAgents/com.kitchenos.mealplan.plist
+
+# Test run manually
+.venv/bin/python generate_meal_plan.py
+```
+
+### Meal Plan Location
+
+Files are created in: `{Obsidian Vault}/Meal Plans/2026-W03.md`
+
+Template includes Monday-Sunday with Breakfast/Lunch/Dinner/Notes sections.
+
 ## API Server (iOS Shortcut Integration)
 
 The API server enables recipe extraction from iOS via Share Sheet. It runs as a LaunchAgent and is accessible via Tailscale from anywhere.
@@ -147,10 +204,14 @@ template → Obsidian
 | `main.py` | Video data fetcher (transcript, metadata, `--json` mode) |
 | `api_server.py` | Flask API for iOS Shortcut integration |
 | `batch_extract.py` | Batch processor - reads from iOS Reminders, extracts in bulk |
+| `generate_meal_plan.py` | Creates weekly meal plan templates |
+| `shopping_list.py` | Generates shopping list from meal plans |
 | `prompts/recipe_extraction.py` | AI prompt templates for structured extraction |
 | `templates/recipe_template.py` | Markdown formatter with YAML frontmatter |
+| `templates/meal_plan_template.py` | Weekly meal plan template generator |
 | `lib/ingredient_parser.py` | Parses ingredient strings into amount/unit/item |
 | `lib/ingredient_validator.py` | Validates/repairs AI extraction errors in ingredients |
+| `lib/ingredient_aggregator.py` | Combines like ingredients for shopping lists |
 
 ### Key Functions
 
@@ -357,11 +418,12 @@ KitchenOS/
 ├── batch_extract.py       # Batch processor
 ├── recipe_sources.py      # Recipe extraction logic
 ├── migrate_recipes.py     # Schema migration
-├── shopping_list.py       # Shopping list feature
+├── shopping_list.py       # Shopping list from meal plans
+├── generate_meal_plan.py  # Weekly meal plan generator
 │
 ├── lib/                   # Python library modules
 ├── prompts/               # AI prompt templates
-├── templates/             # Recipe markdown templates
+├── templates/             # Recipe + meal plan templates
 ├── tests/                 # Test suite
 ├── scripts/               # Shell scripts
 │
@@ -370,6 +432,7 @@ KitchenOS/
 │   ├── plans/             # Design documents
 │   └── stories/           # User stories
 │
+├── com.kitchenos.mealplan.plist  # LaunchAgent for meal plan generation
 └── KitchenOSApp/          # macOS menu bar app
 ```
 

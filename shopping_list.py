@@ -5,7 +5,9 @@ Reads recipe links from a Meal Plan note, aggregates ingredients,
 and pushes the combined list to Apple Reminders.
 
 Usage:
-    python shopping_list.py                    # Default meal plan
+    python shopping_list.py                    # Auto-detect current week's plan
+    python shopping_list.py --week 2026-W03   # Use specific week's plan
+    python shopping_list.py --plan custom.md  # Use custom file
     python shopping_list.py --dry-run          # Preview without adding
     python shopping_list.py --output list.txt  # Save to file
     python shopping_list.py --clear            # Clear list first
@@ -14,6 +16,7 @@ Usage:
 import argparse
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
 from lib.recipe_parser import parse_recipe_file
@@ -22,9 +25,67 @@ from lib.reminders import add_to_reminders, clear_reminders_list, create_reminde
 
 # Configuration
 OBSIDIAN_VAULT = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS")
-MEAL_PLAN_PATH = OBSIDIAN_VAULT / "Meal Plan.md"
+MEAL_PLANS_PATH = OBSIDIAN_VAULT / "Meal Plans"
+LEGACY_MEAL_PLAN_PATH = OBSIDIAN_VAULT / "Meal Plan.md"
 RECIPES_PATH = OBSIDIAN_VAULT / "Recipes"
 REMINDERS_LIST = "Shopping"
+
+
+def get_current_week_plan() -> Path | None:
+    """Get the meal plan file for the current week.
+
+    Returns:
+        Path to current week's meal plan, or None if not found.
+    """
+    today = date.today()
+    iso_cal = today.isocalendar()
+    filename = f"{iso_cal.year}-W{iso_cal.week:02d}.md"
+    filepath = MEAL_PLANS_PATH / filename
+
+    if filepath.exists():
+        return filepath
+    return None
+
+
+def parse_week_string(week_str: str) -> Path:
+    """Parse a week string like '2026-W03' into a file path.
+
+    Raises:
+        ValueError: If format is invalid or file doesn't exist.
+    """
+    match = re.match(r'^(\d{4})-W(\d{2})$', week_str)
+    if not match:
+        raise ValueError(f"Invalid week format: {week_str}. Expected format: YYYY-WNN (e.g., 2026-W03)")
+
+    filepath = MEAL_PLANS_PATH / f"{week_str}.md"
+    if not filepath.exists():
+        raise ValueError(f"Meal plan not found: {filepath}")
+
+    return filepath
+
+
+def resolve_meal_plan_path(args) -> Path:
+    """Determine which meal plan file to use.
+
+    Priority:
+    1. --plan (explicit file path)
+    2. --week (specific week)
+    3. Auto-detect current week
+    4. Fallback to legacy Meal Plan.md
+    """
+    if args.plan:
+        return args.plan
+
+    if args.week:
+        return parse_week_string(args.week)
+
+    # Try auto-detect current week
+    current_week_plan = get_current_week_plan()
+    if current_week_plan:
+        return current_week_plan
+
+    # Fallback to legacy path
+    return LEGACY_MEAL_PLAN_PATH
 
 
 def slugify(text):
@@ -71,14 +132,24 @@ def find_recipe_file(recipe_name, recipes_path):
 
 def main():
     parser = argparse.ArgumentParser(description="Generate shopping list from meal plan")
-    parser.add_argument('--plan', type=Path, default=MEAL_PLAN_PATH, help='Meal plan file')
+    parser.add_argument('--week', type=str, help='Week to use (e.g., 2026-W03)')
+    parser.add_argument('--plan', type=Path, help='Custom meal plan file')
     parser.add_argument('--dry-run', action='store_true', help='Preview without adding to Reminders')
     parser.add_argument('--output', type=Path, help='Output to file instead of Reminders')
     parser.add_argument('--clear', action='store_true', help='Clear list before adding')
     args = parser.parse_args()
 
+    # Resolve meal plan path
+    try:
+        meal_plan_path = resolve_meal_plan_path(args)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Using meal plan: {meal_plan_path.name}")
+
     # Parse meal plan
-    recipe_names = parse_meal_plan(args.plan)
+    recipe_names = parse_meal_plan(meal_plan_path)
     print(f"Found {len(recipe_names)} recipes in meal plan")
 
     if not recipe_names:
