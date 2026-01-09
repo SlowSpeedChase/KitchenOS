@@ -126,12 +126,13 @@ def save_recipe_to_obsidian(recipe_data, video_url, video_title, channel, video_
     return filepath
 
 
-def extract_single_recipe(url: str, dry_run: bool = False) -> dict:
+def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False) -> dict:
     """Extract recipe from a YouTube URL.
 
     Args:
         url: YouTube video URL or ID
         dry_run: If True, don't save to Obsidian
+        force: If True, re-extract even if recipe already exists
 
     Returns:
         dict with keys:
@@ -164,9 +165,9 @@ def extract_single_recipe(url: str, dry_run: bool = False) -> dict:
         else:
             video_url = f"https://www.youtube.com/watch?v={video_id}"
 
-        # Check for existing recipe first
+        # Check for existing recipe first (skip unless force=True)
         existing = find_existing_recipe(OBSIDIAN_RECIPES_PATH, video_id)
-        if existing and not dry_run:
+        if existing and not dry_run and not force:
             result["success"] = True
             result["skipped"] = True
             result["filepath"] = existing
@@ -272,6 +273,11 @@ def main():
         action='store_true',
         help='Print recipe without saving to Obsidian'
     )
+    parser.add_argument(
+        '--force',
+        action='store_true',
+        help='Re-extract even if recipe already exists'
+    )
     args = parser.parse_args()
 
     parsed = youtube_parser(args.url)
@@ -280,7 +286,7 @@ def main():
     video_type = "Short" if is_short else "video"
     print(f"Fetching {video_type} data for: {video_id}")
 
-    result = extract_single_recipe(args.url, dry_run=args.dry_run)
+    result = extract_single_recipe(args.url, dry_run=args.dry_run, force=args.force)
 
     if not result["success"]:
         print(f"Error: {result['error']}", file=sys.stderr)

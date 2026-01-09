@@ -12,6 +12,18 @@ UNIT_WORDS = [
     'kg', 'kilogram', 'kilograms',
 ]
 
+# Non-standard unit names that indicate AI formatting errors
+MALFORMED_UNITS = [
+    'half_cup', 'quarter_cup', 'third_cup', 'three_quarters_cup',
+    'half_teaspoon', 'quarter_teaspoon',
+    'half_tablespoon', 'quarter_tablespoon',
+    'two_tablespoons', 'three_tablespoons',
+]
+
+# Regex to detect units concatenated with numbers (e.g., "20g", "100ml")
+import re
+AMOUNT_WITH_UNIT_PATTERN = re.compile(r'^\d+(?:\.\d+)?\s*(g|kg|ml|l|oz|lb)$', re.IGNORECASE)
+
 
 def is_malformed_ingredient(ing: dict) -> bool:
     """Detect common AI extraction errors in ingredient structure.
@@ -19,8 +31,11 @@ def is_malformed_ingredient(ing: dict) -> bool:
     Detects:
     - Unit field is "None", "null", or empty when amount contains unit words
     - Amount field contains unit words (e.g., "30 grams" instead of amount=30, unit=g)
+    - Amount field has unit concatenated (e.g., "20g" instead of amount=20, unit=g)
     - Empty item field
     - Unit is "whole" but amount contains unit words
+    - Unit is non-standard name (e.g., "half_cup" instead of "cup")
+    - Amount is "None" or "null"
 
     Args:
         ing: Ingredient dict with amount, unit, item keys
@@ -36,8 +51,16 @@ def is_malformed_ingredient(ing: dict) -> bool:
     if not item:
         return True
 
-    # Check if amount contains unit words
+    # Amount is "none" or "null"
+    if amount in ('none', 'null', ''):
+        return True
+
+    # Check if amount contains unit words (space-separated)
     amount_has_unit = any(word in amount.split() for word in UNIT_WORDS)
+
+    # Check if amount has unit concatenated (e.g., "20g", "100ml")
+    if AMOUNT_WITH_UNIT_PATTERN.match(amount):
+        return True
 
     # Unit is "none"/"null"/empty but amount has unit words
     if unit in ('none', 'null', '') and amount_has_unit:
@@ -52,14 +75,18 @@ def is_malformed_ingredient(ing: dict) -> bool:
     if unit in ('none', 'null'):
         return True
 
+    # Unit is non-standard AI-generated name
+    if unit in MALFORMED_UNITS:
+        return True
+
     return False
 
 
 def repair_ingredient(ing: dict) -> dict:
     """Re-parse a malformed ingredient using ingredient_parser.
 
-    Combines all parts of the malformed ingredient into a single string
-    and re-parses it to get correct amount/unit/item structure.
+    Intelligently combines parts of the malformed ingredient, excluding
+    bad unit values, then re-parses to get correct structure.
 
     Args:
         ing: Malformed ingredient dict
@@ -67,24 +94,41 @@ def repair_ingredient(ing: dict) -> dict:
     Returns:
         Repaired ingredient dict with amount, unit, item, inferred keys
     """
-    # Combine all parts into a single string
-    parts = []
-
     amount = str(ing.get('amount', '')).strip()
     unit = str(ing.get('unit', '')).strip()
     item = str(ing.get('item', '')).strip()
 
-    if amount:
+    parts = []
+
+    # Handle amount
+    amount_lower = amount.lower()
+    if amount_lower not in ('none', 'null', ''):
         parts.append(amount)
+        amount_has_embedded_unit = (
+            AMOUNT_WITH_UNIT_PATTERN.match(amount_lower) or
+            any(word in amount_lower.split() for word in UNIT_WORDS)
+        )
+    else:
+        amount_has_embedded_unit = False
 
-    # Only include unit if it's meaningful (not none/null/whole when amount has units)
-    if unit and unit.lower() not in ('none', 'null'):
-        # Don't duplicate if amount already contains unit words
-        amount_lower = amount.lower()
-        if not any(word in amount_lower.split() for word in UNIT_WORDS):
-            if unit.lower() != 'whole':
-                parts.append(unit)
+    # Handle unit - only include if valid and not redundant
+    unit_lower = unit.lower()
+    unit_is_bad = (
+        unit_lower in ('none', 'null', '') or
+        unit_lower in MALFORMED_UNITS or
+        amount_has_embedded_unit  # Don't add unit if amount already has one
+    )
 
+    if not unit_is_bad:
+        # Unit looks valid, include it
+        parts.append(unit)
+    elif amount_lower in ('none', 'null', '') and unit_lower not in ('none', 'null', ''):
+        # Amount is empty but we have a unit - might be informal like "pinch"
+        # Include it so parser can handle "pinch salt"
+        if unit_lower not in MALFORMED_UNITS:
+            parts.append(unit)
+
+    # Always include item
     if item:
         parts.append(item)
 
