@@ -22,12 +22,16 @@ from pathlib import Path
 from lib.recipe_parser import parse_recipe_file, parse_ingredient_table
 from lib.ingredient_aggregator import aggregate_ingredients, format_ingredient
 from lib.reminders import add_to_reminders, clear_reminders_list, create_reminders_list
+from lib.shopping_list_generator import (
+    parse_week_string,
+    extract_ingredient_table,
+    find_recipe_file,
+    MEAL_PLANS_PATH,
+)
 
 # Configuration
 OBSIDIAN_VAULT = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS")
-MEAL_PLANS_PATH = OBSIDIAN_VAULT / "Meal Plans"
 LEGACY_MEAL_PLAN_PATH = OBSIDIAN_VAULT / "Meal Plan.md"
-RECIPES_PATH = OBSIDIAN_VAULT / "Recipes"
 REMINDERS_LIST = "Shopping"
 
 
@@ -45,23 +49,6 @@ def get_current_week_plan() -> Path | None:
     if filepath.exists():
         return filepath
     return None
-
-
-def parse_week_string(week_str: str) -> Path:
-    """Parse a week string like '2026-W03' into a file path.
-
-    Raises:
-        ValueError: If format is invalid or file doesn't exist.
-    """
-    match = re.match(r'^(\d{4})-W(\d{2})$', week_str)
-    if not match:
-        raise ValueError(f"Invalid week format: {week_str}. Expected format: YYYY-WNN (e.g., 2026-W03)")
-
-    filepath = MEAL_PLANS_PATH / f"{week_str}.md"
-    if not filepath.exists():
-        raise ValueError(f"Meal plan not found: {filepath}")
-
-    return filepath
 
 
 def resolve_meal_plan_path(args) -> Path:
@@ -88,25 +75,6 @@ def resolve_meal_plan_path(args) -> Path:
     return LEGACY_MEAL_PLAN_PATH
 
 
-def slugify(text):
-    """Convert text to slug format."""
-    return re.sub(r'[^a-z0-9]+', '-', text.lower()).strip('-')
-
-
-def extract_ingredient_table(body: str) -> str:
-    """Extract the ingredient table from recipe body.
-
-    Looks for ## Ingredients section and extracts the markdown table.
-    """
-    # Find ## Ingredients section
-    pattern = r'##\s+Ingredients\s*\n(.*?)(?=\n##|\Z)'
-    match = re.search(pattern, body, re.IGNORECASE | re.DOTALL)
-
-    if match:
-        return match.group(1).strip()
-    return ""
-
-
 def parse_meal_plan(meal_plan_path):
     """Extract recipe links from meal plan note.
 
@@ -123,25 +91,6 @@ def parse_meal_plan(meal_plan_path):
     links = re.findall(r'\[\[([^\]]+)\]\]', content)
 
     return links
-
-
-def find_recipe_file(recipe_name, recipes_path):
-    """Find recipe file by name.
-
-    Tries exact match, then slugified match.
-    """
-    # Try exact match
-    exact = recipes_path / f"{recipe_name}.md"
-    if exact.exists():
-        return exact
-
-    # Try slugified
-    slug = slugify(recipe_name)
-    for file in recipes_path.glob("*.md"):
-        if slugify(file.stem) == slug:
-            return file
-
-    return None
 
 
 def main():
@@ -175,7 +124,7 @@ def main():
     loaded_recipes = 0
 
     for name in recipe_names:
-        recipe_file = find_recipe_file(name, RECIPES_PATH)
+        recipe_file = find_recipe_file(name)
         if recipe_file:
             try:
                 content = recipe_file.read_text(encoding='utf-8')

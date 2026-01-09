@@ -2,14 +2,18 @@
 
 import pytest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 from lib.shopping_list_generator import (
     generate_shopping_list,
     parse_week_string,
     extract_recipe_links,
     slugify,
+    find_recipe_file,
+    extract_ingredient_table,
+    load_recipe_ingredients,
     MEAL_PLANS_PATH,
+    RECIPES_PATH,
 )
 
 
@@ -97,3 +101,99 @@ def test_generate_shopping_list_no_recipes():
 
     assert result["success"] is False
     assert "No recipes found" in result["error"]
+
+
+# Tests for find_recipe_file
+
+def test_find_recipe_file_exact_match():
+    """Finds recipe by exact name."""
+    with patch.object(Path, 'exists', return_value=True):
+        result = find_recipe_file("Pasta Carbonara")
+        assert result == RECIPES_PATH / "Pasta Carbonara.md"
+
+
+def test_find_recipe_file_returns_none_when_not_found():
+    """Returns None when recipe not found."""
+    with patch.object(Path, 'exists', return_value=False):
+        with patch.object(Path, 'glob', return_value=[]):
+            result = find_recipe_file("Nonexistent Recipe")
+            assert result is None
+
+
+def test_find_recipe_file_slugified_match():
+    """Finds recipe via slugified name matching."""
+    mock_file = MagicMock(spec=Path)
+    mock_file.stem = "pasta-aglio-e-olio"
+
+    with patch.object(Path, 'exists', return_value=False):
+        with patch.object(Path, 'glob', return_value=[mock_file]):
+            result = find_recipe_file("Pasta Aglio e Olio")
+            assert result == mock_file
+
+
+# Tests for extract_ingredient_table
+
+def test_extract_ingredient_table_finds_section():
+    """Extracts ingredient table from body."""
+    body = "## Description\n\nSome text\n\n## Ingredients\n\n| Amount | Unit | Item |\n|--------|------|------|\n| 1 | cup | rice |\n\n## Instructions"
+    result = extract_ingredient_table(body)
+    assert "| 1 | cup | rice |" in result
+
+
+def test_extract_ingredient_table_empty_when_no_section():
+    """Returns empty string when no ingredients section."""
+    body = "## Description\nSome text\n## Instructions\n"
+    result = extract_ingredient_table(body)
+    assert result == ""
+
+
+def test_extract_ingredient_table_handles_end_of_file():
+    """Extracts ingredients when section is at end of file."""
+    body = "## Description\n\nSome text\n\n## Ingredients\n\n| Amount | Unit | Item |\n| 2 | tbsp | oil |"
+    result = extract_ingredient_table(body)
+    assert "| 2 | tbsp | oil |" in result
+
+
+def test_extract_ingredient_table_case_insensitive():
+    """Section heading matching is case insensitive."""
+    body = "## description\n\n## ingredients\n\n| 1 | cup | flour |"
+    result = extract_ingredient_table(body)
+    assert "| 1 | cup | flour |" in result
+
+
+# Tests for load_recipe_ingredients
+
+def test_load_recipe_ingredients_not_found():
+    """Returns empty list and warning when recipe not found."""
+    with patch('lib.shopping_list_generator.find_recipe_file', return_value=None):
+        ingredients, warning = load_recipe_ingredients("Missing Recipe")
+        assert ingredients == []
+        assert "Recipe not found" in warning
+
+
+def test_load_recipe_ingredients_no_table():
+    """Returns empty list when recipe has no ingredients table."""
+    mock_file = MagicMock(spec=Path)
+    mock_file.read_text.return_value = "---\ntitle: Test\n---\n## Description\nNo ingredients here"
+
+    with patch('lib.shopping_list_generator.find_recipe_file', return_value=mock_file):
+        with patch('lib.shopping_list_generator.parse_recipe_file', return_value={'body': '## Description\nNo ingredients'}):
+            ingredients, warning = load_recipe_ingredients("Test Recipe")
+            assert ingredients == []
+            assert "No ingredients table" in warning
+
+
+def test_load_recipe_ingredients_success():
+    """Successfully loads ingredients from recipe."""
+    mock_file = MagicMock(spec=Path)
+    mock_file.read_text.return_value = "content"
+
+    body_with_table = "## Ingredients\n\n| Amount | Unit | Item |\n|--------|------|------|\n| 1 | cup | rice |"
+    parsed_ingredients = [{"amount": "1", "unit": "cup", "item": "rice"}]
+
+    with patch('lib.shopping_list_generator.find_recipe_file', return_value=mock_file):
+        with patch('lib.shopping_list_generator.parse_recipe_file', return_value={'body': body_with_table}):
+            with patch('lib.shopping_list_generator.parse_ingredient_table', return_value=parsed_ingredients):
+                ingredients, warning = load_recipe_ingredients("Test Recipe")
+                assert ingredients == parsed_ingredients
+                assert warning is None
