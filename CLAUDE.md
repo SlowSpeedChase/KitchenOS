@@ -116,7 +116,7 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist
 - **Tailscale IP**: `100.111.6.10`
 - **LaunchAgent**: `~/Library/LaunchAgents/com.kitchenos.api.plist`
 
-See `iOS_SHORTCUT_SETUP.md` for iOS Shortcut configuration.
+See `docs/setup/iOS_SHORTCUT_SETUP.md` for iOS Shortcut configuration.
 
 ## Architecture
 
@@ -341,18 +341,46 @@ These features are planned but not yet implemented:
 | Feature | Priority | Notes |
 |---------|----------|-------|
 | ~~Recipe link detection~~ | ~~High~~ | **Completed** - Priority chain: webpage → description → AI |
-| ~~iOS Shortcut~~ | ~~Medium~~ | **Completed** - /extract endpoint + Tailscale, see iOS_SHORTCUT_SETUP.md |
+| ~~iOS Shortcut~~ | ~~Medium~~ | **Completed** - /extract endpoint + Tailscale, see docs/setup/iOS_SHORTCUT_SETUP.md |
 | ~~Batch processing~~ | ~~Medium~~ | **Completed** - Processes URLs from iOS Reminders list |
 | ~~YouTube Shorts support~~ | ~~Medium~~ | **Completed** - yt-dlp fetches metadata for /shorts/ URLs |
 | Claude API fallback | Low | Use Claude when Ollama fails |
 | Image extraction | Low | Get video thumbnails for recipes |
+
+## Project Structure
+
+```
+KitchenOS/
+├── extract_recipe.py      # Main entry point
+├── main.py                # Video data fetcher
+├── api_server.py          # Flask API for iOS
+├── batch_extract.py       # Batch processor
+├── recipe_sources.py      # Recipe extraction logic
+├── migrate_recipes.py     # Schema migration
+├── shopping_list.py       # Shopping list feature
+│
+├── lib/                   # Python library modules
+├── prompts/               # AI prompt templates
+├── templates/             # Recipe markdown templates
+├── tests/                 # Test suite
+├── scripts/               # Shell scripts
+│
+├── docs/                  # Documentation
+│   ├── setup/             # Setup guides (iOS, HOW_TO_RUN)
+│   ├── plans/             # Design documents
+│   └── stories/           # User stories
+│
+└── KitchenOSApp/          # macOS menu bar app
+```
 
 ## Documentation
 
 | Document | Purpose |
 |----------|---------|
 | `README.md` | User guide - installation, usage, configuration |
+| `docs/setup/iOS_SHORTCUT_SETUP.md` | iOS Shortcut configuration |
+| `docs/setup/HOW_TO_RUN.md` | Quick start guide |
 | `docs/IMPLEMENTATION_SUMMARY.md` | What was built vs planned, lessons learned |
-| `docs/plans/2026-01-07-youtube-recipe-extraction-design.md` | Original design (n8n-based, **superseded** by standalone script) |
+| `docs/plans/` | Design documents and plans |
 
 **Note:** The original design proposed n8n orchestration, but we built a simpler standalone Python solution. See `IMPLEMENTATION_SUMMARY.md` for details on this decision.

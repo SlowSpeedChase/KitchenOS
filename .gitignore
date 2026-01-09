@@ -94,6 +94,10 @@ Thumbs.db
 temp/
 tmp/
 
+# Server logs
+server.log
+*.log
+
 # Audio files (for Whisper processing)
 *.mp3
 *.wav
