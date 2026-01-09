@@ -7,6 +7,7 @@ from typing import Optional, Dict, Any, List
 
 import requests
 from bs4 import BeautifulSoup
+from duckduckgo_search import DDGS
 
 # Config directory
 CONFIG_DIR = Path(__file__).parent / "config"
@@ -47,6 +48,8 @@ EXCLUDED_DOMAINS = [
     "amzn.to",
     "youtube.com",
     "youtu.be",
+    "pinterest.com",
+    "pinterest.co.uk",
 ]
 
 # Keywords that indicate a recipe link
@@ -467,3 +470,56 @@ def load_creator_mapping() -> Dict[str, Optional[str]]:
     except (json.JSONDecodeError, IOError) as e:
         print(f"  -> Warning: Could not load creator mapping: {e}")
         return {}
+
+
+def search_for_recipe_url(
+    channel: str,
+    title: str,
+    site: Optional[str] = None
+) -> Optional[str]:
+    """
+    Search DuckDuckGo for a recipe URL.
+
+    Args:
+        channel: YouTube channel name
+        title: Video title
+        site: Optional domain to restrict search (e.g., "feelgoodfoodie.net")
+
+    Returns:
+        Recipe URL if found, None otherwise
+    """
+    # Clean up title (remove channel name if present, common suffixes)
+    clean_title = title
+    for suffix in [" | " + channel, " - " + channel, " by " + channel]:
+        if clean_title.lower().endswith(suffix.lower()):
+            clean_title = clean_title[:-len(suffix)]
+
+    # Build query
+    if site:
+        query = f'"{clean_title}" recipe site:{site}'
+    else:
+        query = f'"{channel}" "{clean_title}" recipe'
+
+    try:
+        with DDGS() as ddgs:
+            results = ddgs.text(query, max_results=5)
+
+            for result in results:
+                url = result.get("href", "")
+
+                # Skip excluded domains
+                if _is_excluded_domain(url):
+                    continue
+
+                # Prefer URLs with /recipe/ in path
+                if "/recipe/" in url.lower():
+                    return url
+
+                # Accept first non-excluded result
+                return url
+
+            return None
+
+    except Exception as e:
+        print(f"  -> DuckDuckGo search failed: {e}")
+        return None
