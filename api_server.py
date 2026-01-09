@@ -11,6 +11,9 @@ import warnings
 from pathlib import Path
 from dotenv import load_dotenv
 
+from lib.shopping_list_generator import generate_shopping_list, SHOPPING_LISTS_PATH
+from templates.shopping_list_template import generate_shopping_list_markdown, generate_filename as shopping_list_filename
+
 load_dotenv()
 warnings.filterwarnings('ignore', message='urllib3 v2 only supports OpenSSL 1.1.1+')
 
@@ -181,6 +184,41 @@ def extract_recipe():
         return jsonify({'status': 'error', 'message': 'Extraction timed out (5 min)'}), 504
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/generate-shopping-list', methods=['POST'])
+def generate_shopping_list_endpoint():
+    """Generate shopping list markdown from meal plan."""
+    data = request.get_json(force=True, silent=True) or {}
+    week = data.get('week')
+
+    if not week:
+        return jsonify({'success': False, 'error': 'No week provided'}), 400
+
+    # Generate the shopping list
+    result = generate_shopping_list(week)
+
+    if not result['success']:
+        return jsonify(result), 400
+
+    # Create markdown content
+    markdown = generate_shopping_list_markdown(week, result['items'])
+
+    # Ensure Shopping Lists folder exists
+    SHOPPING_LISTS_PATH.mkdir(parents=True, exist_ok=True)
+
+    # Write file
+    filename = shopping_list_filename(week)
+    filepath = SHOPPING_LISTS_PATH / filename
+    filepath.write_text(markdown, encoding='utf-8')
+
+    return jsonify({
+        'success': True,
+        'file': f"Shopping Lists/{filename}",
+        'item_count': len(result['items']),
+        'recipes': result['recipes'],
+        'warnings': result.get('warnings', [])
+    })
 
 
 if __name__ == '__main__':
