@@ -11,7 +11,7 @@ import warnings
 from pathlib import Path
 from dotenv import load_dotenv
 
-from lib.shopping_list_generator import generate_shopping_list, SHOPPING_LISTS_PATH
+from lib.shopping_list_generator import generate_shopping_list, parse_shopping_list_file, SHOPPING_LISTS_PATH
 from templates.shopping_list_template import generate_shopping_list_markdown, generate_filename as shopping_list_filename
 
 load_dotenv()
@@ -219,6 +219,48 @@ def generate_shopping_list_endpoint():
         'recipes': result['recipes'],
         'warnings': result.get('warnings', [])
     })
+
+
+@app.route('/send-to-reminders', methods=['POST'])
+def send_to_reminders_endpoint():
+    """Send shopping list items to Apple Reminders."""
+    from lib.reminders import add_to_reminders, create_reminders_list
+
+    data = request.get_json(force=True, silent=True) or {}
+    week = data.get('week')
+
+    if not week:
+        return jsonify({'success': False, 'error': 'No week provided'}), 400
+
+    # Parse shopping list
+    result = parse_shopping_list_file(week)
+
+    if not result['success']:
+        return jsonify(result), 400
+
+    if not result['items']:
+        return jsonify({
+            'success': True,
+            'items_sent': 0,
+            'items_skipped': result['skipped'],
+            'message': 'No unchecked items to send'
+        })
+
+    # Send to Reminders
+    try:
+        create_reminders_list("Shopping")
+        add_to_reminders(result['items'], "Shopping")
+
+        return jsonify({
+            'success': True,
+            'items_sent': len(result['items']),
+            'items_skipped': result['skipped']
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Failed to add to Reminders: {e}'
+        }), 500
 
 
 if __name__ == '__main__':

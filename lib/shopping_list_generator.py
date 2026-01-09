@@ -138,3 +138,43 @@ def generate_shopping_list(week: str) -> dict:
         "recipes": loaded_recipes,
         "warnings": warnings
     }
+
+
+def parse_shopping_list_file(week: str) -> dict:
+    """Parse shopping list file and extract unchecked items.
+
+    Args:
+        week: Week identifier like '2026-W04'
+
+    Returns:
+        Dict with keys:
+            - success: bool
+            - items: list of unchecked item strings
+            - skipped: count of checked items
+            - error: error message (if success=False)
+    """
+    filepath = SHOPPING_LISTS_PATH / f"{week}.md"
+
+    if not filepath.exists():
+        return {"success": False, "error": f"Shopping list not found: {week}. Generate it first."}
+
+    content = filepath.read_text(encoding='utf-8')
+
+    unchecked = []
+    checked_count = 0
+
+    for line in content.split('\n'):
+        # Match unchecked: - [ ] item
+        if re.match(r'^- \[ \] ', line):
+            item = line[6:].strip()  # Remove "- [ ] " prefix
+            if item:
+                unchecked.append(item)
+        # Match checked: - [x] item
+        elif re.match(r'^- \[x\] ', line, re.IGNORECASE):
+            checked_count += 1
+
+    return {
+        "success": True,
+        "items": unchecked,
+        "skipped": checked_count
+    }

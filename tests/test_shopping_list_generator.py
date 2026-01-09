@@ -12,8 +12,10 @@ from lib.shopping_list_generator import (
     find_recipe_file,
     extract_ingredient_table,
     load_recipe_ingredients,
+    parse_shopping_list_file,
     MEAL_PLANS_PATH,
     RECIPES_PATH,
+    SHOPPING_LISTS_PATH,
 )
 
 
@@ -197,3 +199,64 @@ def test_load_recipe_ingredients_success():
                 ingredients, warning = load_recipe_ingredients("Test Recipe")
                 assert ingredients == parsed_ingredients
                 assert warning is None
+
+
+# Tests for parse_shopping_list_file
+
+def test_parse_shopping_list_extracts_unchecked():
+    """Parser extracts only unchecked items."""
+    content = """# Shopping List
+- [ ] chicken
+- [x] rice
+- [ ] onions
+"""
+
+    with patch.object(Path, 'exists', return_value=True):
+        with patch.object(Path, 'read_text', return_value=content):
+            result = parse_shopping_list_file("2026-W04")
+
+    assert result['success'] is True
+    assert result['items'] == ['chicken', 'onions']
+    assert result['skipped'] == 1
+
+
+def test_parse_shopping_list_not_found():
+    """Returns error when shopping list file not found."""
+    with patch.object(Path, 'exists', return_value=False):
+        result = parse_shopping_list_file("1999-W01")
+
+    assert result['success'] is False
+    assert "Shopping list not found" in result['error']
+
+
+def test_parse_shopping_list_case_insensitive_check():
+    """Handles uppercase X in checked items."""
+    content = """# Shopping List
+- [ ] item1
+- [X] item2
+- [x] item3
+"""
+
+    with patch.object(Path, 'exists', return_value=True):
+        with patch.object(Path, 'read_text', return_value=content):
+            result = parse_shopping_list_file("2026-W04")
+
+    assert result['success'] is True
+    assert result['items'] == ['item1']
+    assert result['skipped'] == 2
+
+
+def test_parse_shopping_list_empty_items_skipped():
+    """Empty checkbox items are not included."""
+    content = """# Shopping List
+- [ ]
+- [ ] chicken
+- [ ]
+"""
+
+    with patch.object(Path, 'exists', return_value=True):
+        with patch.object(Path, 'read_text', return_value=content):
+            result = parse_shopping_list_file("2026-W04")
+
+    assert result['success'] is True
+    assert result['items'] == ['chicken']

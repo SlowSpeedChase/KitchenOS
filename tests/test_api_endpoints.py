@@ -26,3 +26,11 @@ def test_generate_shopping_list_invalid_week(client):
     assert response.status_code == 400
     data = response.get_json()
     assert data['success'] is False
+
+
+def test_send_to_reminders_requires_week(client):
+    """Endpoint requires week parameter."""
+    response = client.post('/send-to-reminders', json={})
+    assert response.status_code == 400
+    data = response.get_json()
+    assert "week" in data.get("error", "").lower()
