@@ -292,7 +292,7 @@ def has_recipe_in_description(description: str) -> bool:
     Check if a video description appears to contain a recipe.
 
     Looks for:
-    - "Ingredients" header
+    - "Ingredients" header (on its own line, not as a reference)
     - Multiple lines with quantities
     - "Method", "Instructions", or "Directions" header
     """
@@ -301,21 +301,36 @@ def has_recipe_in_description(description: str) -> bool:
 
     desc_lower = description.lower()
 
-    # Check for ingredients header
-    has_ingredients = any(marker in desc_lower for marker in [
-        "ingredients", "*ingredients*", "**ingredients**"
-    ])
+    # Exclude patterns that reference ingredients elsewhere (pinned comment, video, etc.)
+    reference_patterns = [
+        r'ingredients.*(?:in|see|check|find).*(?:pinned|comment|video|link|below|description)',
+        r'(?:pinned|comment).*ingredients',
+        r'ingredients.*you\'ll need.*(?:pinned|comment)',
+    ]
+    for pattern in reference_patterns:
+        if re.search(pattern, desc_lower):
+            return False
 
-    # Check for method/instructions header
-    has_method = any(marker in desc_lower for marker in [
-        "method", "instructions", "directions",
-        "*method*", "**method**",
-        "*instructions*", "**instructions**",
-    ])
+    # Check for ingredients header - must be at start of a line (actual header)
+    ingredients_header_pattern = r'^(?:\*{1,2})?ingredients(?:\*{1,2})?(?:\s*:)?$'
+    has_ingredients = bool(re.search(
+        ingredients_header_pattern,
+        desc_lower,
+        re.MULTILINE
+    ))
+
+    # Check for method/instructions header - must be at start of a line
+    method_header_pattern = r'^(?:\*{1,2})?(?:method|instructions|directions)(?:\*{1,2})?(?:\s*:)?$'
+    has_method = bool(re.search(
+        method_header_pattern,
+        desc_lower,
+        re.MULTILINE
+    ))
 
     # Check for quantity patterns (numbers followed by units)
-    quantity_pattern = r'\d+\s*(?:cup|tbsp|tsp|oz|lb|g|kg|ml|clove|bunch|head)'
-    has_quantities = len(re.findall(quantity_pattern, desc_lower)) >= 2
+    # Must have at least 3 to be a real ingredient list, not just nutrition info
+    quantity_pattern = r'\d+\s*(?:cup|tbsp|tsp|oz|lb|g|kg|ml|clove|bunch|head)\b'
+    has_quantities = len(re.findall(quantity_pattern, desc_lower)) >= 3
 
     return has_ingredients and (has_method or has_quantities)
 

@@ -19,7 +19,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from lib.recipe_parser import parse_recipe_file
+from lib.recipe_parser import parse_recipe_file, parse_ingredient_table
 from lib.ingredient_aggregator import aggregate_ingredients, format_ingredient
 from lib.reminders import add_to_reminders, clear_reminders_list, create_reminders_list
 
@@ -91,6 +91,20 @@ def resolve_meal_plan_path(args) -> Path:
 def slugify(text):
     """Convert text to slug format."""
     return re.sub(r'[^a-z0-9]+', '-', text.lower()).strip('-')
+
+
+def extract_ingredient_table(body: str) -> str:
+    """Extract the ingredient table from recipe body.
+
+    Looks for ## Ingredients section and extracts the markdown table.
+    """
+    # Find ## Ingredients section
+    pattern = r'##\s+Ingredients\s*\n(.*?)(?=\n##|\Z)'
+    match = re.search(pattern, body, re.IGNORECASE | re.DOTALL)
+
+    if match:
+        return match.group(1).strip()
+    return ""
 
 
 def parse_meal_plan(meal_plan_path):
@@ -166,9 +180,14 @@ def main():
             try:
                 content = recipe_file.read_text(encoding='utf-8')
                 parsed = parse_recipe_file(content)
-                ingredients = parsed['frontmatter'].get('ingredients', [])
-                all_ingredients.extend(ingredients)
-                loaded_recipes += 1
+                # Extract ingredients from body table, not frontmatter
+                table_text = extract_ingredient_table(parsed['body'])
+                if table_text:
+                    ingredients = parse_ingredient_table(table_text)
+                    all_ingredients.extend(ingredients)
+                    loaded_recipes += 1
+                else:
+                    print(f"Warning: No ingredients table found in {name}")
             except Exception as e:
                 print(f"Warning: Could not parse {name}: {e}", file=sys.stderr)
         else:
