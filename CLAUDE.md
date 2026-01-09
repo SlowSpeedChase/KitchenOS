@@ -107,6 +107,24 @@ cd /Users/chaseeasterling/KitchenOS
 .venv/bin/python shopping_list.py --clear
 ```
 
+### Generate Shopping List (via API)
+
+The Obsidian button calls this endpoint, but you can also test directly:
+
+```bash
+curl -X POST http://localhost:5001/generate-shopping-list \
+  -H "Content-Type: application/json" \
+  -d '{"week": "2026-W04"}'
+```
+
+### Send to Reminders (via API)
+
+```bash
+curl -X POST http://localhost:5001/send-to-reminders \
+  -H "Content-Type: application/json" \
+  -d '{"week": "2026-W04"}'
+```
+
 ## Meal Plan Generator (LaunchAgent)
 
 Auto-generates weekly meal plan templates 2 weeks in advance. Runs daily at 6am.
@@ -166,6 +184,8 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist
 | `/health` | GET | Health check |
 | `/transcript` | GET/POST | Returns transcript + description (no extraction) |
 | `/extract` | POST | Full extraction, saves to Obsidian |
+| `/generate-shopping-list` | POST | Generate shopping list markdown from meal plan |
+| `/send-to-reminders` | POST | Send unchecked items to Apple Reminders |
 
 ### Configuration
 
@@ -212,6 +232,9 @@ template → Obsidian
 | `lib/ingredient_parser.py` | Parses ingredient strings into amount/unit/item |
 | `lib/ingredient_validator.py` | Validates/repairs AI extraction errors in ingredients |
 | `lib/ingredient_aggregator.py` | Combines like ingredients for shopping lists |
+| `lib/shopping_list_generator.py` | Core logic for generating shopping lists from meal plans |
+| `templates/shopping_list_template.py` | Markdown template for shopping list files |
+| `scripts/kitchenos-uri-handler/` | macOS URI scheme handler for Obsidian buttons |
 
 ### Key Functions
 
