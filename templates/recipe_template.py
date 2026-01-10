@@ -144,7 +144,7 @@ confidence_notes: "{confidence_notes}"
 '''
 
 
-def format_recipe_markdown(recipe_data, video_url, video_title, channel):
+def format_recipe_markdown(recipe_data, video_url, video_title, channel, date_added=None):
     """Format recipe data into markdown string"""
 
     # Format ingredients as 3-column table
@@ -256,7 +256,7 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel):
         title=recipe_data.get('recipe_name', 'Untitled Recipe'),
         source_url=video_url,
         source_channel=channel or "Unknown",
-        date_added=date.today().isoformat(),
+        date_added=date_added or date.today().isoformat(),
         video_title=video_title or "Unknown Video",
         recipe_source=recipe_source,
         prep_time=quote_or_null(prep),

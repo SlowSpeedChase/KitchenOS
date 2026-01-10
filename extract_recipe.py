@@ -160,11 +160,12 @@ def save_recipe_to_obsidian(recipe_data, video_url, video_title, channel, video_
     """Format recipe as markdown and save to Obsidian vault.
 
     If a recipe for this video already exists, backs it up and preserves
-    the My Notes section before overwriting.
+    the My Notes section and date_added before overwriting.
     """
     # Check for existing recipe
     existing = find_existing_recipe(OBSIDIAN_RECIPES_PATH, video_id)
     preserved_notes = ""
+    preserved_date_added = None
     filepath = None
 
     if existing:
@@ -174,11 +175,20 @@ def save_recipe_to_obsidian(recipe_data, video_url, video_title, channel, video_
         backup_path = create_backup(existing)
         print(f"Backup created: {backup_path.name}")
 
-        # Preserve My Notes section
+        # Preserve My Notes section and date_added
         old_content = existing.read_text(encoding='utf-8')
         preserved_notes = extract_my_notes(old_content)
         if preserved_notes:
             print("Preserving My Notes section")
+
+        # Preserve original date_added
+        try:
+            parsed = parse_recipe_file(old_content)
+            preserved_date_added = parsed['frontmatter'].get('date_added')
+            if preserved_date_added:
+                print(f"Preserving original date_added: {preserved_date_added}")
+        except Exception:
+            pass  # If parsing fails, just use today's date
 
         # Reuse existing filepath
         filepath = existing
@@ -191,7 +201,7 @@ def save_recipe_to_obsidian(recipe_data, video_url, video_title, channel, video_
     OBSIDIAN_RECIPES_PATH.mkdir(parents=True, exist_ok=True)
 
     # Generate markdown
-    markdown = format_recipe_markdown(recipe_data, video_url, video_title, channel)
+    markdown = format_recipe_markdown(recipe_data, video_url, video_title, channel, preserved_date_added)
 
     # If we have preserved notes, replace the empty My Notes section
     if preserved_notes:
