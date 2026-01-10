@@ -154,6 +154,56 @@ def find_existing_recipe(recipes_dir: Path, video_id: str) -> Optional[Path]:
     return None
 
 
+def parse_recipe_body(body: str) -> dict:
+    """Parse recipe body into structured data for re-rendering.
+
+    Extracts ingredients and instructions from markdown body.
+
+    Args:
+        body: The markdown body (after frontmatter)
+
+    Returns:
+        dict with 'ingredients', 'instructions', 'description', 'video_tips'
+    """
+    result = {
+        'ingredients': [],
+        'instructions': [],
+        'description': '',
+        'video_tips': [],
+    }
+
+    # Extract description (first blockquote after title)
+    desc_match = re.search(r'^>\s*(.+?)$', body, re.MULTILINE)
+    if desc_match:
+        result['description'] = desc_match.group(1).strip()
+
+    # Extract ingredients table
+    ing_match = re.search(r'## Ingredients\n\n((?:\|[^\n]+\n)+)', body)
+    if ing_match:
+        result['ingredients'] = parse_ingredient_table(ing_match.group(1))
+
+    # Extract instructions
+    inst_match = re.search(r'## Instructions\n\n(.*?)(?=\n## |\Z)', body, re.DOTALL)
+    if inst_match:
+        inst_text = inst_match.group(1).strip()
+        # Parse numbered steps
+        steps = re.findall(r'^(\d+)\.\s+(.+?)(?=\n\d+\.\s|\Z)', inst_text, re.MULTILINE | re.DOTALL)
+        for step_num, step_text in steps:
+            result['instructions'].append({
+                'step': int(step_num),
+                'text': step_text.strip(),
+                'time': None
+            })
+
+    # Extract video tips
+    tips_match = re.search(r'## Tips from the Video\n\n(.*?)(?=\n## |\Z)', body, re.DOTALL)
+    if tips_match:
+        tips_text = tips_match.group(1).strip()
+        result['video_tips'] = [t.strip('- ').strip() for t in tips_text.split('\n') if t.strip().startswith('-')]
+
+    return result
+
+
 def parse_ingredient_table(table_text: str) -> List[dict]:
     """
     Parse a markdown ingredient table into structured data.
