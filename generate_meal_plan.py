@@ -18,10 +18,12 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from templates.meal_plan_template import generate_meal_plan_markdown, generate_filename
+from lib.backup import cleanup_old_backups
 
 # Configuration
 OBSIDIAN_VAULT = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS")
 MEAL_PLANS_PATH = OBSIDIAN_VAULT / "Meal Plans"
+RECIPES_HISTORY_PATH = OBSIDIAN_VAULT / "Recipes" / ".history"
 
 
 def parse_week_string(week_str: str) -> tuple[int, int]:
@@ -97,6 +99,12 @@ def main():
     # Write file
     filepath.write_text(content, encoding='utf-8')
     print(f"Created: {filepath}")
+
+    # Cleanup old recipe backups (runs daily with meal plan generation)
+    if RECIPES_HISTORY_PATH.exists():
+        removed = cleanup_old_backups(RECIPES_HISTORY_PATH, max_age_days=30)
+        if removed > 0:
+            print(f"Cleaned up {removed} old backup(s)")
 
 
 if __name__ == "__main__":
