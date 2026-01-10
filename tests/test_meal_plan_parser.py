@@ -116,3 +116,38 @@ Some notes here
         assert result['breakfast'] is None
         assert result['lunch'] is None
         assert result['dinner'] is None
+
+    def test_extracts_snack(self):
+        section = """## Monday (Jan 19)
+### Breakfast
+[[Pancakes]]
+### Lunch
+[[Salad]]
+### Snack
+[[Cookies]]
+### Dinner
+[[Steak]]
+### Notes
+"""
+        result = extract_meals_for_day(section)
+
+        assert result['breakfast'] == 'Pancakes'
+        assert result['lunch'] == 'Salad'
+        assert result['snack'] == 'Cookies'
+        assert result['dinner'] == 'Steak'
+
+    def test_returns_none_for_empty_snack(self):
+        section = """## Monday (Jan 19)
+### Breakfast
+
+### Lunch
+
+### Snack
+
+### Dinner
+
+### Notes
+"""
+        result = extract_meals_for_day(section)
+
+        assert result['snack'] is None
