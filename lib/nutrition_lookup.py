@@ -1,5 +1,6 @@
 """Nutrition lookup from external APIs."""
 
+import json
 import os
 from dataclasses import dataclass
 from typing import Optional
@@ -11,6 +12,18 @@ from lib.nutrition import NutritionData
 
 NUTRITIONIX_URL = "https://trackapi.nutritionix.com/v2/natural/nutrients"
 USDA_URL = "https://api.nal.usda.gov/fdc/v1/foods/search"
+
+OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_MODEL = "mistral:7b"
+
+NUTRITION_PROMPT = """Estimate the total nutrition for these ingredients combined.
+Return ONLY a JSON object with these exact keys: calories, protein, carbs, fat.
+Values should be integers representing the total for all ingredients.
+
+Ingredients:
+{ingredients}
+
+JSON response:"""
 
 # USDA nutrient IDs
 NUTRIENT_CALORIES = 1008
@@ -122,4 +135,49 @@ def lookup_usda(ingredient: str) -> Optional[NutritionLookupResult]:
         return NutritionLookupResult(nutrition=nutrition, source="usda")
 
     except (requests.RequestException, KeyError, ValueError):
+        return None
+
+
+def estimate_with_ai(ingredients: list[str]) -> Optional[NutritionLookupResult]:
+    """Estimate nutrition using Ollama AI.
+
+    Args:
+        ingredients: List of ingredient strings (e.g., ["1 cup flour", "2 eggs"])
+
+    Returns:
+        NutritionLookupResult or None if estimation fails
+    """
+    prompt = NUTRITION_PROMPT.format(ingredients="\n".join(f"- {i}" for i in ingredients))
+
+    try:
+        response = requests.post(
+            OLLAMA_URL,
+            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
+            timeout=60,
+        )
+
+        if response.status_code != 200:
+            return None
+
+        data = response.json()
+        response_text = data.get("response", "")
+
+        json_start = response_text.find("{")
+        json_end = response_text.rfind("}") + 1
+
+        if json_start == -1 or json_end == 0:
+            return None
+
+        nutrition_json = json.loads(response_text[json_start:json_end])
+
+        nutrition = NutritionData(
+            calories=int(nutrition_json.get("calories", 0)),
+            protein=int(nutrition_json.get("protein", 0)),
+            carbs=int(nutrition_json.get("carbs", 0)),
+            fat=int(nutrition_json.get("fat", 0)),
+        )
+
+        return NutritionLookupResult(nutrition=nutrition, source="ai")
+
+    except (requests.RequestException, json.JSONDecodeError, KeyError, ValueError):
         return None

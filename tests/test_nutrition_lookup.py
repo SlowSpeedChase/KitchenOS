@@ -2,7 +2,9 @@
 
 from unittest.mock import patch, Mock
 
-from lib.nutrition_lookup import lookup_nutritionix, lookup_usda, NutritionLookupResult
+import requests
+
+from lib.nutrition_lookup import lookup_nutritionix, lookup_usda, estimate_with_ai, NutritionLookupResult
 from lib.nutrition import NutritionData
 
 
@@ -117,5 +119,42 @@ class TestLookupUsda:
         with patch("lib.nutrition_lookup.requests.get") as mock_get:
             mock_get.return_value = Mock(status_code=500)
             result = lookup_usda("flour")
+
+        assert result is None
+
+
+class TestEstimateWithAi:
+    def test_parses_ollama_response(self):
+        mock_ollama_response = {
+            "response": '{"calories": 200, "protein": 5, "carbs": 40, "fat": 2}'
+        }
+
+        with patch("lib.nutrition_lookup.requests.post") as mock_post:
+            mock_post.return_value = Mock(
+                status_code=200,
+                json=lambda: mock_ollama_response
+            )
+            result = estimate_with_ai(["1 cup flour", "2 eggs"])
+
+        assert result is not None
+        assert result.nutrition.calories == 200
+        assert result.source == "ai"
+
+    def test_returns_none_on_invalid_json(self):
+        mock_ollama_response = {"response": "I cannot determine the nutrition."}
+
+        with patch("lib.nutrition_lookup.requests.post") as mock_post:
+            mock_post.return_value = Mock(
+                status_code=200,
+                json=lambda: mock_ollama_response
+            )
+            result = estimate_with_ai(["mystery ingredient"])
+
+        assert result is None
+
+    def test_returns_none_on_api_error(self):
+        with patch("lib.nutrition_lookup.requests.post") as mock_post:
+            mock_post.side_effect = requests.RequestException("Connection failed")
+            result = estimate_with_ai(["1 cup flour"])
 
         assert result is None
