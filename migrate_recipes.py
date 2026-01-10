@@ -18,9 +18,42 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from lib.backup import create_backup
 from lib.recipe_parser import parse_recipe_file, extract_my_notes, parse_ingredient_table
-from templates.recipe_template import RECIPE_SCHEMA
+from templates.recipe_template import RECIPE_SCHEMA, generate_tools_callout
 
 OBSIDIAN_RECIPES_PATH = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS/Recipes")
+
+
+def has_tools_callout(content: str) -> bool:
+    """Check if content already has a Tools callout."""
+    return "> [!tools]" in content.lower()
+
+
+def add_tools_callout(content: str, filename: str) -> str:
+    """Add Tools callout after frontmatter.
+
+    Args:
+        content: Full file content
+        filename: Recipe filename for button URLs
+
+    Returns:
+        Content with Tools callout inserted
+    """
+    # Find end of frontmatter
+    parts = content.split('---', 2)
+    if len(parts) < 3:
+        return content  # No frontmatter, skip
+
+    frontmatter = parts[1]
+    body = parts[2]
+
+    # Generate callout
+    callout = generate_tools_callout(filename)
+
+    # Insert callout at start of body (after frontmatter)
+    # Body typically starts with "\n\n# Title"
+    new_body = "\n\n" + callout + body.lstrip('\n')
+
+    return f"---{frontmatter}---{new_body}"
 
 
 def migrate_ingredient_table(table_text: str) -> str:
@@ -41,19 +74,23 @@ def migrate_ingredient_table(table_text: str) -> str:
     return '\n'.join(lines)
 
 
-def migrate_recipe_content(content: str) -> Tuple[str, List[str]]:
+def migrate_recipe_content(content: str, filename: str = None) -> Tuple[str, List[str]]:
     """
     Migrate recipe markdown content to new format.
 
-    Finds 2-column ingredient tables and converts them to 3-column format.
+    Handles:
+    - Converting 2-column ingredient tables to 3-column format
+    - Adding Tools callout with reprocess buttons
 
     Args:
         content: Full markdown file content
+        filename: Recipe filename (for Tools callout URLs)
 
     Returns:
         Tuple of (new_content, list_of_changes)
     """
     changes = []
+    new_content = content
 
     # Find and replace ingredient table
     # Pattern matches: ## Ingredients\n\n followed by table rows
@@ -69,7 +106,13 @@ def migrate_recipe_content(content: str) -> Tuple[str, List[str]]:
         changes.append("Converted ingredient table to 3-column format")
         return f"{header}{new_table}\n"
 
-    new_content = re.sub(table_pattern, replace_table, content)
+    new_content = re.sub(table_pattern, replace_table, new_content)
+
+    # Add Tools callout if missing
+    if filename and not has_tools_callout(new_content):
+        new_content = add_tools_callout(new_content, filename)
+        changes.append("Added Tools callout with reprocess buttons")
+
     return new_content, changes
 
 
@@ -92,8 +135,8 @@ def migrate_recipe_file(filepath: Path) -> List[str]:
             missing_fields.append(field)
             changes.append(f"Added field '{field}'")
 
-    # Migrate ingredient table content
-    new_content, content_changes = migrate_recipe_content(content)
+    # Migrate content (pass filename for Tools callout)
+    new_content, content_changes = migrate_recipe_content(content, filepath.name)
     changes.extend(content_changes)
 
     # If no frontmatter changes needed, just apply content changes
@@ -130,12 +173,17 @@ def migrate_recipe_file(filepath: Path) -> List[str]:
 
 
 def needs_content_migration(content: str) -> bool:
-    """Check if content needs ingredient table migration.
+    """Check if content needs any content migration.
 
-    Returns True if there's a 2-column ingredient table that needs conversion.
+    Returns True if:
+    - There's a 2-column ingredient table that needs conversion
+    - Missing Tools callout
     """
     # Look for 2-column table header (Amount | Ingredient) without Unit
     if '| Amount | Ingredient |' in content:
+        return True
+    # Check for missing Tools callout
+    if not has_tools_callout(content):
         return True
     return False
 
@@ -172,8 +220,10 @@ def run_migration(recipes_dir: Path, dry_run: bool = False) -> dict:
 
             if dry_run:
                 changes = [f"Would add '{f}'" for f in missing]
-                if needs_content:
+                if '| Amount | Ingredient |' in content:
                     changes.append("Would convert ingredient table to 3-column format")
+                if not has_tools_callout(content):
+                    changes.append("Would add Tools callout with reprocess buttons")
                 results['updated'].append((md_file.name, changes))
             else:
                 backup_path = create_backup(md_file)
