@@ -376,6 +376,68 @@ def refresh_template():
         return error_page(f"Error refreshing template: {str(e)}"), 500
 
 
+@app.route('/reprocess', methods=['GET'])
+def reprocess_recipe():
+    """Full re-extraction: fetch from YouTube, run through Ollama, regenerate."""
+    from urllib.parse import unquote
+
+    filename = request.args.get('file')
+
+    if not filename:
+        return error_page("Error: file parameter required"), 400
+
+    # URL-decode the filename
+    filename = unquote(filename)
+    filepath = OBSIDIAN_RECIPES_PATH / filename
+
+    if not filepath.exists():
+        return error_page(f"Error: Recipe not found: {filename}"), 404
+
+    try:
+        # Read existing file to get source_url and notes
+        content = filepath.read_text(encoding='utf-8')
+        parsed = parse_recipe_file(content)
+        frontmatter = parsed['frontmatter']
+
+        source_url = frontmatter.get('source_url')
+        if not source_url:
+            return error_page("Error: Cannot reprocess - no source URL in recipe"), 400
+
+        # Extract notes to preserve
+        my_notes = extract_my_notes(content)
+
+        # Create backup before re-extraction
+        create_backup(filepath)
+
+        # Run full extraction
+        result = subprocess.run(
+            ['.venv/bin/python', 'extract_recipe.py', source_url],
+            capture_output=True,
+            text=True,
+            cwd='/Users/chaseeasterling/KitchenOS',
+            timeout=300
+        )
+
+        if result.returncode != 0:
+            error_msg = result.stderr.strip() if result.stderr else 'Extraction failed'
+            return error_page(f"Error: {error_msg}"), 500
+
+        # Inject preserved notes into the newly created file
+        if my_notes and my_notes != "<!-- Your personal notes, ratings, and modifications go here -->":
+            # Re-read the file (extract_recipe.py may have written to different filename)
+            if filepath.exists():
+                new_content = filepath.read_text(encoding='utf-8')
+                new_content = inject_my_notes(new_content, my_notes)
+                filepath.write_text(new_content, encoding='utf-8')
+
+        return success_page("Recipe re-extracted successfully", filename)
+
+    except subprocess.TimeoutExpired:
+        return error_page("Error: Extraction timed out (5 min)"), 504
+    except Exception as e:
+        return error_page(f"Error: {str(e)}"), 500
+
+
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
