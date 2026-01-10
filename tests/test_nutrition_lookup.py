@@ -158,3 +158,67 @@ class TestEstimateWithAi:
             result = estimate_with_ai(["1 cup flour"])
 
         assert result is None
+
+
+class TestCalculateRecipeNutrition:
+    def test_sums_ingredients_and_divides_by_servings(self):
+        from lib.nutrition_lookup import calculate_recipe_nutrition
+
+        ingredients = [
+            {"amount": "2", "unit": "cups", "item": "flour"},
+            {"amount": "3", "unit": "whole", "item": "eggs"},
+        ]
+
+        with patch("lib.nutrition_lookup.lookup_nutritionix") as mock_nx:
+            mock_nx.side_effect = [
+                NutritionLookupResult(NutritionData(400, 10, 80, 2), "nutritionix"),
+                NutritionLookupResult(NutritionData(210, 18, 3, 15), "nutritionix"),
+            ]
+            result = calculate_recipe_nutrition(ingredients, servings=2)
+
+        assert result.nutrition.calories == 305
+        assert result.nutrition.protein == 14
+        assert result.nutrition.carbs == 41
+        assert result.nutrition.fat == 8
+        assert result.source == "nutritionix"
+
+    def test_falls_back_to_usda(self):
+        from lib.nutrition_lookup import calculate_recipe_nutrition
+
+        ingredients = [{"amount": "1", "unit": "cup", "item": "flour"}]
+
+        with patch("lib.nutrition_lookup.lookup_nutritionix", return_value=None):
+            with patch("lib.nutrition_lookup.lookup_usda") as mock_usda:
+                mock_usda.return_value = NutritionLookupResult(
+                    NutritionData(364, 10, 76, 1), "usda"
+                )
+                result = calculate_recipe_nutrition(ingredients, servings=1)
+
+        assert result.source == "usda"
+
+    def test_falls_back_to_ai(self):
+        from lib.nutrition_lookup import calculate_recipe_nutrition
+
+        ingredients = [{"amount": "1", "unit": "cup", "item": "mystery"}]
+
+        with patch("lib.nutrition_lookup.lookup_nutritionix", return_value=None):
+            with patch("lib.nutrition_lookup.lookup_usda", return_value=None):
+                with patch("lib.nutrition_lookup.estimate_with_ai") as mock_ai:
+                    mock_ai.return_value = NutritionLookupResult(
+                        NutritionData(100, 5, 20, 2), "ai"
+                    )
+                    result = calculate_recipe_nutrition(ingredients, servings=1)
+
+        assert result.source == "ai"
+
+    def test_returns_none_when_all_fail(self):
+        from lib.nutrition_lookup import calculate_recipe_nutrition
+
+        ingredients = [{"amount": "1", "unit": "cup", "item": "unknown"}]
+
+        with patch("lib.nutrition_lookup.lookup_nutritionix", return_value=None):
+            with patch("lib.nutrition_lookup.lookup_usda", return_value=None):
+                with patch("lib.nutrition_lookup.estimate_with_ai", return_value=None):
+                    result = calculate_recipe_nutrition(ingredients, servings=1)
+
+        assert result is None

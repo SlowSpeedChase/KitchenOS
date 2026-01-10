@@ -181,3 +181,58 @@ def estimate_with_ai(ingredients: list[str]) -> Optional[NutritionLookupResult]:
 
     except (requests.RequestException, json.JSONDecodeError, KeyError, ValueError):
         return None
+
+
+def calculate_recipe_nutrition(
+    ingredients: list[dict],
+    servings: int
+) -> Optional[NutritionLookupResult]:
+    """Calculate total nutrition for a recipe.
+
+    Tries Nutritionix first, then USDA, then AI estimation.
+
+    Args:
+        ingredients: List of ingredient dicts with amount, unit, item
+        servings: Number of servings in recipe
+
+    Returns:
+        NutritionLookupResult with per-serving values, or None if all fail
+    """
+    total = NutritionData.empty()
+    source = "nutritionix"
+    failed_ingredients = []
+
+    for ing in ingredients:
+        ingredient_str = f"{ing.get('amount', '1')} {ing.get('unit', '')} {ing.get('item', '')}".strip()
+
+        # Try Nutritionix first
+        result = lookup_nutritionix(ingredient_str)
+
+        # Fall back to USDA
+        if result is None:
+            result = lookup_usda(ing.get("item", ""))
+            if result:
+                source = "usda" if source == "nutritionix" else source
+
+        if result:
+            total = total + result.nutrition
+        else:
+            failed_ingredients.append(ingredient_str)
+
+    # If any ingredients failed, try AI for the whole list
+    if failed_ingredients:
+        ai_result = estimate_with_ai(failed_ingredients)
+        if ai_result:
+            total = total + ai_result.nutrition
+            source = "ai"
+        elif not any(lookup_nutritionix(f"{i.get('amount', '1')} {i.get('unit', '')} {i.get('item', '')}".strip()) or lookup_usda(i.get("item", "")) for i in ingredients):
+            # All ingredients failed
+            return None
+
+    # Divide by servings for per-serving values
+    if servings > 0:
+        per_serving = total * (1 / servings)
+    else:
+        per_serving = total
+
+    return NutritionLookupResult(nutrition=per_serving, source=source)
