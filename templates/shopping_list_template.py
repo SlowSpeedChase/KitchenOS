@@ -33,10 +33,16 @@ def generate_shopping_list_markdown(week: str, items: list[str]) -> str:
     for item in items:
         lines.append(f"- [ ] {item}")
 
-    # Add button
+    # Add buttons
     lines.extend([
         "",
         "---",
+        "",
+        "```button",
+        "name Add Ingredients",
+        "type command",
+        "action QuickAdd: Add Ingredients to Shopping List",
+        "```",
         "",
         "```button",
         "name Send to Reminders",

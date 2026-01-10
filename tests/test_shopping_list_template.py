@@ -58,3 +58,14 @@ def test_items_section_header():
         items=["test item"]
     )
     assert "## Items" in result
+
+
+def test_template_includes_add_ingredients_button():
+    """Shopping list template includes QuickAdd button."""
+    from templates.shopping_list_template import generate_shopping_list_markdown
+
+    result = generate_shopping_list_markdown('2026-W04', ['item1', 'item2'])
+
+    assert '```button' in result
+    assert 'Add Ingredients' in result
+    assert 'QuickAdd: Add Ingredients to Shopping List' in result
