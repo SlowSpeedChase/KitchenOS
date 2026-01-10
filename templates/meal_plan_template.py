@@ -60,6 +60,8 @@ def generate_meal_plan_markdown(year: int, week: int) -> str:
             "",
             "### Lunch",
             "",
+            "### Snack",
+            "",
             "### Dinner",
             "",
             "### Notes",
