@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Simple API server for iOS Shortcuts integration."""
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from youtube_transcript_api import YouTubeTranscriptApi
 from googleapiclient.discovery import build
 import os
@@ -297,6 +297,22 @@ def send_to_reminders_endpoint():
             'success': False,
             'error': f'Failed to add to Reminders: {e}'
         }), 500
+
+
+@app.route('/calendar.ics', methods=['GET'])
+def serve_calendar():
+    """Serve the meal plan calendar ICS file."""
+    ics_path = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS/meal_calendar.ics")
+
+    if not ics_path.exists():
+        return "Calendar not generated. Run sync_calendar.py first.", 404
+
+    return send_file(
+        ics_path,
+        mimetype='text/calendar',
+        as_attachment=False,
+        download_name='meal_calendar.ics'
+    )
 
 
 @app.route('/refresh', methods=['GET'])

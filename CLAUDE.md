@@ -126,6 +126,16 @@ curl -X POST http://localhost:5001/send-to-reminders \
   -d '{"week": "2026-W04"}'
 ```
 
+### Sync Calendar
+
+```bash
+# Generate meal calendar ICS file
+.venv/bin/python sync_calendar.py
+
+# Preview without writing
+.venv/bin/python sync_calendar.py --dry-run
+```
+
 ## Meal Plan Generator (LaunchAgent)
 
 Auto-generates weekly meal plan templates 2 weeks in advance. Runs daily at 6am.
@@ -153,6 +163,30 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.mealplan.plist
 Files are created in: `{Obsidian Vault}/Meal Plans/2026-W03.md`
 
 Template includes Monday-Sunday with Breakfast/Lunch/Dinner/Notes sections.
+
+## Calendar Sync (LaunchAgent)
+
+Syncs meal plans to ICS calendar file daily at 6:05am (after meal plan generator).
+
+### Management
+
+```bash
+# Install the LaunchAgent
+cp com.kitchenos.calendar-sync.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.kitchenos.calendar-sync.plist
+
+# View logs
+tail -f /Users/chaseeasterling/KitchenOS/calendar_sync.log
+
+# Test run manually
+.venv/bin/python sync_calendar.py
+```
+
+### Output
+
+ICS file is written to: `{Obsidian Vault}/meal_calendar.ics`
+
+Accessible via API at: `http://localhost:5001/calendar.ics` (or Tailscale IP)
 
 ## API Server (iOS Shortcut Integration)
 
@@ -189,6 +223,7 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist
 | `/send-to-reminders` | POST | Send unchecked items to Apple Reminders |
 | `/reprocess?file=<name>` | GET | Full re-extraction from YouTube (preserves notes) |
 | `/refresh?file=<name>` | GET | Template refresh only, keeps existing data |
+| `/calendar.ics` | GET | Serves meal plan calendar file |
 
 ### Configuration
 
@@ -239,6 +274,9 @@ template → Obsidian
 | `lib/shopping_list_generator.py` | Core logic for generating shopping lists from meal plans |
 | `templates/shopping_list_template.py` | Markdown template for shopping list files |
 | `scripts/kitchenos-uri-handler/` | macOS URI scheme handler for Obsidian buttons |
+| `sync_calendar.py` | Generates ICS calendar from meal plans |
+| `lib/meal_plan_parser.py` | Parses meal plan markdown files |
+| `lib/ics_generator.py` | Creates ICS calendar format |
 
 ### Key Functions
 
@@ -296,6 +334,19 @@ template → Obsidian
 - `validate_ingredients()` - Validates/repairs list of ingredients from AI extraction
 - `is_malformed_ingredient()` - Detects AI errors (unit in amount, empty item, etc.)
 - `repair_ingredient()` - Re-parses malformed ingredient using ingredient_parser
+
+**sync_calendar.py:**
+- `collect_all_days()` - Collects all days from meal plan files
+- `parse_week_from_filename()` - Extracts year/week from filename
+
+**lib/meal_plan_parser.py:**
+- `parse_meal_plan()` - Parses meal plan markdown into structured data
+- `extract_meals_for_day()` - Extracts meals from a day section
+
+**lib/ics_generator.py:**
+- `generate_ics()` - Creates ICS calendar content
+- `create_meal_event()` - Creates single calendar event
+- `format_day_summary()` - Formats "B: X | L: Y | D: Z" string
 
 ## AI Configuration
 
