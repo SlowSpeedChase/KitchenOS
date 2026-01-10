@@ -247,6 +247,26 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist
 
 See `docs/setup/iOS_SHORTCUT_SETUP.md` for iOS Shortcut configuration.
 
+## QuickAdd Setup (Obsidian)
+
+The "Add Ingredients" button in shopping lists requires QuickAdd plugin configuration:
+
+1. Settings → QuickAdd → Add Choice → name: `Add Ingredients to Shopping List` → type: Capture
+2. Configure the Capture:
+   - **Capture To:** Active file
+   - **Insert at:** Bottom of file
+   - **Capture format:** Enabled
+3. Format template: `{{VALUE:Paste ingredients (one per line):}}`
+4. Add format function to transform lines to checkboxes:
+   ```javascript
+   return value
+     .split('\n')
+     .map(line => line.trim())
+     .filter(line => line.length > 0)
+     .map(line => `- [ ] ${line}`)
+     .join('\n');
+   ```
+
 ## Architecture
 
 ### Pipeline Flow

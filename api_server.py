@@ -11,7 +11,12 @@ import warnings
 from pathlib import Path
 from dotenv import load_dotenv
 
-from lib.shopping_list_generator import generate_shopping_list, parse_shopping_list_file, SHOPPING_LISTS_PATH
+from lib.shopping_list_generator import (
+    generate_shopping_list,
+    parse_shopping_list_file,
+    extract_manual_items,
+    SHOPPING_LISTS_PATH,
+)
 from lib.backup import create_backup
 from lib.recipe_parser import parse_recipe_file, extract_my_notes, parse_recipe_body
 from templates.shopping_list_template import generate_shopping_list_markdown, generate_filename as shopping_list_filename
@@ -237,21 +242,36 @@ def generate_shopping_list_endpoint():
     if not result['success']:
         return jsonify(result), 400
 
+    # Check for existing manual items before overwriting
+    manual_items = []
+    filename = shopping_list_filename(week)
+    filepath = SHOPPING_LISTS_PATH / filename
+    if filepath.exists():
+        existing_result = parse_shopping_list_file(week)
+        if existing_result['success']:
+            manual_items = extract_manual_items(
+                existing_result['items'],
+                result['items']
+            )
+
+    # Combine generated items with manual items
+    all_items = result['items'] + manual_items
+
     # Create markdown content
-    markdown = generate_shopping_list_markdown(week, result['items'])
+    markdown = generate_shopping_list_markdown(week, all_items)
 
     # Ensure Shopping Lists folder exists
     SHOPPING_LISTS_PATH.mkdir(parents=True, exist_ok=True)
 
     # Write file
-    filename = shopping_list_filename(week)
-    filepath = SHOPPING_LISTS_PATH / filename
     filepath.write_text(markdown, encoding='utf-8')
 
     return jsonify({
         'success': True,
         'file': f"Shopping Lists/{filename}",
-        'item_count': len(result['items']),
+        'item_count': len(all_items),
+        'generated_count': len(result['items']),
+        'manual_count': len(manual_items),
         'recipes': result['recipes'],
         'warnings': result.get('warnings', [])
     })
