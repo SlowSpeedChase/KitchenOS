@@ -178,3 +178,17 @@ def parse_shopping_list_file(week: str) -> dict:
         "items": unchecked,
         "skipped": checked_count
     }
+
+
+def extract_manual_items(existing_items: list[str], generated_items: list[str]) -> list[str]:
+    """Find items that were manually added (not from generation).
+
+    Args:
+        existing_items: Items currently in the shopping list
+        generated_items: Items freshly generated from meal plan
+
+    Returns:
+        List of items that exist but weren't generated (manual additions)
+    """
+    generated_set = set(generated_items)
+    return [item for item in existing_items if item not in generated_set]

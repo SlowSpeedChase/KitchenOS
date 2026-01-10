@@ -260,3 +260,55 @@ def test_parse_shopping_list_empty_items_skipped():
 
     assert result['success'] is True
     assert result['items'] == ['chicken']
+
+
+# Tests for extract_manual_items
+
+class TestExtractManualItems:
+    """Tests for extract_manual_items function."""
+
+    def test_identifies_items_not_in_generated_list(self):
+        """Items in existing but not generated are manual."""
+        existing = ["2 cups flour", "1 tsp salt", "organic eggs"]
+        generated = ["2 cups flour", "1 tsp salt"]
+
+        from lib.shopping_list_generator import extract_manual_items
+        result = extract_manual_items(existing, generated)
+
+        assert result == ["organic eggs"]
+
+    def test_returns_empty_when_all_items_generated(self):
+        """No manual items when existing matches generated."""
+        existing = ["2 cups flour", "1 tsp salt"]
+        generated = ["2 cups flour", "1 tsp salt", "1 cup sugar"]
+
+        from lib.shopping_list_generator import extract_manual_items
+        result = extract_manual_items(existing, generated)
+
+        assert result == []
+
+    def test_preserves_order_of_manual_items(self):
+        """Manual items maintain their original order."""
+        existing = ["item1", "manual1", "item2", "manual2", "item3"]
+        generated = ["item1", "item2", "item3"]
+
+        from lib.shopping_list_generator import extract_manual_items
+        result = extract_manual_items(existing, generated)
+
+        assert result == ["manual1", "manual2"]
+
+    def test_handles_empty_existing_list(self):
+        """Empty existing list returns empty manual list."""
+        from lib.shopping_list_generator import extract_manual_items
+        result = extract_manual_items([], ["item1"])
+
+        assert result == []
+
+    def test_handles_empty_generated_list(self):
+        """Empty generated list means all items are manual."""
+        existing = ["item1", "item2"]
+
+        from lib.shopping_list_generator import extract_manual_items
+        result = extract_manual_items(existing, [])
+
+        assert result == ["item1", "item2"]
