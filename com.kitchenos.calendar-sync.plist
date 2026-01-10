@@ -9,6 +9,8 @@
         <string>/Users/chaseeasterling/KitchenOS/.venv/bin/python</string>
         <string>/Users/chaseeasterling/KitchenOS/sync_calendar.py</string>
     </array>
+    <key>RunAtLoad</key>
+    <true/>
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
