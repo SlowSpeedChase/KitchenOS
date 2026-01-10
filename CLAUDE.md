@@ -36,7 +36,8 @@ Development guide for Claude Code when working with this repository.
 |------|---------|
 | `/Users/chaseeasterling/KitchenOS/` | Project root |
 | `.venv/` | Python virtual environment |
-| `Recipes/` in Obsidian vault | Output folder for recipe markdown |
+| `Recipes/` in Obsidian vault | Main recipe files (title case, e.g., `Butter Biscuits.md`) |
+| `Recipes/Cooking Mode/` in Obsidian vault | Simplified cooking view files (`.recipe.md`) |
 
 **Obsidian Vault**: `/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS/`
 
@@ -381,9 +382,11 @@ Falls back to Whisper (requires OpenAI key) or proceeds with description only.
 
 ## File Naming Convention
 
-Output files use: `{recipe-name-slugified}.md`
+Recipe files use title case with spaces: `{Recipe Name}.md`
 
-Example: `pasta-aglio-e-olio.md`
+Example: `Pasta Aglio E Olio.md`
+
+Cooking mode files are stored in a subdirectory: `Recipes/Cooking Mode/{Recipe Name}.recipe.md`
 
 ## Completing Work
 

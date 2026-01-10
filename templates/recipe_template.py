@@ -283,6 +283,11 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel, date_ad
 
 
 def generate_filename(recipe_name):
-    """Generate filename from recipe name"""
-    slug = re.sub(r'[^a-z0-9]+', '-', recipe_name.lower()).strip('-')
-    return f"{slug}.md"
+    """Generate filename from recipe name using title case with spaces."""
+    # Remove characters that are problematic in filenames
+    clean = re.sub(r'[<>:"/\\|?*]', '', recipe_name)
+    # Normalize whitespace
+    clean = ' '.join(clean.split())
+    # Title case
+    title = clean.title()
+    return f"{title}.md"
