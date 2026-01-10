@@ -36,7 +36,8 @@ Development guide for Claude Code when working with this repository.
 |------|---------|
 | `/Users/chaseeasterling/KitchenOS/` | Project root |
 | `.venv/` | Python virtual environment |
-| `Recipes/` in Obsidian vault | Output folder for recipe markdown |
+| `Recipes/` in Obsidian vault | Main recipe files (title case, e.g., `Butter Biscuits.md`) |
+| `Recipes/Cooking Mode/` in Obsidian vault | Simplified cooking view files (`.recipe.md`) |
 
 **Obsidian Vault**: `/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS/`
 
@@ -186,6 +187,8 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist
 | `/extract` | POST | Full extraction, saves to Obsidian |
 | `/generate-shopping-list` | POST | Generate shopping list markdown from meal plan |
 | `/send-to-reminders` | POST | Send unchecked items to Apple Reminders |
+| `/reprocess?file=<name>` | GET | Full re-extraction from YouTube (preserves notes) |
+| `/refresh?file=<name>` | GET | Template refresh only, keeps existing data |
 
 ### Configuration
 
@@ -207,7 +210,8 @@ main.py (fetch metadata + transcript)
 recipe_sources.py:
   1. find_recipe_link() → scrape_recipe_from_url()
   2. parse_recipe_from_description()
-  3. extract_recipe_with_ollama() (fallback)
+  3. search_creator_website() → scrape_recipe_from_url()
+  4. extract_recipe_with_ollama() (fallback)
     ↓
 extract_cooking_tips() (if webpage/description source)
     ↓
@@ -251,24 +255,36 @@ template → Obsidian
 **templates/recipe_template.py:**
 - `format_recipe_markdown()` - Converts recipe JSON to Obsidian markdown
 - `generate_filename()` - Creates `YYYY-MM-DD-recipe-slug.md` filename
+- `generate_tools_callout()` - Generates Tools callout with reprocess buttons
 
 **recipe_sources.py:**
 - `find_recipe_link()` - Detects recipe URLs in video descriptions
 - `scrape_recipe_from_url()` - Fetches and parses JSON-LD from recipe websites
 - `parse_recipe_from_description()` - Extracts inline recipes from descriptions
 - `extract_cooking_tips()` - Pulls practical tips from transcripts
+- `load_creator_mapping()` - Loads channel → website mapping from config
+- `search_for_recipe_url()` - Searches DuckDuckGo for recipe URL
+- `search_creator_website()` - Orchestrates creator website search
+
+**api_server.py:**
+- `refresh_template()` - Regenerates recipe with current template, preserves data/notes
+- `reprocess_recipe()` - Full re-extraction from YouTube, preserves My Notes section
 
 **lib/backup.py:**
 - `create_backup()` - Creates timestamped backup in .history/ folder
+- `cleanup_old_backups()` - Removes backups older than 30 days
 
 **lib/recipe_parser.py:**
 - `parse_recipe_file()` - Parses frontmatter and body from recipe markdown
 - `extract_my_notes()` - Extracts content from ## My Notes section
+- `parse_recipe_body()` - Extracts ingredients/instructions from markdown body
 - `find_existing_recipe()` - Finds recipe file by video ID
 
 **migrate_recipes.py:**
 - `migrate_recipe_file()` - Updates single recipe to current schema
 - `run_migration()` - Batch migrates all recipes
+- `has_tools_callout()` - Detects if recipe has Tools callout
+- `add_tools_callout()` - Adds Tools callout to existing recipes
 
 **lib/ingredient_parser.py:**
 - `parse_ingredient()` - Splits ingredient string into amount, unit, item
@@ -316,6 +332,22 @@ The AI extracts this structure:
 }
 ```
 
+### Creator Website Mapping
+
+**File:** `config/creator_websites.json`
+
+Maps YouTube channel names to their recipe website domains. Used to search creator websites when video description is empty (common with Shorts).
+
+```json
+{
+  "feelgoodfoodie": "feelgoodfoodie.net",
+  "adam ragusea": null
+}
+```
+
+- `null` value means creator has no recipe website (skip search)
+- Add new creators as you discover them
+
 ## Development Environment
 
 - **Python Version**: 3.11
@@ -333,6 +365,7 @@ yt-dlp                    # Audio download for Whisper
 openai                    # Whisper API transcription
 python-dotenv             # Environment variables
 requests                  # HTTP requests to Ollama
+duckduckgo-search         # Web search for creator websites
 ```
 
 ## Testing
@@ -360,9 +393,11 @@ Falls back to Whisper (requires OpenAI key) or proceeds with description only.
 
 ## File Naming Convention
 
-Output files use: `{recipe-name-slugified}.md`
+Recipe files use title case with spaces: `{Recipe Name}.md`
 
-Example: `pasta-aglio-e-olio.md`
+Example: `Pasta Aglio E Olio.md`
+
+Cooking mode files are stored in a subdirectory: `Recipes/Cooking Mode/{Recipe Name}.recipe.md`
 
 ## Completing Work
 
@@ -428,6 +463,7 @@ These features are planned but not yet implemented:
 | ~~iOS Shortcut~~ | ~~Medium~~ | **Completed** - /extract endpoint + Tailscale, see docs/setup/iOS_SHORTCUT_SETUP.md |
 | ~~Batch processing~~ | ~~Medium~~ | **Completed** - Processes URLs from iOS Reminders list |
 | ~~YouTube Shorts support~~ | ~~Medium~~ | **Completed** - yt-dlp fetches metadata for /shorts/ URLs |
+| ~~Recipe reprocess buttons~~ | ~~Medium~~ | **Completed** - Tools callout with Re-extract/Refresh buttons |
 | Claude API fallback | Low | Use Claude when Ollama fails |
 | Image extraction | Low | Get video thumbnails for recipes |
 

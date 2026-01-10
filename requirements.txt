@@ -23,3 +23,6 @@ flask>=2.0.0
 
 # macOS Reminders integration (batch processing)
 pyobjc-framework-EventKit>=10.0
+
+# Web search (creator website search fallback)
+duckduckgo-search>=6.0.0

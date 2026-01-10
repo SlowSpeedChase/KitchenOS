@@ -1,0 +1,19 @@
+{
+  "_comment": "Channel name (lowercase) → website domain. Use null for creators without recipe sites.",
+  "feelgoodfoodie": "feelgoodfoodie.net",
+  "joshua weissman": "joshuaweissman.com",
+  "babish culinary universe": "bingingwithbabish.com",
+  "binging with babish": "bingingwithbabish.com",
+  "ethan chlebowski": "ethanchlebowski.com",
+  "internet shaquille": "internetshaquille.com",
+  "j. kenji lópez-alt": "seriouseats.com",
+  "kenji's cooking show": "seriouseats.com",
+  "bon appétit": "bonappetit.com",
+  "bon appetit": "bonappetit.com",
+  "tasty": "tasty.co",
+  "delish": "delish.com",
+  "serious eats": "seriouseats.com",
+  "adam ragusea": null,
+  "pro home cooks": null,
+  "america's test kitchen": "americastestkitchen.com"
+}

@@ -115,5 +115,11 @@ def build_tags(recipe_data):
 
 
 def generate_recipemd_filename(recipe_name):
-    slug = re.sub(r'[^a-z0-9]+', '-', recipe_name.lower()).strip('-')
-    return f"{slug}.recipe.md"
+    """Generate filename from recipe name using title case with spaces."""
+    # Remove characters that are problematic in filenames
+    clean = re.sub(r'[<>:"/\\|?*]', '', recipe_name)
+    # Normalize whitespace
+    clean = ' '.join(clean.split())
+    # Title case
+    title = clean.title()
+    return f"{title}.recipe.md"

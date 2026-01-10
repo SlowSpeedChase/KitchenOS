@@ -12,14 +12,50 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from lib.shopping_list_generator import generate_shopping_list, parse_shopping_list_file, SHOPPING_LISTS_PATH
+from lib.backup import create_backup
+from lib.recipe_parser import parse_recipe_file, extract_my_notes, parse_recipe_body
 from templates.shopping_list_template import generate_shopping_list_markdown, generate_filename as shopping_list_filename
+from templates.recipe_template import format_recipe_markdown
 
 load_dotenv()
 warnings.filterwarnings('ignore', message='urllib3 v2 only supports OpenSSL 1.1.1+')
 
 YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')
+OBSIDIAN_RECIPES_PATH = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS/Recipes")
 
 app = Flask(__name__)
+
+
+def error_page(message: str) -> str:
+    """Generate simple HTML error page."""
+    return f'''<!DOCTYPE html>
+<html><head><title>KitchenOS</title></head>
+<body style="font-family: system-ui; padding: 2rem; max-width: 600px; margin: 0 auto;">
+<div style="background: #fee; border: 1px solid #c00; padding: 1rem; border-radius: 8px;">
+<strong style="color: #c00;">Error</strong><br>{message}
+</div>
+<p><a href="obsidian://open?vault=KitchenOS">Return to Obsidian</a></p>
+</body></html>'''
+
+
+def success_page(message: str, filename: str) -> str:
+    """Generate simple HTML success page."""
+    from urllib.parse import quote
+    encoded_filename = quote(filename, safe='')
+    return f'''<!DOCTYPE html>
+<html><head><title>KitchenOS</title></head>
+<body style="font-family: system-ui; padding: 2rem; max-width: 600px; margin: 0 auto;">
+<div style="background: #efe; border: 1px solid #0a0; padding: 1rem; border-radius: 8px;">
+<strong style="color: #0a0;">Success</strong><br>{message}
+</div>
+<p><a href="obsidian://open?vault=KitchenOS&file=Recipes/{encoded_filename}">Return to {filename}</a></p>
+</body></html>'''
+
+
+def inject_my_notes(content: str, notes: str) -> str:
+    """Replace the My Notes placeholder with preserved notes."""
+    placeholder = "<!-- Your personal notes, ratings, and modifications go here -->"
+    return content.replace(placeholder, notes)
 
 
 def youtube_parser(input_str):
@@ -261,6 +297,145 @@ def send_to_reminders_endpoint():
             'success': False,
             'error': f'Failed to add to Reminders: {e}'
         }), 500
+
+
+@app.route('/refresh', methods=['GET'])
+def refresh_template():
+    """Regenerate recipe file with current template, preserving data and notes."""
+    from urllib.parse import unquote
+
+    filename = request.args.get('file')
+
+    if not filename:
+        return error_page("Error: file parameter required"), 400
+
+    # URL-decode the filename
+    filename = unquote(filename)
+    filepath = OBSIDIAN_RECIPES_PATH / filename
+
+    if not filepath.exists():
+        return error_page(f"Error: Recipe not found: {filename}"), 404
+
+    try:
+        # Read and parse existing file
+        content = filepath.read_text(encoding='utf-8')
+        parsed = parse_recipe_file(content)
+        frontmatter = parsed['frontmatter']
+        body = parsed['body']
+
+        # Extract notes to preserve
+        my_notes = extract_my_notes(content)
+
+        # Parse body for recipe data
+        body_data = parse_recipe_body(body)
+
+        # Build recipe_data from frontmatter + body
+        recipe_data = {
+            'recipe_name': frontmatter.get('title', 'Untitled'),
+            'description': body_data.get('description', ''),
+            'prep_time': frontmatter.get('prep_time'),
+            'cook_time': frontmatter.get('cook_time'),
+            'total_time': frontmatter.get('total_time'),
+            'servings': frontmatter.get('servings'),
+            'difficulty': frontmatter.get('difficulty'),
+            'cuisine': frontmatter.get('cuisine'),
+            'protein': frontmatter.get('protein'),
+            'dish_type': frontmatter.get('dish_type'),
+            'dietary': frontmatter.get('dietary', []),
+            'equipment': frontmatter.get('equipment', []),
+            'ingredients': body_data.get('ingredients', []),
+            'instructions': body_data.get('instructions', []),
+            'video_tips': body_data.get('video_tips', []),
+            'needs_review': frontmatter.get('needs_review', False),
+            'confidence_notes': frontmatter.get('confidence_notes', ''),
+            'source': frontmatter.get('recipe_source', 'unknown'),
+        }
+
+        # Create backup
+        create_backup(filepath)
+
+        # Regenerate markdown (preserve original date_added)
+        new_content = format_recipe_markdown(
+            recipe_data,
+            video_url=frontmatter.get('source_url', ''),
+            video_title=frontmatter.get('video_title', ''),
+            channel=frontmatter.get('source_channel', ''),
+            date_added=frontmatter.get('date_added')
+        )
+
+        # Inject preserved notes
+        if my_notes and my_notes != "<!-- Your personal notes, ratings, and modifications go here -->":
+            new_content = inject_my_notes(new_content, my_notes)
+
+        # Write file
+        filepath.write_text(new_content, encoding='utf-8')
+
+        return success_page("Template refreshed successfully", filename)
+
+    except Exception as e:
+        return error_page(f"Error refreshing template: {str(e)}"), 500
+
+
+@app.route('/reprocess', methods=['GET'])
+def reprocess_recipe():
+    """Full re-extraction: fetch from YouTube, run through Ollama, regenerate."""
+    from urllib.parse import unquote
+
+    filename = request.args.get('file')
+
+    if not filename:
+        return error_page("Error: file parameter required"), 400
+
+    # URL-decode the filename
+    filename = unquote(filename)
+    filepath = OBSIDIAN_RECIPES_PATH / filename
+
+    if not filepath.exists():
+        return error_page(f"Error: Recipe not found: {filename}"), 404
+
+    try:
+        # Read existing file to get source_url and notes
+        content = filepath.read_text(encoding='utf-8')
+        parsed = parse_recipe_file(content)
+        frontmatter = parsed['frontmatter']
+
+        source_url = frontmatter.get('source_url')
+        if not source_url:
+            return error_page("Error: Cannot reprocess - no source URL in recipe"), 400
+
+        # Extract notes to preserve
+        my_notes = extract_my_notes(content)
+
+        # Create backup before re-extraction
+        create_backup(filepath)
+
+        # Run full extraction
+        result = subprocess.run(
+            ['.venv/bin/python', 'extract_recipe.py', source_url],
+            capture_output=True,
+            text=True,
+            cwd='/Users/chaseeasterling/KitchenOS',
+            timeout=300
+        )
+
+        if result.returncode != 0:
+            error_msg = result.stderr.strip() if result.stderr else 'Extraction failed'
+            return error_page(f"Error: {error_msg}"), 500
+
+        # Inject preserved notes into the newly created file
+        if my_notes and my_notes != "<!-- Your personal notes, ratings, and modifications go here -->":
+            # Re-read the file (extract_recipe.py may have written to different filename)
+            if filepath.exists():
+                new_content = filepath.read_text(encoding='utf-8')
+                new_content = inject_my_notes(new_content, my_notes)
+                filepath.write_text(new_content, encoding='utf-8')
+
+        return success_page("Recipe re-extracted successfully", filename)
+
+    except subprocess.TimeoutExpired:
+        return error_page("Error: Extraction timed out (5 min)"), 504
+    except Exception as e:
+        return error_page(f"Error: {str(e)}"), 500
 
 
 if __name__ == '__main__':

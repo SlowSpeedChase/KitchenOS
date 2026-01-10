@@ -5,21 +5,33 @@ import UserNotifications
 @MainActor
 class ExtractionManager: ObservableObject {
     @Published var isExtracting = false
+    @Published var isBatchExtracting = false
     @Published var status: String = "Ready"
     @Published var statusIsError = false
     @Published var history: [HistoryItem] = []
 
+    // Batch processing state
+    @Published var batchCurrent = 0
+    @Published var batchTotal = 0
+    private var batchSucceeded = 0
+    private var batchSkipped = 0
+    private var batchFailed = 0
+
     private var currentProcess: Process?
     private let maxHistoryItems = 10
     private let timeoutSeconds: TimeInterval = 300 // 5 minutes
+    private let batchTimeoutSeconds: TimeInterval = 1800 // 30 minutes for batch
 
     private let pythonPath = "/Users/chaseeasterling/KitchenOS/.venv/bin/python"
     private let scriptPath = "/Users/chaseeasterling/KitchenOS/extract_recipe.py"
+    private let batchScriptPath = "/Users/chaseeasterling/KitchenOS/batch_extract.py"
     private let workingDirectory = "/Users/chaseeasterling/KitchenOS"
 
     init() {
-        // Request notification permission
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        // Request notification permission (may fail if not in app bundle)
+        if Bundle.main.bundleIdentifier != nil {
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        }
     }
 
     func extract(url: String) {
@@ -156,6 +168,9 @@ class ExtractionManager: ObservableObject {
     }
 
     private func sendNotification(title: String, body: String) {
+        // Skip if not in app bundle
+        guard Bundle.main.bundleIdentifier != nil else { return }
+
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
@@ -174,7 +189,134 @@ class ExtractionManager: ObservableObject {
         currentProcess?.terminate()
         currentProcess = nil
         isExtracting = false
+        isBatchExtracting = false
         status = "Cancelled"
         statusIsError = false
+    }
+
+    // MARK: - Batch Extraction
+
+    var isAnyExtracting: Bool {
+        isExtracting || isBatchExtracting
+    }
+
+    func batchExtract() {
+        guard !isAnyExtracting else { return }
+
+        isBatchExtracting = true
+        batchCurrent = 0
+        batchTotal = 0
+        batchSucceeded = 0
+        batchSkipped = 0
+        batchFailed = 0
+        status = "Starting batch..."
+        statusIsError = false
+
+        Task {
+            await runBatchExtraction()
+        }
+    }
+
+    private func runBatchExtraction() async {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: pythonPath)
+        process.arguments = [batchScriptPath]
+        process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
+
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        currentProcess = process
+
+        // Set up timeout
+        let timeoutTask = Task {
+            try await Task.sleep(nanoseconds: UInt64(batchTimeoutSeconds * 1_000_000_000))
+            if process.isRunning {
+                process.terminate()
+            }
+        }
+
+        do {
+            try process.run()
+
+            // Read stdout line by line for progress
+            let handle = stdout.fileHandleForReading
+            handle.readabilityHandler = { [weak self] fileHandle in
+                let data = fileHandle.availableData
+                guard !data.isEmpty,
+                      let line = String(data: data, encoding: .utf8) else { return }
+
+                Task { @MainActor in
+                    self?.parseBatchLine(line)
+                }
+            }
+
+            process.waitUntilExit()
+            timeoutTask.cancel()
+
+            // Clean up handler
+            handle.readabilityHandler = nil
+
+            // Final status
+            handleBatchResult()
+        } catch {
+            status = "Error: \(error.localizedDescription)"
+            statusIsError = true
+            isBatchExtracting = false
+        }
+
+        currentProcess = nil
+    }
+
+    private func parseBatchLine(_ line: String) {
+        // Parse progress: [3/10]
+        if let openBracket = line.firstIndex(of: "["),
+           let slash = line.firstIndex(of: "/"),
+           let closeBracket = line.firstIndex(of: "]"),
+           openBracket < slash, slash < closeBracket {
+            let currentStr = line[line.index(after: openBracket)..<slash]
+            let totalStr = line[line.index(after: slash)..<closeBracket]
+            if let current = Int(currentStr), let total = Int(totalStr) {
+                batchCurrent = current
+                batchTotal = total
+                status = "Processing \(batchCurrent)/\(batchTotal)..."
+            }
+        }
+
+        // Track results
+        if line.contains("→ Saved:") && !line.contains("Already exists") {
+            batchSucceeded += 1
+        }
+        if line.contains("Already exists") || line.contains("Not a YouTube URL") {
+            batchSkipped += 1
+        }
+        if line.contains("→ Error:") {
+            batchFailed += 1
+        }
+    }
+
+    private func handleBatchResult() {
+        isBatchExtracting = false
+
+        let total = batchSucceeded + batchSkipped + batchFailed
+        if total == 0 {
+            status = "No items to process"
+            statusIsError = false
+        } else if batchFailed == 0 {
+            status = "Done: \(batchSucceeded) extracted, \(batchSkipped) skipped"
+            statusIsError = false
+            if batchSucceeded > 0 {
+                sendNotification(title: "Batch Complete", body: "\(batchSucceeded) recipes extracted")
+            }
+        } else {
+            status = "Done: \(batchSucceeded) ok, \(batchSkipped) skipped, \(batchFailed) failed"
+            statusIsError = true
+            sendNotification(title: "Batch Complete", body: "\(batchSucceeded) extracted, \(batchFailed) failed")
+        }
+
+        batchCurrent = 0
+        batchTotal = 0
     }
 }

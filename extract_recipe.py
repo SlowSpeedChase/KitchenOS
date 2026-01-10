@@ -25,12 +25,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from main import youtube_parser, get_video_metadata, get_transcript
 from prompts.recipe_extraction import SYSTEM_PROMPT, build_user_prompt
 from templates.recipe_template import format_recipe_markdown, generate_filename
-from templates.recipemd_template import format_recipemd
+from templates.recipemd_template import format_recipemd, generate_recipemd_filename
 from recipe_sources import (
     find_recipe_link,
     scrape_recipe_from_url,
     parse_recipe_from_description,
     extract_cooking_tips,
+    search_creator_website,
 )
 
 # Configuration
@@ -159,11 +160,12 @@ def save_recipe_to_obsidian(recipe_data, video_url, video_title, channel, video_
     """Format recipe as markdown and save to Obsidian vault.
 
     If a recipe for this video already exists, backs it up and preserves
-    the My Notes section before overwriting.
+    the My Notes section and date_added before overwriting.
     """
     # Check for existing recipe
     existing = find_existing_recipe(OBSIDIAN_RECIPES_PATH, video_id)
     preserved_notes = ""
+    preserved_date_added = None
     filepath = None
 
     if existing:
@@ -173,11 +175,20 @@ def save_recipe_to_obsidian(recipe_data, video_url, video_title, channel, video_
         backup_path = create_backup(existing)
         print(f"Backup created: {backup_path.name}")
 
-        # Preserve My Notes section
+        # Preserve My Notes section and date_added
         old_content = existing.read_text(encoding='utf-8')
         preserved_notes = extract_my_notes(old_content)
         if preserved_notes:
             print("Preserving My Notes section")
+
+        # Preserve original date_added
+        try:
+            parsed = parse_recipe_file(old_content)
+            preserved_date_added = parsed['frontmatter'].get('date_added')
+            if preserved_date_added:
+                print(f"Preserving original date_added: {preserved_date_added}")
+        except Exception:
+            pass  # If parsing fails, just use today's date
 
         # Reuse existing filepath
         filepath = existing
@@ -190,7 +201,7 @@ def save_recipe_to_obsidian(recipe_data, video_url, video_title, channel, video_
     OBSIDIAN_RECIPES_PATH.mkdir(parents=True, exist_ok=True)
 
     # Generate markdown
-    markdown = format_recipe_markdown(recipe_data, video_url, video_title, channel)
+    markdown = format_recipe_markdown(recipe_data, video_url, video_title, channel, preserved_date_added)
 
     # If we have preserved notes, replace the empty My Notes section
     if preserved_notes:
@@ -201,9 +212,12 @@ def save_recipe_to_obsidian(recipe_data, video_url, video_title, channel, video_
     # Write file
     filepath.write_text(markdown, encoding='utf-8')
 
-    # Generate and save RecipeMD version
+    # Generate and save RecipeMD version to Cooking Mode subdirectory
     recipemd_content = format_recipemd(recipe_data, video_url, video_title, channel)
-    recipemd_path = filepath.with_suffix('.recipe.md')
+    recipemd_dir = OBSIDIAN_RECIPES_PATH / "Cooking Mode"
+    recipemd_dir.mkdir(parents=True, exist_ok=True)
+    recipemd_filename = generate_recipemd_filename(recipe_data.get('recipe_name', 'Untitled Recipe'))
+    recipemd_path = recipemd_dir / recipemd_filename
     recipemd_path.write_text(recipemd_content, encoding='utf-8')
 
     return filepath
@@ -300,7 +314,16 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False) 
             if recipe_data:
                 source = "description"
 
-        # 3. Fall back to AI extraction from transcript
+        # 3. Search creator's website for full recipe
+        if not recipe_data:
+            creator_url = search_creator_website(channel, title)
+            if creator_url:
+                recipe_data = scrape_recipe_from_url(creator_url)
+                if recipe_data:
+                    source = "creator_website"
+                    recipe_link = creator_url  # For metadata
+
+        # 4. Fall back to AI extraction from transcript
         if not recipe_data:
             recipe_data, error = extract_recipe_with_ollama(title, channel, description, transcript)
             if error:
@@ -308,8 +331,8 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False) 
                 return result
             source = "ai_extraction"
 
-        # 4. Extract cooking tips if we got recipe from webpage or description
-        if source in ("webpage", "description") and transcript:
+        # 5. Extract cooking tips if we got recipe from webpage, description, or creator website
+        if source in ("webpage", "description", "creator_website") and transcript:
             tips = extract_cooking_tips(transcript, recipe_data)
             recipe_data['video_tips'] = tips
 

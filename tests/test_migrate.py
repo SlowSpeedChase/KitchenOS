@@ -1,7 +1,7 @@
 """Tests for recipe migration"""
 import tempfile
 from pathlib import Path
-from migrate_recipes import migrate_recipe_file, run_migration
+from migrate_recipes import migrate_recipe_file, run_migration, has_tools_callout, add_tools_callout
 
 
 def test_migrate_recipe_adds_missing_fields():
@@ -387,3 +387,68 @@ title: "Test Recipe"
             new_content = recipe.read_text()
             assert '| Amount | Unit | Ingredient |' in new_content
             assert '| 2 | cup | flour |' in new_content
+
+
+# ============================================================================
+# Tests for Tools callout migration
+# ============================================================================
+
+
+class TestToolsCalloutMigration:
+    """Tests for migrating Tools callout to existing recipes"""
+
+    def test_has_tools_callout_detects_existing(self):
+        """Should detect when tools callout already exists"""
+        content = '''---
+title: Test
+---
+
+> [!tools]- Tools
+> ```button
+> name Re-extract
+
+# Test
+'''
+        assert has_tools_callout(content) is True
+
+    def test_has_tools_callout_detects_missing(self):
+        """Should detect when tools callout is missing"""
+        content = '''---
+title: Test
+---
+
+# Test
+'''
+        assert has_tools_callout(content) is False
+
+    def test_add_tools_callout_inserts_after_frontmatter(self):
+        """Should insert tools callout between frontmatter and title"""
+        content = '''---
+title: Test
+source_url: "https://youtube.com/watch?v=abc"
+---
+
+# Test
+
+Content here.
+'''
+        result = add_tools_callout(content, "Test.md")
+
+        assert "> [!tools]- Tools" in result
+        assert "reprocess?file=Test.md" in result
+        # Callout should be before title
+        callout_pos = result.find("> [!tools]-")
+        title_pos = result.find("# Test")
+        assert callout_pos < title_pos
+
+    def test_add_tools_callout_url_encodes_filename(self):
+        """Should URL-encode filename with spaces"""
+        content = '''---
+title: Test
+---
+
+# Test
+'''
+        result = add_tools_callout(content, "Pasta Aglio E Olio.md")
+
+        assert "Pasta%20Aglio%20E%20Olio.md" in result

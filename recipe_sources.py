@@ -2,10 +2,15 @@
 
 import json
 import re
+from pathlib import Path
 from typing import Optional, Dict, Any, List
 
 import requests
 from bs4 import BeautifulSoup
+from duckduckgo_search import DDGS
+
+# Config directory
+CONFIG_DIR = Path(__file__).parent / "config"
 
 from lib.ingredient_parser import parse_ingredient
 from prompts.recipe_extraction import (
@@ -43,6 +48,8 @@ EXCLUDED_DOMAINS = [
     "amzn.to",
     "youtube.com",
     "youtu.be",
+    "pinterest.com",
+    "pinterest.co.uk",
 ]
 
 # Keywords that indicate a recipe link
@@ -438,3 +445,127 @@ def extract_cooking_tips(transcript: str, recipe: Dict[str, Any]) -> List[str]:
     except Exception as e:
         print(f"  -> Tips extraction failed: {e}")
         return []
+
+
+def load_creator_mapping() -> Dict[str, Optional[str]]:
+    """
+    Load channel → website mapping from config file.
+
+    Returns:
+        Dict mapping lowercase channel names to website domains.
+        Value is None for channels known to have no recipe site.
+        Returns empty dict if config file is missing.
+    """
+    config_path = CONFIG_DIR / "creator_websites.json"
+
+    if not config_path.exists():
+        print(f"  -> Warning: Creator mapping not found at {config_path}")
+        return {}
+
+    try:
+        with open(config_path, 'r') as f:
+            data = json.load(f)
+        # Filter out comments
+        return {k: v for k, v in data.items() if not k.startswith('_')}
+    except (json.JSONDecodeError, IOError) as e:
+        print(f"  -> Warning: Could not load creator mapping: {e}")
+        return {}
+
+
+def search_for_recipe_url(
+    channel: str,
+    title: str,
+    site: Optional[str] = None
+) -> Optional[str]:
+    """
+    Search DuckDuckGo for a recipe URL.
+
+    Args:
+        channel: YouTube channel name
+        title: Video title
+        site: Optional domain to restrict search (e.g., "feelgoodfoodie.net")
+
+    Returns:
+        Recipe URL if found, None otherwise
+    """
+    # Clean up title (remove channel name if present, common suffixes)
+    clean_title = title
+    for suffix in [" | " + channel, " - " + channel, " by " + channel]:
+        if clean_title.lower().endswith(suffix.lower()):
+            clean_title = clean_title[:-len(suffix)]
+
+    # Build query
+    if site:
+        query = f'"{clean_title}" recipe site:{site}'
+    else:
+        query = f'"{channel}" "{clean_title}" recipe'
+
+    try:
+        with DDGS() as ddgs:
+            results = ddgs.text(query, max_results=5)
+
+            for result in results:
+                url = result.get("href", "")
+
+                # Skip excluded domains
+                if _is_excluded_domain(url):
+                    continue
+
+                # Prefer URLs with /recipe/ in path
+                if "/recipe/" in url.lower():
+                    return url
+
+                # Accept first non-excluded result
+                return url
+
+            return None
+
+    except Exception as e:
+        print(f"  -> DuckDuckGo search failed: {e}")
+        return None
+
+
+def search_creator_website(channel: str, title: str) -> Optional[str]:
+    """
+    Attempt to find recipe URL on creator's website.
+
+    1. Load channel → website mapping
+    2. If mapped to null → return None (creator has no site)
+    3. If mapped to domain → search that domain
+    4. If not mapped → search DuckDuckGo without site restriction
+
+    Args:
+        channel: YouTube channel name
+        title: Video title
+
+    Returns:
+        Recipe URL if found, None otherwise
+    """
+    # Normalize channel name for lookup
+    channel_key = channel.lower().strip()
+
+    # Load mapping
+    mapping = load_creator_mapping()
+
+    # Check if channel is in mapping
+    if channel_key in mapping:
+        site = mapping[channel_key]
+
+        # null means creator has no recipe site - don't search
+        if site is None:
+            print(f"  -> {channel} has no recipe website (skipping search)")
+            return None
+
+        print(f"  -> Searching {site} for \"{title}\"...")
+    else:
+        site = None
+        print(f"  -> Searching web for \"{channel}\" \"{title}\"...")
+
+    url = search_for_recipe_url(channel=channel, title=title, site=site)
+
+    if url:
+        print(f"  -> Found: {url}")
+    else:
+        print(f"  -> No recipe URL found")
+
+    return url

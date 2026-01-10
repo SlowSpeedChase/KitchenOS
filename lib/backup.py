@@ -37,3 +37,31 @@ def create_backup(file_path: Path) -> Path:
     shutil.copy2(file_path, backup_path)
 
     return backup_path
+
+
+def cleanup_old_backups(history_dir: Path, max_age_days: int = 30) -> int:
+    """Remove backup files older than max_age_days.
+
+    Args:
+        history_dir: Path to .history directory
+        max_age_days: Maximum age in days (default 30)
+
+    Returns:
+        Number of files removed
+    """
+    import time
+
+    history_dir = Path(history_dir)
+
+    if not history_dir.exists():
+        return 0
+
+    cutoff_time = time.time() - (max_age_days * 24 * 60 * 60)
+    removed = 0
+
+    for backup_file in history_dir.glob("*.md"):
+        if backup_file.stat().st_mtime < cutoff_time:
+            backup_file.unlink()
+            removed += 1
+
+    return removed
