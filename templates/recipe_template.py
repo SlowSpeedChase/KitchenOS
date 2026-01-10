@@ -3,8 +3,11 @@
 from datetime import date
 import re
 from fractions import Fraction
+from urllib.parse import quote
 
 from lib.ingredient_parser import parse_ingredient
+
+API_BASE_URL = "http://localhost:5001"
 
 # Schema definition for recipe frontmatter
 # Used by migration to add missing fields
@@ -91,6 +94,32 @@ def convert_quantity_to_decimal(quantity_str):
         return f"{decimal_str}{rest}"
     return f"{decimal_str} {rest}"
 
+
+def generate_tools_callout(filename: str) -> str:
+    """Generate the Tools callout block with reprocess buttons.
+
+    Args:
+        filename: The recipe filename (e.g., "Pasta Aglio E Olio.md")
+
+    Returns:
+        Markdown callout block with buttons
+    """
+    encoded_filename = quote(filename, safe='')
+    return f'''> [!tools]- Tools
+> ```button
+> name Re-extract
+> type link
+> url {API_BASE_URL}/reprocess?file={encoded_filename}
+> ```
+> ```button
+> name Refresh Template
+> type link
+> url {API_BASE_URL}/refresh?file={encoded_filename}
+> ```
+
+'''
+
+
 RECIPE_TEMPLATE = '''---
 title: "{title}"
 source_url: "{source_url}"
@@ -119,7 +148,7 @@ needs_review: {needs_review}
 confidence_notes: "{confidence_notes}"
 ---
 
-# {title}
+{tools_callout}# {title}
 
 > {description}
 
@@ -240,6 +269,10 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel, date_ad
     # Get recipe source
     recipe_source = recipe_data.get('source', 'ai_extraction')
 
+    # Generate tools callout
+    filename = generate_filename(recipe_data.get('recipe_name', 'Untitled Recipe'))
+    tools_callout = generate_tools_callout(filename)
+
     # Get time values
     prep = recipe_data.get('prep_time')
     cook = recipe_data.get('cook_time')
@@ -259,6 +292,7 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel, date_ad
         date_added=date_added or date.today().isoformat(),
         video_title=video_title or "Unknown Video",
         recipe_source=recipe_source,
+        tools_callout=tools_callout,
         prep_time=quote_or_null(prep),
         cook_time=quote_or_null(cook),
         total_time=quote_or_null(total or prep or cook),
