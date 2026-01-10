@@ -10,6 +10,13 @@ from lib.nutrition import NutritionData
 
 
 NUTRITIONIX_URL = "https://trackapi.nutritionix.com/v2/natural/nutrients"
+USDA_URL = "https://api.nal.usda.gov/fdc/v1/foods/search"
+
+# USDA nutrient IDs
+NUTRIENT_CALORIES = 1008
+NUTRIENT_PROTEIN = 1003
+NUTRIENT_CARBS = 1005
+NUTRIENT_FAT = 1004
 
 
 @dataclass
@@ -66,6 +73,53 @@ def lookup_nutritionix(ingredient: str) -> Optional[NutritionLookupResult]:
         )
 
         return NutritionLookupResult(nutrition=nutrition, source="nutritionix")
+
+    except (requests.RequestException, KeyError, ValueError):
+        return None
+
+
+def lookup_usda(ingredient: str) -> Optional[NutritionLookupResult]:
+    """Look up nutrition data from USDA FoodData Central.
+
+    Args:
+        ingredient: Ingredient name to search
+
+    Returns:
+        NutritionLookupResult or None if lookup fails
+    """
+    # Extract just the food name (remove quantities)
+    words = ingredient.split()
+    food_name = " ".join(w for w in words if not w.replace(".", "").replace("/", "").isdigit())
+
+    params = {
+        "query": food_name,
+        "pageSize": 1,
+        "dataType": ["Foundation", "SR Legacy"],
+    }
+
+    try:
+        response = requests.get(USDA_URL, params=params, timeout=10)
+
+        if response.status_code != 200:
+            return None
+
+        data = response.json()
+        foods = data.get("foods", [])
+
+        if not foods:
+            return None
+
+        food = foods[0]
+        nutrients = {n["nutrientId"]: n.get("value", 0) for n in food.get("foodNutrients", [])}
+
+        nutrition = NutritionData(
+            calories=int(nutrients.get(NUTRIENT_CALORIES, 0)),
+            protein=int(nutrients.get(NUTRIENT_PROTEIN, 0)),
+            carbs=int(nutrients.get(NUTRIENT_CARBS, 0)),
+            fat=int(nutrients.get(NUTRIENT_FAT, 0)),
+        )
+
+        return NutritionLookupResult(nutrition=nutrition, source="usda")
 
     except (requests.RequestException, KeyError, ValueError):
         return None
