@@ -77,7 +77,7 @@ def main():
         return
 
     # Count days with meals
-    days_with_meals = sum(1 for d in days if any([d['breakfast'], d['lunch'], d['dinner']]))
+    days_with_meals = sum(1 for d in days if any([d['breakfast'], d['lunch'], d['snack'], d['dinner']]))
     print(f"Found {len(days)} days across meal plans ({days_with_meals} with meals)")
 
     # Generate ICS
