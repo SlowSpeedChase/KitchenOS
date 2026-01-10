@@ -18,6 +18,7 @@ from lib.backup import create_backup
 from lib.recipe_parser import find_existing_recipe, parse_recipe_file, extract_my_notes
 from lib.ingredient_validator import validate_ingredients
 from lib.ingredient_parser import parse_ingredient
+from lib.nutrition_lookup import calculate_recipe_nutrition
 
 # Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -353,6 +354,20 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False) 
             recipe_data.get('ingredients', []),
             verbose=True
         )
+
+        # Calculate nutrition from ingredients
+        ingredients = recipe_data.get("ingredients", [])
+        servings = recipe_data.get("servings", 1) or 1
+
+        nutrition_result = calculate_recipe_nutrition(ingredients, servings)
+
+        if nutrition_result:
+            recipe_data["calories"] = nutrition_result.nutrition.calories
+            recipe_data["protein_g"] = nutrition_result.nutrition.protein
+            recipe_data["carbs_g"] = nutrition_result.nutrition.carbs
+            recipe_data["fat_g"] = nutrition_result.nutrition.fat
+            recipe_data["nutrition_source"] = nutrition_result.source
+            recipe_data["serving_size"] = recipe_data.get("serving_size", "1 serving")
 
         recipe_name = recipe_data.get('recipe_name', 'Unknown Recipe')
         result["recipe_name"] = recipe_name

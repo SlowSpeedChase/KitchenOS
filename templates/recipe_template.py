@@ -21,7 +21,13 @@ RECIPE_SCHEMA = {
     "cook_time": str,
     "total_time": str,
     "servings": int,
+    "serving_size": str,
     "difficulty": str,
+    "calories": int,
+    "nutrition_protein": int,
+    "carbs": int,
+    "fat": int,
+    "nutrition_source": str,
     "cuisine": str,
     "protein": str,
     "dish_type": str,
@@ -120,6 +126,36 @@ def generate_tools_callout(filename: str) -> str:
 '''
 
 
+def generate_nutrition_section(recipe_data: dict) -> str:
+    """Generate nutrition section if data available.
+
+    Args:
+        recipe_data: Recipe data dict with nutrition fields
+
+    Returns:
+        Markdown section with nutrition table, or empty string if no data
+    """
+    calories = recipe_data.get("calories")
+    if calories is None:
+        return ""
+
+    nutrition_protein = recipe_data.get("nutrition_protein", 0)
+    carbs = recipe_data.get("carbs", 0)
+    fat = recipe_data.get("fat", 0)
+    serving_size = recipe_data.get("serving_size", "1 serving")
+    source = recipe_data.get("nutrition_source", "unknown")
+
+    return f"""## Nutrition (per serving)
+
+| Calories | Protein | Carbs | Fat |
+|----------|---------|-------|-----|
+| {calories}      | {nutrition_protein}g     | {carbs}g   | {fat}g |
+
+*Serving size: {serving_size} • Source: {source.title()}*
+
+"""
+
+
 RECIPE_TEMPLATE = '''---
 title: "{title}"
 source_url: "{source_url}"
@@ -132,7 +168,14 @@ prep_time: {prep_time}
 cook_time: {cook_time}
 total_time: {total_time}
 servings: {servings}
+serving_size: {serving_size}
 difficulty: {difficulty}
+
+calories: {calories}
+nutrition_protein: {nutrition_protein}
+carbs: {carbs}
+fat: {fat}
+nutrition_source: {nutrition_source}
 
 cuisine: {cuisine}
 protein: {protein}
@@ -156,7 +199,7 @@ confidence_notes: "{confidence_notes}"
 
 {ingredients}
 
-## Instructions
+{nutrition_section}## Instructions
 
 {instructions}
 
@@ -273,6 +316,9 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel, date_ad
     filename = generate_filename(recipe_data.get('recipe_name', 'Untitled Recipe'))
     tools_callout = generate_tools_callout(filename)
 
+    # Generate nutrition section
+    nutrition_section = generate_nutrition_section(recipe_data)
+
     # Get time values
     prep = recipe_data.get('prep_time')
     cook = recipe_data.get('cook_time')
@@ -297,7 +343,13 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel, date_ad
         cook_time=quote_or_null(cook),
         total_time=quote_or_null(total or prep or cook),
         servings=num_or_null(recipe_data.get('servings')),
+        serving_size=quote_or_null(recipe_data.get('serving_size')),
         difficulty=quote_or_null(recipe_data.get('difficulty')),
+        calories=num_or_null(recipe_data.get('calories')),
+        nutrition_protein=num_or_null(recipe_data.get('nutrition_protein')),
+        carbs=num_or_null(recipe_data.get('carbs')),
+        fat=num_or_null(recipe_data.get('fat')),
+        nutrition_source=quote_or_null(recipe_data.get('nutrition_source')),
         cuisine=quote_or_null(recipe_data.get('cuisine')),
         protein=quote_or_null(recipe_data.get('protein')),
         dish_type=quote_or_null(recipe_data.get('dish_type')),
@@ -308,6 +360,7 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel, date_ad
         confidence_notes=recipe_data.get('confidence_notes', ''),
         description=recipe_data.get('description', ''),
         ingredients='\n'.join(ingredients_lines),
+        nutrition_section=nutrition_section,
         # Join instructions with extra blank line between steps for better readability
         instructions='\n\n\n'.join(instruction_blocks),
         equipment_list=equipment_list,

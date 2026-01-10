@@ -136,6 +136,19 @@ curl -X POST http://localhost:5001/send-to-reminders \
 .venv/bin/python sync_calendar.py --dry-run
 ```
 
+### Generate Nutrition Dashboard
+
+```bash
+# Generate for current week
+.venv/bin/python generate_nutrition_dashboard.py
+
+# Generate for specific week
+.venv/bin/python generate_nutrition_dashboard.py --week 2026-W03
+
+# Preview without saving
+.venv/bin/python generate_nutrition_dashboard.py --dry-run
+```
+
 ## Meal Plan Generator (LaunchAgent)
 
 Auto-generates weekly meal plan templates 2 weeks in advance. Runs daily at 6am.
@@ -224,6 +237,7 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist
 | `/reprocess?file=<name>` | GET | Full re-extraction from YouTube (preserves notes) |
 | `/refresh?file=<name>` | GET | Template refresh only, keeps existing data |
 | `/calendar.ics` | GET | Serves meal plan calendar file |
+| `/refresh-nutrition?week=<week>` | GET | Regenerate nutrition dashboard for week |
 
 ### Configuration
 
@@ -277,6 +291,11 @@ template → Obsidian
 | `sync_calendar.py` | Generates ICS calendar from meal plans |
 | `lib/meal_plan_parser.py` | Parses meal plan markdown files |
 | `lib/ics_generator.py` | Creates ICS calendar format |
+| `generate_nutrition_dashboard.py` | Creates nutrition dashboard from meal plans |
+| `lib/nutrition.py` | NutritionData dataclass |
+| `lib/nutrition_lookup.py` | API clients for Nutritionix, USDA, AI fallback |
+| `lib/macro_targets.py` | Parses My Macros.md targets |
+| `lib/nutrition_dashboard.py` | Dashboard generation logic |
 
 ### Key Functions
 
@@ -348,6 +367,20 @@ template → Obsidian
 - `create_meal_event()` - Creates single calendar event
 - `format_day_summary()` - Formats "B: X | L: Y | D: Z" string
 
+**lib/nutrition_lookup.py:**
+- `lookup_nutritionix()` - Queries Nutritionix API for ingredient nutrition
+- `lookup_usda()` - Queries USDA FoodData Central API
+- `estimate_with_ai()` - Uses Ollama to estimate nutrition when APIs fail
+- `calculate_recipe_nutrition()` - Sums ingredient nutrition, divides by servings
+
+**lib/nutrition_dashboard.py:**
+- `generate_dashboard()` - Creates nutrition dashboard markdown
+- `get_recipe_nutrition()` - Loads nutrition data from recipe file
+- `calculate_daily_nutrition()` - Sums meals for a day
+
+**lib/macro_targets.py:**
+- `load_macro_targets()` - Loads targets from My Macros.md
+
 ## AI Configuration
 
 ### Ollama Settings
@@ -406,6 +439,8 @@ Maps YouTube channel names to their recipe website domains. Used to search creat
 - **API Keys**: In `.env` file
   - `YOUTUBE_API_KEY` - YouTube Data API
   - `OPENAI_API_KEY` - Whisper fallback
+  - `NUTRITIONIX_APP_ID` - Nutritionix API app ID
+  - `NUTRITIONIX_API_KEY` - Nutritionix API key
 
 ## Dependencies
 
@@ -515,6 +550,7 @@ These features are planned but not yet implemented:
 | ~~Batch processing~~ | ~~Medium~~ | **Completed** - Processes URLs from iOS Reminders list |
 | ~~YouTube Shorts support~~ | ~~Medium~~ | **Completed** - yt-dlp fetches metadata for /shorts/ URLs |
 | ~~Recipe reprocess buttons~~ | ~~Medium~~ | **Completed** - Tools callout with Re-extract/Refresh buttons |
+| ~~Nutrition tracking~~ | ~~Medium~~ | **Completed** - Macro tracking with dashboard, API lookup (Nutritionix, USDA), AI fallback |
 | Claude API fallback | Low | Use Claude when Ollama fails |
 | Image extraction | Low | Get video thumbnails for recipes |
 
@@ -530,6 +566,7 @@ KitchenOS/
 ├── migrate_recipes.py     # Schema migration
 ├── shopping_list.py       # Shopping list from meal plans
 ├── generate_meal_plan.py  # Weekly meal plan generator
+├── generate_nutrition_dashboard.py  # Nutrition dashboard generator
 │
 ├── lib/                   # Python library modules
 ├── prompts/               # AI prompt templates

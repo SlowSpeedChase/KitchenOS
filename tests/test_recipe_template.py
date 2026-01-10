@@ -1,5 +1,9 @@
 """Tests for recipe template"""
-from templates.recipe_template import format_recipe_markdown, generate_tools_callout
+from templates.recipe_template import (
+    format_recipe_markdown,
+    generate_tools_callout,
+    generate_nutrition_section,
+)
 
 
 def test_generate_tools_callout():
@@ -32,3 +36,114 @@ def test_format_recipe_markdown_includes_tools_callout():
 
     assert "> [!tools]- Tools" in result
     assert "reprocess?file=Test%20Recipe.md" in result
+
+
+class TestNutritionSection:
+    def test_generate_nutrition_section_with_data(self):
+        """Nutrition section should generate markdown table when data present"""
+        recipe_data = {
+            "calories": 450,
+            "nutrition_protein": 25,
+            "carbs": 45,
+            "fat": 18,
+            "serving_size": "1 cup",
+            "nutrition_source": "nutritionix",
+        }
+        result = generate_nutrition_section(recipe_data)
+
+        assert "## Nutrition (per serving)" in result
+        assert "| Calories | Protein | Carbs | Fat |" in result
+        assert "| 450" in result
+        assert "| 25g" in result
+        assert "| 45g" in result
+        assert "| 18g" in result
+        assert "*Serving size: 1 cup" in result
+        assert "Nutritionix" in result
+
+    def test_generate_nutrition_section_without_data(self):
+        """Nutrition section should return empty string when no calories"""
+        recipe_data = {}
+        result = generate_nutrition_section(recipe_data)
+        assert result == ""
+
+    def test_includes_nutrition_in_frontmatter(self):
+        """Recipe frontmatter should include nutrition fields"""
+        recipe_data = {
+            "recipe_name": "Test Recipe",
+            "description": "A test",
+            "servings": 4,
+            "serving_size": "1 cup",
+            "calories": 450,
+            "nutrition_protein": 25,
+            "carbs": 45,
+            "fat": 18,
+            "nutrition_source": "nutritionix",
+            "ingredients": [],
+            "instructions": [],
+            "equipment": [],
+        }
+        result = format_recipe_markdown(recipe_data, "http://example.com", "Test Video", "Test Channel")
+
+        assert "calories: 450" in result
+        assert "nutrition_protein: 25" in result
+        assert "carbs: 45" in result
+        assert "fat: 18" in result
+        assert 'serving_size: "1 cup"' in result
+        assert 'nutrition_source: "nutritionix"' in result
+
+    def test_includes_nutrition_table_in_body(self):
+        """Recipe body should include nutrition table after ingredients"""
+        recipe_data = {
+            "recipe_name": "Test Recipe",
+            "description": "A test",
+            "servings": 4,
+            "serving_size": "1 cup",
+            "calories": 450,
+            "nutrition_protein": 25,
+            "carbs": 45,
+            "fat": 18,
+            "nutrition_source": "nutritionix",
+            "ingredients": [],
+            "instructions": [],
+            "equipment": [],
+        }
+        result = format_recipe_markdown(recipe_data, "http://example.com", "Test Video", "Test Channel")
+
+        assert "## Nutrition (per serving)" in result
+        assert "| Calories | Protein | Carbs | Fat |" in result
+        assert "| 450" in result
+        assert "*Serving size: 1 cup" in result
+
+    def test_omits_nutrition_section_when_no_data(self):
+        """Recipe should not include nutrition section when no calorie data"""
+        recipe_data = {
+            "recipe_name": "Test Recipe",
+            "description": "A test",
+            "servings": 4,
+            "ingredients": [],
+            "instructions": [],
+            "equipment": [],
+        }
+        result = format_recipe_markdown(recipe_data, "http://example.com", "Test Video", "Test Channel")
+
+        assert "## Nutrition (per serving)" not in result
+
+    def test_nutrition_with_null_values(self):
+        """Frontmatter should handle null nutrition values"""
+        recipe_data = {
+            "recipe_name": "Test Recipe",
+            "description": "A test",
+            "servings": 4,
+            "ingredients": [],
+            "instructions": [],
+            "equipment": [],
+            # No nutrition data
+        }
+        result = format_recipe_markdown(recipe_data, "http://example.com", "Test Video", "Test Channel")
+
+        assert "calories: null" in result
+        assert "nutrition_protein: null" in result
+        assert "carbs: null" in result
+        assert "fat: null" in result
+        assert "serving_size: null" in result
+        assert "nutrition_source: null" in result

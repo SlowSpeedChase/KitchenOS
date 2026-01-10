@@ -315,6 +315,45 @@ def serve_calendar():
     )
 
 
+@app.route('/refresh-nutrition', methods=['GET'])
+def refresh_nutrition():
+    """Regenerate nutrition dashboard for a given week."""
+    from lib.nutrition_dashboard import save_dashboard
+
+    week = request.args.get('week')
+
+    if not week:
+        return error_page("Error: week parameter required (e.g., 2026-W03)"), 400
+
+    vault_path = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS")
+
+    try:
+        output_path, warnings = save_dashboard(week, vault_path)
+
+        # Generate success page with link to dashboard
+        warnings_html = ""
+        if warnings:
+            warnings_list = "".join(f"<li>{w}</li>" for w in warnings)
+            warnings_html = f'<div style="background: #ffc; border: 1px solid #cc0; padding: 1rem; border-radius: 8px; margin-top: 1rem;"><strong>Warnings:</strong><ul>{warnings_list}</ul></div>'
+
+        return f'''<!DOCTYPE html>
+<html><head><title>KitchenOS</title></head>
+<body style="font-family: system-ui; padding: 2rem; max-width: 600px; margin: 0 auto;">
+<div style="background: #efe; border: 1px solid #0a0; padding: 1rem; border-radius: 8px;">
+<strong style="color: #0a0;">Success</strong><br>Dashboard updated for {week}
+</div>
+{warnings_html}
+<p><a href="obsidian://open?vault=KitchenOS&file=Nutrition%20Dashboard">View Dashboard</a></p>
+</body></html>'''
+
+    except FileNotFoundError as e:
+        return error_page(f"Error: {str(e)}"), 404
+    except ValueError as e:
+        return error_page(f"Error: {str(e)}"), 400
+    except Exception as e:
+        return error_page(f"Error generating dashboard: {str(e)}"), 500
+
+
 @app.route('/refresh', methods=['GET'])
 def refresh_template():
     """Regenerate recipe file with current template, preserving data and notes."""
