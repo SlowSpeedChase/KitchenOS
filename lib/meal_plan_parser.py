@@ -18,17 +18,17 @@ def get_week_start_date(year: int, week: int) -> date:
 
 
 def extract_meals_for_day(section: str) -> dict:
-    """Extract breakfast, lunch, dinner from a day section.
+    """Extract breakfast, lunch, snack, dinner from a day section.
 
     Args:
         section: Markdown section for a single day
 
     Returns:
-        Dict with 'breakfast', 'lunch', 'dinner' keys (None if empty)
+        Dict with 'breakfast', 'lunch', 'snack', 'dinner' keys (None if empty)
     """
-    meals = {'breakfast': None, 'lunch': None, 'dinner': None}
+    meals = {'breakfast': None, 'lunch': None, 'snack': None, 'dinner': None}
 
-    for meal_type in ['breakfast', 'lunch', 'dinner']:
+    for meal_type in ['breakfast', 'lunch', 'snack', 'dinner']:
         pattern = rf'###\s+{meal_type}\s*\n(.*?)(?=###|\Z)'
         match = re.search(pattern, section, re.IGNORECASE | re.DOTALL)
         if match:
@@ -55,6 +55,7 @@ def parse_meal_plan(content: str, year: int, week: int) -> list[dict]:
             - day: str (Monday, Tuesday, etc.)
             - breakfast: str or None
             - lunch: str or None
+            - snack: str or None
             - dinner: str or None
     """
     days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
@@ -68,7 +69,7 @@ def parse_meal_plan(content: str, year: int, week: int) -> list[dict]:
         pattern = rf'##\s+{day_name}\s+\([^)]+\)(.*?)(?=##\s+(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)|\Z)'
         match = re.search(pattern, content, re.IGNORECASE | re.DOTALL)
 
-        meals = {'breakfast': None, 'lunch': None, 'dinner': None}
+        meals = {'breakfast': None, 'lunch': None, 'snack': None, 'dinner': None}
         if match:
             meals = extract_meals_for_day(match.group(0))
 

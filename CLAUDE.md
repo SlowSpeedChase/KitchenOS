@@ -383,9 +383,9 @@ template → Obsidian
 - `extract_meals_for_day()` - Extracts meals from a day section
 
 **lib/ics_generator.py:**
-- `generate_ics()` - Creates ICS calendar content
-- `create_meal_event()` - Creates single calendar event
-- `format_day_summary()` - Formats "B: X | L: Y | D: Z" string
+- `MEAL_TIMES` - Dict mapping meal types to (hour, minute) tuples
+- `create_meal_event()` - Creates single timed event for a meal
+- `generate_ics()` - Creates ICS calendar with timed events per meal
 
 **lib/nutrition_lookup.py:**
 - `lookup_nutritionix()` - Queries Nutritionix API for ingredient nutrition
