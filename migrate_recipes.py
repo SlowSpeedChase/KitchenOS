@@ -8,17 +8,23 @@ Usage:
 """
 
 import argparse
+import json
 import re
 import sys
 import os
 from pathlib import Path
 from typing import List, Tuple
 
+import requests
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from lib.backup import create_backup
 from lib.recipe_parser import parse_recipe_file, extract_my_notes, parse_ingredient_table
 from templates.recipe_template import RECIPE_SCHEMA, generate_tools_callout
+
+OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_MODEL = "mistral:7b"
 
 OBSIDIAN_RECIPES_PATH = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS/Recipes")
 
@@ -54,6 +60,70 @@ def add_tools_callout(content: str, filename: str) -> str:
     new_body = "\n\n" + callout + body.lstrip('\n')
 
     return f"---{frontmatter}---{new_body}"
+
+
+def infer_meal_occasion(frontmatter: dict) -> list:
+    """Use Ollama to infer meal_occasion from existing recipe metadata.
+
+    Args:
+        frontmatter: Parsed frontmatter dict with title, cuisine, dish_type, etc.
+
+    Returns:
+        List of up to 3 slugified occasion strings, or empty list on failure.
+    """
+    title = frontmatter.get('title', '')
+    cuisine = frontmatter.get('cuisine', '')
+    dish_type = frontmatter.get('dish_type', '')
+    protein = frontmatter.get('protein', '')
+    difficulty = frontmatter.get('difficulty', '')
+    prep_time = frontmatter.get('prep_time', '')
+    cook_time = frontmatter.get('cook_time', '')
+
+    prompt = f"""Given this recipe, return a JSON array of up to 3 meal occasions describing when someone would make this.
+
+Recipe: {title}
+Cuisine: {cuisine}
+Type: {dish_type}
+Protein: {protein}
+Difficulty: {difficulty}
+Prep time: {prep_time}
+Cook time: {cook_time}
+
+Use slugified values like: weeknight-dinner, grab-and-go-breakfast, meal-prep, weekend-project, packed-lunch, afternoon-snack, date-night, post-workout, crowd-pleaser, lazy-sunday
+
+Return ONLY a JSON array of strings, nothing else. Example: ["weeknight-dinner", "meal-prep"]"""
+
+    try:
+        response = requests.post(
+            OLLAMA_URL,
+            json={
+                "model": OLLAMA_MODEL,
+                "prompt": prompt,
+                "stream": False,
+                "format": "json"
+            },
+            timeout=60
+        )
+        response.raise_for_status()
+        result = response.json()
+        raw = result.get("response", "")
+        parsed = json.loads(raw)
+
+        # Handle both {"meal_occasion": [...]} and bare [...] responses
+        if isinstance(parsed, dict):
+            occasions = parsed.get("meal_occasion", parsed.get("occasions", []))
+        elif isinstance(parsed, list):
+            occasions = parsed
+        else:
+            return []
+
+        return [
+            o.strip().lower().replace(' ', '-')
+            for o in occasions if o and isinstance(o, str)
+        ][:3]
+    except Exception as e:
+        print(f"    Warning: Could not infer meal_occasion: {e}")
+        return []
 
 
 def migrate_ingredient_table(table_text: str) -> str:
@@ -145,6 +215,13 @@ def migrate_recipe_file(filepath: Path) -> List[str]:
             filepath.write_text(new_content, encoding='utf-8')
         return changes
 
+    # Infer meal_occasion via Ollama if missing
+    inferred_occasion = []
+    if 'meal_occasion' in missing_fields:
+        inferred_occasion = infer_meal_occasion(frontmatter)
+        if inferred_occasion:
+            changes.append(f"Inferred meal_occasion: {inferred_occasion}")
+
     # Add missing frontmatter fields
     lines = new_content.split('\n')
     new_lines = []
@@ -157,8 +234,11 @@ def migrate_recipe_file(filepath: Path) -> List[str]:
                 new_lines.append(line)
             else:
                 for field in missing_fields:
-                    field_type = RECIPE_SCHEMA[field]
-                    if field_type == list:
+                    if field == 'meal_occasion' and inferred_occasion:
+                        quote = '"'
+                        yaml_list = f"[{', '.join(quote + o + quote for o in inferred_occasion)}]"
+                        new_lines.append(f"meal_occasion: {yaml_list}")
+                    elif RECIPE_SCHEMA[field] == list:
                         new_lines.append(f"{field}: []")
                     else:
                         new_lines.append(f"{field}: null")
@@ -220,6 +300,8 @@ def run_migration(recipes_dir: Path, dry_run: bool = False) -> dict:
 
             if dry_run:
                 changes = [f"Would add '{f}'" for f in missing]
+                if 'meal_occasion' in missing:
+                    changes.append("Would infer meal_occasion via Ollama")
                 if '| Amount | Ingredient |' in content:
                     changes.append("Would convert ingredient table to 3-column format")
                 if not has_tools_callout(content):

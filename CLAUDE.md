@@ -428,6 +428,7 @@ The AI extracts this structure:
   "cuisine": "string",
   "protein": "string or null",
   "dish_type": "string",
+  "meal_occasion": ["up to 3 strings - e.g. weeknight-dinner, grab-and-go-breakfast, meal-prep"],
   "dietary": ["array"],
   "equipment": ["array"],
   "ingredients": [{"amount": "number/string", "unit": "string", "item": "string", "inferred": boolean}],

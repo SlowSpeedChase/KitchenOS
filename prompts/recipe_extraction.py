@@ -33,6 +33,7 @@ Output valid JSON matching this schema:
     {"step": number, "text": "string", "time": "string or null"}
   ],
   "storage": "string or null",
+  "meal_occasion": ["up to 3 strings - when would someone make this? e.g. weeknight-dinner, grab-and-go-breakfast, meal-prep, weekend-project, packed-lunch, afternoon-snack, date-night, post-workout, crowd-pleaser, lazy-sunday"],
   "variations": ["array of strings"],
   "nutritional_info": "string or null",
   "needs_review": boolean,
@@ -103,6 +104,7 @@ Output valid JSON matching this schema:
     {"step": number, "text": "string", "time": "string or null"}
   ],
   "storage": "string or null",
+  "meal_occasion": ["up to 3 strings - when would someone make this? e.g. weeknight-dinner, grab-and-go-breakfast, meal-prep, weekend-project, packed-lunch, afternoon-snack, date-night, post-workout, crowd-pleaser, lazy-sunday"],
   "variations": ["array of strings"],
   "needs_review": false,
   "confidence_notes": "Extracted from video description text."

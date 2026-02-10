@@ -372,6 +372,21 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False) 
             recipe_data.get('instructions', [])
         )
 
+        # Normalize string fields that AI sometimes returns as lists
+        for field in ('cuisine', 'protein', 'dish_type', 'difficulty'):
+            val = recipe_data.get(field)
+            if isinstance(val, list):
+                recipe_data[field] = val[0] if val else None
+
+        # Normalize meal_occasion to list of slugified strings (max 3)
+        occasion = recipe_data.get('meal_occasion', [])
+        if isinstance(occasion, str):
+            occasion = [occasion]
+        recipe_data['meal_occasion'] = [
+            o.strip().lower().replace(' ', '-')
+            for o in occasion if o and isinstance(o, str)
+        ][:3]
+
         # Validate and repair ingredients (fixes AI extraction errors)
         recipe_data['ingredients'] = validate_ingredients(
             recipe_data.get('ingredients', []),

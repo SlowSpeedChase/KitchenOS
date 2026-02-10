@@ -31,6 +31,7 @@ RECIPE_SCHEMA = {
     "cuisine": str,
     "protein": str,
     "dish_type": str,
+    "meal_occasion": list,
     "dietary": list,
     "equipment": list,
     "needs_review": bool,
@@ -180,6 +181,7 @@ nutrition_source: {nutrition_source}
 cuisine: {cuisine}
 protein: {protein}
 dish_type: {dish_type}
+meal_occasion: {meal_occasion}
 dietary: {dietary}
 
 equipment: {equipment}
@@ -278,6 +280,10 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel, date_ad
     quote = '"'
     equipment_yaml = f"[{', '.join(quote + e + quote for e in equipment)}]" if equipment else "[]"
 
+    # Format meal_occasion as YAML list
+    meal_occasion = recipe_data.get('meal_occasion', [])
+    meal_occasion_yaml = f"[{', '.join(quote + o.lower().replace(' ', '-') + quote for o in meal_occasion)}]" if meal_occasion else "[]"
+
     # Format tags
     tags = []
     if recipe_data.get('cuisine'):
@@ -286,6 +292,9 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel, date_ad
         tags.append(f"  - {recipe_data['protein'].lower().replace(' ', '-')}")
     if recipe_data.get('dish_type'):
         tags.append(f"  - {recipe_data['dish_type'].lower().replace(' ', '-')}")
+    for occasion in recipe_data.get('meal_occasion', []):
+        if occasion:
+            tags.append(f"  - {occasion.lower().replace(' ', '-')}")
     tags_yaml = '\n'.join(tags) if tags else "  - recipe"
 
     # Build notes section
@@ -353,6 +362,7 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel, date_ad
         cuisine=quote_or_null(recipe_data.get('cuisine')),
         protein=quote_or_null(recipe_data.get('protein')),
         dish_type=quote_or_null(recipe_data.get('dish_type')),
+        meal_occasion=meal_occasion_yaml,
         dietary=dietary_yaml,
         equipment=equipment_yaml,
         tags=tags_yaml,
