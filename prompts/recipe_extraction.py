@@ -46,17 +46,26 @@ CHANNEL: {channel}
 
 DESCRIPTION:
 {description}
-
+{comment_section}
 TRANSCRIPT:
 {transcript}"""
 
 
-def build_user_prompt(title, channel, description, transcript):
-    """Build the user prompt with video data"""
+def build_user_prompt(title, channel, description, transcript, comment=None):
+    """Build the user prompt with video data.
+
+    Args:
+        comment: Optional first comment text to include as additional context.
+    """
+    comment_section = ""
+    if comment:
+        comment_section = f"\nFIRST COMMENT:\n{comment}\n"
+
     return USER_PROMPT_TEMPLATE.format(
         title=title or "Unknown",
         channel=channel or "Unknown",
         description=description or "No description",
+        comment_section=comment_section,
         transcript=transcript or "No transcript"
     )
 

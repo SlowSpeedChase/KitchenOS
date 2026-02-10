@@ -274,15 +274,17 @@ The "Add Ingredients" button in shopping lists requires QuickAdd plugin configur
 ```
 YouTube URL → extract_recipe.py
     ↓
-main.py (fetch metadata + transcript)
+main.py (fetch metadata + transcript + first comment)
     ↓
 recipe_sources.py:
   1. find_recipe_link() → scrape_recipe_from_url()
   2. parse_recipe_from_description()
+  2.5a. find_recipe_link(comment) → scrape_recipe_from_url()
+  2.5b. parse_recipe_from_description(comment)
   3. search_creator_website() → scrape_recipe_from_url()
-  4. extract_recipe_with_ollama() (fallback)
+  4. extract_recipe_with_ollama() (fallback, includes comment as context)
     ↓
-extract_cooking_tips() (if webpage/description source)
+extract_cooking_tips() (if webpage/description/comment source)
     ↓
 validate_ingredients() (repair AI extraction errors)
     ↓
@@ -328,6 +330,7 @@ template → Obsidian
 - `youtube_parser(url)` - Extracts video ID from various URL formats
 - `get_video_metadata(video_id)` - Fetches title, channel, description
 - `get_transcript(video_id)` - Gets transcript (YouTube or Whisper fallback)
+- `get_first_comment(video_id)` - Fetches first (usually pinned) comment via YouTube API
 
 **templates/recipe_template.py:**
 - `format_recipe_markdown()` - Converts recipe JSON to Obsidian markdown

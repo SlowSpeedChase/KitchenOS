@@ -10,6 +10,7 @@ import yt_dlp
 import openai
 import tempfile
 from pathlib import Path
+from typing import Optional
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -127,6 +128,47 @@ def get_video_metadata(video_id, is_short=False):
     except Exception as e:
         print(f"Error fetching video metadata: {e}", file=sys.stderr)
         return None
+
+def get_first_comment(video_id: str) -> Optional[dict]:
+    """Fetch the first (usually pinned) comment on a video.
+
+    Uses YouTube Data API commentThreads endpoint sorted by relevance,
+    which surfaces pinned comments first.
+
+    Args:
+        video_id: YouTube video ID (works for both regular videos and Shorts)
+
+    Returns:
+        Dict with keys: text, author. None if comments are disabled,
+        unavailable, or API call fails.
+    """
+    if not YOUTUBE_API_KEY:
+        return None
+
+    try:
+        youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
+        request = youtube.commentThreads().list(
+            part='snippet',
+            videoId=video_id,
+            order='relevance',
+            maxResults=1,
+        )
+        response = request.execute()
+
+        items = response.get('items', [])
+        if not items:
+            return None
+
+        snippet = items[0]['snippet']['topLevelComment']['snippet']
+        return {
+            'text': snippet.get('textOriginal', ''),
+            'author': snippet.get('authorDisplayName', ''),
+        }
+
+    except Exception as e:
+        print(f"Could not fetch comments: {e}", file=sys.stderr)
+        return None
+
 
 def print_transcript(video_id):
     try:

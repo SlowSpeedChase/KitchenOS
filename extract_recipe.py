@@ -23,7 +23,7 @@ from lib.nutrition_lookup import calculate_recipe_nutrition
 # Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from main import youtube_parser, get_video_metadata, get_transcript
+from main import youtube_parser, get_video_metadata, get_transcript, get_first_comment
 from prompts.recipe_extraction import SYSTEM_PROMPT, build_user_prompt
 from templates.recipe_template import format_recipe_markdown, generate_filename
 from templates.recipemd_template import format_recipemd, generate_recipemd_filename
@@ -123,9 +123,9 @@ def normalize_ingredients(ingredients: list) -> list:
     return normalized
 
 
-def extract_recipe_with_ollama(title, channel, description, transcript):
+def extract_recipe_with_ollama(title, channel, description, transcript, comment=None):
     """Send video data to Ollama and extract recipe as JSON."""
-    prompt = f"{SYSTEM_PROMPT}\n\n{build_user_prompt(title, channel, description, transcript)}"
+    prompt = f"{SYSTEM_PROMPT}\n\n{build_user_prompt(title, channel, description, transcript, comment=comment)}"
 
     try:
         response = requests.post(
@@ -296,6 +296,12 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False) 
         transcript_result = get_transcript(video_id)
         transcript = transcript_result['text']
 
+        # Get first comment (usually pinned)
+        first_comment = get_first_comment(video_id)
+        comment_text = first_comment['text'] if first_comment else None
+        if comment_text:
+            print(f"  -> Found first comment by {first_comment['author']}")
+
         # === PRIORITY CHAIN ===
         recipe_data = None
         source = None
@@ -315,6 +321,21 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False) 
             if recipe_data:
                 source = "description"
 
+        # 2.5a. Check for recipe link in first comment
+        if not recipe_data and comment_text:
+            comment_link = find_recipe_link(comment_text)
+            if comment_link:
+                recipe_data = scrape_recipe_from_url(comment_link)
+                if recipe_data:
+                    source = "comment_link"
+                    recipe_link = comment_link
+
+        # 2.5b. Try parsing recipe from first comment
+        if not recipe_data and comment_text:
+            recipe_data = parse_recipe_from_description(comment_text, title, channel)
+            if recipe_data:
+                source = "comment"
+
         # 3. Search creator's website for full recipe
         if not recipe_data:
             creator_url = search_creator_website(channel, title)
@@ -324,16 +345,18 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False) 
                     source = "creator_website"
                     recipe_link = creator_url  # For metadata
 
-        # 4. Fall back to AI extraction from transcript
+        # 4. Fall back to AI extraction from transcript (include comment as context)
         if not recipe_data:
-            recipe_data, error = extract_recipe_with_ollama(title, channel, description, transcript)
+            recipe_data, error = extract_recipe_with_ollama(
+                title, channel, description, transcript, comment=comment_text
+            )
             if error:
                 result["error"] = error
                 return result
             source = "ai_extraction"
 
-        # 5. Extract cooking tips if we got recipe from webpage, description, or creator website
-        if source in ("webpage", "description", "creator_website") and transcript:
+        # 5. Extract cooking tips if we got recipe from a structured source (not AI)
+        if source in ("webpage", "description", "comment_link", "comment", "creator_website") and transcript:
             tips = extract_cooking_tips(transcript, recipe_data)
             recipe_data['video_tips'] = tips
 
