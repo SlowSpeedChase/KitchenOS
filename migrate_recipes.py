@@ -151,6 +151,8 @@ def migrate_recipe_content(content: str, filename: str = None) -> Tuple[str, Lis
     Handles:
     - Converting 2-column ingredient tables to 3-column format
     - Adding Tools callout with reprocess buttons
+    - Replacing localhost URLs with Tailscale IP
+    - Adding 'Add to Meal Plan' button if missing from Tools callout
 
     Args:
         content: Full markdown file content
@@ -182,6 +184,29 @@ def migrate_recipe_content(content: str, filename: str = None) -> Tuple[str, Lis
     if filename and not has_tools_callout(new_content):
         new_content = add_tools_callout(new_content, filename)
         changes.append("Added Tools callout with reprocess buttons")
+
+    # Migrate localhost URLs to Tailscale IP
+    if "localhost:5001" in new_content:
+        new_content = new_content.replace("http://localhost:5001", "http://100.111.6.10:5001")
+        changes.append("Updated button URLs from localhost to Tailscale IP")
+
+    # Add "Add to Meal Plan" button if Tools callout exists but button is missing
+    if has_tools_callout(new_content) and "Add to Meal Plan" not in new_content and filename:
+        from urllib.parse import quote
+        encoded_filename = quote(filename, safe='')
+        meal_plan_button = (
+            f'> ```button\n'
+            f'> name Add to Meal Plan\n'
+            f'> type link\n'
+            f'> url http://100.111.6.10:5001/add-to-meal-plan?recipe={encoded_filename}\n'
+            f'> ```\n'
+        )
+        # Insert before the closing of the tools callout (before the blank line after last ```)
+        last_button_end = new_content.rfind('> ```\n')
+        if last_button_end != -1:
+            insert_pos = last_button_end + len('> ```\n')
+            new_content = new_content[:insert_pos] + meal_plan_button + new_content[insert_pos:]
+            changes.append("Added 'Add to Meal Plan' button")
 
     return new_content, changes
 
@@ -258,12 +283,20 @@ def needs_content_migration(content: str) -> bool:
     Returns True if:
     - There's a 2-column ingredient table that needs conversion
     - Missing Tools callout
+    - Has localhost URLs that need Tailscale IP replacement
+    - Missing 'Add to Meal Plan' button in Tools callout
     """
     # Look for 2-column table header (Amount | Ingredient) without Unit
     if '| Amount | Ingredient |' in content:
         return True
     # Check for missing Tools callout
     if not has_tools_callout(content):
+        return True
+    # Check for localhost URLs that need Tailscale IP replacement
+    if "localhost:5001" in content:
+        return True
+    # Check for missing 'Add to Meal Plan' button
+    if has_tools_callout(content) and "Add to Meal Plan" not in content:
         return True
     return False
 

@@ -452,3 +452,60 @@ title: Test
         result = add_tools_callout(content, "Pasta Aglio E Olio.md")
 
         assert "Pasta%20Aglio%20E%20Olio.md" in result
+
+
+# ============================================================================
+# Tests for Tailscale IP migration and Add to Meal Plan button
+# ============================================================================
+
+from migrate_recipes import migrate_recipe_content
+
+
+def test_migration_updates_localhost_to_tailscale():
+    """Migration should replace localhost URLs with Tailscale IP."""
+    content = '''---
+title: "Test"
+---
+
+> [!tools]- Tools
+> ```button
+> name Re-extract
+> type link
+> url http://localhost:5001/reprocess?file=Test.md
+> ```
+> ```button
+> name Refresh Template
+> type link
+> url http://localhost:5001/refresh?file=Test.md
+> ```
+
+# Test
+'''
+    result, changes = migrate_recipe_content(content, "Test.md")
+    assert "100.111.6.10:5001" in result
+    assert "localhost:5001" not in result
+
+
+def test_migration_adds_meal_plan_button():
+    """Migration should add Add to Meal Plan button if missing."""
+    content = '''---
+title: "Test"
+---
+
+> [!tools]- Tools
+> ```button
+> name Re-extract
+> type link
+> url http://localhost:5001/reprocess?file=Test.md
+> ```
+> ```button
+> name Refresh Template
+> type link
+> url http://localhost:5001/refresh?file=Test.md
+> ```
+
+# Test
+'''
+    result, changes = migrate_recipe_content(content, "Test.md")
+    assert "Add to Meal Plan" in result
+    assert "add-to-meal-plan" in result
