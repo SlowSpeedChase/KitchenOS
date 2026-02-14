@@ -4,7 +4,6 @@ import tempfile
 import time
 import os
 from pathlib import Path
-from datetime import datetime
 from lib.failure_logger import (
     classify_error,
     log_failures,
