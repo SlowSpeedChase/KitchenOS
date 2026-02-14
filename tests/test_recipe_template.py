@@ -3,6 +3,7 @@ from templates.recipe_template import (
     format_recipe_markdown,
     generate_tools_callout,
     generate_nutrition_section,
+    API_BASE_URL,
 )
 
 
@@ -16,6 +17,23 @@ def test_generate_tools_callout():
     # Filename should be URL-encoded
     assert "reprocess?file=Pasta%20Aglio%20E%20Olio.md" in callout
     assert "refresh?file=Pasta%20Aglio%20E%20Olio.md" in callout
+
+
+def test_api_base_url_uses_tailscale():
+    assert API_BASE_URL == "http://100.111.6.10:5001"
+
+
+def test_tools_callout_contains_add_to_meal_plan():
+    result = generate_tools_callout("Test Recipe.md")
+    assert "Add to Meal Plan" in result
+    assert "add-to-meal-plan" in result
+    assert "recipe=Test%20Recipe.md" in result
+
+
+def test_tools_callout_uses_tailscale_ip():
+    result = generate_tools_callout("Test.md")
+    assert "100.111.6.10:5001" in result
+    assert "localhost" not in result
 
 
 def test_format_recipe_markdown_includes_tools_callout():

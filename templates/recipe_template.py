@@ -7,7 +7,7 @@ from urllib.parse import quote
 
 from lib.ingredient_parser import parse_ingredient
 
-API_BASE_URL = "http://localhost:5001"
+API_BASE_URL = "http://100.111.6.10:5001"
 
 # Schema definition for recipe frontmatter
 # Used by migration to add missing fields
@@ -122,6 +122,11 @@ def generate_tools_callout(filename: str) -> str:
 > name Refresh Template
 > type link
 > url {API_BASE_URL}/refresh?file={encoded_filename}
+> ```
+> ```button
+> name Add to Meal Plan
+> type link
+> url {API_BASE_URL}/add-to-meal-plan?recipe={encoded_filename}
 > ```
 
 '''
