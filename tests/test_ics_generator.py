@@ -4,6 +4,7 @@ import pytest
 from datetime import date
 from icalendar import Calendar
 from lib.ics_generator import format_day_summary, create_meal_event, generate_ics
+from lib.meal_plan_parser import MealEntry
 
 
 class TestFormatDaySummary:
@@ -20,6 +21,22 @@ class TestFormatDaySummary:
     def test_all_empty(self):
         result = format_day_summary(None, None, None)
         assert result == 'B: — | L: — | D: —'
+
+    def test_formats_meal_entry_without_multiplier(self):
+        result = format_day_summary(
+            MealEntry('Pancakes', 1),
+            MealEntry('Salad', 1),
+            MealEntry('Steak', 1),
+        )
+        assert result == 'B: Pancakes | L: Salad | D: Steak'
+
+    def test_formats_meal_entry_with_multiplier(self):
+        result = format_day_summary(
+            MealEntry('Pancakes', 2),
+            None,
+            MealEntry('Steak', 1),
+        )
+        assert result == 'B: Pancakes x2 | L: — | D: Steak'
 
 
 class TestCreateMealEvent:

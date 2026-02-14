@@ -2,7 +2,7 @@
 
 import pytest
 from datetime import date
-from lib.meal_plan_parser import parse_meal_plan, extract_meals_for_day, insert_recipe_into_meal_plan
+from lib.meal_plan_parser import parse_meal_plan, extract_meals_for_day, insert_recipe_into_meal_plan, MealEntry
 
 
 class TestParseMealPlan:
@@ -40,9 +40,9 @@ class TestParseMealPlan:
 """
         result = parse_meal_plan(content, 2026, 4)
 
-        assert result[0]['breakfast'] == 'Rich Fudgy Chocolate Cake'
-        assert result[0]['lunch'] == 'Caesar Salad'
-        assert result[0]['dinner'] == 'Pasta Aglio E Olio'
+        assert result[0]['breakfast'] == MealEntry('Rich Fudgy Chocolate Cake', 1)
+        assert result[0]['lunch'] == MealEntry('Caesar Salad', 1)
+        assert result[0]['dinner'] == MealEntry('Pasta Aglio E Olio', 1)
 
     def test_handles_empty_meals(self):
         content = """# Meal Plan - Week 04 (Jan 19 - Jan 25, 2026)
@@ -60,7 +60,7 @@ class TestParseMealPlan:
 
         assert result[0]['breakfast'] is None
         assert result[0]['lunch'] is None
-        assert result[0]['dinner'] == 'Pasta'
+        assert result[0]['dinner'] == MealEntry('Pasta', 1)
 
     def test_handles_multiple_recipes_uses_first(self):
         content = """# Meal Plan - Week 04 (Jan 19 - Jan 25, 2026)
@@ -78,7 +78,25 @@ class TestParseMealPlan:
         result = parse_meal_plan(content, 2026, 4)
 
         # Use first recipe only for simplicity
-        assert result[0]['breakfast'] == 'Eggs'
+        assert result[0]['breakfast'] == MealEntry('Eggs', 1)
+
+    def test_extracts_servings_multiplier(self):
+        content = """# Meal Plan - Week 04 (Jan 19 - Jan 25, 2026)
+
+## Monday (Jan 19)
+### Breakfast
+[[Pancakes]] x2
+### Lunch
+[[Caesar Salad]]
+### Dinner
+[[Pasta]] x3
+### Notes
+"""
+        result = parse_meal_plan(content, 2026, 4)
+
+        assert result[0]['breakfast'] == MealEntry('Pancakes', 2)
+        assert result[0]['lunch'] == MealEntry('Caesar Salad', 1)
+        assert result[0]['dinner'] == MealEntry('Pasta', 3)
 
 
 class TestExtractMealsForDay:
@@ -97,9 +115,25 @@ Some notes here
 """
         result = extract_meals_for_day(section)
 
-        assert result['breakfast'] == 'Pancakes'
-        assert result['lunch'] == 'Salad'
-        assert result['dinner'] == 'Steak'
+        assert result['breakfast'] == MealEntry('Pancakes', 1)
+        assert result['lunch'] == MealEntry('Salad', 1)
+        assert result['dinner'] == MealEntry('Steak', 1)
+
+    def test_extracts_multiplier(self):
+        section = """## Monday (Jan 19)
+### Breakfast
+[[Pancakes]] x2
+### Lunch
+[[Salad]]
+### Dinner
+[[Steak]] x3
+### Notes
+"""
+        result = extract_meals_for_day(section)
+
+        assert result['breakfast'] == MealEntry('Pancakes', 2)
+        assert result['lunch'] == MealEntry('Salad', 1)
+        assert result['dinner'] == MealEntry('Steak', 3)
 
     def test_returns_none_for_empty(self):
         section = """## Monday (Jan 19)

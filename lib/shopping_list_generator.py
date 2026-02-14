@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 from lib.recipe_parser import parse_recipe_file, parse_ingredient_table
-from lib.ingredient_aggregator import aggregate_ingredients, format_ingredient
+from lib.ingredient_aggregator import aggregate_ingredients, format_ingredient, parse_amount_to_float, format_amount
 
 # Configuration
 OBSIDIAN_VAULT = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS")
@@ -33,10 +33,15 @@ def parse_week_string(week_str: str) -> Path:
     return filepath
 
 
-def extract_recipe_links(meal_plan_path: Path) -> list[str]:
-    """Extract [[recipe]] links from meal plan."""
+def extract_recipe_links(meal_plan_path: Path) -> list[tuple[str, int]]:
+    """Extract [[recipe]] links from meal plan with optional servings multiplier.
+
+    Returns:
+        List of (recipe_name, servings) tuples. Servings defaults to 1.
+    """
     content = meal_plan_path.read_text(encoding='utf-8')
-    return re.findall(r'\[\[([^\]]+)\]\]', content)
+    matches = re.findall(r'\[\[([^\]]+)\]\]\s*(?:x(\d+))?', content)
+    return [(name, int(mult) if mult else 1) for name, mult in matches]
 
 
 def slugify(text: str) -> str:
@@ -62,6 +67,29 @@ def extract_ingredient_table(body: str) -> str:
     pattern = r'##\s+Ingredients\s*\n(.*?)(?=\n##|\Z)'
     match = re.search(pattern, body, re.IGNORECASE | re.DOTALL)
     return match.group(1).strip() if match else ""
+
+
+def multiply_ingredients(ingredients: list[dict], multiplier: int) -> list[dict]:
+    """Scale ingredient amounts by a multiplier.
+
+    Args:
+        ingredients: List of ingredient dicts with 'amount', 'unit', 'item' keys
+        multiplier: Number to multiply amounts by
+
+    Returns:
+        New list of ingredient dicts with scaled amounts
+    """
+    if multiplier == 1:
+        return ingredients
+
+    scaled = []
+    for ing in ingredients:
+        new_ing = ing.copy()
+        amount = parse_amount_to_float(ing.get('amount'))
+        if amount is not None:
+            new_ing['amount'] = format_amount(amount * multiplier)
+        scaled.append(new_ing)
+    return scaled
 
 
 def load_recipe_ingredients(recipe_name: str) -> tuple[list[dict], str | None]:
@@ -106,20 +134,20 @@ def generate_shopping_list(week: str) -> dict:
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
-    recipe_names = extract_recipe_links(meal_plan_path)
-    if not recipe_names:
+    recipe_links = extract_recipe_links(meal_plan_path)
+    if not recipe_links:
         return {"success": False, "error": "No recipes found in meal plan"}
 
     all_ingredients = []
     loaded_recipes = []
     warnings = []
 
-    for name in recipe_names:
+    for name, servings in recipe_links:
         ingredients, warning = load_recipe_ingredients(name)
         if warning:
             warnings.append(warning)
         if ingredients:
-            all_ingredients.extend(ingredients)
+            all_ingredients.extend(multiply_ingredients(ingredients, servings))
             loaded_recipes.append(name)
 
     if not all_ingredients:

@@ -5,6 +5,13 @@ Extracts recipe links from weekly meal plan files for calendar generation.
 
 import re
 from datetime import date, timedelta
+from typing import NamedTuple
+
+
+class MealEntry(NamedTuple):
+    """A recipe reference in a meal plan with optional servings multiplier."""
+    name: str
+    servings: int = 1
 
 
 def get_week_start_date(year: int, week: int) -> date:
@@ -33,10 +40,12 @@ def extract_meals_for_day(section: str) -> dict:
         match = re.search(pattern, section, re.IGNORECASE | re.DOTALL)
         if match:
             content = match.group(1).strip()
-            # Extract first [[recipe]] link
-            link_match = re.search(r'\[\[([^\]]+)\]\]', content)
+            # Extract first [[recipe]] link with optional xN multiplier
+            link_match = re.search(r'\[\[([^\]]+)\]\]\s*(?:x(\d+))?', content)
             if link_match:
-                meals[meal_type] = link_match.group(1)
+                name = link_match.group(1)
+                servings = int(link_match.group(2)) if link_match.group(2) else 1
+                meals[meal_type] = MealEntry(name=name, servings=servings)
 
     return meals
 

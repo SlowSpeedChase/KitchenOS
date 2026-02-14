@@ -7,7 +7,7 @@ from typing import Optional
 
 from lib.nutrition import NutritionData
 from lib.macro_targets import load_macro_targets
-from lib.meal_plan_parser import parse_meal_plan
+from lib.meal_plan_parser import parse_meal_plan, MealEntry
 from lib.recipe_parser import parse_recipe_file
 
 
@@ -60,13 +60,21 @@ def calculate_daily_nutrition(
     missing = []
 
     for meal in ['breakfast', 'lunch', 'dinner']:
-        recipe_name = day_data.get(meal)
-        if not recipe_name:
+        entry = day_data.get(meal)
+        if not entry:
             continue
+
+        # Support both MealEntry objects and plain strings
+        if isinstance(entry, MealEntry):
+            recipe_name = entry.name
+            servings = entry.servings
+        else:
+            recipe_name = entry
+            servings = 1
 
         nutrition = get_recipe_nutrition(recipe_name, recipes_dir)
         if nutrition:
-            total = total + nutrition
+            total = total + nutrition * servings
         else:
             missing.append(recipe_name)
 

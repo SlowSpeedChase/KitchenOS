@@ -8,6 +8,7 @@ from lib.shopping_list_generator import (
     generate_shopping_list,
     parse_week_string,
     extract_recipe_links,
+    multiply_ingredients,
     slugify,
     find_recipe_file,
     extract_ingredient_table,
@@ -67,7 +68,17 @@ def test_extract_recipe_links():
     with patch.object(Path, 'read_text', return_value=content):
         links = extract_recipe_links(Path("/fake/path.md"))
 
-    assert links == ["pasta", "salad"]
+    assert links == [("pasta", 1), ("salad", 1)]
+
+
+def test_extract_recipe_links_with_multiplier():
+    """Extracts wiki links with servings multiplier."""
+    content = "# Meal\n## Monday\n[[pasta]] x2\n[[salad]]\n[[soup]] x3\n"
+
+    with patch.object(Path, 'read_text', return_value=content):
+        links = extract_recipe_links(Path("/fake/path.md"))
+
+    assert links == [("pasta", 2), ("salad", 1), ("soup", 3)]
 
 
 def test_extract_recipe_links_empty():
@@ -103,6 +114,42 @@ def test_generate_shopping_list_no_recipes():
 
     assert result["success"] is False
     assert "No recipes found" in result["error"]
+
+
+# Tests for multiply_ingredients
+
+def test_multiply_ingredients_scales_amounts():
+    """Multiplier scales ingredient amounts."""
+    ingredients = [
+        {"amount": "1", "unit": "cup", "item": "rice"},
+        {"amount": "2", "unit": "tbsp", "item": "oil"},
+    ]
+    result = multiply_ingredients(ingredients, 2)
+
+    assert result[0]["amount"] == "2"
+    assert result[1]["amount"] == "4"
+
+
+def test_multiply_ingredients_no_op_for_one():
+    """Multiplier of 1 returns original list."""
+    ingredients = [{"amount": "1", "unit": "cup", "item": "rice"}]
+    result = multiply_ingredients(ingredients, 1)
+    assert result is ingredients  # same object, not a copy
+
+
+def test_multiply_ingredients_handles_decimal():
+    """Multiplier works with decimal amounts."""
+    ingredients = [{"amount": "0.5", "unit": "cup", "item": "flour"}]
+    result = multiply_ingredients(ingredients, 3)
+    assert result[0]["amount"] == "1.5"
+
+
+def test_multiply_ingredients_handles_no_amount():
+    """Multiplier preserves ingredients without parseable amounts."""
+    ingredients = [{"amount": "", "unit": "to taste", "item": "salt"}]
+    result = multiply_ingredients(ingredients, 2)
+    assert result[0]["amount"] == ""
+    assert result[0]["item"] == "salt"
 
 
 # Tests for find_recipe_file

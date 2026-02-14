@@ -11,6 +11,7 @@ from lib.nutrition_dashboard import (
     generate_dashboard,
 )
 from lib.nutrition import NutritionData
+from lib.meal_plan_parser import MealEntry
 
 
 def create_recipe_file(recipes_dir: Path, name: str, nutrition: dict) -> None:
@@ -30,7 +31,10 @@ nutrition_source: "test"
 
 
 def create_meal_plan(meal_plans_dir: Path, week: str, meals: dict) -> None:
-    """Helper to create a meal plan file."""
+    """Helper to create a meal plan file.
+
+    Meal values can be plain strings ("Recipe") or "Recipe x2" for multiplier.
+    """
     days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     dates = ['Jan 13', 'Jan 14', 'Jan 15', 'Jan 16', 'Jan 17', 'Jan 18', 'Jan 19']
 
@@ -41,7 +45,13 @@ def create_meal_plan(meal_plans_dir: Path, week: str, meals: dict) -> None:
         for meal_type in ['breakfast', 'lunch', 'dinner']:
             section += f"### {meal_type.capitalize()}\n\n"
             if meal_type in day_meals:
-                section += f"[[{day_meals[meal_type]}]]\n\n"
+                value = day_meals[meal_type]
+                # Support "Recipe x2" syntax in test helper
+                if ' x' in value and value.split(' x')[-1].isdigit():
+                    parts = value.rsplit(' x', 1)
+                    section += f"[[{parts[0]}]] x{parts[1]}\n\n"
+                else:
+                    section += f"[[{value}]]\n\n"
         sections.append(section)
 
     content = f"""---
@@ -132,6 +142,29 @@ class TestCalculateDailyNutrition:
             assert total.protein == 80
             assert len(missing) == 0
 
+    def test_multiplies_nutrition_by_servings(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            recipes_dir = Path(tmp_dir)
+            create_recipe_file(recipes_dir, "Breakfast", {
+                'calories': 300, 'protein': 10, 'carbs': 40, 'fat': 10
+            })
+            create_recipe_file(recipes_dir, "Dinner", {
+                'calories': 500, 'protein': 30, 'carbs': 50, 'fat': 15
+            })
+
+            day_data = {
+                'breakfast': MealEntry('Breakfast', 2),
+                'lunch': None,
+                'dinner': MealEntry('Dinner', 1)
+            }
+
+            total, missing = calculate_daily_nutrition(day_data, recipes_dir)
+
+            # Breakfast 300*2 + Dinner 500*1 = 1100
+            assert total.calories == 1100
+            assert total.protein == 50  # 10*2 + 30*1
+            assert len(missing) == 0
+
     def test_tracks_missing_recipes(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             recipes_dir = Path(tmp_dir)
@@ -206,6 +239,32 @@ class TestGenerateDashboard:
             assert "2026-W03" in markdown
             assert "Monday" in markdown
             assert "1500 / 2000" in markdown  # 3 meals * 500 cal
+
+    def test_dashboard_with_servings_multiplier(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            vault_path = Path(tmp_dir)
+            recipes_dir = vault_path / "Recipes"
+            meal_plans_dir = vault_path / "Meal Plans"
+            recipes_dir.mkdir()
+            meal_plans_dir.mkdir()
+
+            create_macros_file(vault_path, {
+                'calories': 2000, 'protein': 150, 'carbs': 200, 'fat': 65
+            })
+
+            create_recipe_file(recipes_dir, "Test Recipe", {
+                'calories': 500, 'protein': 25, 'carbs': 50, 'fat': 20
+            })
+
+            # Use x2 multiplier for dinner
+            create_meal_plan(meal_plans_dir, "2026-W03", {
+                'Monday': {'breakfast': 'Test Recipe', 'dinner': 'Test Recipe x2'}
+            })
+
+            markdown, warnings = generate_dashboard("2026-W03", vault_path)
+
+            # breakfast 500 + dinner 500*2 = 1500
+            assert "1500 / 2000" in markdown
 
     def test_handles_missing_macros_file(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

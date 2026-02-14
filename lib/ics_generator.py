@@ -7,20 +7,39 @@ from datetime import date
 from icalendar import Calendar, Event
 
 
-def format_day_summary(breakfast: str | None, lunch: str | None, dinner: str | None) -> str:
+def _format_meal_display(meal) -> str:
+    """Format a meal entry for calendar display.
+
+    Args:
+        meal: MealEntry, plain string, or None
+
+    Returns:
+        Display string like "Recipe x2" or "Recipe" or "—"
+    """
+    if meal is None:
+        return '—'
+    # Handle MealEntry (NamedTuple with name and servings)
+    if hasattr(meal, 'name') and hasattr(meal, 'servings'):
+        if meal.servings > 1:
+            return f'{meal.name} x{meal.servings}'
+        return meal.name
+    return str(meal)
+
+
+def format_day_summary(breakfast=None, lunch=None, dinner=None) -> str:
     """Format meals into a compact summary string.
 
     Args:
-        breakfast: Recipe name or None
-        lunch: Recipe name or None
-        dinner: Recipe name or None
+        breakfast: MealEntry, recipe name string, or None
+        lunch: MealEntry, recipe name string, or None
+        dinner: MealEntry, recipe name string, or None
 
     Returns:
-        String like "B: Pancakes | L: — | D: Pasta"
+        String like "B: Pancakes | L: — | D: Pasta x2"
     """
-    b = breakfast or '—'
-    l = lunch or '—'
-    d = dinner or '—'
+    b = _format_meal_display(breakfast)
+    l = _format_meal_display(lunch)
+    d = _format_meal_display(dinner)
     return f'B: {b} | L: {l} | D: {d}'
 
 

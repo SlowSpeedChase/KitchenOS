@@ -26,6 +26,7 @@ from lib.shopping_list_generator import (
     parse_week_string,
     extract_ingredient_table,
     find_recipe_file,
+    multiply_ingredients,
     MEAL_PLANS_PATH,
 )
 
@@ -79,7 +80,7 @@ def parse_meal_plan(meal_plan_path):
     """Extract recipe links from meal plan note.
 
     Returns:
-        List of recipe names (without [[brackets]])
+        List of (recipe_name, servings) tuples
     """
     if not meal_plan_path.exists():
         print(f"Error: Meal plan not found: {meal_plan_path}", file=sys.stderr)
@@ -87,10 +88,10 @@ def parse_meal_plan(meal_plan_path):
 
     content = meal_plan_path.read_text(encoding='utf-8')
 
-    # Find all [[wiki links]]
-    links = re.findall(r'\[\[([^\]]+)\]\]', content)
+    # Find all [[wiki links]] with optional xN multiplier
+    matches = re.findall(r'\[\[([^\]]+)\]\]\s*(?:x(\d+))?', content)
 
-    return links
+    return [(name, int(mult) if mult else 1) for name, mult in matches]
 
 
 def main():
@@ -112,10 +113,10 @@ def main():
     print(f"Using meal plan: {meal_plan_path.name}")
 
     # Parse meal plan
-    recipe_names = parse_meal_plan(meal_plan_path)
-    print(f"Found {len(recipe_names)} recipes in meal plan")
+    recipe_links = parse_meal_plan(meal_plan_path)
+    print(f"Found {len(recipe_links)} recipes in meal plan")
 
-    if not recipe_names:
+    if not recipe_links:
         print("No recipes found. Add [[Recipe Name]] links to your meal plan.")
         return
 
@@ -123,7 +124,7 @@ def main():
     all_ingredients = []
     loaded_recipes = 0
 
-    for name in recipe_names:
+    for name, servings in recipe_links:
         recipe_file = find_recipe_file(name)
         if recipe_file:
             try:
@@ -133,7 +134,7 @@ def main():
                 table_text = extract_ingredient_table(parsed['body'])
                 if table_text:
                     ingredients = parse_ingredient_table(table_text)
-                    all_ingredients.extend(ingredients)
+                    all_ingredients.extend(multiply_ingredients(ingredients, servings))
                     loaded_recipes += 1
                 else:
                     print(f"Warning: No ingredients table found in {name}")

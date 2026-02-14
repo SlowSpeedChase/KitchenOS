@@ -177,6 +177,8 @@ Files are created in: `{Obsidian Vault}/Meal Plans/2026-W03.md`
 
 Template includes Monday-Sunday with Breakfast/Lunch/Dinner/Notes sections.
 
+**Servings multiplier:** Use `[[Recipe Name]] x2` to indicate multiple servings. The `xN` goes outside the wiki link so Obsidian links still resolve. Affects nutrition dashboard calculations and shopping list ingredient scaling.
+
 ## Calendar Sync (LaunchAgent)
 
 Syncs meal plans to ICS calendar file daily at 6:05am (after meal plan generator).
@@ -399,13 +401,19 @@ template → Obsidian
 - `is_malformed_ingredient()` - Detects AI errors (unit in amount, empty item, etc.)
 - `repair_ingredient()` - Re-parses malformed ingredient using ingredient_parser
 
+**lib/shopping_list_generator.py:**
+- `extract_recipe_links()` - Extracts `[[recipe]]` links with optional `xN` multiplier, returns `list[tuple[str, int]]`
+- `multiply_ingredients()` - Scales ingredient amounts by a multiplier
+- `generate_shopping_list()` - Generates aggregated shopping list from meal plan
+
 **sync_calendar.py:**
 - `collect_all_days()` - Collects all days from meal plan files
 - `parse_week_from_filename()` - Extracts year/week from filename
 
 **lib/meal_plan_parser.py:**
-- `parse_meal_plan()` - Parses meal plan markdown into structured data
-- `extract_meals_for_day()` - Extracts meals from a day section
+- `MealEntry` - NamedTuple with `name: str` and `servings: int` (default 1)
+- `parse_meal_plan()` - Parses meal plan markdown into structured data (returns `MealEntry` objects)
+- `extract_meals_for_day()` - Extracts meals from a day section, supports `[[Recipe]] x2` multiplier syntax
 
 **lib/ics_generator.py:**
 - `generate_ics()` - Creates ICS calendar content
