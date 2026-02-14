@@ -132,12 +132,15 @@ def trigger_analysis_agent(failure_log_path: Path):
         return
 
     try:
+        log_file = open(Path(__file__).parent / "failure_analysis.log", "a")
         subprocess.Popen(
             [str(script), str(failure_log_path)],
-            stdout=open(Path(__file__).parent / "failure_analysis.log", "a"),
+            stdout=log_file,
             stderr=subprocess.STDOUT,
             start_new_session=True,
+            close_fds=True,
         )
+        # log_file intentionally left open — inherited by child process
         print("Analysis agent triggered in background")
     except Exception as e:
         print(f"Warning: Failed to trigger analysis agent: {e}", file=sys.stderr)
@@ -301,7 +304,6 @@ def main():
 
     # Write failure log and trigger analysis agent
     if failed and not args.dry_run:
-        total = len(succeeded) + len(skipped) + len(failed) + len(invalid)
         failure_log = log_failures(failed, total_processed=total)
         print(f"\nFailure log written to: {failure_log}")
 
