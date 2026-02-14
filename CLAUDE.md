@@ -262,6 +262,7 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist
 | `/refresh?file=<name>` | GET | Template refresh only, keeps existing data |
 | `/calendar.ics` | GET | Serves meal plan calendar file |
 | `/refresh-nutrition?week=<week>` | GET | Regenerate nutrition dashboard for week |
+| `/add-to-meal-plan?recipe=<name>` | GET/POST | Pick meal plan slot and add recipe |
 
 ### Configuration
 
@@ -373,6 +374,8 @@ template → Obsidian
 **api_server.py:**
 - `refresh_template()` - Regenerates recipe with current template, preserves data/notes
 - `reprocess_recipe()` - Full re-extraction from YouTube, preserves My Notes section
+- `add_to_meal_plan_form()` - Serves mobile-friendly form to pick week/day/meal
+- `add_to_meal_plan()` - Inserts recipe wikilink into meal plan file
 
 **lib/backup.py:**
 - `create_backup()` - Creates timestamped backup in .history/ folder
@@ -414,6 +417,7 @@ template → Obsidian
 - `MealEntry` - NamedTuple with `name: str` and `servings: int` (default 1)
 - `parse_meal_plan()` - Parses meal plan markdown into structured data (returns `MealEntry` objects)
 - `extract_meals_for_day()` - Extracts meals from a day section, supports `[[Recipe]] x2` multiplier syntax
+- `insert_recipe_into_meal_plan()` - Inserts `[[recipe]]` wikilink into meal plan markdown at specified day/meal slot
 
 **lib/ics_generator.py:**
 - `generate_ics()` - Creates ICS calendar content
