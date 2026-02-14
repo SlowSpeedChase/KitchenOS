@@ -2,7 +2,7 @@
 
 import pytest
 from datetime import date
-from lib.meal_plan_parser import parse_meal_plan, extract_meals_for_day
+from lib.meal_plan_parser import parse_meal_plan, extract_meals_for_day, insert_recipe_into_meal_plan
 
 
 class TestParseMealPlan:
@@ -116,3 +116,95 @@ Some notes here
         assert result['breakfast'] is None
         assert result['lunch'] is None
         assert result['dinner'] is None
+
+
+class TestInsertRecipeIntoMealPlan:
+    """Test inserting recipe links into meal plan markdown."""
+
+    def test_inserts_into_empty_slot(self):
+        content = """# Meal Plan - Week 07
+
+## Monday (Feb 9)
+### Breakfast
+
+### Lunch
+
+### Dinner
+
+### Notes
+
+"""
+        result = insert_recipe_into_meal_plan(content, "Monday", "Dinner", "Pasta Aglio E Olio")
+        assert "### Dinner\n[[Pasta Aglio E Olio]]" in result
+
+    def test_appends_to_existing_recipe(self):
+        content = """# Meal Plan - Week 07
+
+## Monday (Feb 9)
+### Breakfast
+
+### Lunch
+
+### Dinner
+[[Existing Recipe]]
+### Notes
+
+"""
+        result = insert_recipe_into_meal_plan(content, "Monday", "Dinner", "New Recipe")
+        assert "[[Existing Recipe]]" in result
+        assert "[[New Recipe]]" in result
+
+    def test_inserts_into_correct_day(self):
+        content = """# Meal Plan - Week 07
+
+## Monday (Feb 9)
+### Breakfast
+
+### Lunch
+
+### Dinner
+
+### Notes
+
+## Tuesday (Feb 10)
+### Breakfast
+
+### Lunch
+
+### Dinner
+
+### Notes
+
+"""
+        result = insert_recipe_into_meal_plan(content, "Tuesday", "Breakfast", "Pancakes")
+        # Tuesday breakfast should have the recipe
+        assert "## Tuesday" in result
+        # Monday dinner should still be empty
+        monday_section = result.split("## Tuesday")[0]
+        assert "[[Pancakes]]" not in monday_section
+
+    def test_case_insensitive_day_and_meal(self):
+        content = """# Meal Plan - Week 07
+
+## Monday (Feb 9)
+### Breakfast
+
+### Lunch
+
+### Dinner
+
+### Notes
+
+"""
+        result = insert_recipe_into_meal_plan(content, "monday", "dinner", "Test Recipe")
+        assert "[[Test Recipe]]" in result
+
+    def test_raises_on_invalid_day(self):
+        content = "# Meal Plan\n## Monday (Feb 9)\n### Breakfast\n\n### Lunch\n\n### Dinner\n\n### Notes\n"
+        with pytest.raises(ValueError, match="Day .* not found"):
+            insert_recipe_into_meal_plan(content, "Funday", "Dinner", "Test")
+
+    def test_raises_on_invalid_meal(self):
+        content = "# Meal Plan\n## Monday (Feb 9)\n### Breakfast\n\n### Lunch\n\n### Dinner\n\n### Notes\n"
+        with pytest.raises(ValueError, match="Meal .* not found"):
+            insert_recipe_into_meal_plan(content, "Monday", "Brunch", "Test")
