@@ -225,6 +225,37 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.batch-extract.plist
 .venv/bin/python batch_extract.py
 ```
 
+## Failure Analysis Agent
+
+When batch extract encounters failures, it writes a structured JSON log to `failures/` and triggers `scripts/analyze_failures.sh` in the background. The script invokes `claude -p` to:
+
+1. Analyze the failure log
+2. Skip transient (network) errors
+3. Reproduce and fix code bugs
+4. Open a PR for review
+
+### Failure Log Location
+
+Files: `failures/YYYY-MM-DD-HHMMSS.json` (auto-cleaned after 30 days)
+
+### Error Categories
+
+| Category | Meaning | Agent Action |
+|----------|---------|--------------|
+| `network` | Transient connectivity | Skip |
+| `ollama` | Ollama infrastructure | Check config |
+| `youtube` | Video/transcript issue | Improve fallbacks |
+| `parsing` | Code bug | Create fix |
+| `io` | File/permission issue | Flag for review |
+| `unknown` | Unrecognized | Investigate |
+
+### Manual Trigger
+
+```bash
+# Run analysis on a specific failure log
+scripts/analyze_failures.sh failures/2026-02-13-061000.json
+```
+
 ## API Server (iOS Shortcut Integration)
 
 The API server enables recipe extraction from iOS via Share Sheet. It runs as a LaunchAgent and is accessible via Tailscale from anywhere.
@@ -335,6 +366,8 @@ template → Obsidian
 | `lib/shopping_list_generator.py` | Core logic for generating shopping lists from meal plans |
 | `templates/shopping_list_template.py` | Markdown template for shopping list files |
 | `scripts/kitchenos-uri-handler/` | macOS URI scheme handler for Obsidian buttons |
+| `lib/failure_logger.py` | Error classification and structured failure logging |
+| `scripts/analyze_failures.sh` | Invokes Claude Code CLI to analyze failures and create fix PRs |
 | `sync_calendar.py` | Generates ICS calendar from meal plans |
 | `lib/meal_plan_parser.py` | Parses meal plan markdown files |
 | `lib/ics_generator.py` | Creates ICS calendar format |
@@ -403,6 +436,11 @@ template → Obsidian
 - `validate_ingredients()` - Validates/repairs list of ingredients from AI extraction
 - `is_malformed_ingredient()` - Detects AI errors (unit in amount, empty item, etc.)
 - `repair_ingredient()` - Re-parses malformed ingredient using ingredient_parser
+
+**lib/failure_logger.py:**
+- `classify_error()` - Categorizes errors (network, ollama, youtube, parsing, io, unknown)
+- `log_failures()` - Writes structured failure JSON to `failures/` directory
+- `cleanup_old_failure_logs()` - Removes failure logs older than 30 days
 
 **lib/shopping_list_generator.py:**
 - `extract_recipe_links()` - Extracts `[[recipe]]` links with optional `xN` multiplier, returns `list[tuple[str, int]]`
