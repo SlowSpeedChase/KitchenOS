@@ -11,7 +11,11 @@ Usage:
 import argparse
 import sys
 import time
+import traceback
+from datetime import datetime
 from pathlib import Path
+
+from lib.failure_logger import classify_error, log_failures, cleanup_old_failure_logs, FAILURES_DIR_NAME
 
 # macOS Reminders integration
 from EventKit import (
@@ -115,6 +119,30 @@ def is_youtube_url(text):
     return any(domain in text for domain in ['youtube.com', 'youtu.be'])
 
 
+def trigger_analysis_agent(failure_log_path: Path):
+    """Spawn the failure analysis agent in the background.
+
+    Runs scripts/analyze_failures.sh detached so batch_extract doesn't wait.
+    """
+    import subprocess
+
+    script = Path(__file__).parent / "scripts" / "analyze_failures.sh"
+    if not script.exists():
+        print(f"Warning: Analysis script not found at {script}", file=sys.stderr)
+        return
+
+    try:
+        subprocess.Popen(
+            [str(script), str(failure_log_path)],
+            stdout=open(Path(__file__).parent / "failure_analysis.log", "a"),
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        print("Analysis agent triggered in background")
+    except Exception as e:
+        print(f"Warning: Failed to trigger analysis agent: {e}", file=sys.stderr)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Batch extract recipes from YouTube URLs in Reminders"
@@ -125,6 +153,12 @@ def main():
         help='Preview without extracting or marking complete'
     )
     args = parser.parse_args()
+
+    # Clean up old failure logs
+    failures_dir = Path(__file__).parent / FAILURES_DIR_NAME
+    removed = cleanup_old_failure_logs(failures_dir)
+    if removed:
+        print(f"Cleaned up {removed} old failure log(s)")
 
     print("Connecting to Reminders...")
 
@@ -188,6 +222,8 @@ def main():
             print("\n\nInterrupted by user.")
             break
         except Exception as e:
+            tb = traceback.format_exc()
+            category = classify_error(str(e), type(e))
             result = {
                 "success": False,
                 "title": None,
@@ -196,6 +232,8 @@ def main():
                 "error": str(e),
                 "skipped": False,
                 "source": None,
+                "_traceback": tb,
+                "_error_category": category,
             }
 
         if result["success"]:
@@ -223,7 +261,16 @@ def main():
             error = result.get("error", "Unknown error")
             print(f"       → Error: {error}")
             print("       ✗ Left unchecked (will retry next run)")
-            failed.append((url, error))
+            tb = result.get("_traceback", "")
+            category = result.get("_error_category", classify_error(error, Exception))
+            failed.append({
+                "url": url,
+                "error": error,
+                "error_category": category,
+                "traceback": tb,
+                "reminder_title": url,
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
+            })
 
         # Delay between videos (unless last one or dry run)
         if i < len(reminders) and not args.dry_run and result["success"]:
@@ -243,14 +290,23 @@ def main():
 
     if failed:
         print("\nFailed items:")
-        for url, error in failed:
-            print(f"  - {url}")
-            print(f"    ({error})")
+        for f in failed:
+            print(f"  - {f['url']}")
+            print(f"    ({f['error']}) [{f['error_category']}]")
 
     if invalid:
         print("\nInvalid URLs:")
         for url, reason in invalid:
             print(f"  - {url} ({reason})")
+
+    # Write failure log and trigger analysis agent
+    if failed and not args.dry_run:
+        total = len(succeeded) + len(skipped) + len(failed) + len(invalid)
+        failure_log = log_failures(failed, total_processed=total)
+        print(f"\nFailure log written to: {failure_log}")
+
+        # Trigger analysis agent
+        trigger_analysis_agent(failure_log)
 
 
 if __name__ == "__main__":
