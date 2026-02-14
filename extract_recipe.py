@@ -419,7 +419,10 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False, 
         # Calculate nutrition from ingredients
         status("Calculating nutrition...")
         ingredients = recipe_data.get("ingredients", [])
-        servings = recipe_data.get("servings", 1) or 1
+        try:
+            servings = int(recipe_data.get("servings", 1) or 1)
+        except (ValueError, TypeError):
+            servings = 1
 
         nutrition_result = calculate_recipe_nutrition(ingredients, servings)
 
