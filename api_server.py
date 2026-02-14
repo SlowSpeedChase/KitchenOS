@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import warnings
+from datetime import timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -21,12 +22,14 @@ from lib.backup import create_backup
 from lib.recipe_parser import parse_recipe_file, extract_my_notes, parse_recipe_body
 from templates.shopping_list_template import generate_shopping_list_markdown, generate_filename as shopping_list_filename
 from templates.recipe_template import format_recipe_markdown
+from templates.meal_plan_template import generate_meal_plan_markdown
 
 load_dotenv()
 warnings.filterwarnings('ignore', message='urllib3 v2 only supports OpenSSL 1.1.1+')
 
 YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')
 OBSIDIAN_RECIPES_PATH = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS/Recipes")
+MEAL_PLANS_PATH = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS/Meal Plans")
 
 app = Flask(__name__)
 
@@ -511,6 +514,121 @@ def reprocess_recipe():
         return error_page("Error: Extraction timed out (5 min)"), 504
     except Exception as e:
         return error_page(f"Error: {str(e)}"), 500
+
+
+@app.route('/add-to-meal-plan', methods=['GET'])
+def add_to_meal_plan_form():
+    """Serve HTML form for picking meal plan slot."""
+    from urllib.parse import unquote
+    from datetime import date
+
+    recipe = request.args.get('recipe')
+    if not recipe:
+        return error_page("Error: recipe parameter required"), 400
+
+    recipe = unquote(recipe)
+    # Strip .md extension for display
+    recipe_display = recipe.replace('.md', '')
+
+    # Generate week options: current week + next 3
+    today = date.today()
+    weeks = []
+    for i in range(4):
+        d = today + timedelta(days=7 * i)
+        iso = d.isocalendar()
+        week_id = f"{iso[0]}-W{iso[1]:02d}"
+        weeks.append(week_id)
+
+    days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    meals = ['Breakfast', 'Lunch', 'Dinner']
+
+    week_options = ''.join(f'<option value="{w}">{w}</option>' for w in weeks)
+    day_options = ''.join(f'<option value="{d}">{d}</option>' for d in days)
+    meal_options = ''.join(f'<option value="{m}">{m}</option>' for m in meals)
+
+    return f'''<!DOCTYPE html>
+<html><head>
+<title>Add to Meal Plan</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+    body {{ font-family: system-ui; padding: 1.5rem; max-width: 480px; margin: 0 auto; background: #fafafa; }}
+    h2 {{ margin-top: 0; }}
+    .recipe-name {{ background: #f0f0f0; padding: 0.75rem; border-radius: 8px; margin-bottom: 1.5rem; font-weight: 600; }}
+    label {{ display: block; font-weight: 600; margin-bottom: 0.25rem; margin-top: 1rem; }}
+    select {{ width: 100%; padding: 0.75rem; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; background: white; -webkit-appearance: none; }}
+    button {{ width: 100%; padding: 1rem; font-size: 18px; font-weight: 600; background: #2563eb; color: white; border: none; border-radius: 8px; margin-top: 1.5rem; cursor: pointer; }}
+    button:active {{ background: #1d4ed8; }}
+</style>
+</head>
+<body>
+<h2>Add to Meal Plan</h2>
+<div class="recipe-name">{recipe_display}</div>
+<form method="POST" action="/add-to-meal-plan">
+    <input type="hidden" name="recipe" value="{recipe_display}">
+    <label for="week">Week</label>
+    <select name="week" id="week">{week_options}</select>
+    <label for="day">Day</label>
+    <select name="day" id="day">{day_options}</select>
+    <label for="meal">Meal</label>
+    <select name="meal" id="meal">{meal_options}</select>
+    <button type="submit">Add to Meal Plan</button>
+</form>
+</body></html>'''
+
+
+@app.route('/add-to-meal-plan', methods=['POST'])
+def add_to_meal_plan():
+    """Add recipe to a meal plan slot."""
+    from lib.meal_plan_parser import insert_recipe_into_meal_plan
+
+    recipe = request.form.get('recipe')
+    week = request.form.get('week')
+    day = request.form.get('day')
+    meal = request.form.get('meal')
+
+    if not all([recipe, week, day, meal]):
+        return error_page("Error: recipe, week, day, and meal are all required"), 400
+
+    # Parse week string (e.g. "2026-W07")
+    try:
+        parts = week.split('-W')
+        year = int(parts[0])
+        week_num = int(parts[1])
+    except (ValueError, IndexError):
+        return error_page(f"Error: Invalid week format: {week}"), 400
+
+    # Find or create meal plan file
+    MEAL_PLANS_PATH.mkdir(parents=True, exist_ok=True)
+    plan_file = MEAL_PLANS_PATH / f"{week}.md"
+
+    if not plan_file.exists():
+        content = generate_meal_plan_markdown(year, week_num)
+        plan_file.write_text(content, encoding='utf-8')
+
+    # Read current content and insert recipe
+    content = plan_file.read_text(encoding='utf-8')
+    try:
+        new_content = insert_recipe_into_meal_plan(content, day, meal, recipe)
+    except ValueError as e:
+        return error_page(f"Error: {str(e)}"), 400
+
+    plan_file.write_text(new_content, encoding='utf-8')
+
+    # Success page with link to meal plan in Obsidian
+    from urllib.parse import quote
+    encoded_file = quote(f"Meal Plans/{week}", safe='')
+    return f'''<!DOCTYPE html>
+<html><head><title>KitchenOS</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body style="font-family: system-ui; padding: 2rem; max-width: 600px; margin: 0 auto;">
+<div style="background: #efe; border: 1px solid #0a0; padding: 1rem; border-radius: 8px;">
+<strong style="color: #0a0;">Added!</strong><br>
+[[{recipe}]] &rarr; {day} {meal} ({week})
+</div>
+<p><a href="obsidian://open?vault=KitchenOS&file={encoded_file}">View Meal Plan</a></p>
+<p><a href="obsidian://open?vault=KitchenOS">Back to Obsidian</a></p>
+</body></html>'''
 
 
 if __name__ == '__main__':

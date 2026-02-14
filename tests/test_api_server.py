@@ -161,3 +161,71 @@ class TestGenerateShoppingListMerge:
                 assert data['success'] is True
                 assert data['manual_count'] == 0
                 assert data['generated_count'] == 2
+
+
+class TestAddToMealPlan:
+    """Tests for the add-to-meal-plan endpoint."""
+
+    def test_get_returns_form_html(self, client):
+        """GET should return an HTML form."""
+        response = client.get('/add-to-meal-plan?recipe=Test%20Recipe.md')
+        assert response.status_code == 200
+        assert b'Test Recipe' in response.data
+        assert b'<form' in response.data
+        assert b'Breakfast' in response.data
+
+    def test_get_missing_recipe_returns_error(self, client):
+        """GET without recipe param should return 400."""
+        response = client.get('/add-to-meal-plan')
+        assert response.status_code == 400
+
+    def test_post_adds_recipe_to_meal_plan(self, tmp_path):
+        """POST should append recipe wikilink to meal plan file."""
+        from templates.meal_plan_template import generate_meal_plan_markdown
+
+        meal_plans_path = tmp_path / "Meal Plans"
+        meal_plans_path.mkdir()
+        plan_file = meal_plans_path / "2026-W07.md"
+        plan_file.write_text(generate_meal_plan_markdown(2026, 7))
+
+        with patch('api_server.MEAL_PLANS_PATH', meal_plans_path):
+            with app.test_client() as client:
+                response = client.post('/add-to-meal-plan', data={
+                    'recipe': 'Pasta Aglio E Olio',
+                    'week': '2026-W07',
+                    'day': 'Monday',
+                    'meal': 'Dinner'
+                })
+
+        assert response.status_code == 200
+        assert b'Added!' in response.data
+        content = plan_file.read_text()
+        assert '[[Pasta Aglio E Olio]]' in content
+
+    def test_post_creates_meal_plan_if_missing(self, tmp_path):
+        """POST should create meal plan file if it doesn't exist."""
+        meal_plans_path = tmp_path / "Meal Plans"
+        meal_plans_path.mkdir()
+
+        with patch('api_server.MEAL_PLANS_PATH', meal_plans_path):
+            with app.test_client() as client:
+                response = client.post('/add-to-meal-plan', data={
+                    'recipe': 'Test Recipe',
+                    'week': '2026-W07',
+                    'day': 'Wednesday',
+                    'meal': 'Lunch'
+                })
+
+        assert response.status_code == 200
+        plan_file = meal_plans_path / "2026-W07.md"
+        assert plan_file.exists()
+        content = plan_file.read_text()
+        assert '[[Test Recipe]]' in content
+
+    def test_post_missing_fields_returns_error(self, client):
+        """POST without required fields should return 400."""
+        response = client.post('/add-to-meal-plan', data={
+            'recipe': 'Test',
+            # missing week, day, meal
+        })
+        assert response.status_code == 400
