@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.kitchenos.batch-extract</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/chaseeasterling/KitchenOS/.venv/bin/python</string>
+        <string>/Users/chaseeasterling/KitchenOS/batch_extract.py</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>6</integer>
+        <key>Minute</key>
+        <integer>10</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/chaseeasterling/KitchenOS/batch_extract.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/chaseeasterling/KitchenOS/batch_extract.log</string>
+    <key>WorkingDirectory</key>
+    <string>/Users/chaseeasterling/KitchenOS</string>
+</dict>
+</plist>

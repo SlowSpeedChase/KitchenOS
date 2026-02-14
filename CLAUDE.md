@@ -201,6 +201,28 @@ ICS file is written to: `{Obsidian Vault}/meal_calendar.ics`
 
 Accessible via API at: `http://localhost:5001/calendar.ics` (or Tailscale IP)
 
+## Batch Extract (LaunchAgent)
+
+Processes YouTube URLs from the "Recipies to Process" iOS Reminders list daily at 6:10am.
+
+### Management
+
+```bash
+# Install the LaunchAgent
+cp com.kitchenos.batch-extract.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.kitchenos.batch-extract.plist
+
+# View logs
+tail -f /Users/chaseeasterling/KitchenOS/batch_extract.log
+
+# Restart service
+launchctl unload ~/Library/LaunchAgents/com.kitchenos.batch-extract.plist
+launchctl load ~/Library/LaunchAgents/com.kitchenos.batch-extract.plist
+
+# Test run manually
+.venv/bin/python batch_extract.py
+```
+
 ## API Server (iOS Shortcut Integration)
 
 The API server enables recipe extraction from iOS via Share Sheet. It runs as a LaunchAgent and is accessible via Tailscale from anywhere.

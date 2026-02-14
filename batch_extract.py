@@ -179,8 +179,11 @@ def main():
             continue
 
         # Extract recipe
+        def print_status(msg):
+            print(f"       {msg}")
+
         try:
-            result = extract_single_recipe(url, dry_run=args.dry_run)
+            result = extract_single_recipe(url, dry_run=args.dry_run, on_status=print_status)
         except KeyboardInterrupt:
             print("\n\nInterrupted by user.")
             break

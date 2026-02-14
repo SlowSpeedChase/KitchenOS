@@ -224,13 +224,14 @@ def save_recipe_to_obsidian(recipe_data, video_url, video_title, channel, video_
     return filepath
 
 
-def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False) -> dict:
+def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False, on_status=None) -> dict:
     """Extract recipe from a YouTube URL.
 
     Args:
         url: YouTube video URL or ID
         dry_run: If True, don't save to Obsidian
         force: If True, re-extract even if recipe already exists
+        on_status: Optional callback(message: str) for progress updates
 
     Returns:
         dict with keys:
@@ -241,6 +242,7 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False) 
             error: str or None (error message if failed)
             skipped: bool (True if already existed)
     """
+    status = on_status or (lambda msg: None)
     result = {
         "success": False,
         "title": None,
@@ -264,6 +266,7 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False) 
             video_url = f"https://www.youtube.com/watch?v={video_id}"
 
         # Check for existing recipe first (skip unless force=True)
+        status("Checking for existing recipe...")
         existing = find_existing_recipe(OBSIDIAN_RECIPES_PATH, video_id)
         if existing and not dry_run and not force:
             result["success"] = True
@@ -282,6 +285,7 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False) 
             return result
 
         # Get video metadata (uses yt-dlp for Shorts)
+        status("Fetching video metadata...")
         metadata = get_video_metadata(video_id, is_short=is_short)
         if not metadata:
             result["error"] = "Could not fetch video metadata"
@@ -293,10 +297,12 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False) 
         result["title"] = title
 
         # Get transcript
+        status(f"Fetching transcript for \"{title}\"...")
         transcript_result = get_transcript(video_id)
         transcript = transcript_result['text']
 
         # Get first comment (usually pinned)
+        status("Checking first comment...")
         first_comment = get_first_comment(video_id)
         comment_text = first_comment['text'] if first_comment else None
         if comment_text:
@@ -308,45 +314,59 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False) 
         recipe_link = None
 
         # 1. Check for recipe link in description
+        status("Checking description for recipe link...")
         recipe_link = find_recipe_link(description)
 
         if recipe_link:
+            status(f"Scraping recipe from {recipe_link}...")
             recipe_data = scrape_recipe_from_url(recipe_link)
             if recipe_data:
                 source = "webpage"
+                status("Found recipe on webpage")
 
         # 2. Try parsing recipe from description
         if not recipe_data:
+            status("Parsing recipe from description...")
             recipe_data = parse_recipe_from_description(description, title, channel)
             if recipe_data:
                 source = "description"
+                status("Found recipe in description")
 
         # 2.5a. Check for recipe link in first comment
         if not recipe_data and comment_text:
+            status("Checking first comment for recipe link...")
             comment_link = find_recipe_link(comment_text)
             if comment_link:
+                status(f"Scraping recipe from comment link...")
                 recipe_data = scrape_recipe_from_url(comment_link)
                 if recipe_data:
                     source = "comment_link"
                     recipe_link = comment_link
+                    status("Found recipe via comment link")
 
         # 2.5b. Try parsing recipe from first comment
         if not recipe_data and comment_text:
+            status("Parsing recipe from first comment...")
             recipe_data = parse_recipe_from_description(comment_text, title, channel)
             if recipe_data:
                 source = "comment"
+                status("Found recipe in comment")
 
         # 3. Search creator's website for full recipe
         if not recipe_data:
+            status(f"Searching {channel}'s website for recipe...")
             creator_url = search_creator_website(channel, title)
             if creator_url:
+                status(f"Scraping recipe from creator website...")
                 recipe_data = scrape_recipe_from_url(creator_url)
                 if recipe_data:
                     source = "creator_website"
                     recipe_link = creator_url  # For metadata
+                    status("Found recipe on creator website")
 
         # 4. Fall back to AI extraction from transcript (include comment as context)
         if not recipe_data:
+            status("Extracting recipe with Ollama (this may take a moment)...")
             recipe_data, error = extract_recipe_with_ollama(
                 title, channel, description, transcript, comment=comment_text
             )
@@ -354,9 +374,11 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False) 
                 result["error"] = error
                 return result
             source = "ai_extraction"
+            status("AI extraction complete")
 
         # 5. Extract cooking tips if we got recipe from a structured source (not AI)
         if source in ("webpage", "description", "comment_link", "comment", "creator_website") and transcript:
+            status("Extracting cooking tips from transcript...")
             tips = extract_cooking_tips(transcript, recipe_data)
             recipe_data['video_tips'] = tips
 
@@ -388,12 +410,14 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False) 
         ][:3]
 
         # Validate and repair ingredients (fixes AI extraction errors)
+        status("Validating ingredients...")
         recipe_data['ingredients'] = validate_ingredients(
             recipe_data.get('ingredients', []),
             verbose=True
         )
 
         # Calculate nutrition from ingredients
+        status("Calculating nutrition...")
         ingredients = recipe_data.get("ingredients", [])
         servings = recipe_data.get("servings", 1) or 1
 
@@ -416,6 +440,7 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False) 
             return result
 
         # Save to Obsidian
+        status("Saving to Obsidian...")
         filepath = save_recipe_to_obsidian(recipe_data, video_url, title, channel, video_id)
         result["success"] = True
         result["filepath"] = filepath
@@ -453,7 +478,7 @@ def main():
     video_type = "Short" if is_short else "video"
     print(f"Fetching {video_type} data for: {video_id}")
 
-    result = extract_single_recipe(args.url, dry_run=args.dry_run, force=args.force)
+    result = extract_single_recipe(args.url, dry_run=args.dry_run, force=args.force, on_status=print)
 
     if not result["success"]:
         print(f"Error: {result['error']}", file=sys.stderr)
