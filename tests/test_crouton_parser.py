@@ -1,7 +1,7 @@
 """Tests for Crouton .crumb file parser"""
 
 import pytest
-from lib.crouton_parser import map_quantity_type
+from lib.crouton_parser import map_quantity_type, map_ingredient
 
 
 class TestMapQuantityType:
@@ -54,3 +54,42 @@ class TestMapQuantityType:
 
     def test_none_returns_whole(self):
         assert map_quantity_type(None) == "whole"
+
+
+class TestMapIngredient:
+    """Converts Crouton ingredient objects to KitchenOS {amount, unit, item} dicts"""
+
+    def test_standard_ingredient(self):
+        crouton_ing = {
+            "order": 0, "uuid": "abc",
+            "ingredient": {"uuid": "def", "name": "chicken breast"},
+            "quantity": {"amount": 1, "quantityType": "POUND"},
+        }
+        result = map_ingredient(crouton_ing)
+        assert result == {"amount": 1, "unit": "lb", "item": "chicken breast", "inferred": False}
+
+    def test_item_quantity(self):
+        crouton_ing = {
+            "order": 0, "uuid": "abc",
+            "ingredient": {"uuid": "def", "name": "jalapeno"},
+            "quantity": {"amount": 1, "quantityType": "ITEM"},
+        }
+        result = map_ingredient(crouton_ing)
+        assert result == {"amount": 1, "unit": "whole", "item": "jalapeno", "inferred": False}
+
+    def test_no_quantity(self):
+        crouton_ing = {
+            "order": 0, "uuid": "abc",
+            "ingredient": {"uuid": "def", "name": "to taste salt"},
+        }
+        result = map_ingredient(crouton_ing)
+        assert result == {"amount": "", "unit": "", "item": "to taste salt", "inferred": False}
+
+    def test_fractional_amount(self):
+        crouton_ing = {
+            "order": 0, "uuid": "abc",
+            "ingredient": {"uuid": "def", "name": "butter"},
+            "quantity": {"amount": 2.5, "quantityType": "TABLESPOON"},
+        }
+        result = map_ingredient(crouton_ing)
+        assert result == {"amount": 2.5, "unit": "tbsp", "item": "butter", "inferred": False}
