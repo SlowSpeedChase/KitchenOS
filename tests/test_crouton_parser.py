@@ -1,7 +1,7 @@
 """Tests for Crouton .crumb file parser"""
 
 import pytest
-from lib.crouton_parser import map_quantity_type, map_ingredient, map_steps
+from lib.crouton_parser import map_quantity_type, map_ingredient, map_steps, parse_crumb_file
 
 
 class TestMapQuantityType:
@@ -133,3 +133,81 @@ class TestMapSteps:
     def test_empty_steps(self):
         result = map_steps([])
         assert result == []
+
+
+class TestParseCrumbFile:
+    def _make_crumb(self, **overrides):
+        base = {
+            "name": "Test Recipe", "uuid": "abc-123", "serves": 4,
+            "duration": 15, "cookingDuration": 30,
+            "webLink": "https://example.com/recipe",
+            "sourceName": "Test Kitchen", "notes": "Some notes here",
+            "tags": [],
+            "ingredients": [{"order": 0, "uuid": "i1",
+                "ingredient": {"uuid": "ig1", "name": "flour"},
+                "quantity": {"amount": 2, "quantityType": "CUP"}}],
+            "steps": [{"order": 0, "uuid": "s1", "isSection": False, "step": "Mix it."}],
+            "defaultScale": 1, "isPublicRecipe": False, "folderIDs": [], "images": [],
+        }
+        base.update(overrides)
+        return base
+
+    def test_basic_fields(self):
+        data = self._make_crumb()
+        result = parse_crumb_file(data)
+        assert result["recipe_name"] == "Test Recipe"
+        assert result["servings"] == 4
+        assert result["source_url"] == "https://example.com/recipe"
+        assert result["source_channel"] == "Test Kitchen"
+        assert result["recipe_source"] == "crouton_import"
+        assert result["needs_review"] is True
+
+    def test_time_formatting(self):
+        data = self._make_crumb(duration=15, cookingDuration=30)
+        result = parse_crumb_file(data)
+        assert result["prep_time"] == "15 minutes"
+        assert result["cook_time"] == "30 minutes"
+
+    def test_no_time(self):
+        data = self._make_crumb(duration=0, cookingDuration=0)
+        result = parse_crumb_file(data)
+        assert result["prep_time"] is None
+        assert result["cook_time"] is None
+
+    def test_ingredients_mapped(self):
+        data = self._make_crumb()
+        result = parse_crumb_file(data)
+        assert len(result["ingredients"]) == 1
+        assert result["ingredients"][0]["item"] == "flour"
+        assert result["ingredients"][0]["unit"] == "cup"
+
+    def test_steps_mapped(self):
+        data = self._make_crumb()
+        result = parse_crumb_file(data)
+        assert len(result["instructions"]) == 1
+        assert result["instructions"][0]["text"] == "Mix it."
+
+    def test_url_from_notes_fallback(self):
+        data = self._make_crumb(webLink="", notes="Recipe: https://www.youtube.com/watch?v=abc123\nEnjoy!")
+        result = parse_crumb_file(data)
+        assert result["source_url"] == "https://www.youtube.com/watch?v=abc123"
+
+    def test_notes_preserved(self):
+        data = self._make_crumb(notes="My personal notes here")
+        result = parse_crumb_file(data)
+        assert result["notes"] == "My personal notes here"
+
+    def test_no_serves(self):
+        data = self._make_crumb()
+        del data["serves"]
+        result = parse_crumb_file(data)
+        assert result["servings"] is None
+
+    def test_missing_optional_fields(self):
+        data = {"name": "Minimal Recipe", "uuid": "abc", "ingredients": [], "steps": [],
+                "defaultScale": 1, "isPublicRecipe": False, "folderIDs": [], "images": [], "tags": []}
+        result = parse_crumb_file(data)
+        assert result["recipe_name"] == "Minimal Recipe"
+        assert result["source_url"] == ""
+        assert result["source_channel"] == ""
+        assert result["servings"] is None
