@@ -53,6 +53,19 @@ cd /Users/chaseeasterling/KitchenOS
 .venv/bin/python extract_recipe.py --dry-run "VIDEO_URL"
 ```
 
+### Import from Crouton
+
+```bash
+# Import all .crumb files from a Crouton export folder
+.venv/bin/python import_crouton.py "/path/to/Crouton Recipes"
+
+# Preview without importing
+.venv/bin/python import_crouton.py --dry-run "/path/to/Crouton Recipes"
+
+# Import without Ollama enrichment (faster, metadata will be null)
+.venv/bin/python import_crouton.py --no-enrich "/path/to/Crouton Recipes"
+```
+
 ### Fetch Video Data Only
 
 ```bash
@@ -355,6 +368,7 @@ template → Obsidian
 | `main.py` | Video data fetcher (transcript, metadata, `--json` mode) |
 | `api_server.py` | Flask API for iOS Shortcut integration |
 | `batch_extract.py` | Batch processor - reads from iOS Reminders, extracts in bulk |
+| `import_crouton.py` | Imports Crouton .crumb files into Obsidian vault |
 | `generate_meal_plan.py` | Creates weekly meal plan templates |
 | `shopping_list.py` | Generates shopping list from meal plans |
 | `prompts/recipe_extraction.py` | AI prompt templates for structured extraction |
@@ -366,6 +380,8 @@ template → Obsidian
 | `lib/shopping_list_generator.py` | Core logic for generating shopping lists from meal plans |
 | `templates/shopping_list_template.py` | Markdown template for shopping list files |
 | `scripts/kitchenos-uri-handler/` | macOS URI scheme handler for Obsidian buttons |
+| `lib/crouton_parser.py` | Parses Crouton .crumb JSON format |
+| `prompts/crouton_enrichment.py` | AI prompt for classifying imported recipes |
 | `lib/failure_logger.py` | Error classification and structured failure logging |
 | `scripts/analyze_failures.sh` | Invokes Claude Code CLI to analyze failures and create fix PRs |
 | `sync_calendar.py` | Generates ICS calendar from meal plans |
@@ -436,6 +452,12 @@ template → Obsidian
 - `validate_ingredients()` - Validates/repairs list of ingredients from AI extraction
 - `is_malformed_ingredient()` - Detects AI errors (unit in amount, empty item, etc.)
 - `repair_ingredient()` - Re-parses malformed ingredient using ingredient_parser
+
+**lib/crouton_parser.py:**
+- `parse_crumb_file()` - Parses .crumb JSON dict into KitchenOS recipe_data format
+- `map_quantity_type()` - Maps Crouton quantityType enum to unit string
+- `map_ingredient()` - Converts Crouton ingredient object to {amount, unit, item}
+- `map_steps()` - Converts Crouton steps with section header support
 
 **lib/failure_logger.py:**
 - `classify_error()` - Categorizes errors (network, ollama, youtube, parsing, io, unknown)
