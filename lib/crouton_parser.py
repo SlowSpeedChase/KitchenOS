@@ -115,7 +115,7 @@ def parse_crumb_file(crumb_data: dict) -> dict:
     return {
         "recipe_name": name, "source_url": source_url,
         "source_channel": crumb_data.get("sourceName", ""),
-        "recipe_source": "crouton_import",
+        "source": "crouton_import",
         "servings": crumb_data.get("serves"),
         "prep_time": format_duration(duration),
         "cook_time": format_duration(cooking_duration),

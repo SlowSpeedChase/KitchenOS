@@ -159,7 +159,7 @@ class TestParseCrumbFile:
         assert result["servings"] == 4
         assert result["source_url"] == "https://example.com/recipe"
         assert result["source_channel"] == "Test Kitchen"
-        assert result["recipe_source"] == "crouton_import"
+        assert result["source"] == "crouton_import"
         assert result["needs_review"] is True
 
     def test_time_formatting(self):

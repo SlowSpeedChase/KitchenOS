@@ -4,7 +4,6 @@ Used by import_crouton.py to classify recipes that Crouton exports
 without metadata like cuisine, difficulty, or dish type.
 """
 
-import json
 
 CROUTON_ENRICHMENT_PROMPT = """You are classifying a recipe that was imported from a recipe app.
 The recipe already has ingredients and instructions. You need to infer the metadata.
