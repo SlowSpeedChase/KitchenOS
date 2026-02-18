@@ -40,6 +40,9 @@ def map_ingredient(crouton_ing: dict) -> dict:
     if quantity:
         amount = quantity.get("amount", "")
         unit = map_quantity_type(quantity.get("quantityType"))
+        # Round floats to 2 decimal places (Crouton stores 1/3 as 0.333...)
+        if isinstance(amount, float) and amount != round(amount, 0):
+            amount = round(amount, 2)
     else:
         amount = ""
         unit = ""

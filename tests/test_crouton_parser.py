@@ -94,6 +94,46 @@ class TestMapIngredient:
         result = map_ingredient(crouton_ing)
         assert result == {"amount": 2.5, "unit": "tbsp", "item": "butter", "inferred": False}
 
+    def test_repeating_decimal_rounded(self):
+        """1/3 stored as 0.333... should round to 0.33"""
+        crouton_ing = {
+            "order": 0, "uuid": "abc",
+            "ingredient": {"uuid": "def", "name": "tahini"},
+            "quantity": {"amount": 0.3333333333333333, "quantityType": "CUP"},
+        }
+        result = map_ingredient(crouton_ing)
+        assert result == {"amount": 0.33, "unit": "cup", "item": "tahini", "inferred": False}
+
+    def test_two_thirds_rounded(self):
+        """2/3 stored as 0.666... should round to 0.67"""
+        crouton_ing = {
+            "order": 0, "uuid": "abc",
+            "ingredient": {"uuid": "def", "name": "cream"},
+            "quantity": {"amount": 0.6666666666666666, "quantityType": "CUP"},
+        }
+        result = map_ingredient(crouton_ing)
+        assert result == {"amount": 0.67, "unit": "cup", "item": "cream", "inferred": False}
+
+    def test_clean_float_unchanged(self):
+        """Amounts like 1.5 should stay as 1.5, not become 1.50"""
+        crouton_ing = {
+            "order": 0, "uuid": "abc",
+            "ingredient": {"uuid": "def", "name": "salt"},
+            "quantity": {"amount": 1.5, "quantityType": "TEASPOON"},
+        }
+        result = map_ingredient(crouton_ing)
+        assert result == {"amount": 1.5, "unit": "tsp", "item": "salt", "inferred": False}
+
+    def test_whole_number_stays_int(self):
+        """Integer amounts like 2 should stay as int, not become 2.0"""
+        crouton_ing = {
+            "order": 0, "uuid": "abc",
+            "ingredient": {"uuid": "def", "name": "garlic"},
+            "quantity": {"amount": 2, "quantityType": "ITEM"},
+        }
+        result = map_ingredient(crouton_ing)
+        assert result == {"amount": 2, "unit": "whole", "item": "garlic", "inferred": False}
+
 
 class TestMapSteps:
     def test_simple_steps(self):
