@@ -21,6 +21,7 @@ from lib.ingredient_validator import validate_ingredients
 from lib.ingredient_parser import parse_ingredient
 from lib.nutrition_lookup import calculate_recipe_nutrition
 from lib.image_downloader import download_image
+from lib.seasonality import match_ingredients_to_seasonal, calculate_season_score, get_peak_months
 
 # Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -417,6 +418,17 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False, 
             recipe_data.get('ingredients', []),
             verbose=True
         )
+
+        # Match seasonal ingredients
+        status("Matching seasonal ingredients...")
+        seasonal_matches = match_ingredients_to_seasonal(
+            recipe_data.get('ingredients', [])
+        )
+        recipe_data['seasonal_ingredients'] = seasonal_matches
+        recipe_data['peak_months'] = get_peak_months(seasonal_matches)
+        if seasonal_matches:
+            score = calculate_season_score(seasonal_matches)
+            status(f"Found {len(seasonal_matches)} seasonal ingredients (score: {score})")
 
         # Calculate nutrition from ingredients
         status("Calculating nutrition...")
