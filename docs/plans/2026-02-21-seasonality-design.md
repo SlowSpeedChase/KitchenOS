@@ -1,7 +1,7 @@
 # Seasonality Feature Design
 
 **Date:** 2026-02-21
-**Status:** Approved
+**Status:** Implemented
 
 ## Goal
 
