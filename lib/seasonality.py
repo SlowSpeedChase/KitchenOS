@@ -6,6 +6,8 @@ from pathlib import Path
 
 import requests
 
+from prompts.seasonal_matching import build_seasonal_matching_prompt
+
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "mistral:7b"
 CONFIG_PATH = Path(__file__).parent.parent / "config" / "seasonal_ingredients.json"
@@ -41,20 +43,7 @@ def match_ingredients_to_seasonal(ingredients: list[dict]) -> list[str]:
     if not ingredient_items:
         return []
 
-    prompt = f"""Given these recipe ingredients:
-{json.dumps(ingredient_items)}
-
-And these seasonal produce items:
-{json.dumps(seasonal_names)}
-
-Return ONLY the matches as a JSON array of objects:
-[{{"ingredient": "butternut squash", "matches": "butternut squash"}}]
-
-Rules:
-- Only match fresh produce, skip pantry staples (oil, flour, sugar, salt, spices, sauces, grains, pasta, rice, etc.)
-- Match variants to the closest seasonal item (e.g. "baby spinach" -> "spinach", "cherry tomato" -> "tomato")
-- If no match exists for an ingredient, omit it entirely
-- Return an empty array [] if no ingredients match"""
+    prompt = build_seasonal_matching_prompt(ingredient_items, seasonal_names)
 
     try:
         response = requests.post(
