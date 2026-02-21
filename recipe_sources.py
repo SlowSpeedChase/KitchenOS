@@ -242,6 +242,31 @@ def _parse_nutrition(nutrition) -> Optional[str]:
     return ", ".join(parts) if parts else None
 
 
+def _extract_image_url(image_field) -> Optional[str]:
+    """Extract image URL from JSON-LD image field.
+
+    Handles:
+    - None → None
+    - str → return directly
+    - list → first string found, or first dict's 'url' key
+    - dict → return .get("url")
+    """
+    if image_field is None:
+        return None
+    if isinstance(image_field, str):
+        return image_field
+    if isinstance(image_field, list):
+        for item in image_field:
+            if isinstance(item, str):
+                return item
+            if isinstance(item, dict):
+                return item.get("url")
+        return None
+    if isinstance(image_field, dict):
+        return image_field.get("url")
+    return None
+
+
 def parse_json_ld_recipe(json_ld: Dict[str, Any]) -> Dict[str, Any]:
     """Parse a Schema.org Recipe JSON-LD object into our recipe format."""
     recipe = {
@@ -264,6 +289,7 @@ def parse_json_ld_recipe(json_ld: Dict[str, Any]) -> Dict[str, Any]:
         "nutritional_info": _parse_nutrition(json_ld.get("nutrition")),
         "needs_review": False,
         "confidence_notes": "Extracted from structured JSON-LD data on recipe webpage.",
+        "image_url": _extract_image_url(json_ld.get("image")),
     }
     return recipe
 
