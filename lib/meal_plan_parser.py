@@ -145,3 +145,63 @@ def parse_meal_plan(content: str, year: int, week: int) -> list[dict]:
         })
 
     return result
+
+
+def rebuild_meal_plan_markdown(week: str, days: list[dict]) -> str:
+    """Rebuild meal plan markdown from structured data.
+
+    Args:
+        week: Week identifier like '2026-W09'
+        days: List of 7 day dicts, each with keys:
+            day, date (ISO string), breakfast, lunch, dinner
+            Meal values are None or {"name": str, "servings": int}
+
+    Returns:
+        Complete meal plan markdown string
+    """
+    parts = week.split("-W")
+    year = int(parts[0])
+    week_num = int(parts[1])
+
+    day_dates = [date.fromisoformat(d["date"]) for d in days]
+    start_date = day_dates[0]
+    end_date = day_dates[6]
+
+    def fmt_date(d):
+        return d.strftime("%b %-d")
+
+    def fmt_meal(meal_data):
+        if meal_data is None:
+            return ""
+        name = meal_data["name"]
+        servings = meal_data.get("servings", 1)
+        if servings > 1:
+            return f"[[{name}]] x{servings}"
+        return f"[[{name}]]"
+
+    lines = [
+        f"# Meal Plan - Week {week_num:02d} ({fmt_date(start_date)} - {fmt_date(end_date)}, {year})",
+        "",
+        "```button",
+        "name Generate Shopping List",
+        "type link",
+        f"action kitchenos://generate-shopping-list?week={week}",
+        "```",
+        "",
+    ]
+
+    for day_data in days:
+        d = date.fromisoformat(day_data["date"])
+        day_name = day_data["day"]
+        lines.append(f"## {day_name} ({fmt_date(d)})")
+        lines.append("### Breakfast")
+        lines.append(fmt_meal(day_data.get("breakfast")))
+        lines.append("### Lunch")
+        lines.append(fmt_meal(day_data.get("lunch")))
+        lines.append("### Dinner")
+        lines.append(fmt_meal(day_data.get("dinner")))
+        lines.append("### Notes")
+        lines.append("")
+        lines.append("")
+
+    return "\n".join(lines)
