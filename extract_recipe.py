@@ -11,6 +11,7 @@ import argparse
 import json
 import sys
 import os
+import re
 import requests
 from pathlib import Path
 
@@ -19,11 +20,12 @@ from lib.recipe_parser import find_existing_recipe, parse_recipe_file, extract_m
 from lib.ingredient_validator import validate_ingredients
 from lib.ingredient_parser import parse_ingredient
 from lib.nutrition_lookup import calculate_recipe_nutrition
+from lib.image_downloader import download_image
 
 # Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from main import youtube_parser, get_video_metadata, get_transcript, get_first_comment
+from main import youtube_parser, get_video_metadata, get_transcript, get_first_comment, get_thumbnail_url
 from prompts.recipe_extraction import SYSTEM_PROMPT, build_user_prompt
 from templates.recipe_template import format_recipe_markdown, generate_filename
 from templates.recipemd_template import format_recipemd, generate_recipemd_filename
@@ -433,6 +435,27 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False, 
             recipe_data["fat_g"] = nutrition_result.nutrition.fat
             recipe_data["nutrition_source"] = nutrition_result.source
             recipe_data["serving_size"] = recipe_data.get("serving_size", "1 serving")
+
+        # Download recipe image
+        image_filename = None
+        image_url = recipe_data.get('image_url')  # From JSON-LD scrape
+        if not image_url:
+            # Fallback to YouTube thumbnail
+            image_url = get_thumbnail_url(video_id)
+
+        if image_url and not dry_run:
+            status("Downloading recipe image...")
+            recipe_name_for_image = recipe_data.get('recipe_name', 'Untitled Recipe')
+            # Use same naming as recipe file but with .jpg extension
+            safe_name = re.sub(r'[<>:"/\|?*]', '', recipe_name_for_image)
+            safe_name = ' '.join(safe_name.split()).title()
+            image_target = OBSIDIAN_RECIPES_PATH / "Images" / f"{safe_name}.jpg"
+            downloaded = download_image(image_url, image_target)
+            if downloaded:
+                image_filename = f"{safe_name}.jpg"
+                status(f"Image saved: {image_filename}")
+
+        recipe_data['image_filename'] = image_filename
 
         recipe_name = recipe_data.get('recipe_name', 'Unknown Recipe')
         result["recipe_name"] = recipe_name
