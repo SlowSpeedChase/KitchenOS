@@ -125,3 +125,35 @@ def apply_cuisine_corrections(recipe_name: str, current_cuisine) -> str | None:
 
     # 3. Pass through
     return current_cuisine
+
+
+def update_frontmatter_field(content: str, field: str, value) -> str:
+    """Update a single frontmatter field in recipe markdown content.
+
+    Args:
+        content: Full markdown file content with YAML frontmatter
+        field: Frontmatter field name to update
+        value: New value (str, list, int, or None)
+
+    Returns:
+        Updated content with the field changed
+    """
+    # Format value for YAML
+    if value is None:
+        yaml_value = "null"
+    elif isinstance(value, list):
+        if not value:
+            yaml_value = "[]"
+        elif isinstance(value[0], str):
+            yaml_value = "[" + ", ".join(f'"{v}"' for v in value) + "]"
+        else:
+            yaml_value = "[" + ", ".join(str(v) for v in value) + "]"
+    elif isinstance(value, str):
+        yaml_value = f'"{value}"'
+    else:
+        yaml_value = str(value)
+
+    # Replace the field line in frontmatter
+    pattern = rf'^({field}:\s*).*$'
+    replacement = rf'\g<1>{yaml_value}'
+    return re.sub(pattern, replacement, content, count=1, flags=re.MULTILINE)
