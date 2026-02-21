@@ -38,6 +38,7 @@ Development guide for Claude Code when working with this repository.
 | `.venv/` | Python virtual environment |
 | `Recipes/` in Obsidian vault | Main recipe files (title case, e.g., `Butter Biscuits.md`) |
 | `Recipes/Cooking Mode/` in Obsidian vault | Simplified cooking view files (`.recipe.md`) |
+| `Recipes/Images/` in Obsidian vault | Recipe images (downloaded from source or YouTube thumbnail) |
 
 **Obsidian Vault**: `/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS/`
 
@@ -357,6 +358,8 @@ extract_cooking_tips() (if webpage/description/comment source)
     ↓
 validate_ingredients() (repair AI extraction errors)
     ↓
+download_image() (website image or YouTube thumbnail → Recipes/Images/)
+    ↓
 template → Obsidian
 ```
 
@@ -380,6 +383,7 @@ template → Obsidian
 | `lib/shopping_list_generator.py` | Core logic for generating shopping lists from meal plans |
 | `templates/shopping_list_template.py` | Markdown template for shopping list files |
 | `scripts/kitchenos-uri-handler/` | macOS URI scheme handler for Obsidian buttons |
+| `lib/image_downloader.py` | Downloads recipe images from URLs |
 | `lib/crouton_parser.py` | Parses Crouton .crumb JSON format |
 | `prompts/crouton_enrichment.py` | AI prompt for classifying imported recipes |
 | `lib/failure_logger.py` | Error classification and structured failure logging |
@@ -402,9 +406,10 @@ template → Obsidian
 
 **main.py:**
 - `youtube_parser(url)` - Extracts video ID from various URL formats
-- `get_video_metadata(video_id)` - Fetches title, channel, description
+- `get_video_metadata(video_id)` - Fetches title, channel, description, thumbnail_url
 - `get_transcript(video_id)` - Gets transcript (YouTube or Whisper fallback)
 - `get_first_comment(video_id)` - Fetches first (usually pinned) comment via YouTube API
+- `get_thumbnail_url(video_id)` - Constructs YouTube thumbnail URL from video ID
 
 **templates/recipe_template.py:**
 - `format_recipe_markdown()` - Converts recipe JSON to Obsidian markdown
@@ -419,6 +424,7 @@ template → Obsidian
 - `load_creator_mapping()` - Loads channel → website mapping from config
 - `search_for_recipe_url()` - Searches DuckDuckGo for recipe URL
 - `search_creator_website()` - Orchestrates creator website search
+- `_extract_image_url()` - Extracts image URL from JSON-LD image field (string, list, or ImageObject)
 
 **api_server.py:**
 - `refresh_template()` - Regenerates recipe with current template, preserves data/notes
@@ -452,6 +458,9 @@ template → Obsidian
 - `validate_ingredients()` - Validates/repairs list of ingredients from AI extraction
 - `is_malformed_ingredient()` - Detects AI errors (unit in amount, empty item, etc.)
 - `repair_ingredient()` - Re-parses malformed ingredient using ingredient_parser
+
+**lib/image_downloader.py:**
+- `download_image()` - Downloads image from URL, saves to local path, validates content-type
 
 **lib/crouton_parser.py:**
 - `parse_crumb_file()` - Parses .crumb JSON dict into KitchenOS recipe_data format
@@ -670,7 +679,7 @@ These features are planned but not yet implemented:
 | ~~Recipe reprocess buttons~~ | ~~Medium~~ | **Completed** - Tools callout with Re-extract/Refresh buttons |
 | ~~Nutrition tracking~~ | ~~Medium~~ | **Completed** - Macro tracking with dashboard, API lookup (Nutritionix, USDA), AI fallback |
 | Claude API fallback | Low | Use Claude when Ollama fails |
-| Image extraction | Low | Get video thumbnails for recipes |
+| ~~Image extraction~~ | ~~Low~~ | **Completed** - Downloads recipe website images or YouTube thumbnails to vault |
 
 ## Project Structure
 
