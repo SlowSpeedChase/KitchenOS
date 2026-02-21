@@ -329,6 +329,8 @@ title: "Test Recipe"
 
         content = '''---
 title: "Test Recipe"
+cssclasses:
+  - recipe
 ---
 
 ## Ingredients
@@ -509,3 +511,44 @@ title: "Test"
     result, changes = migrate_recipe_content(content, "Test.md")
     assert "Add to Meal Plan" in result
     assert "add-to-meal-plan" in result
+
+
+# ============================================================================
+# Tests for cssclasses migration
+# ============================================================================
+
+
+class TestCssclassesMigration:
+    def test_migration_adds_cssclasses_to_frontmatter(self):
+        """Migration should add cssclasses to existing recipes"""
+        content = '''---
+title: "Test"
+source_url: "https://youtube.com/watch?v=abc123"
+---
+
+> [!tools]- Tools
+> test
+
+# Test
+'''
+        new_content, changes = migrate_recipe_content(content, "test.md")
+        assert "cssclasses:" in new_content
+        assert "  - recipe" in new_content
+        assert any("cssclasses" in c for c in changes)
+
+    def test_migration_skips_existing_cssclasses(self):
+        """Should not duplicate cssclasses if already present"""
+        content = '''---
+title: "Test"
+cssclasses:
+  - recipe
+---
+
+> [!tools]- Tools
+> test
+
+# Test
+'''
+        new_content, changes = migrate_recipe_content(content, "test.md")
+        assert new_content.count("cssclasses:") == 1
+        assert not any("cssclasses" in c for c in changes)
