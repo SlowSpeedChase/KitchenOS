@@ -704,6 +704,12 @@ def add_to_meal_plan():
 </body></html>'''
 
 
+@app.route('/meal-planner', methods=['GET'])
+def meal_planner():
+    """Serve the interactive meal planner board."""
+    return send_file('templates/meal_planner.html', mimetype='text/html')
+
+
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
