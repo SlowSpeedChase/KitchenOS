@@ -83,6 +83,19 @@ cd /Users/chaseeasterling/KitchenOS
 .venv/bin/python migrate_recipes.py
 ```
 
+### Clean Up Cuisine Data & Populate Seasonal
+
+```bash
+# Preview cuisine corrections and seasonal population
+.venv/bin/python migrate_cuisine.py --dry-run
+
+# Apply all fixes
+.venv/bin/python migrate_cuisine.py
+
+# Cuisine fixes only (skip Ollama seasonal matching)
+.venv/bin/python migrate_cuisine.py --no-seasonal
+```
+
 ### Batch Extract from Reminders
 
 ```bash
@@ -418,6 +431,7 @@ template → Obsidian
 | `prompts/seasonal_matching.py` | Ollama prompt for fuzzy matching ingredients to seasonal produce |
 | `config/seasonal_ingredients.json` | Texas seasonal produce calendar (~60 items) |
 | `templates/meal_planner.html` | Interactive meal planner board (HTML/CSS/JS + SortableJS) |
+| `migrate_cuisine.py` | Cuisine data cleanup & seasonal data population |
 
 ### Key Functions
 
@@ -473,6 +487,12 @@ template → Obsidian
 - `run_migration()` - Batch migrates all recipes
 - `has_tools_callout()` - Detects if recipe has Tools callout
 - `add_tools_callout()` - Adds Tools callout to existing recipes
+
+**migrate_cuisine.py:**
+- `apply_cuisine_corrections()` - Deterministic cuisine fix from correction map + per-recipe overrides
+- `update_frontmatter_field()` - Updates single YAML frontmatter field in recipe content
+- `run_cuisine_migration()` - Batch cuisine cleanup across all recipe files
+- `run_seasonal_migration()` - Batch seasonal data population via Ollama
 
 **lib/ingredient_parser.py:**
 - `parse_ingredient()` - Splits ingredient string into amount, unit, item
@@ -736,6 +756,7 @@ KitchenOS/
 ├── batch_extract.py       # Batch processor
 ├── recipe_sources.py      # Recipe extraction logic
 ├── migrate_recipes.py     # Schema migration
+├── migrate_cuisine.py     # Cuisine cleanup & seasonal population
 ├── shopping_list.py       # Shopping list from meal plans
 ├── generate_meal_plan.py  # Weekly meal plan generator
 ├── generate_nutrition_dashboard.py  # Nutrition dashboard generator
