@@ -4,7 +4,7 @@ from pathlib import Path
 
 from lib.recipe_parser import parse_recipe_file
 
-FILTER_FIELDS = ("cuisine", "protein", "difficulty", "meal_occasion", "dish_type")
+FILTER_FIELDS = ("cuisine", "protein", "difficulty", "meal_occasion", "dish_type", "peak_months")
 
 
 def get_recipe_index(recipes_dir: Path) -> list[dict]:
@@ -15,7 +15,7 @@ def get_recipe_index(recipes_dir: Path) -> list[dict]:
 
     Returns:
         List of dicts sorted by name, each with keys:
-            name, cuisine, protein, difficulty, meal_occasion, dish_type
+            name, cuisine, protein, difficulty, meal_occasion, dish_type, peak_months
     """
     recipes = []
 
