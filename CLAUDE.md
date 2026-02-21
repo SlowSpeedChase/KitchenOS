@@ -92,6 +92,15 @@ cd /Users/chaseeasterling/KitchenOS
 .venv/bin/python batch_extract.py --dry-run
 ```
 
+### Meal Planner UI (iPad)
+
+```
+Open in browser: http://localhost:5001/meal-planner
+iPad via Tailscale: http://100.111.6.10:5001/meal-planner
+```
+
+Drag-and-drop board for planning weekly meals. Recipe sidebar with search and filter chips. Reads/writes the same Obsidian markdown files.
+
 ### Generate Meal Plan
 
 ```bash
@@ -307,6 +316,10 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist
 | `/calendar.ics` | GET | Serves meal plan calendar file |
 | `/refresh-nutrition?week=<week>` | GET | Regenerate nutrition dashboard for week |
 | `/add-to-meal-plan?recipe=<name>` | GET/POST | Pick meal plan slot and add recipe |
+| `/meal-planner` | GET | Interactive drag-and-drop meal planner board |
+| `/api/recipes` | GET | JSON list of recipe metadata for meal planner |
+| `/api/meal-plan/<week>` | GET | Read meal plan as JSON |
+| `/api/meal-plan/<week>` | PUT | Save meal plan from JSON |
 
 ### Configuration
 
@@ -392,6 +405,8 @@ template → Obsidian
 | `lib/nutrition_lookup.py` | API clients for Nutritionix, USDA, AI fallback |
 | `lib/macro_targets.py` | Parses My Macros.md targets |
 | `lib/nutrition_dashboard.py` | Dashboard generation logic |
+| `lib/recipe_index.py` | Scans recipe files, returns frontmatter metadata for filtering |
+| `templates/meal_planner.html` | Interactive meal planner board (HTML/CSS/JS + SortableJS) |
 
 ### Key Functions
 
@@ -425,6 +440,10 @@ template → Obsidian
 - `reprocess_recipe()` - Full re-extraction from YouTube, preserves My Notes section
 - `add_to_meal_plan_form()` - Serves mobile-friendly form to pick week/day/meal
 - `add_to_meal_plan()` - Inserts recipe wikilink into meal plan file
+- `api_recipes()` - Returns recipe metadata JSON for meal planner (cached 5min)
+- `api_meal_plan_get()` - Returns meal plan as structured JSON
+- `api_meal_plan_put()` - Saves meal plan from structured JSON
+- `meal_planner()` - Serves interactive meal planner HTML board
 
 **lib/backup.py:**
 - `create_backup()` - Creates timestamped backup in .history/ folder
@@ -478,6 +497,10 @@ template → Obsidian
 - `parse_meal_plan()` - Parses meal plan markdown into structured data (returns `MealEntry` objects)
 - `extract_meals_for_day()` - Extracts meals from a day section, supports `[[Recipe]] x2` multiplier syntax
 - `insert_recipe_into_meal_plan()` - Inserts `[[recipe]]` wikilink into meal plan markdown at specified day/meal slot
+- `rebuild_meal_plan_markdown()` - Converts structured JSON meal plan back to markdown
+
+**lib/recipe_index.py:**
+- `get_recipe_index()` - Scans recipes folder, returns sorted list of recipe metadata dicts
 
 **lib/ics_generator.py:**
 - `generate_ics()` - Creates ICS calendar content
