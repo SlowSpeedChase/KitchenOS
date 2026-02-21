@@ -7,6 +7,7 @@ from googleapiclient.discovery import build
 import os
 import re
 import subprocess
+import time
 import warnings
 from datetime import timedelta
 from pathlib import Path
@@ -19,6 +20,7 @@ from lib.shopping_list_generator import (
     SHOPPING_LISTS_PATH,
 )
 from lib.backup import create_backup
+from lib.recipe_index import get_recipe_index
 from lib.recipe_parser import parse_recipe_file, extract_my_notes, parse_recipe_body
 from templates.shopping_list_template import generate_shopping_list_markdown, generate_filename as shopping_list_filename
 from templates.recipe_template import format_recipe_markdown
@@ -32,6 +34,9 @@ OBSIDIAN_RECIPES_PATH = Path("/Users/chaseeasterling/Library/Mobile Documents/iC
 MEAL_PLANS_PATH = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS/Meal Plans")
 
 app = Flask(__name__)
+
+_recipe_cache = {"data": None, "timestamp": 0}
+RECIPE_CACHE_TTL = 300  # 5 minutes
 
 
 def error_page(message: str) -> str:
@@ -194,6 +199,16 @@ def get_video_info():
 def health():
     """Health check endpoint."""
     return jsonify({'status': 'ok'})
+
+
+@app.route('/api/recipes', methods=['GET'])
+def api_recipes():
+    """Return recipe metadata for meal planner sidebar."""
+    now = time.time()
+    if _recipe_cache["data"] is None or (now - _recipe_cache["timestamp"]) > RECIPE_CACHE_TTL:
+        _recipe_cache["data"] = get_recipe_index(OBSIDIAN_RECIPES_PATH)
+        _recipe_cache["timestamp"] = now
+    return jsonify(_recipe_cache["data"])
 
 
 @app.route('/extract', methods=['POST'])
