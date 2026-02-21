@@ -55,6 +55,15 @@ def print_virtual_env():
     else:
         print("No virtual environment detected")
 
+
+def get_thumbnail_url(video_id: str) -> str:
+    """Construct YouTube thumbnail URL from video ID.
+
+    YouTube thumbnails follow a predictable URL pattern.
+    maxresdefault.jpg gives the highest resolution available.
+    """
+    return f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg"
+
 def get_video_description(video_id, is_short=False):
     """Backwards compatible wrapper - returns description string only"""
     metadata = get_video_metadata(video_id, is_short=is_short)
@@ -89,7 +98,8 @@ def get_video_metadata_ytdlp(video_id, is_short=False):
             return {
                 'title': info.get('title', ''),
                 'channel': info.get('channel', '') or info.get('uploader', ''),
-                'description': info.get('description', '')
+                'description': info.get('description', ''),
+                'thumbnail_url': get_thumbnail_url(video_id)
             }
     except yt_dlp.utils.DownloadError as e:
         print(f"yt-dlp error: {e}", file=sys.stderr)
@@ -121,7 +131,8 @@ def get_video_metadata(video_id, is_short=False):
             return {
                 'title': snippet.get('title', ''),
                 'channel': snippet.get('channelTitle', ''),
-                'description': snippet.get('description', '')
+                'description': snippet.get('description', ''),
+                'thumbnail_url': get_thumbnail_url(video_id)
             }
         else:
             return None
