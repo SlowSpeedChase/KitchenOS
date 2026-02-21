@@ -747,13 +747,7 @@
                     delayOnTouchOnly: true,
                     touchStartThreshold: 5,
                     animation: 150,
-                    filter: '.hidden',
-                    onClone: function(evt) {
-                        const clone = evt.clone;
-                        const name = clone.dataset.name;
-                        const gridCard = createGridCard(name, 1);
-                        evt.item.replaceWith(gridCard);
-                    }
+                    filter: '.hidden'
                 });
             }
         }
@@ -766,7 +760,8 @@
                 gridSortables.push(
                     Sortable.create(cell, {
                         group: { name: 'recipes', pull: true, put: function(to) {
-                            return to.el.querySelectorAll('.grid-card').length === 0;
+                            // Allow drop only if cell is empty (no grid-card or recipe-card)
+                            return to.el.querySelectorAll('.grid-card, .recipe-card').length === 0;
                         }},
                         draggable: '.grid-card',
                         ghostClass: 'sortable-ghost',
@@ -777,6 +772,13 @@
                         animation: 150,
                         onAdd: function(evt) {
                             const cell = evt.to;
+                            // Convert sidebar recipe-card to grid-card
+                            const item = evt.item;
+                            if (item.classList.contains('recipe-card')) {
+                                const name = item.dataset.name;
+                                const gridCard = createGridCard(name, 1);
+                                item.replaceWith(gridCard);
+                            }
                             updateCellState(cell);
                             debounceSave();
                             closeSidebar();
