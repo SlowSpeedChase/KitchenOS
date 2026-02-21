@@ -17,8 +17,10 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
-from templates.meal_plan_template import generate_meal_plan_markdown, generate_filename
+from templates.meal_plan_template import generate_meal_plan_markdown, generate_filename, get_week_start
 from lib.backup import cleanup_old_backups
+from lib.seasonality import calculate_season_score, load_seasonal_config
+from lib.recipe_parser import parse_recipe_file
 
 # Configuration
 OBSIDIAN_VAULT = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS")
@@ -46,6 +48,79 @@ def get_target_week() -> tuple[int, int]:
     target_date = date.today() + timedelta(weeks=2)
     iso_cal = target_date.isocalendar()
     return iso_cal.year, iso_cal.week
+
+
+RECIPES_PATH = OBSIDIAN_VAULT / "Recipes"
+
+
+def get_seasonal_suggestions(recipes_dir: Path, year: int, week: int, limit: int = 15) -> str:
+    """Generate seasonal recipe suggestions section for meal plan.
+
+    Scores recipes by seasonal ingredients, clusters by shared produce.
+
+    Args:
+        recipes_dir: Path to recipes directory
+        year: ISO year
+        week: ISO week number
+        limit: Max recipes to suggest
+
+    Returns:
+        Markdown string with seasonal suggestions, or empty string
+    """
+    week_start = get_week_start(year, week)
+    month = week_start.month
+
+    config = load_seasonal_config()
+
+    # Score all recipes
+    scored = []
+    for md_file in recipes_dir.glob("*.md"):
+        if md_file.name.startswith('.'):
+            continue
+        try:
+            content = md_file.read_text(encoding='utf-8')
+            parsed = parse_recipe_file(content)
+            fm = parsed['frontmatter']
+            seasonal = fm.get('seasonal_ingredients', [])
+            if not seasonal or not isinstance(seasonal, list):
+                continue
+            score = calculate_season_score(seasonal, month=month)
+            if score > 0:
+                scored.append({
+                    'name': fm.get('title', md_file.stem),
+                    'score': score,
+                    'seasonal': [s for s in seasonal
+                                 if config['ingredients'].get(s, {}).get('peak_months', [])
+                                 and month in config['ingredients'][s]['peak_months']],
+                })
+        except Exception:
+            continue
+
+    if not scored:
+        return ""
+
+    # Sort by score descending
+    scored.sort(key=lambda x: x['score'], reverse=True)
+    scored = scored[:limit]
+
+    # Group recipes by their top seasonal ingredient
+    groups = {}
+    for r in scored:
+        key = r['seasonal'][0] if r['seasonal'] else 'other'
+        if key not in groups:
+            groups[key] = []
+        groups[key].append(r)
+
+    lines = ["\n## Seasonal Suggestions\n"]
+    lines.append(f"*In season for {week_start.strftime('%B')}:*\n")
+
+    for ingredient, recipes in sorted(groups.items(), key=lambda x: -len(x[1])):
+        lines.append(f"**{ingredient.title()}** ({len(recipes)} recipes)")
+        for r in recipes:
+            lines.append(f"- [[{r['name']}]]")
+        lines.append("")
+
+    return '\n'.join(lines)
 
 
 def ensure_meal_plans_folder():
@@ -85,6 +160,13 @@ def main():
 
     # Generate content
     content = generate_meal_plan_markdown(year, week)
+
+    # Append seasonal suggestions if recipes have seasonal data
+    if RECIPES_PATH.exists():
+        suggestions = get_seasonal_suggestions(RECIPES_PATH, year, week)
+        if suggestions:
+            content += suggestions
+            print("Added seasonal recipe suggestions")
 
     if args.dry_run:
         print("\n--- Preview ---")
