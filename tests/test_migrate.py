@@ -1,6 +1,7 @@
 """Tests for recipe migration"""
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 from migrate_recipes import migrate_recipe_file, run_migration, has_tools_callout, add_tools_callout
 
 
@@ -552,3 +553,67 @@ cssclasses:
         new_content, changes = migrate_recipe_content(content, "test.md")
         assert new_content.count("cssclasses:") == 1
         assert not any("cssclasses" in c for c in changes)
+
+
+# ============================================================================
+# Tests for seasonal migration
+# ============================================================================
+
+
+class TestSeasonalMigration:
+    @patch("migrate_recipes.match_ingredients_to_seasonal")
+    def test_migration_adds_seasonal_fields(self, mock_match):
+        """Migration should add seasonal_ingredients and peak_months"""
+        mock_match.return_value = ["tomato", "basil"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = Path(tmpdir)
+            recipe = recipes_dir / "test.md"
+            recipe.write_text('''---
+title: "Tomato Basil Pasta"
+source_url: "https://youtube.com/watch?v=abc123"
+---
+
+## Ingredients
+
+| Amount | Unit | Ingredient |
+|--------|------|------------|
+| 2 | whole | tomato |
+| 3 | leaf | basil |
+| 1 | tbsp | olive oil |
+
+## Instructions
+
+1. Cook pasta.
+''')
+            changes = migrate_recipe_file(recipe)
+            new_content = recipe.read_text()
+            assert "seasonal_ingredients:" in new_content
+            assert "peak_months:" in new_content
+
+    @patch("migrate_recipes.match_ingredients_to_seasonal")
+    def test_migration_skips_seasonal_when_present(self, mock_match):
+        """Migration should not re-match if seasonal_ingredients already present"""
+        mock_match.return_value = ["tomato"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = Path(tmpdir)
+            recipe = recipes_dir / "test.md"
+            recipe.write_text('''---
+title: "Tomato Pasta"
+source_url: "https://youtube.com/watch?v=abc123"
+seasonal_ingredients: ["tomato", "basil"]
+peak_months: [4, 5, 6, 10, 11]
+---
+
+## Ingredients
+
+| Amount | Unit | Ingredient |
+|--------|------|------------|
+| 2 | whole | tomato |
+
+## Instructions
+
+1. Cook pasta.
+''')
+            changes = migrate_recipe_file(recipe)
+            # Should not have called Ollama since fields already exist
+            mock_match.assert_not_called()
