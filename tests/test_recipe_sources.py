@@ -334,3 +334,54 @@ class TestExtractCookingTips:
         from recipe_sources import extract_cooking_tips
         result = extract_cooking_tips("", {})
         assert isinstance(result, list)
+
+
+class TestImageExtraction:
+    """Tests for image URL extraction from JSON-LD"""
+
+    def test_parse_json_ld_extracts_image_url(self):
+        """Extracts image_url when image field is a string"""
+        json_ld = {
+            "@type": "Recipe",
+            "name": "Test Recipe",
+            "image": "https://example.com/photo.jpg",
+        }
+        result = parse_json_ld_recipe(json_ld)
+        assert result["image_url"] == "https://example.com/photo.jpg"
+
+    def test_parse_json_ld_extracts_image_from_list(self):
+        """Extracts first URL when image field is a list"""
+        json_ld = {
+            "@type": "Recipe",
+            "name": "Test Recipe",
+            "image": [
+                "https://example.com/photo1.jpg",
+                "https://example.com/photo2.jpg",
+            ],
+        }
+        result = parse_json_ld_recipe(json_ld)
+        assert result["image_url"] == "https://example.com/photo1.jpg"
+
+    def test_parse_json_ld_extracts_image_from_object(self):
+        """Extracts url from ImageObject dict"""
+        json_ld = {
+            "@type": "Recipe",
+            "name": "Test Recipe",
+            "image": {
+                "@type": "ImageObject",
+                "url": "https://example.com/photo.jpg",
+                "width": 800,
+                "height": 600,
+            },
+        }
+        result = parse_json_ld_recipe(json_ld)
+        assert result["image_url"] == "https://example.com/photo.jpg"
+
+    def test_parse_json_ld_no_image_returns_none(self):
+        """Returns None for image_url when image field is missing"""
+        json_ld = {
+            "@type": "Recipe",
+            "name": "Test Recipe",
+        }
+        result = parse_json_ld_recipe(json_ld)
+        assert result["image_url"] is None

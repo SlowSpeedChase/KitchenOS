@@ -208,6 +208,15 @@ def migrate_recipe_content(content: str, filename: str = None) -> Tuple[str, Lis
             new_content = new_content[:insert_pos] + meal_plan_button + new_content[insert_pos:]
             changes.append("Added 'Add to Meal Plan' button")
 
+    # Add cssclasses if missing
+    if "cssclasses:" not in new_content:
+        parts = new_content.split('---', 2)
+        if len(parts) >= 3:
+            frontmatter = parts[1]
+            frontmatter = frontmatter.rstrip('\n') + '\ncssclasses:\n  - recipe\n'
+            new_content = f"---{frontmatter}---{parts[2]}"
+            changes.append("Added cssclasses: [recipe] to frontmatter")
+
     return new_content, changes
 
 
@@ -297,6 +306,9 @@ def needs_content_migration(content: str) -> bool:
         return True
     # Check for missing 'Add to Meal Plan' button
     if has_tools_callout(content) and "Add to Meal Plan" not in content:
+        return True
+    # Check for missing cssclasses
+    if "cssclasses:" not in content:
         return True
     return False
 
