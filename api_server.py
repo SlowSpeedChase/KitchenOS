@@ -569,6 +569,28 @@ def api_meal_plan_get(week):
     return jsonify({"week": week, "days": days})
 
 
+@app.route('/api/meal-plan/<week>', methods=['PUT'])
+def api_meal_plan_put(week):
+    """Save meal plan from structured JSON."""
+    match = re.match(r'^(\d{4})-W(\d{2})$', week)
+    if not match:
+        return jsonify({"error": "Invalid week format. Expected YYYY-WNN"}), 400
+
+    data = request.get_json(force=True, silent=True)
+    if not data or "days" not in data:
+        return jsonify({"error": "Request body must include 'days' array"}), 400
+
+    content = rebuild_meal_plan_markdown(week, data["days"])
+
+    MEAL_PLANS_PATH.mkdir(parents=True, exist_ok=True)
+    plan_file = MEAL_PLANS_PATH / f"{week}.md"
+    plan_file.write_text(content, encoding="utf-8")
+
+    _recipe_cache["data"] = None
+
+    return jsonify({"status": "saved", "week": week})
+
+
 @app.route('/add-to-meal-plan', methods=['GET'])
 def add_to_meal_plan_form():
     """Serve HTML form for picking meal plan slot."""
