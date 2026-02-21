@@ -91,3 +91,70 @@ class TestUpdateFrontmatterField:
         content = '---\ntitle: "Test"\npeak_months: []\n---\n\n# Test'
         result = update_frontmatter_field(content, "peak_months", [4, 5, 6])
         assert "peak_months: [4, 5, 6]" in result
+
+
+from migrate_cuisine import run_cuisine_migration
+
+
+class TestRunCuisineMigration:
+    """Test full cuisine migration on recipe files."""
+
+    def test_fixes_misclassified_cuisine(self):
+        """Overwrites wrong cuisine for known recipes."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = Path(tmpdir)
+            recipe = recipes_dir / "Seneyet Jaj O Batata.md"
+            recipe.write_text(
+                '---\ntitle: "Seneyet Jaj O Batata"\ncuisine: "Ethiopian"\n---\n\n# Test'
+            )
+            results = run_cuisine_migration(recipes_dir, dry_run=False)
+            new_content = recipe.read_text()
+            assert 'cuisine: "Middle Eastern"' in new_content
+            assert len(results["updated"]) == 1
+
+    def test_consolidates_variant(self):
+        """Consolidates Korean-inspired to Korean."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = Path(tmpdir)
+            recipe = recipes_dir / "Some Korean Dish.md"
+            recipe.write_text(
+                '---\ntitle: "Some Korean Dish"\ncuisine: "Korean-inspired"\n---\n\n# Test'
+            )
+            results = run_cuisine_migration(recipes_dir, dry_run=False)
+            new_content = recipe.read_text()
+            assert 'cuisine: "Korean"' in new_content
+
+    def test_skips_correct_cuisine(self):
+        """Recipes with correct cuisines are skipped."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = Path(tmpdir)
+            recipe = recipes_dir / "Good Recipe.md"
+            recipe.write_text(
+                '---\ntitle: "Good Recipe"\ncuisine: "Italian"\n---\n\n# Test'
+            )
+            results = run_cuisine_migration(recipes_dir, dry_run=False)
+            assert len(results["skipped"]) == 1
+
+    def test_dry_run_no_changes(self):
+        """Dry run reports changes but doesn't modify files."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = Path(tmpdir)
+            recipe = recipes_dir / "Seneyet Jaj O Batata.md"
+            original = '---\ntitle: "Seneyet Jaj O Batata"\ncuisine: "Ethiopian"\n---\n\n# Test'
+            recipe.write_text(original)
+            results = run_cuisine_migration(recipes_dir, dry_run=True)
+            assert recipe.read_text() == original
+            assert len(results["updated"]) == 1
+
+    def test_creates_backup_before_modifying(self):
+        """Should create backup in .history before writing."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = Path(tmpdir)
+            recipe = recipes_dir / "Seneyet Jaj O Batata.md"
+            recipe.write_text(
+                '---\ntitle: "Seneyet Jaj O Batata"\ncuisine: "Ethiopian"\n---\n\n# Test'
+            )
+            run_cuisine_migration(recipes_dir, dry_run=False)
+            history_dir = recipes_dir / ".history"
+            assert history_dir.exists()
+            assert len(list(history_dir.glob("*.md"))) == 1
