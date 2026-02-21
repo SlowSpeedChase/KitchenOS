@@ -34,6 +34,8 @@ RECIPE_SCHEMA = {
     "dish_type": str,
     "meal_occasion": list,
     "dietary": list,
+    "seasonal_ingredients": list,
+    "peak_months": list,
     "equipment": list,
     "needs_review": bool,
     "confidence_notes": str,
@@ -189,6 +191,8 @@ protein: {protein}
 dish_type: {dish_type}
 meal_occasion: {meal_occasion}
 dietary: {dietary}
+seasonal_ingredients: {seasonal_ingredients}
+peak_months: {peak_months}
 
 equipment: {equipment}
 
@@ -293,6 +297,13 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel, date_ad
     meal_occasion = recipe_data.get('meal_occasion', [])
     meal_occasion_yaml = f"[{', '.join(quote + o.lower().replace(' ', '-') + quote for o in meal_occasion)}]" if meal_occasion else "[]"
 
+    # Format seasonal fields as YAML lists
+    seasonal_ings = recipe_data.get('seasonal_ingredients', [])
+    seasonal_yaml = f"[{', '.join(quote + s + quote for s in seasonal_ings)}]" if seasonal_ings else "[]"
+
+    peak_months = recipe_data.get('peak_months', [])
+    peak_months_yaml = f"[{', '.join(str(m) for m in peak_months)}]" if peak_months else "[]"
+
     # Format tags
     tags = []
     if recipe_data.get('cuisine'):
@@ -378,6 +389,8 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel, date_ad
         dish_type=quote_or_null(recipe_data.get('dish_type')),
         meal_occasion=meal_occasion_yaml,
         dietary=dietary_yaml,
+        seasonal_ingredients=seasonal_yaml,
+        peak_months=peak_months_yaml,
         equipment=equipment_yaml,
         tags=tags_yaml,
         needs_review=str(recipe_data.get('needs_review', True)).lower(),

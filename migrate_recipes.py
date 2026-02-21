@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from lib.backup import create_backup
 from lib.recipe_parser import parse_recipe_file, extract_my_notes, parse_ingredient_table
+from lib.seasonality import match_ingredients_to_seasonal, get_peak_months
 from templates.recipe_template import RECIPE_SCHEMA, generate_tools_callout
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
@@ -124,6 +125,28 @@ Return ONLY a JSON array of strings, nothing else. Example: ["weeknight-dinner",
     except Exception as e:
         print(f"    Warning: Could not infer meal_occasion: {e}")
         return []
+
+
+def match_seasonal_produce(body: str) -> tuple[list[str], list[int]]:
+    """Match ingredients from recipe body to seasonal produce.
+
+    Args:
+        body: Recipe markdown body containing ingredient table
+
+    Returns:
+        Tuple of (seasonal_ingredients, peak_months)
+    """
+    ing_match = re.search(r'## Ingredients\n\n((?:\|[^\n]+\n)+)', body)
+    if not ing_match:
+        return [], []
+
+    ingredients = parse_ingredient_table(ing_match.group(1))
+    if not ingredients:
+        return [], []
+
+    seasonal = match_ingredients_to_seasonal(ingredients)
+    months = get_peak_months(seasonal)
+    return seasonal, months
 
 
 def migrate_ingredient_table(table_text: str) -> str:
@@ -256,6 +279,14 @@ def migrate_recipe_file(filepath: Path) -> List[str]:
         if inferred_occasion:
             changes.append(f"Inferred meal_occasion: {inferred_occasion}")
 
+    # Infer seasonal ingredients via Ollama if missing
+    inferred_seasonal = []
+    inferred_peak_months = []
+    if 'seasonal_ingredients' in missing_fields:
+        inferred_seasonal, inferred_peak_months = match_seasonal_produce(parsed['body'])
+        if inferred_seasonal:
+            changes.append(f"Matched seasonal produce: {inferred_seasonal}")
+
     # Add missing frontmatter fields
     lines = new_content.split('\n')
     new_lines = []
@@ -272,6 +303,13 @@ def migrate_recipe_file(filepath: Path) -> List[str]:
                         quote = '"'
                         yaml_list = f"[{', '.join(quote + o + quote for o in inferred_occasion)}]"
                         new_lines.append(f"meal_occasion: {yaml_list}")
+                    elif field == 'seasonal_ingredients' and inferred_seasonal:
+                        quote = '"'
+                        yaml_list = f"[{', '.join(quote + s + quote for s in inferred_seasonal)}]"
+                        new_lines.append(f"seasonal_ingredients: {yaml_list}")
+                    elif field == 'peak_months' and inferred_peak_months:
+                        yaml_list = f"[{', '.join(str(m) for m in inferred_peak_months)}]"
+                        new_lines.append(f"peak_months: {yaml_list}")
                     elif RECIPE_SCHEMA[field] == list:
                         new_lines.append(f"{field}: []")
                     else:
@@ -347,6 +385,8 @@ def run_migration(recipes_dir: Path, dry_run: bool = False) -> dict:
                 changes = [f"Would add '{f}'" for f in missing]
                 if 'meal_occasion' in missing:
                     changes.append("Would infer meal_occasion via Ollama")
+                if 'seasonal_ingredients' in missing:
+                    changes.append("Would match seasonal ingredients via Ollama")
                 if '| Amount | Ingredient |' in content:
                     changes.append("Would convert ingredient table to 3-column format")
                 if not has_tools_callout(content):

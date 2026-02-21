@@ -239,3 +239,31 @@ class TestImageSupport:
         image_pos = result.find("![[Test Recipe.jpg]]")
         desc_pos = result.find("> A test")
         assert image_pos < desc_pos
+
+
+class TestSeasonalFrontmatter:
+    def test_seasonal_fields_in_output(self):
+        """Seasonal fields should appear in frontmatter"""
+        recipe_data = {
+            "recipe_name": "Test",
+            "description": "Test recipe",
+            "ingredients": [],
+            "instructions": [],
+            "seasonal_ingredients": ["tomato", "basil"],
+            "peak_months": [4, 5, 6, 10, 11],
+        }
+        result = format_recipe_markdown(recipe_data, "http://test.com", "Test", "Channel")
+        assert "seasonal_ingredients:" in result
+        assert "peak_months:" in result
+
+    def test_empty_seasonal_fields(self):
+        """Empty seasonal data should render as empty lists"""
+        recipe_data = {
+            "recipe_name": "Test",
+            "description": "Test recipe",
+            "ingredients": [],
+            "instructions": [],
+        }
+        result = format_recipe_markdown(recipe_data, "http://test.com", "Test", "Channel")
+        assert "seasonal_ingredients: []" in result
+        assert "peak_months: []" in result

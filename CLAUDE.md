@@ -371,6 +371,10 @@ extract_cooking_tips() (if webpage/description/comment source)
     ↓
 validate_ingredients() (repair AI extraction errors)
     ↓
+match_ingredients_to_seasonal() (Ollama fuzzy match → seasonal_ingredients, peak_months)
+    ↓
+calculate_recipe_nutrition() (Nutritionix → USDA → AI fallback)
+    ↓
 download_image() (website image or YouTube thumbnail → Recipes/Images/)
     ↓
 template → Obsidian
@@ -410,6 +414,9 @@ template → Obsidian
 | `lib/macro_targets.py` | Parses My Macros.md targets |
 | `lib/nutrition_dashboard.py` | Dashboard generation logic |
 | `lib/recipe_index.py` | Scans recipe files, returns frontmatter metadata for filtering |
+| `lib/seasonality.py` | Seasonal ingredient matching and scoring |
+| `prompts/seasonal_matching.py` | Ollama prompt for fuzzy matching ingredients to seasonal produce |
+| `config/seasonal_ingredients.json` | Texas seasonal produce calendar (~60 items) |
 | `templates/meal_planner.html` | Interactive meal planner board (HTML/CSS/JS + SortableJS) |
 
 ### Key Functions
@@ -530,6 +537,12 @@ template → Obsidian
 **lib/macro_targets.py:**
 - `load_macro_targets()` - Loads targets from My Macros.md
 
+**lib/seasonality.py:**
+- `load_seasonal_config()` - Loads Texas seasonal produce config
+- `match_ingredients_to_seasonal()` - Ollama fuzzy matching of ingredients to seasonal produce
+- `calculate_season_score()` - Counts in-season ingredients for a given month
+- `get_peak_months()` - Returns union of peak months for matched ingredients
+
 ## AI Configuration
 
 ### Ollama Settings
@@ -561,10 +574,18 @@ The AI extracts this structure:
   "instructions": [{"step": number, "text": "string", "time": "string or null"}],
   "storage": "string or null",
   "variations": ["array"],
+  "seasonal_ingredients": ["array of matched seasonal produce names"],
+  "peak_months": [1, 2, 3],
   "needs_review": boolean,
   "confidence_notes": "string"
 }
 ```
+
+### Seasonal Produce Config
+
+**File:** `config/seasonal_ingredients.json`
+
+Maps ~60 Texas produce items to peak month numbers (1-12). Used by `lib/seasonality.py` to score recipes by seasonal freshness. Region is Texas.
 
 ### Creator Website Mapping
 
@@ -701,6 +722,7 @@ These features are planned but not yet implemented:
 | ~~YouTube Shorts support~~ | ~~Medium~~ | **Completed** - yt-dlp fetches metadata for /shorts/ URLs |
 | ~~Recipe reprocess buttons~~ | ~~Medium~~ | **Completed** - Tools callout with Re-extract/Refresh buttons |
 | ~~Nutrition tracking~~ | ~~Medium~~ | **Completed** - Macro tracking with dashboard, API lookup (Nutritionix, USDA), AI fallback |
+| ~~Seasonality~~ | ~~Medium~~ | **Completed** - Texas produce calendar, Ollama fuzzy matching, Dashboard "In Season Now", meal plan suggestions |
 | Claude API fallback | Low | Use Claude when Ollama fails |
 | ~~Image extraction~~ | ~~Low~~ | **Completed** - Downloads recipe website images or YouTube thumbnails to vault |
 
