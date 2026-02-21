@@ -119,6 +119,17 @@
             border-color: var(--accent);
         }
 
+        .chip.season {
+            border-color: var(--success);
+            color: var(--success);
+        }
+
+        .chip.season.active {
+            background: var(--success);
+            color: #ffffff;
+            border-color: var(--success);
+        }
+
         .chip:active {
             transform: scale(0.95);
         }
@@ -578,6 +589,7 @@
         let dayDates = {};       // { Monday: '2026-02-23', ... }
         let allRecipes = [];
         let activeFilters = {};  // { cuisine: Set, protein: Set, meal_occasion: Set }
+        let seasonFilterActive = false;
         let sidebarSortable = null;
         let gridSortables = [];
         let saveTimeout = null;
@@ -966,6 +978,7 @@
                 card.dataset.protein = recipe.protein || '';
                 card.dataset.mealOccasion = (recipe.meal_occasion || []).join(',');
                 card.dataset.dishType = recipe.dish_type || '';
+                card.dataset.peakMonths = JSON.stringify(recipe.peak_months || []);
 
                 // Build meta text
                 const metaParts = [];
@@ -1000,12 +1013,18 @@
         }
 
         function matchesActiveFilters(recipe) {
+            // Special: "In Season" toggle
+            if (seasonFilterActive) {
+                const months = (recipe.peak_months || []).map(m => parseInt(m));
+                const currentMonth = new Date().getMonth() + 1;
+                if (!months.includes(currentMonth)) return false;
+            }
+
             for (const [field, values] of Object.entries(activeFilters)) {
                 if (values.size === 0) continue;
 
                 if (field === 'meal_occasion') {
                     const recipeValues = recipe.meal_occasion || [];
-                    // Recipe must match at least one active value in this field
                     const hasMatch = recipeValues.some(v => values.has(v));
                     if (!hasMatch) return false;
                 } else {
@@ -1020,6 +1039,18 @@
             const chipsContainer = document.getElementById('filter-chips');
             chipsContainer.innerHTML = '';
             activeFilters = {};
+
+            // "In Season" toggle chip — always first
+            seasonFilterActive = false;
+            const seasonChip = document.createElement('button');
+            seasonChip.className = 'chip season';
+            seasonChip.textContent = 'In Season';
+            seasonChip.addEventListener('click', function() {
+                seasonFilterActive = !seasonFilterActive;
+                seasonChip.classList.toggle('active', seasonFilterActive);
+                renderRecipes();
+            });
+            chipsContainer.appendChild(seasonChip);
 
             const chipData = [];
 
