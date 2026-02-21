@@ -229,3 +229,183 @@ class TestAddToMealPlan:
             # missing week, day, meal
         })
         assert response.status_code == 400
+
+
+class TestApiRecipes:
+    """Tests for GET /api/recipes endpoint."""
+
+    def test_returns_recipe_list(self, tmp_path):
+        """Should return JSON list of recipe metadata."""
+        import api_server
+
+        recipes_path = tmp_path / "Recipes"
+        recipes_path.mkdir()
+        (recipes_path / "Pasta.md").write_text(
+            '---\ntitle: "Pasta"\ncuisine: "Italian"\nprotein: null\n'
+            'difficulty: "easy"\nmeal_occasion: ["weeknight-dinner"]\n---\n\n# Pasta'
+        )
+
+        with patch.object(api_server, 'OBSIDIAN_RECIPES_PATH', recipes_path), \
+             patch.object(api_server, '_recipe_cache', {"data": None, "timestamp": 0}):
+            with app.test_client() as c:
+                response = c.get('/api/recipes')
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert len(data) == 1
+        assert data[0]["name"] == "Pasta"
+        assert data[0]["cuisine"] == "Italian"
+
+    def test_returns_empty_list_for_no_recipes(self, tmp_path):
+        """Should return empty list if no recipe files."""
+        import api_server
+
+        recipes_path = tmp_path / "Recipes"
+        recipes_path.mkdir()
+
+        with patch.object(api_server, 'OBSIDIAN_RECIPES_PATH', recipes_path), \
+             patch.object(api_server, '_recipe_cache', {"data": None, "timestamp": 0}):
+            with app.test_client() as c:
+                response = c.get('/api/recipes')
+
+        assert response.status_code == 200
+        assert response.get_json() == []
+
+
+class TestApiMealPlanGet:
+    """Tests for GET /api/meal-plan/<week> endpoint."""
+
+    def test_returns_parsed_meal_plan(self, tmp_path):
+        """Should return structured JSON from existing meal plan."""
+        from templates.meal_plan_template import generate_meal_plan_markdown
+
+        meal_plans_path = tmp_path / "Meal Plans"
+        meal_plans_path.mkdir()
+        plan_file = meal_plans_path / "2026-W09.md"
+        content = generate_meal_plan_markdown(2026, 9)
+        content = content.replace("## Monday (Feb 23)\n### Breakfast\n",
+                                  "## Monday (Feb 23)\n### Breakfast\n[[Pancakes]] x2\n")
+        plan_file.write_text(content)
+
+        with patch('api_server.MEAL_PLANS_PATH', meal_plans_path):
+            with app.test_client() as c:
+                response = c.get('/api/meal-plan/2026-W09')
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["week"] == "2026-W09"
+        assert len(data["days"]) == 7
+        assert data["days"][0]["day"] == "Monday"
+        assert data["days"][0]["breakfast"]["name"] == "Pancakes"
+        assert data["days"][0]["breakfast"]["servings"] == 2
+        assert data["days"][0]["lunch"] is None
+
+    def test_creates_plan_if_missing(self, tmp_path):
+        """Should auto-create meal plan file and return empty plan."""
+        meal_plans_path = tmp_path / "Meal Plans"
+        meal_plans_path.mkdir()
+
+        with patch('api_server.MEAL_PLANS_PATH', meal_plans_path):
+            with app.test_client() as c:
+                response = c.get('/api/meal-plan/2026-W09')
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["week"] == "2026-W09"
+        assert all(d["breakfast"] is None for d in data["days"])
+        assert (meal_plans_path / "2026-W09.md").exists()
+
+    def test_invalid_week_format(self, client):
+        """Should return 400 for invalid week format."""
+        response = client.get('/api/meal-plan/bad-format')
+        assert response.status_code == 400
+
+
+class TestApiMealPlanPut:
+    """Tests for PUT /api/meal-plan/<week> endpoint."""
+
+    def test_saves_meal_plan(self, tmp_path):
+        """Should write meal plan markdown from JSON."""
+        from templates.meal_plan_template import generate_meal_plan_markdown
+
+        meal_plans_path = tmp_path / "Meal Plans"
+        meal_plans_path.mkdir()
+        plan_file = meal_plans_path / "2026-W09.md"
+        plan_file.write_text(generate_meal_plan_markdown(2026, 9))
+
+        payload = {
+            "week": "2026-W09",
+            "days": [
+                {"day": "Monday", "date": "2026-02-23",
+                 "breakfast": {"name": "Pancakes", "servings": 2},
+                 "lunch": None,
+                 "dinner": {"name": "Butter Chicken", "servings": 1}},
+                {"day": "Tuesday", "date": "2026-02-24", "breakfast": None, "lunch": None, "dinner": None},
+                {"day": "Wednesday", "date": "2026-02-25", "breakfast": None, "lunch": None, "dinner": None},
+                {"day": "Thursday", "date": "2026-02-26", "breakfast": None, "lunch": None, "dinner": None},
+                {"day": "Friday", "date": "2026-02-27", "breakfast": None, "lunch": None, "dinner": None},
+                {"day": "Saturday", "date": "2026-02-28", "breakfast": None, "lunch": None, "dinner": None},
+                {"day": "Sunday", "date": "2026-03-01", "breakfast": None, "lunch": None, "dinner": None},
+            ]
+        }
+
+        with patch('api_server.MEAL_PLANS_PATH', meal_plans_path):
+            with app.test_client() as c:
+                response = c.put('/api/meal-plan/2026-W09', json=payload, content_type='application/json')
+
+        assert response.status_code == 200
+        content = plan_file.read_text()
+        assert "[[Pancakes]] x2" in content
+        assert "[[Butter Chicken]]" in content
+
+    def test_creates_file_if_missing(self, tmp_path):
+        """Should create meal plan file if it doesn't exist."""
+        meal_plans_path = tmp_path / "Meal Plans"
+        meal_plans_path.mkdir()
+
+        payload = {
+            "week": "2026-W09",
+            "days": [
+                {"day": "Monday", "date": "2026-02-23",
+                 "breakfast": {"name": "Toast", "servings": 1},
+                 "lunch": None, "dinner": None},
+                {"day": "Tuesday", "date": "2026-02-24", "breakfast": None, "lunch": None, "dinner": None},
+                {"day": "Wednesday", "date": "2026-02-25", "breakfast": None, "lunch": None, "dinner": None},
+                {"day": "Thursday", "date": "2026-02-26", "breakfast": None, "lunch": None, "dinner": None},
+                {"day": "Friday", "date": "2026-02-27", "breakfast": None, "lunch": None, "dinner": None},
+                {"day": "Saturday", "date": "2026-02-28", "breakfast": None, "lunch": None, "dinner": None},
+                {"day": "Sunday", "date": "2026-03-01", "breakfast": None, "lunch": None, "dinner": None},
+            ]
+        }
+
+        with patch('api_server.MEAL_PLANS_PATH', meal_plans_path):
+            with app.test_client() as c:
+                response = c.put('/api/meal-plan/2026-W09', json=payload, content_type='application/json')
+
+        assert response.status_code == 200
+        assert (meal_plans_path / "2026-W09.md").exists()
+        content = (meal_plans_path / "2026-W09.md").read_text()
+        assert "[[Toast]]" in content
+
+    def test_invalid_week_format(self, client):
+        """Should return 400 for invalid week format."""
+        response = client.put('/api/meal-plan/bad', json={"days": []}, content_type='application/json')
+        assert response.status_code == 400
+
+    def test_roundtrip_get_put_get(self, tmp_path):
+        """GET -> PUT -> GET should preserve data."""
+        meal_plans_path = tmp_path / "Meal Plans"
+        meal_plans_path.mkdir()
+
+        with patch('api_server.MEAL_PLANS_PATH', meal_plans_path):
+            with app.test_client() as c:
+                r1 = c.get('/api/meal-plan/2026-W09')
+                data = r1.get_json()
+                data["days"][0]["dinner"] = {"name": "Steak", "servings": 1}
+                c.put('/api/meal-plan/2026-W09', json=data, content_type='application/json')
+                r2 = c.get('/api/meal-plan/2026-W09')
+                data2 = r2.get_json()
+
+        assert data2["days"][0]["dinner"]["name"] == "Steak"
+        assert data2["days"][0]["dinner"]["servings"] == 1
+        assert data2["days"][0]["breakfast"] is None

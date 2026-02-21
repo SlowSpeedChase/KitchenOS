@@ -7,6 +7,7 @@ from googleapiclient.discovery import build
 import os
 import re
 import subprocess
+import time
 import warnings
 from datetime import timedelta
 from pathlib import Path
@@ -19,6 +20,8 @@ from lib.shopping_list_generator import (
     SHOPPING_LISTS_PATH,
 )
 from lib.backup import create_backup
+from lib.recipe_index import get_recipe_index
+from lib.meal_plan_parser import insert_recipe_into_meal_plan, parse_meal_plan, rebuild_meal_plan_markdown
 from lib.recipe_parser import parse_recipe_file, extract_my_notes, parse_recipe_body
 from templates.shopping_list_template import generate_shopping_list_markdown, generate_filename as shopping_list_filename
 from templates.recipe_template import format_recipe_markdown
@@ -32,6 +35,9 @@ OBSIDIAN_RECIPES_PATH = Path("/Users/chaseeasterling/Library/Mobile Documents/iC
 MEAL_PLANS_PATH = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS/Meal Plans")
 
 app = Flask(__name__)
+
+_recipe_cache = {"data": None, "timestamp": 0}
+RECIPE_CACHE_TTL = 300  # 5 minutes
 
 
 def error_page(message: str) -> str:
@@ -194,6 +200,16 @@ def get_video_info():
 def health():
     """Health check endpoint."""
     return jsonify({'status': 'ok'})
+
+
+@app.route('/api/recipes', methods=['GET'])
+def api_recipes():
+    """Return recipe metadata for meal planner sidebar."""
+    now = time.time()
+    if _recipe_cache["data"] is None or (now - _recipe_cache["timestamp"]) > RECIPE_CACHE_TTL:
+        _recipe_cache["data"] = get_recipe_index(OBSIDIAN_RECIPES_PATH)
+        _recipe_cache["timestamp"] = now
+    return jsonify(_recipe_cache["data"])
 
 
 @app.route('/extract', methods=['POST'])
@@ -516,6 +532,65 @@ def reprocess_recipe():
         return error_page(f"Error: {str(e)}"), 500
 
 
+@app.route('/api/meal-plan/<week>', methods=['GET'])
+def api_meal_plan_get(week):
+    """Return meal plan as structured JSON."""
+    match = re.match(r'^(\d{4})-W(\d{2})$', week)
+    if not match:
+        return jsonify({"error": "Invalid week format. Expected YYYY-WNN"}), 400
+
+    year = int(match.group(1))
+    week_num = int(match.group(2))
+
+    MEAL_PLANS_PATH.mkdir(parents=True, exist_ok=True)
+    plan_file = MEAL_PLANS_PATH / f"{week}.md"
+
+    if not plan_file.exists():
+        content = generate_meal_plan_markdown(year, week_num)
+        plan_file.write_text(content, encoding="utf-8")
+    else:
+        content = plan_file.read_text(encoding="utf-8")
+
+    parsed = parse_meal_plan(content, year, week_num)
+
+    days = []
+    for day_data in parsed:
+        day_json = {
+            "day": day_data["day"],
+            "date": day_data["date"].isoformat(),
+            "breakfast": None, "lunch": None, "dinner": None,
+        }
+        for meal in ("breakfast", "lunch", "dinner"):
+            entry = day_data[meal]
+            if entry is not None:
+                day_json[meal] = {"name": entry.name, "servings": entry.servings}
+        days.append(day_json)
+
+    return jsonify({"week": week, "days": days})
+
+
+@app.route('/api/meal-plan/<week>', methods=['PUT'])
+def api_meal_plan_put(week):
+    """Save meal plan from structured JSON."""
+    match = re.match(r'^(\d{4})-W(\d{2})$', week)
+    if not match:
+        return jsonify({"error": "Invalid week format. Expected YYYY-WNN"}), 400
+
+    data = request.get_json(force=True, silent=True)
+    if not data or "days" not in data:
+        return jsonify({"error": "Request body must include 'days' array"}), 400
+
+    content = rebuild_meal_plan_markdown(week, data["days"])
+
+    MEAL_PLANS_PATH.mkdir(parents=True, exist_ok=True)
+    plan_file = MEAL_PLANS_PATH / f"{week}.md"
+    plan_file.write_text(content, encoding="utf-8")
+
+    _recipe_cache["data"] = None
+
+    return jsonify({"status": "saved", "week": week})
+
+
 @app.route('/add-to-meal-plan', methods=['GET'])
 def add_to_meal_plan_form():
     """Serve HTML form for picking meal plan slot."""
@@ -579,8 +654,6 @@ def add_to_meal_plan_form():
 @app.route('/add-to-meal-plan', methods=['POST'])
 def add_to_meal_plan():
     """Add recipe to a meal plan slot."""
-    from lib.meal_plan_parser import insert_recipe_into_meal_plan
-
     recipe = request.form.get('recipe')
     week = request.form.get('week')
     day = request.form.get('day')
@@ -629,6 +702,12 @@ def add_to_meal_plan():
 <p><a href="obsidian://open?vault=KitchenOS&file={encoded_file}">View Meal Plan</a></p>
 <p><a href="obsidian://open?vault=KitchenOS">Back to Obsidian</a></p>
 </body></html>'''
+
+
+@app.route('/meal-planner', methods=['GET'])
+def meal_planner():
+    """Serve the interactive meal planner board."""
+    return send_file('templates/meal_planner.html', mimetype='text/html')
 
 
 if __name__ == '__main__':
