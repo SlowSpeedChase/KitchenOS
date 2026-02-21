@@ -165,3 +165,77 @@ class TestNutritionSection:
         assert "fat: null" in result
         assert "serving_size: null" in result
         assert "nutrition_source: null" in result
+
+
+class TestImageSupport:
+    def test_template_includes_cssclasses(self):
+        """Recipe frontmatter should include cssclasses: [recipe]"""
+        recipe_data = {
+            "recipe_name": "Test Recipe",
+            "description": "A test",
+            "ingredients": [],
+            "instructions": [],
+        }
+        result = format_recipe_markdown(recipe_data, "http://test.com", "Test", "Channel")
+        assert "cssclasses:" in result
+        assert "  - recipe" in result
+
+    def test_template_includes_banner_when_image(self):
+        """Frontmatter should include banner when image_filename is provided"""
+        recipe_data = {
+            "recipe_name": "Test Recipe",
+            "description": "A test",
+            "ingredients": [],
+            "instructions": [],
+            "image_filename": "Test Recipe.jpg",
+        }
+        result = format_recipe_markdown(recipe_data, "http://test.com", "Test", "Channel")
+        assert 'banner: "[[Test Recipe.jpg]]"' in result
+
+    def test_template_includes_inline_image_when_image(self):
+        """Body should include ![[image]] embed when image_filename is provided"""
+        recipe_data = {
+            "recipe_name": "Test Recipe",
+            "description": "A test",
+            "ingredients": [],
+            "instructions": [],
+            "image_filename": "Test Recipe.jpg",
+        }
+        result = format_recipe_markdown(recipe_data, "http://test.com", "Test", "Channel")
+        assert "![[Test Recipe.jpg]]" in result
+
+    def test_template_no_banner_without_image(self):
+        """Frontmatter should have banner: null when no image"""
+        recipe_data = {
+            "recipe_name": "Test Recipe",
+            "description": "A test",
+            "ingredients": [],
+            "instructions": [],
+        }
+        result = format_recipe_markdown(recipe_data, "http://test.com", "Test", "Channel")
+        assert "banner: null" in result
+
+    def test_template_no_inline_image_without_image(self):
+        """Body should not include ![[]] embed when no image"""
+        recipe_data = {
+            "recipe_name": "Test Recipe",
+            "description": "A test",
+            "ingredients": [],
+            "instructions": [],
+        }
+        result = format_recipe_markdown(recipe_data, "http://test.com", "Test", "Channel")
+        assert "![[" not in result
+
+    def test_inline_image_before_description(self):
+        """Image embed should appear before the description blockquote"""
+        recipe_data = {
+            "recipe_name": "Test Recipe",
+            "description": "A test",
+            "ingredients": [],
+            "instructions": [],
+            "image_filename": "Test Recipe.jpg",
+        }
+        result = format_recipe_markdown(recipe_data, "http://test.com", "Test", "Channel")
+        image_pos = result.find("![[Test Recipe.jpg]]")
+        desc_pos = result.find("> A test")
+        assert image_pos < desc_pos

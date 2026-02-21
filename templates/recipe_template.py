@@ -13,6 +13,7 @@ API_BASE_URL = "http://100.111.6.10:5001"
 # Used by migration to add missing fields
 RECIPE_SCHEMA = {
     "title": str,
+    "banner": str,
     "source_url": str,
     "source_channel": str,
     "date_added": str,
@@ -196,11 +197,14 @@ tags:
 
 needs_review: {needs_review}
 confidence_notes: "{confidence_notes}"
+banner: {banner}
+cssclasses:
+  - recipe
 ---
 
 {tools_callout}# {title}
 
-> {description}
+{image_embed}> {description}
 
 ## Ingredients
 
@@ -345,6 +349,11 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel, date_ad
     def num_or_null(val):
         return val if val is not None else "null"
 
+    # Image support
+    image_filename = recipe_data.get('image_filename')
+    banner = f'"[[{image_filename}]]"' if image_filename else "null"
+    image_embed = f"![[{image_filename}]]\n\n" if image_filename else ""
+
     return RECIPE_TEMPLATE.format(
         title=recipe_data.get('recipe_name', 'Untitled Recipe'),
         source_url=video_url,
@@ -373,6 +382,8 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel, date_ad
         tags=tags_yaml,
         needs_review=str(recipe_data.get('needs_review', True)).lower(),
         confidence_notes=recipe_data.get('confidence_notes', ''),
+        banner=banner,
+        image_embed=image_embed,
         description=recipe_data.get('description', ''),
         ingredients='\n'.join(ingredients_lines),
         nutrition_section=nutrition_section,
