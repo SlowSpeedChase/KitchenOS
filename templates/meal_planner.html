@@ -251,6 +251,50 @@
             text-decoration: underline;
         }
 
+        .grid-card.has-image {
+            background-size: cover;
+            background-position: center;
+            border: none;
+            overflow: hidden;
+            min-height: 60px;
+        }
+
+        .grid-card.has-image::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(transparent 10%, rgba(0, 0, 0, 0.65) 100%);
+            border-radius: 8px;
+            pointer-events: none;
+        }
+
+        .grid-card.has-image .grid-card-name {
+            position: relative;
+            z-index: 1;
+            color: #ffffff;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+        }
+
+        .grid-card.has-image .remove-btn {
+            z-index: 1;
+        }
+
+        .grid-card.has-image .servings-btn {
+            z-index: 1;
+            background: rgba(0, 0, 0, 0.4);
+            border-color: rgba(255, 255, 255, 0.3);
+            color: #ffffff;
+        }
+
+        .grid-card .grid-card-name-link {
+            color: inherit;
+            text-decoration: none;
+        }
+
+        .grid-card .grid-card-name-link:active {
+            text-decoration: underline;
+        }
+
         .sidebar-count {
             padding: 8px 16px;
             font-size: 12px;
@@ -884,8 +928,18 @@
             card.dataset.name = name;
             card.dataset.servings = servings || 1;
 
-            const nameEl = document.createElement('div');
-            nameEl.className = 'grid-card-name';
+            // Find image from recipe data
+            const recipe = allRecipes.find(r => r.name === name);
+            if (recipe && recipe.image) {
+                card.classList.add('has-image');
+                card.style.backgroundImage = `url(/images/${encodeURIComponent(recipe.image)})`;
+            }
+
+            const obsidianUrl = `obsidian://open?vault=KitchenOS&file=${encodeURIComponent('Recipes/' + name)}`;
+
+            const nameEl = document.createElement('a');
+            nameEl.className = 'grid-card-name grid-card-name-link';
+            nameEl.href = obsidianUrl;
             nameEl.textContent = name;
 
             const removeBtn = document.createElement('button');
