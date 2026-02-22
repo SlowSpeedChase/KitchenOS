@@ -212,6 +212,20 @@ def api_recipes():
     return jsonify(_recipe_cache["data"])
 
 
+@app.route('/images/<path:filename>', methods=['GET'])
+def serve_recipe_image(filename):
+    """Serve recipe images from Obsidian vault."""
+    # Block path traversal
+    if '..' in filename or '/' in filename:
+        return '', 404
+
+    image_path = OBSIDIAN_RECIPES_PATH / "Images" / filename
+    if not image_path.exists():
+        return '', 404
+
+    return send_file(image_path, mimetype='image/jpeg')
+
+
 @app.route('/extract', methods=['POST'])
 def extract_recipe():
     """Run full recipe extraction and save to Obsidian."""

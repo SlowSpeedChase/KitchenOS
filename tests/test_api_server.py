@@ -409,3 +409,50 @@ class TestApiMealPlanPut:
         assert data2["days"][0]["dinner"]["name"] == "Steak"
         assert data2["days"][0]["dinner"]["servings"] == 1
         assert data2["days"][0]["breakfast"] is None
+
+
+class TestServeImages:
+    """Tests for GET /images/<filename> endpoint."""
+
+    def test_serves_existing_image(self, tmp_path):
+        """Should serve image file from Recipes/Images/ directory."""
+        import api_server
+
+        recipes_path = tmp_path / "Recipes"
+        images_path = recipes_path / "Images"
+        images_path.mkdir(parents=True)
+        (images_path / "Test Recipe.jpg").write_bytes(b'\xff\xd8\xff\xe0fake-jpeg')
+
+        with patch.object(api_server, 'OBSIDIAN_RECIPES_PATH', recipes_path):
+            with app.test_client() as c:
+                response = c.get('/images/Test%20Recipe.jpg')
+
+        assert response.status_code == 200
+        assert response.content_type.startswith('image/')
+
+    def test_returns_404_for_missing_image(self, tmp_path):
+        """Should return 404 when image doesn't exist."""
+        import api_server
+
+        recipes_path = tmp_path / "Recipes"
+        images_path = recipes_path / "Images"
+        images_path.mkdir(parents=True)
+
+        with patch.object(api_server, 'OBSIDIAN_RECIPES_PATH', recipes_path):
+            with app.test_client() as c:
+                response = c.get('/images/Missing.jpg')
+
+        assert response.status_code == 404
+
+    def test_blocks_path_traversal(self, tmp_path):
+        """Should reject filenames with path traversal."""
+        import api_server
+
+        recipes_path = tmp_path / "Recipes"
+        (recipes_path / "Images").mkdir(parents=True)
+
+        with patch.object(api_server, 'OBSIDIAN_RECIPES_PATH', recipes_path):
+            with app.test_client() as c:
+                response = c.get('/images/..%2F..%2Fetc%2Fpasswd')
+
+        assert response.status_code == 404
