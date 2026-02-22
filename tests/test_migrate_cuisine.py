@@ -93,7 +93,108 @@ class TestUpdateFrontmatterField:
         assert "peak_months: [4, 5, 6]" in result
 
 
-from migrate_cuisine import run_cuisine_migration
+from migrate_cuisine import run_cuisine_migration, run_tag_migration
+
+
+class TestRunTagMigration:
+    """Test tag normalization migration on recipe files."""
+
+    def test_normalizes_protein(self):
+        """'Chicken breast' normalizes to 'chicken'."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = Path(tmpdir)
+            recipe = recipes_dir / "Test Chicken.md"
+            recipe.write_text(
+                '---\ntitle: "Test Chicken"\nprotein: "Chicken breast"\n---\n\n# Test'
+            )
+            results = run_tag_migration(recipes_dir, dry_run=False)
+            new_content = recipe.read_text()
+            assert 'protein: "chicken"' in new_content
+            assert len(results["updated"]) == 1
+
+    def test_normalizes_dish_type(self):
+        """'Main Course' normalizes to 'main'."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = Path(tmpdir)
+            recipe = recipes_dir / "Test Dish.md"
+            recipe.write_text(
+                '---\ntitle: "Test Dish"\ndish_type: "Main Course"\n---\n\n# Test'
+            )
+            results = run_tag_migration(recipes_dir, dry_run=False)
+            new_content = recipe.read_text()
+            assert 'dish_type: "main"' in new_content
+            assert len(results["updated"]) == 1
+
+    def test_normalizes_difficulty(self):
+        """'Medium' normalizes to 'medium' (case folding)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = Path(tmpdir)
+            recipe = recipes_dir / "Test Difficulty.md"
+            recipe.write_text(
+                '---\ntitle: "Test Difficulty"\ndifficulty: "Medium"\n---\n\n# Test'
+            )
+            results = run_tag_migration(recipes_dir, dry_run=False)
+            new_content = recipe.read_text()
+            assert 'difficulty: "medium"' in new_content
+            assert len(results["updated"]) == 1
+
+    def test_normalizes_dietary_array(self):
+        """['High Protein', 'Gluten-free'] normalizes to ['high-protein', 'gluten-free']."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = Path(tmpdir)
+            recipe = recipes_dir / "Test Dietary.md"
+            recipe.write_text(
+                '---\ntitle: "Test Dietary"\n'
+                'dietary: ["High Protein", "Gluten-free"]\n---\n\n# Test'
+            )
+            results = run_tag_migration(recipes_dir, dry_run=False)
+            new_content = recipe.read_text()
+            assert 'dietary: ["high-protein", "gluten-free"]' in new_content
+            assert len(results["updated"]) == 1
+
+    def test_removes_leaked_meal_occasion(self):
+        """Leaked dietary value in meal_occasion gets removed."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = Path(tmpdir)
+            recipe = recipes_dir / "Test Occasion.md"
+            recipe.write_text(
+                '---\ntitle: "Test Occasion"\n'
+                'meal_occasion: ["weeknight-dinner", "vegan"]\n---\n\n# Test'
+            )
+            results = run_tag_migration(recipes_dir, dry_run=False)
+            new_content = recipe.read_text()
+            assert 'meal_occasion: ["weeknight-dinner"]' in new_content
+            assert len(results["updated"]) == 1
+
+    def test_skips_already_correct(self):
+        """Recipes with already-normalized tags are skipped."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = Path(tmpdir)
+            recipe = recipes_dir / "Test Correct.md"
+            recipe.write_text(
+                '---\ntitle: "Test Correct"\n'
+                'protein: "chicken"\n'
+                'dish_type: "main"\n'
+                'difficulty: "easy"\n'
+                'dietary: ["vegan"]\n'
+                'meal_occasion: ["weeknight-dinner"]\n---\n\n# Test'
+            )
+            results = run_tag_migration(recipes_dir, dry_run=False)
+            assert len(results["skipped"]) == 1
+            assert len(results["updated"]) == 0
+
+    def test_dry_run_no_changes(self):
+        """Dry run reports changes but doesn't modify files."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = Path(tmpdir)
+            recipe = recipes_dir / "Test DryRun.md"
+            original = (
+                '---\ntitle: "Test DryRun"\nprotein: "Chicken breast"\n---\n\n# Test'
+            )
+            recipe.write_text(original)
+            results = run_tag_migration(recipes_dir, dry_run=True)
+            assert recipe.read_text() == original
+            assert len(results["updated"]) == 1
 
 
 class TestRunCuisineMigration:

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-KitchenOS - Cuisine Data Cleanup & Seasonal Population Migration
+KitchenOS - Cuisine Data Cleanup, Tag Normalization & Seasonal Population Migration
 
-Fixes inconsistent cuisine values and populates seasonal ingredient data.
+Fixes inconsistent cuisine values, normalizes tag fields (protein, dish_type,
+difficulty, dietary, meal_occasion), and populates seasonal ingredient data.
 
 Usage:
-    python migrate_cuisine.py [--dry-run] [--no-seasonal]
+    python migrate_cuisine.py [--dry-run] [--no-tags] [--no-seasonal]
 """
 
 import argparse
@@ -17,12 +18,16 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from lib.backup import create_backup
+from lib.normalizer import normalize_field
 from lib.recipe_parser import parse_recipe_file, parse_ingredient_table
 
 OBSIDIAN_RECIPES_PATH = Path(
     "/Users/chaseeasterling/Library/Mobile Documents/"
     "iCloud~md~obsidian/Documents/KitchenOS/Recipes"
 )
+
+TAG_STRING_FIELDS = ("protein", "dish_type", "difficulty")
+TAG_ARRAY_FIELDS = ("dietary", "meal_occasion")
 
 # Variant consolidation — maps non-standard cuisine values to standard ones.
 # None means "clear this value" (handled per-recipe in RECIPE_OVERRIDES or left null).
@@ -210,6 +215,83 @@ def run_cuisine_migration(recipes_dir: Path, dry_run: bool = False) -> dict:
     return results
 
 
+def run_tag_migration(recipes_dir: Path, dry_run: bool = False) -> dict:
+    """Run tag normalization migration on all recipe files.
+
+    Normalizes protein, dish_type, difficulty (string fields) and
+    dietary, meal_occasion (array fields) using the controlled vocabularies
+    in lib/normalizer.
+
+    Args:
+        recipes_dir: Path to Recipes folder
+        dry_run: If True, report changes without modifying files
+
+    Returns:
+        dict with 'updated', 'skipped', 'errors' lists
+    """
+    results = {"updated": [], "skipped": [], "errors": []}
+
+    if not recipes_dir.exists():
+        print(f"Recipes directory not found: {recipes_dir}")
+        return results
+
+    for md_file in sorted(recipes_dir.glob("*.md")):
+        if md_file.name.startswith("."):
+            continue
+
+        try:
+            content = md_file.read_text(encoding="utf-8")
+            parsed = parse_recipe_file(content)
+            fm = parsed["frontmatter"]
+
+            changes = {}
+
+            # Normalize string fields
+            for field in TAG_STRING_FIELDS:
+                current = fm.get(field)
+                normalized = normalize_field(field, current)
+
+                # ("unknown", original) tuple means unrecognized — keep original
+                if isinstance(normalized, tuple) and normalized[0] == "unknown":
+                    continue
+
+                if normalized != current:
+                    changes[field] = normalized
+
+            # Normalize array fields
+            for field in TAG_ARRAY_FIELDS:
+                current = fm.get(field, [])
+                if not isinstance(current, list):
+                    current = []
+                normalized = normalize_field(field, current)
+
+                if normalized != current:
+                    changes[field] = normalized
+
+            if not changes:
+                results["skipped"].append((md_file.name, "tags already correct"))
+                continue
+
+            change_desc = ", ".join(
+                f"{k}: {fm.get(k)} → {v}" for k, v in changes.items()
+            )
+
+            if dry_run:
+                results["updated"].append((md_file.name, change_desc))
+            else:
+                create_backup(md_file)
+                new_content = content
+                for field, value in changes.items():
+                    new_content = update_frontmatter_field(new_content, field, value)
+                md_file.write_text(new_content, encoding="utf-8")
+                results["updated"].append((md_file.name, change_desc))
+
+        except Exception as e:
+            results["errors"].append((md_file.name, str(e)))
+
+    return results
+
+
 def run_seasonal_migration(recipes_dir: Path, dry_run: bool = False) -> dict:
     """Populate seasonal_ingredients and peak_months for recipes with empty data.
 
@@ -316,10 +398,13 @@ def print_results(results: dict, label: str, dry_run: bool):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Clean up cuisine data and populate seasonal ingredients"
+        description="Clean up cuisine data, normalize tags, and populate seasonal ingredients"
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="Show what would change without modifying files"
+    )
+    parser.add_argument(
+        "--no-tags", action="store_true", help="Skip tag normalization"
     )
     parser.add_argument(
         "--no-seasonal", action="store_true", help="Skip seasonal data population (Ollama)"
@@ -340,13 +425,21 @@ def main():
     cuisine_results = run_cuisine_migration(recipes_dir, dry_run=args.dry_run)
     print_results(cuisine_results, "Cuisine Cleanup", args.dry_run)
 
-    # Phase 2: Seasonal data population
+    # Phase 2: Tag normalization
+    if not args.no_tags:
+        print("\nPhase 2: Tag normalization...")
+        tag_results = run_tag_migration(recipes_dir, dry_run=args.dry_run)
+        print_results(tag_results, "Tag Normalization", args.dry_run)
+    else:
+        print("\nPhase 2: Skipped (--no-tags)")
+
+    # Phase 3: Seasonal data population
     if not args.no_seasonal:
-        print("\nPhase 2: Seasonal data population (Ollama)...")
+        print("\nPhase 3: Seasonal data population (Ollama)...")
         seasonal_results = run_seasonal_migration(recipes_dir, dry_run=args.dry_run)
         print_results(seasonal_results, "Seasonal Data", args.dry_run)
     else:
-        print("\nPhase 2: Skipped (--no-seasonal)")
+        print("\nPhase 3: Skipped (--no-seasonal)")
 
     print("\nDone!")
 
