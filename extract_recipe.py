@@ -22,6 +22,7 @@ from lib.ingredient_parser import parse_ingredient
 from lib.nutrition_lookup import calculate_recipe_nutrition
 from lib.image_downloader import download_image
 from lib.seasonality import match_ingredients_to_seasonal, calculate_season_score, get_peak_months
+from lib.normalizer import normalize_recipe_data
 
 # Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -411,6 +412,9 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False, 
             o.strip().lower().replace(' ', '-')
             for o in occasion if o and isinstance(o, str)
         ][:3]
+
+        # Normalize all tag fields against controlled vocabularies
+        normalize_recipe_data(recipe_data)
 
         # Validate and repair ingredients (fixes AI extraction errors)
         status("Validating ingredients...")

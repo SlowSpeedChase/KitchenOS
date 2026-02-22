@@ -83,17 +83,23 @@ cd /Users/chaseeasterling/KitchenOS
 .venv/bin/python migrate_recipes.py
 ```
 
-### Clean Up Cuisine Data & Populate Seasonal
+### Clean Up Cuisine Data, Normalize Tags & Populate Seasonal
 
 ```bash
-# Preview cuisine corrections and seasonal population
+# Preview all corrections (cuisine, tags, seasonal)
 .venv/bin/python migrate_cuisine.py --dry-run
 
 # Apply all fixes
 .venv/bin/python migrate_cuisine.py
 
-# Cuisine fixes only (skip Ollama seasonal matching)
+# Cuisine + tags only (skip seasonal matching)
 .venv/bin/python migrate_cuisine.py --no-seasonal
+
+# Tags only (skip cuisine and seasonal)
+.venv/bin/python migrate_cuisine.py --no-seasonal
+
+# Force re-match seasonal data (ignore existing)
+.venv/bin/python migrate_cuisine.py --no-tags --force-seasonal
 ```
 
 ### Batch Extract from Reminders
@@ -431,7 +437,8 @@ template → Obsidian
 | `prompts/seasonal_matching.py` | Ollama prompt for fuzzy matching ingredients to seasonal produce |
 | `config/seasonal_ingredients.json` | Texas seasonal produce calendar (~60 items) |
 | `templates/meal_planner.html` | Interactive meal planner board (HTML/CSS/JS + SortableJS) |
-| `migrate_cuisine.py` | Cuisine data cleanup & seasonal data population |
+| `migrate_cuisine.py` | Cuisine cleanup, tag normalization & seasonal population |
+| `lib/normalizer.py` | Controlled vocabularies and tag normalization |
 
 ### Key Functions
 
@@ -492,7 +499,12 @@ template → Obsidian
 - `apply_cuisine_corrections()` - Deterministic cuisine fix from correction map + per-recipe overrides
 - `update_frontmatter_field()` - Updates single YAML frontmatter field in recipe content
 - `run_cuisine_migration()` - Batch cuisine cleanup across all recipe files
-- `run_seasonal_migration()` - Batch seasonal data population via Ollama
+- `run_tag_migration()` - Batch tag normalization (protein, dish_type, difficulty, dietary, meal_occasion)
+- `run_seasonal_migration()` - Batch seasonal data population (keyword matching + Ollama fallback)
+
+**lib/normalizer.py:**
+- `normalize_field()` - Normalizes a single recipe field against its controlled vocabulary
+- `normalize_recipe_data()` - Normalizes all tag fields in a recipe_data dict
 
 **lib/ingredient_parser.py:**
 - `parse_ingredient()` - Splits ingredient string into amount, unit, item
@@ -559,7 +571,8 @@ template → Obsidian
 
 **lib/seasonality.py:**
 - `load_seasonal_config()` - Loads Texas seasonal produce config
-- `match_ingredients_to_seasonal()` - Ollama fuzzy matching of ingredients to seasonal produce
+- `keyword_match_seasonal()` - Fast keyword-based matching of ingredients to seasonal produce
+- `match_ingredients_to_seasonal()` - Keyword matching first, Ollama fallback for edge cases
 - `calculate_season_score()` - Counts in-season ingredients for a given month
 - `get_peak_months()` - Returns union of peak months for matched ingredients
 
@@ -756,7 +769,7 @@ KitchenOS/
 ├── batch_extract.py       # Batch processor
 ├── recipe_sources.py      # Recipe extraction logic
 ├── migrate_recipes.py     # Schema migration
-├── migrate_cuisine.py     # Cuisine cleanup & seasonal population
+├── migrate_cuisine.py     # Cuisine cleanup, tag normalization & seasonal population
 ├── shopping_list.py       # Shopping list from meal plans
 ├── generate_meal_plan.py  # Weekly meal plan generator
 ├── generate_nutrition_dashboard.py  # Nutrition dashboard generator
