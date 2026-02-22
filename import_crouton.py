@@ -17,6 +17,7 @@ from datetime import date
 from pathlib import Path
 
 from lib.crouton_parser import parse_crumb_file
+from lib.normalizer import normalize_recipe_data
 from prompts.crouton_enrichment import CROUTON_ENRICHMENT_PROMPT, build_enrichment_prompt
 from templates.recipe_template import format_recipe_markdown, generate_filename, generate_tools_callout
 from templates.recipemd_template import format_recipemd, generate_recipemd_filename
@@ -234,6 +235,9 @@ def main():
                 print(" ... ", end="", flush=True)
             else:
                 print(f"{prefix} {recipe_name}{dup_label} ... ", end="", flush=True)
+
+            # Normalize all tag fields
+            normalize_recipe_data(recipe_data)
 
             # Save
             filepath, was_dup = save_imported_recipe(recipe_data)
