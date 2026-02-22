@@ -212,6 +212,45 @@
             display: none;
         }
 
+        .recipe-card.has-image {
+            background-size: cover;
+            background-position: center;
+            min-height: 100px;
+            border: none;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .recipe-card.has-image::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(transparent 30%, rgba(0, 0, 0, 0.7) 100%);
+            border-radius: 10px;
+            pointer-events: none;
+        }
+
+        .recipe-card.has-image .recipe-name,
+        .recipe-card.has-image .recipe-meta {
+            position: relative;
+            z-index: 1;
+            color: #ffffff;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+        }
+
+        .recipe-card.has-image .recipe-meta {
+            color: rgba(255, 255, 255, 0.85);
+        }
+
+        .recipe-card .recipe-name-link {
+            color: inherit;
+            text-decoration: none;
+        }
+
+        .recipe-card .recipe-name-link:active {
+            text-decoration: underline;
+        }
+
         .sidebar-count {
             padding: 8px 16px;
             font-size: 12px;
@@ -1012,8 +1051,16 @@
                 if (recipe.cuisine) metaParts.push(recipe.cuisine);
                 if (recipe.protein) metaParts.push(recipe.protein);
 
+                // Apply background image if available
+                if (recipe.image) {
+                    card.classList.add('has-image');
+                    card.style.backgroundImage = `url(/images/${encodeURIComponent(recipe.image)})`;
+                }
+
+                const obsidianUrl = `obsidian://open?vault=KitchenOS&file=${encodeURIComponent('Recipes/' + recipe.name)}`;
+
                 card.innerHTML = `
-                    <div class="recipe-name">${escapeHtml(recipe.name)}</div>
+                    <a href="${obsidianUrl}" class="recipe-name recipe-name-link">${escapeHtml(recipe.name)}</a>
                     ${metaParts.length ? `<div class="recipe-meta">${escapeHtml(metaParts.join(' \u00b7 '))}</div>` : ''}
                 `;
 
