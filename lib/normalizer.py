@@ -80,6 +80,36 @@ PROTEIN_MAP = {
     "crab": "seafood",
     "lobster": "seafood",
     "scallops": "seafood",
+    # Egg variants
+    "egg": "eggs",
+    "egg whites": "eggs",
+    # Chickpea singular
+    "chickpea": "chickpeas",
+    # Edamame → beans
+    "edamame": "beans",
+    # Turkey variants
+    "ground turkey": "turkey",
+    "turkey bacon": "turkey",
+    # Multi-protein → primary
+    "chicken legs or thighs": "chicken",
+    "chicken mince": "chicken",
+    "chicken and turkey bacon": "chicken",
+    # Sausage/bacon variants
+    "breakfast sausage": "pork",
+    "breakfast sausage, bacon": "pork",
+    # Dairy variants (additional)
+    "greek-style yogurt": "dairy",
+    "good culture cottage cheese": "dairy",
+    "goat cheese": "dairy",
+    "dairy (cheese)": "dairy",
+    # Smoked fish
+    "smoked salmon": "fish",
+    # Protein powder variants
+    "protein scoop of your choice": "protein powder",
+    "protein pancake mix": "protein powder",
+    "protein pancake mix and protein powder": "protein powder",
+    "kodiak cakes protein pancake mix": "protein powder",
+    "grassfed vanilla protein": "protein powder",
 }
 
 # Descriptive phrases that should map to None
@@ -90,6 +120,11 @@ _PROTEIN_DISCARD_PATTERNS = [
     "n/a",
     "not specified",
     "various",
+    "protein-rich",
+    "protein per",
+    "plant-based",
+    "chia seeds",
+    "king oyster",
 ]
 
 DISH_TYPE_MAP = {
@@ -124,6 +159,28 @@ DISH_TYPE_MAP = {
     "condiment": "sauce",
     # Variants → appetizer
     "starter": "appetizer",
+    "finger food": "appetizer",
+    "rice ball": "appetizer",
+    # More main variants
+    "stew": "main",
+    "pasta": "main",
+    "noodle dish": "main",
+    "one-pan dinner": "main",
+    "meatballs": "main",
+    "pizza": "main",
+    "grilled skewers": "main",
+    "meal prep": "main",
+    "side dish": "side",
+    "fermented vegetable side dish": "side",
+    # More dessert variants
+    "cake": "dessert",
+    "cookies": "dessert",
+    "baked goods": "dessert",
+    "dessert bars": "dessert",
+    "frosting": "dessert",
+    "biscuit": "dessert",
+    # More breakfast variants
+    "muffins": "breakfast",
 }
 
 DIFFICULTY_MAP = {
@@ -161,8 +218,8 @@ VALID_MEAL_OCCASIONS = {
     "family-meal",
 }
 
-# Regex to catch numeric gram values like "70g", "42G"
-_NUMERIC_PROTEIN_RE = re.compile(r"^\d+[gG]$")
+# Regex to catch numeric gram values like "70g", "42G", "50g (Whole Pizza)", "20G Protein"
+_NUMERIC_PROTEIN_RE = re.compile(r"^\d+[gG]")
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +301,13 @@ def _normalize_dish_type(value):
 
     if lower in DISH_TYPE_MAP:
         return DISH_TYPE_MAP[lower]
+
+    # Comma-separated: take first recognizable
+    if "," in lower:
+        for part in lower.split(","):
+            part = part.strip()
+            if part in DISH_TYPE_MAP:
+                return DISH_TYPE_MAP[part]
 
     return ("unknown", value)
 
