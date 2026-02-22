@@ -36,6 +36,11 @@ def get_recipe_index(recipes_dir: Path) -> list[dict]:
             for field in FILTER_FIELDS:
                 entry.setdefault(field, None)
 
+        # Check for matching image file
+        images_dir = recipes_dir / "Images"
+        image_file = images_dir / f"{name}.jpg"
+        entry["image"] = f"{name}.jpg" if image_file.exists() else None
+
         recipes.append(entry)
 
     recipes.sort(key=lambda r: r["name"])

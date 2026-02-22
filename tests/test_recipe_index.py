@@ -108,3 +108,27 @@ class TestGetRecipeIndex:
             assert len(result) == 1
             assert result[0]["name"] == "Plain Recipe"
             assert result[0]["cuisine"] is None
+
+    def test_includes_image_when_file_exists(self):
+        """Should return image filename when matching .jpg exists in Images/."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = Path(tmpdir)
+            (recipes_dir / "Butter Chicken.md").write_text(
+                '---\ntitle: "Butter Chicken"\ncuisine: "Indian"\n---\n\n# Butter Chicken'
+            )
+            images_dir = recipes_dir / "Images"
+            images_dir.mkdir()
+            (images_dir / "Butter Chicken.jpg").write_text("fake image data")
+
+            result = get_recipe_index(recipes_dir)
+            assert result[0]["image"] == "Butter Chicken.jpg"
+
+    def test_image_null_when_no_file(self):
+        """Should return image: null when no matching image file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = Path(tmpdir)
+            (recipes_dir / "Plain Pasta.md").write_text(
+                '---\ntitle: "Plain Pasta"\ncuisine: "Italian"\n---\n\n# Plain Pasta'
+            )
+            result = get_recipe_index(recipes_dir)
+            assert result[0]["image"] is None
