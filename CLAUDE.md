@@ -333,6 +333,7 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist
 | `/send-to-reminders` | POST | Send unchecked items to Apple Reminders |
 | `/reprocess?file=<name>` | GET | Full re-extraction from YouTube (preserves notes) |
 | `/refresh?file=<name>` | GET | Template refresh only, keeps existing data |
+| `/images/<filename>` | GET | Serve recipe image from vault |
 | `/calendar.ics` | GET | Serves meal plan calendar file |
 | `/refresh-nutrition?week=<week>` | GET | Regenerate nutrition dashboard for week |
 | `/add-to-meal-plan?recipe=<name>` | GET/POST | Pick meal plan slot and add recipe |
@@ -548,7 +549,7 @@ template → Obsidian
 - `rebuild_meal_plan_markdown()` - Converts structured JSON meal plan back to markdown
 
 **lib/recipe_index.py:**
-- `get_recipe_index()` - Scans recipes folder, returns sorted list of recipe metadata dicts
+- `get_recipe_index()` - Scans recipes folder, returns sorted list of recipe metadata dicts (includes image filename)
 
 **lib/ics_generator.py:**
 - `generate_ics()` - Creates ICS calendar content
