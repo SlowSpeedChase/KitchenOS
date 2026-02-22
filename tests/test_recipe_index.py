@@ -78,6 +78,27 @@ class TestGetRecipeIndex:
             names = [r["name"] for r in result]
             assert names == ["Apple Pie", "Mac And Cheese", "Zucchini Bread"]
 
+    def test_extracts_peak_months(self):
+        """Should extract peak_months from frontmatter."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = Path(tmpdir)
+            (recipes_dir / "Summer Salad.md").write_text(
+                '---\ntitle: "Summer Salad"\ncuisine: "American"\n'
+                'peak_months: [5, 6, 7, 8]\nseasonal_ingredients: ["tomato", "cucumber"]\n---\n\n# Summer Salad'
+            )
+            result = get_recipe_index(recipes_dir)
+            assert result[0]["peak_months"] == ["5", "6", "7", "8"]
+
+    def test_peak_months_defaults_to_none(self):
+        """Missing peak_months becomes None."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = Path(tmpdir)
+            (recipes_dir / "Old Recipe.md").write_text(
+                '---\ntitle: "Old Recipe"\ncuisine: "Italian"\n---\n\n# Old Recipe'
+            )
+            result = get_recipe_index(recipes_dir)
+            assert result[0]["peak_months"] is None
+
     def test_handles_missing_frontmatter(self):
         """Files without frontmatter still get indexed with name only."""
         with tempfile.TemporaryDirectory() as tmpdir:
