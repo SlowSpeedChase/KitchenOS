@@ -12,8 +12,10 @@ Return ONLY the matches as a JSON array of objects:
 [{{"ingredient": "butternut squash", "matches": "butternut squash"}}]
 
 Rules:
-- Only match fresh produce, skip pantry staples (oil, flour, sugar, salt, spices, sauces, grains, pasta, rice, etc.)
-- Match variants to the closest seasonal item (e.g. "baby spinach" -> "spinach", "cherry tomato" -> "tomato")
+- Match fresh produce ingredients to their closest seasonal item
+- Match variants generously: "baby spinach" -> "spinach", "cherry tomato" -> "tomato", "sweet corn" -> "corn", "fresh peaches" -> "peach"
+- Skip obvious pantry staples (oil, flour, sugar, salt, spices, sauces, grains, pasta, rice, dried herbs)
+- If an ingredient contains a produce name, match it (e.g., "ears fresh corn" -> "corn")
 - If no match exists for an ingredient, omit it entirely
 - Return an empty array [] if no ingredients match"""
 

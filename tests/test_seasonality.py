@@ -30,30 +30,16 @@ class TestLoadSeasonalConfig:
 
 
 class TestMatchIngredientsToSeasonal:
-    """Tests for LLM-based fuzzy matching of ingredients to seasonal produce"""
+    """Tests for match_ingredients_to_seasonal (keyword first, Ollama fallback)"""
 
-    @patch("lib.seasonality.requests.post")
-    def test_matches_exact_ingredient(self, mock_post):
-        """Exact match: 'tomato' -> 'tomato'"""
-        mock_post.return_value = MagicMock(
-            status_code=200,
-            json=lambda: {"response": json.dumps([
-                {"ingredient": "tomato", "matches": "tomato"}
-            ])}
-        )
+    def test_matches_exact_ingredient_via_keyword(self):
+        """Exact match via keyword: 'tomato' -> 'tomato' (no Ollama needed)"""
         ingredients = [{"amount": "2", "unit": "whole", "item": "tomato"}]
         result = match_ingredients_to_seasonal(ingredients)
         assert result == ["tomato"]
 
-    @patch("lib.seasonality.requests.post")
-    def test_matches_variant_name(self, mock_post):
-        """Fuzzy match: 'butternut squash' -> 'butternut squash'"""
-        mock_post.return_value = MagicMock(
-            status_code=200,
-            json=lambda: {"response": json.dumps([
-                {"ingredient": "butternut squash", "matches": "butternut squash"}
-            ])}
-        )
+    def test_matches_variant_name_via_keyword(self):
+        """Keyword match: 'butternut squash' -> 'butternut squash' (no Ollama needed)"""
         ingredients = [{"amount": "1", "unit": "whole", "item": "butternut squash"}]
         result = match_ingredients_to_seasonal(ingredients)
         assert result == ["butternut squash"]
@@ -72,16 +58,8 @@ class TestMatchIngredientsToSeasonal:
         result = match_ingredients_to_seasonal(ingredients)
         assert result == []
 
-    @patch("lib.seasonality.requests.post")
-    def test_deduplicates_matches(self, mock_post):
+    def test_deduplicates_matches(self):
         """Multiple ingredients matching same seasonal item should deduplicate"""
-        mock_post.return_value = MagicMock(
-            status_code=200,
-            json=lambda: {"response": json.dumps([
-                {"ingredient": "diced tomato", "matches": "tomato"},
-                {"ingredient": "cherry tomato", "matches": "tomato"}
-            ])}
-        )
         ingredients = [
             {"amount": "1", "unit": "cup", "item": "diced tomato"},
             {"amount": "0.5", "unit": "cup", "item": "cherry tomato"},
@@ -89,11 +67,19 @@ class TestMatchIngredientsToSeasonal:
         result = match_ingredients_to_seasonal(ingredients)
         assert result == ["tomato"]
 
-    @patch("lib.seasonality.requests.post")
-    def test_ollama_failure_returns_empty(self, mock_post):
-        """On Ollama failure, return empty list (graceful degradation)"""
-        mock_post.side_effect = Exception("Connection refused")
+    def test_keyword_match_avoids_ollama(self):
+        """When keyword matching succeeds, Ollama is not called even if it would fail"""
         ingredients = [{"amount": "1", "unit": "whole", "item": "tomato"}]
+        # No mock needed -- keyword matching handles this without Ollama
+        result = match_ingredients_to_seasonal(ingredients)
+        assert result == ["tomato"]
+
+    @patch("lib.seasonality.requests.post")
+    def test_ollama_failure_returns_empty_when_no_keyword_match(self, mock_post):
+        """On Ollama failure with no keyword matches, return empty list (graceful degradation)"""
+        mock_post.side_effect = Exception("Connection refused")
+        # Use ingredients that won't keyword-match any seasonal name
+        ingredients = [{"amount": "1", "unit": "whole", "item": "dragon fruit"}]
         result = match_ingredients_to_seasonal(ingredients)
         assert result == []
 
