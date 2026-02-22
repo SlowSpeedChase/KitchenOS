@@ -91,10 +91,36 @@
             flex-wrap: wrap;
             gap: 6px;
             padding: 10px 16px;
-            border-bottom: 1px solid var(--border);
             flex-shrink: 0;
-            max-height: 120px;
+            height: 120px;
             overflow-y: auto;
+        }
+
+        .resize-handle {
+            height: 6px;
+            flex-shrink: 0;
+            cursor: row-resize;
+            background: var(--card-bg);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        .resize-handle::after {
+            content: '';
+            width: 32px;
+            height: 3px;
+            border-radius: 2px;
+            background: var(--border);
+            transition: background 0.15s ease;
+        }
+
+        .resize-handle:hover::after,
+        .resize-handle:active::after {
+            background: var(--text-muted);
         }
 
         .chip {
@@ -546,6 +572,7 @@
                 <input type="text" class="search-input" id="search-input" placeholder="Search recipes..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
             </div>
             <div class="filter-chips" id="filter-chips"></div>
+            <div class="resize-handle" id="resize-handle"></div>
             <div class="recipe-list" id="recipe-list"></div>
             <div class="sidebar-count" id="sidebar-count"></div>
         </aside>
@@ -1127,6 +1154,9 @@
                 if (e.key === 'ArrowRight' && !e.target.matches('input')) navigateWeek(1);
             });
 
+            // Resize handle between filter chips and recipe list
+            initResizeHandle();
+
             // Mobile sidebar toggle
             document.getElementById('sidebar-toggle').addEventListener('click', function() {
                 toggleSidebar();
@@ -1135,6 +1165,42 @@
             document.getElementById('sidebar-backdrop').addEventListener('click', function() {
                 closeSidebar();
             });
+        }
+
+        function initResizeHandle() {
+            const handle = document.getElementById('resize-handle');
+            const chips = document.getElementById('filter-chips');
+            let startY = 0;
+            let startHeight = 0;
+            let dragging = false;
+
+            function onPointerDown(e) {
+                e.preventDefault();
+                dragging = true;
+                startY = e.clientY;
+                startHeight = chips.offsetHeight;
+                document.body.style.cursor = 'row-resize';
+                document.body.style.userSelect = 'none';
+                document.addEventListener('pointermove', onPointerMove);
+                document.addEventListener('pointerup', onPointerUp);
+            }
+
+            function onPointerMove(e) {
+                if (!dragging) return;
+                const delta = e.clientY - startY;
+                const newHeight = Math.max(40, Math.min(startHeight + delta, 400));
+                chips.style.height = newHeight + 'px';
+            }
+
+            function onPointerUp() {
+                dragging = false;
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+                document.removeEventListener('pointermove', onPointerMove);
+                document.removeEventListener('pointerup', onPointerUp);
+            }
+
+            handle.addEventListener('pointerdown', onPointerDown);
         }
 
         async function navigateWeek(delta) {
