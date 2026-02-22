@@ -292,14 +292,15 @@ def run_tag_migration(recipes_dir: Path, dry_run: bool = False) -> dict:
     return results
 
 
-def run_seasonal_migration(recipes_dir: Path, dry_run: bool = False) -> dict:
-    """Populate seasonal_ingredients and peak_months for recipes with empty data.
+def run_seasonal_migration(recipes_dir: Path, dry_run: bool = False, force: bool = False) -> dict:
+    """Populate seasonal_ingredients and peak_months for recipes.
 
-    Requires Ollama running with mistral:7b.
+    Uses keyword matching first (fast), falls back to Ollama for edge cases.
 
     Args:
         recipes_dir: Path to Recipes folder
         dry_run: If True, report what would change without modifying files
+        force: If True, re-match all recipes (ignore existing seasonal data)
 
     Returns:
         dict with 'updated', 'skipped', 'errors' lists
@@ -328,7 +329,7 @@ def run_seasonal_migration(recipes_dir: Path, dry_run: bool = False) -> dict:
             fm = parsed["frontmatter"]
 
             existing_seasonal = fm.get("seasonal_ingredients", [])
-            if existing_seasonal:
+            if existing_seasonal and not force:
                 results["skipped"].append((md_file.name, "already has seasonal data"))
                 continue
 
@@ -410,6 +411,10 @@ def main():
         "--no-seasonal", action="store_true", help="Skip seasonal data population (Ollama)"
     )
     parser.add_argument(
+        "--force-seasonal", action="store_true",
+        help="Re-match all recipes (ignore existing seasonal data)"
+    )
+    parser.add_argument(
         "--path", type=str, help="Path to recipes directory (default: Obsidian vault)"
     )
     args = parser.parse_args()
@@ -436,7 +441,7 @@ def main():
     # Phase 3: Seasonal data population
     if not args.no_seasonal:
         print("\nPhase 3: Seasonal data population (Ollama)...")
-        seasonal_results = run_seasonal_migration(recipes_dir, dry_run=args.dry_run)
+        seasonal_results = run_seasonal_migration(recipes_dir, dry_run=args.dry_run, force=args.force_seasonal)
         print_results(seasonal_results, "Seasonal Data", args.dry_run)
     else:
         print("\nPhase 3: Skipped (--no-seasonal)")
