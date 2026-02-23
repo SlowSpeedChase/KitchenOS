@@ -2,20 +2,22 @@
 
 from pathlib import Path
 
-from lib.recipe_parser import parse_recipe_file
+from lib.recipe_parser import parse_recipe_file, parse_recipe_body
 
 FILTER_FIELDS = ("cuisine", "protein", "difficulty", "meal_occasion", "dish_type", "peak_months")
 
 
-def get_recipe_index(recipes_dir: Path) -> list[dict]:
+def get_recipe_index(recipes_dir: Path, include_ingredients: bool = False) -> list[dict]:
     """Scan all recipe .md files and return metadata for filtering.
 
     Args:
         recipes_dir: Path to the Recipes folder in Obsidian vault
+        include_ingredients: If True, parse recipe body and include ingredient_items list
 
     Returns:
         List of dicts sorted by name, each with keys:
             name, cuisine, protein, difficulty, meal_occasion, dish_type, peak_months
+            Optionally includes ingredient_items (list of item strings) when include_ingredients=True
     """
     recipes = []
 
@@ -32,9 +34,14 @@ def get_recipe_index(recipes_dir: Path) -> list[dict]:
             fm = parsed["frontmatter"]
             for field in FILTER_FIELDS:
                 entry[field] = fm.get(field)
+            if include_ingredients:
+                body_data = parse_recipe_body(parsed["body"])
+                entry["ingredient_items"] = [ing["item"] for ing in body_data.get("ingredients", [])]
         except Exception:
             for field in FILTER_FIELDS:
                 entry.setdefault(field, None)
+            if include_ingredients:
+                entry["ingredient_items"] = []
 
         # Check for matching image file
         images_dir = recipes_dir / "Images"

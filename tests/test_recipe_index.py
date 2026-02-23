@@ -132,3 +132,50 @@ class TestGetRecipeIndex:
             )
             result = get_recipe_index(recipes_dir)
             assert result[0]["image"] is None
+
+
+class TestGetRecipeIndexWithIngredients:
+    """Test ingredient extraction in recipe index."""
+
+    def test_includes_ingredient_items_when_requested(self):
+        """Should extract ingredient item names from recipe body."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = Path(tmpdir)
+            (recipes_dir / "Chicken Shawarma.md").write_text(
+                '---\ntitle: "Chicken Shawarma"\ncuisine: "Middle Eastern"\nprotein: "chicken"\n---\n\n'
+                '# Chicken Shawarma\n\n'
+                '## Ingredients\n\n'
+                '| Amount | Unit | Ingredient |\n'
+                '|--------|------|------------|\n'
+                '| 2 | lb | chicken thighs |\n'
+                '| 1 | cup | greek yogurt |\n'
+                '| 3 | cloves | garlic |\n'
+                '| 1 | tsp | cumin |\n'
+            )
+            result = get_recipe_index(recipes_dir, include_ingredients=True)
+            assert len(result) == 1
+            items = result[0]["ingredient_items"]
+            assert "chicken thighs" in items
+            assert "greek yogurt" in items
+            assert "garlic" in items
+            assert "cumin" in items
+
+    def test_ingredient_items_empty_when_no_table(self):
+        """Recipes without ingredient tables get empty list."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = Path(tmpdir)
+            (recipes_dir / "Simple.md").write_text(
+                '---\ntitle: "Simple"\n---\n\n# Simple\n\nJust text.'
+            )
+            result = get_recipe_index(recipes_dir, include_ingredients=True)
+            assert result[0]["ingredient_items"] == []
+
+    def test_no_ingredients_by_default(self):
+        """Default call should NOT include ingredient_items (backward compat)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = Path(tmpdir)
+            (recipes_dir / "Recipe.md").write_text(
+                '---\ntitle: "Recipe"\ncuisine: "Italian"\n---\n\n# Recipe'
+            )
+            result = get_recipe_index(recipes_dir)
+            assert "ingredient_items" not in result[0]

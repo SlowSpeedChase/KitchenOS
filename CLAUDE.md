@@ -341,6 +341,7 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist
 | `/api/recipes` | GET | JSON list of recipe metadata for meal planner |
 | `/api/meal-plan/<week>` | GET | Read meal plan as JSON |
 | `/api/meal-plan/<week>` | PUT | Save meal plan from JSON |
+| `/api/suggest-meal` | POST | Suggest recipe for empty meal slot |
 
 ### Configuration
 
@@ -440,6 +441,9 @@ template → Obsidian
 | `templates/meal_planner.html` | Interactive meal planner board (HTML/CSS/JS + SortableJS) |
 | `migrate_cuisine.py` | Cuisine cleanup, tag normalization & seasonal population |
 | `lib/normalizer.py` | Controlled vocabularies and tag normalization |
+| `lib/meal_suggester.py` | Ingredient overlap scoring + Claude/Ollama suggestion |
+| `prompts/meal_suggestion.py` | Prompt templates for ingredient normalization and meal selection |
+| `config/pantry_staples.json` | Pantry staples excluded from overlap scoring |
 
 ### Key Functions
 
@@ -577,6 +581,15 @@ template → Obsidian
 - `calculate_season_score()` - Counts in-season ingredients for a given month
 - `get_peak_months()` - Returns union of peak months for matched ingredients
 
+**lib/meal_suggester.py:**
+- `suggest_meal()` - Top-level orchestrator: scores ingredients, tiers to Claude
+- `score_overlap()` - Scores ingredient overlap between recipe and planned meals
+- `rank_candidates()` - Ranks all recipes by overlap score
+- `normalize_ingredient()` - Normalizes ingredient name for matching
+- `normalize_ingredients_ollama()` - Batch normalize via Ollama with fallback
+- `suggest_with_claude()` - Asks Claude API to pick best candidate
+- `suggest_for_empty_week()` - Asks Claude for starting recipe
+
 ## AI Configuration
 
 ### Ollama Settings
@@ -646,6 +659,7 @@ Maps YouTube channel names to their recipe website domains. Used to search creat
   - `OPENAI_API_KEY` - Whisper fallback
   - `NUTRITIONIX_APP_ID` - Nutritionix API app ID
   - `NUTRITIONIX_API_KEY` - Nutritionix API key
+  - `ANTHROPIC_API_KEY` - Claude API for meal suggestions
 
 ## Dependencies
 
@@ -657,6 +671,7 @@ openai                    # Whisper API transcription
 python-dotenv             # Environment variables
 requests                  # HTTP requests to Ollama
 duckduckgo-search         # Web search for creator websites
+anthropic                     # Claude API for meal suggestions
 ```
 
 ## Testing
