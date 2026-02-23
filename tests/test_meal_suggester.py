@@ -230,3 +230,96 @@ class TestClaudeSuggestEmptyWeek:
         )
         assert result["name"] == "Chicken Shawarma"
         assert result["is_new_idea"] is False
+
+
+import tempfile
+
+
+class TestSuggestMeal:
+    """Test the top-level suggest_meal orchestrator."""
+
+    def _make_recipes_dir(self, tmpdir, recipes):
+        """Helper: write recipe files to a temp dir and return Path."""
+        recipes_dir = Path(tmpdir)
+        for name, ingredients in recipes.items():
+            rows = "".join(
+                f"| 1 | whole | {item} |\n" for item in ingredients
+            )
+            content = (
+                f'---\ntitle: "{name}"\ncuisine: "test"\nprotein: "test"\n---\n\n'
+                f"# {name}\n\n## Ingredients\n\n"
+                f"| Amount | Unit | Ingredient |\n|--------|------|------------|\n{rows}"
+            )
+            (recipes_dir / f"{name}.md").write_text(content)
+        return recipes_dir
+
+    @patch("lib.meal_suggester.anthropic_client", None)
+    def test_high_overlap_skips_claude(self):
+        """When top candidate has >= 0.5 overlap, returns it without Claude."""
+        from lib.meal_suggester import suggest_meal
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = self._make_recipes_dir(tmpdir, {
+                "Chicken Gyros": ["chicken", "yogurt", "pita", "cucumber"],
+                "Salmon Bowl": ["salmon", "rice", "avocado"],
+            })
+            planned = [
+                {"day": "Monday", "meal": "dinner", "name": "Chicken Shawarma",
+                 "ingredients": ["chicken", "yogurt", "cumin"]},
+            ]
+            result = suggest_meal(
+                recipes_dir=recipes_dir,
+                planned_meals=planned,
+                day="Tuesday",
+                meal="dinner",
+                skip_index=0,
+            )
+            assert result is not None
+            assert result["name"] == "Chicken Gyros"
+            assert result["score"] >= 0.5
+
+    @patch("lib.meal_suggester.anthropic_client", None)
+    def test_excludes_planned_recipes(self):
+        """Already-planned recipes are not suggested."""
+        from lib.meal_suggester import suggest_meal
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = self._make_recipes_dir(tmpdir, {
+                "Chicken Shawarma": ["chicken", "yogurt", "cumin"],
+                "Salmon Bowl": ["salmon", "rice", "avocado"],
+            })
+            planned = [
+                {"day": "Monday", "meal": "dinner", "name": "Chicken Shawarma",
+                 "ingredients": ["chicken", "yogurt", "cumin"]},
+            ]
+            result = suggest_meal(
+                recipes_dir=recipes_dir,
+                planned_meals=planned,
+                day="Tuesday",
+                meal="dinner",
+                skip_index=0,
+            )
+            assert result is None or result["name"] != "Chicken Shawarma"
+
+    @patch("lib.meal_suggester.anthropic_client", None)
+    def test_skip_index_cycles_candidates(self):
+        """skip_index=1 returns second candidate."""
+        from lib.meal_suggester import suggest_meal
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = self._make_recipes_dir(tmpdir, {
+                "A": ["chicken", "yogurt"],
+                "B": ["chicken", "rice"],
+                "C": ["salmon", "rice"],
+            })
+            planned = [
+                {"day": "Monday", "meal": "dinner", "name": "Shawarma",
+                 "ingredients": ["chicken", "yogurt"]},
+            ]
+            first = suggest_meal(recipes_dir=recipes_dir, planned_meals=planned,
+                                 day="Tue", meal="dinner", skip_index=0)
+            second = suggest_meal(recipes_dir=recipes_dir, planned_meals=planned,
+                                  day="Tue", meal="dinner", skip_index=1)
+            assert first is not None
+            assert second is not None
+            assert first["name"] != second["name"]

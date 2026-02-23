@@ -22,6 +22,8 @@ OLLAMA_MODEL = "mistral:7b"
 CLAUDE_MODEL = "claude-haiku-4-5-20251001"
 CLAUDE_MAX_TOKENS = 200
 
+OVERLAP_THRESHOLD = 0.5
+
 # Words to strip from ingredient names for normalization
 PREP_WORDS = {
     "diced", "minced", "chopped", "sliced", "grated", "shredded",
@@ -274,3 +276,107 @@ def suggest_for_empty_week(
 
     except Exception:
         return None
+
+
+def suggest_meal(
+    recipes_dir: Path,
+    planned_meals: list[dict],
+    day: str,
+    meal: str,
+    skip_index: int = 0,
+) -> Optional[dict]:
+    """Top-level orchestrator: suggest a meal for an empty slot.
+
+    Pipeline:
+    1. If no meals planned -> ask Claude for a starting recipe (or return None)
+    2. Collect planned ingredient names
+    3. Load recipe library with ingredients
+    4. Score and rank candidates
+    5. If top candidate score >= threshold -> return it directly
+    6. Else -> ask Claude to pick from candidates
+    7. skip_index allows cycling through candidates (for "try another")
+
+    Args:
+        recipes_dir: Path to Obsidian Recipes folder
+        planned_meals: List of dicts with day, meal, name, ingredients
+        day: Target day name
+        meal: Target meal type
+        skip_index: Skip this many top candidates (for retry)
+
+    Returns:
+        Dict with name, score, reason, shared_ingredients, is_new_idea, or None
+    """
+    from lib.recipe_index import get_recipe_index
+
+    pantry = load_pantry_staples()
+
+    # Load all recipes with ingredients
+    all_recipes = get_recipe_index(recipes_dir, include_ingredients=True)
+
+    # Names already in the plan
+    planned_names = {m["name"] for m in planned_meals}
+
+    # Empty week -- ask Claude or return None
+    if not planned_meals:
+        summaries = [
+            {"name": r["name"], "cuisine": r.get("cuisine"), "protein": r.get("protein")}
+            for r in all_recipes
+        ]
+        claude_result = suggest_for_empty_week(summaries, day, meal)
+        if claude_result:
+            claude_result["score"] = 0.0
+            claude_result["shared_ingredients"] = []
+        return claude_result
+
+    # Collect all planned ingredient names (normalized)
+    planned_items = set()
+    for m in planned_meals:
+        for item in m.get("ingredients", []):
+            planned_items.add(normalize_ingredient(item))
+
+    # Score and rank
+    ranked = rank_candidates(
+        all_recipes, planned_items, pantry,
+        limit=20, exclude_names=planned_names,
+    )
+
+    if not ranked:
+        return None
+
+    # Apply skip_index for "try another"
+    if skip_index >= len(ranked):
+        return None
+
+    top = ranked[skip_index]
+
+    # Tier decision
+    if top["score"] >= OVERLAP_THRESHOLD:
+        # High overlap -- use directly
+        reason_items = ", ".join(top["shared_ingredients"][:3])
+        planned_names_str = ", ".join(
+            f"{m['day']}'s {m['name']}" for m in planned_meals
+            if set(normalize_ingredient(i) for i in m.get("ingredients", []))
+            & set(top["shared_ingredients"])
+        )
+        top["reason"] = f"Shares {reason_items} with {planned_names_str}" if planned_names_str else f"Shares {reason_items}"
+        top["is_new_idea"] = False
+        top["new_ingredients_needed"] = []
+        return top
+
+    # Low overlap -- try Claude
+    claude_result = suggest_with_claude(planned_meals, ranked[skip_index:], day, meal)
+    if claude_result:
+        match = next((r for r in ranked if r["name"] == claude_result["name"]), None)
+        if match:
+            claude_result["score"] = match["score"]
+            claude_result["shared_ingredients"] = match["shared_ingredients"]
+        else:
+            claude_result["score"] = 0.0
+            claude_result["shared_ingredients"] = []
+        return claude_result
+
+    # Claude unavailable -- fall back to top scored candidate
+    top["reason"] = f"Shares {', '.join(top['shared_ingredients'][:3])}" if top["shared_ingredients"] else "Best available match"
+    top["is_new_idea"] = False
+    top["new_ingredients_needed"] = []
+    return top
