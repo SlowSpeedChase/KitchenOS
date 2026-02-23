@@ -515,6 +515,73 @@
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
         }
 
+        /* --- Suggestion States --- */
+        .grid-cell.suggesting {
+            border-color: var(--accent);
+            border-style: solid;
+            animation: pulse-border 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse-border {
+            0%, 100% { border-color: var(--accent); }
+            50% { border-color: var(--border); }
+        }
+
+        .grid-cell.suggesting .empty-label {
+            display: flex;
+        }
+
+        .grid-cell.suggesting .empty-label::before {
+            content: '';
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 8px;
+        }
+
+        .grid-card .retry-btn {
+            position: absolute;
+            top: 4px;
+            left: 4px;
+            width: 22px;
+            height: 22px;
+            border: none;
+            background: var(--accent);
+            color: #ffffff;
+            border-radius: 50%;
+            font-size: 13px;
+            line-height: 1;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0.7;
+            transition: opacity 0.15s ease;
+        }
+
+        .grid-card .retry-btn:hover,
+        .grid-card .retry-btn:active {
+            opacity: 1;
+        }
+
+        .grid-card.has-image .retry-btn {
+            z-index: 1;
+            background: rgba(0, 113, 227, 0.7);
+        }
+
+        .grid-card.new-idea {
+            border-style: dashed;
+            border-color: var(--accent);
+        }
+
+        .grid-card.new-idea .grid-card-name {
+            font-style: italic;
+        }
+
         /* --- Toast --- */
         .toast {
             position: fixed;
@@ -703,6 +770,7 @@
         let sidebarSortable = null;
         let gridSortables = [];
         let saveTimeout = null;
+        let suggestionSkipIndex = {};  // { "Tuesday-dinner": 0 } — tracks retries per cell
 
         // --- Init ---
         document.addEventListener('DOMContentLoaded', init);
@@ -845,6 +913,12 @@
                     cell.dataset.meal = meal;
                     cell.innerHTML = `<div class="meal-label">${MEAL_LABELS[meal]}</div><div class="empty-label">Drop recipe</div>`;
                     grid.appendChild(cell);
+                    cell.addEventListener('click', function(e) {
+                        // Only trigger on the empty area, not on cards
+                        if (e.target === cell || e.target.classList.contains('empty-label') || e.target.classList.contains('meal-label')) {
+                            suggestMeal(cell);
+                        }
+                    });
                 });
             });
         }
@@ -1307,6 +1381,7 @@
         async function navigateWeek(delta) {
             showLoading();
             currentWeek = offsetWeek(currentWeek, delta);
+            suggestionSkipIndex = {};
             updateURL(currentWeek);
             try {
                 await loadMealPlan(currentWeek);
@@ -1368,6 +1443,93 @@
 
         function hideLoading() {
             document.getElementById('loading').classList.add('hidden');
+        }
+
+        // --- Suggestion ---
+
+        async function suggestMeal(cell) {
+            const day = cell.dataset.day;
+            const meal = cell.dataset.meal;
+            const cellKey = `${day}-${meal}`;
+
+            // Already has a recipe or already suggesting
+            if (cell.querySelector('.grid-card') || cell.classList.contains('suggesting')) return;
+
+            // Show spinner
+            cell.classList.add('suggesting');
+            const emptyLabel = cell.querySelector('.empty-label');
+            if (emptyLabel) emptyLabel.textContent = 'Suggesting...';
+
+            const skipIndex = suggestionSkipIndex[cellKey] || 0;
+
+            try {
+                const response = await fetch('/api/suggest-meal', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        week: currentWeek,
+                        day: day,
+                        meal: meal,
+                        skip_index: skipIndex,
+                    }),
+                });
+
+                const data = await response.json();
+
+                cell.classList.remove('suggesting');
+
+                if (!data.suggestion) {
+                    if (emptyLabel) emptyLabel.textContent = 'Drop recipe';
+                    showToast('No suggestions available', 'error');
+                    return;
+                }
+
+                const suggestion = data.suggestion;
+                const card = createSuggestedCard(suggestion, cell);
+                cell.appendChild(card);
+                updateCellState(cell);
+                debounceSave();
+
+                // Show reason toast
+                if (suggestion.reason) {
+                    showToast(suggestion.reason, 'success');
+                }
+
+                // Increment skip index for retry
+                suggestionSkipIndex[cellKey] = skipIndex + 1;
+
+            } catch (err) {
+                console.error('Suggestion failed:', err);
+                cell.classList.remove('suggesting');
+                if (emptyLabel) emptyLabel.textContent = 'Drop recipe';
+                showToast('Suggestion failed', 'error');
+            }
+        }
+
+        function createSuggestedCard(suggestion, cell) {
+            const card = createGridCard(suggestion.name, 1);
+
+            // Mark new ideas
+            if (suggestion.is_new_idea) {
+                card.classList.add('new-idea');
+            }
+
+            // Add retry button
+            const retryBtn = document.createElement('button');
+            retryBtn.className = 'retry-btn';
+            retryBtn.innerHTML = '&#x21bb;';  // ↻
+            retryBtn.setAttribute('aria-label', 'Try another suggestion');
+            retryBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                const parentCell = card.parentElement;
+                card.remove();
+                updateCellState(parentCell);
+                suggestMeal(parentCell);
+            });
+            card.appendChild(retryBtn);
+
+            return card;
         }
 
         // --- Utilities ---
