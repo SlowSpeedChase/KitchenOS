@@ -605,6 +605,74 @@ def api_meal_plan_put(week):
     return jsonify({"status": "saved", "week": week})
 
 
+@app.route('/api/suggest-meal', methods=['POST'])
+def api_suggest_meal():
+    """Suggest a recipe for an empty meal slot based on ingredient overlap."""
+    data = request.get_json(force=True, silent=True)
+    if not data:
+        return jsonify({"error": "Request body required"}), 400
+
+    week = data.get("week")
+    day = data.get("day")
+    meal = data.get("meal")
+    skip_index = data.get("skip_index", 0)
+
+    if not week or not day or not meal:
+        return jsonify({"error": "Required fields: week, day, meal"}), 400
+
+    if not re.match(r'^\d{4}-W\d{2}$', week):
+        return jsonify({"error": "Invalid week format. Expected YYYY-WNN"}), 400
+
+    # Load current meal plan to get planned meals with ingredients
+    plan_file = MEAL_PLANS_PATH / f"{week}.md"
+    planned_meals = []
+
+    if plan_file.exists():
+        content = plan_file.read_text(encoding="utf-8")
+        parsed = parse_meal_plan(content)
+
+        for day_data in parsed:
+            for meal_type in ("breakfast", "lunch", "dinner"):
+                entry = day_data.get(meal_type)
+                if entry is not None and entry.name:
+                    # Load ingredient items for this recipe
+                    recipe_file = OBSIDIAN_RECIPES_PATH / f"{entry.name}.md"
+                    ingredients = []
+                    if recipe_file.exists():
+                        try:
+                            rc = recipe_file.read_text(encoding="utf-8")
+                            rp = parse_recipe_file(rc)
+                            body_data = parse_recipe_body(rp["body"])
+                            ingredients = [
+                                ing["item"] for ing in body_data.get("ingredients", [])
+                                if ing.get("item")
+                            ]
+                        except Exception:
+                            pass
+
+                    planned_meals.append({
+                        "day": day_data["day"],
+                        "meal": meal_type,
+                        "name": entry.name,
+                        "ingredients": ingredients,
+                    })
+
+    from lib.meal_suggester import suggest_meal
+
+    result = suggest_meal(
+        recipes_dir=OBSIDIAN_RECIPES_PATH,
+        planned_meals=planned_meals,
+        day=day,
+        meal=meal,
+        skip_index=skip_index,
+    )
+
+    if result is None:
+        return jsonify({"suggestion": None, "message": "No suggestions available"})
+
+    return jsonify({"suggestion": result})
+
+
 @app.route('/add-to-meal-plan', methods=['GET'])
 def add_to_meal_plan_form():
     """Serve HTML form for picking meal plan slot."""
