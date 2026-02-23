@@ -29,3 +29,6 @@ duckduckgo-search>=6.0.0
 
 # ICS calendar file generation
 icalendar>=5.0.0
+
+# Claude API for meal suggestions
+anthropic>=0.40.0
