@@ -129,3 +129,38 @@ class TestRankCandidates:
         pantry = set()
         ranked = rank_candidates(candidates, planned_items, pantry, limit=5)
         assert len(ranked) == 5
+
+
+from unittest.mock import patch, MagicMock
+import requests
+
+
+class TestOllamaNormalize:
+    """Test Ollama-based ingredient normalization."""
+
+    @patch("lib.meal_suggester.requests.post")
+    def test_normalizes_via_ollama(self, mock_post):
+        """Ollama returns normalized ingredient names."""
+        from lib.meal_suggester import normalize_ingredients_ollama
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "response": '["chicken", "tomato", "greek yogurt"]'
+        }
+        mock_post.return_value = mock_response
+
+        result = normalize_ingredients_ollama(
+            ["boneless skinless chicken thighs", "fresh diced tomatoes", "low-fat Greek yogurt"]
+        )
+        assert result == ["chicken", "tomato", "greek yogurt"]
+
+    @patch("lib.meal_suggester.requests.post")
+    def test_falls_back_on_ollama_error(self, mock_post):
+        """On Ollama failure, falls back to simple normalization."""
+        from lib.meal_suggester import normalize_ingredients_ollama
+
+        mock_post.side_effect = requests.exceptions.ConnectionError("Ollama down")
+
+        result = normalize_ingredients_ollama(["fresh diced tomatoes", "large eggs"])
+        assert result == ["tomatoes", "eggs"]

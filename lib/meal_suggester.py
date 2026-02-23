@@ -5,7 +5,12 @@ import os
 from pathlib import Path
 from typing import Optional
 
+import requests
+
 PANTRY_CONFIG_PATH = Path(__file__).parent.parent / "config" / "pantry_staples.json"
+
+OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_MODEL = "mistral:7b"
 
 # Words to strip from ingredient names for normalization
 PREP_WORDS = {
@@ -102,3 +107,40 @@ def rank_candidates(
 
     scored.sort(key=lambda r: r["score"], reverse=True)
     return scored[:limit]
+
+
+def normalize_ingredients_ollama(items: list[str]) -> list[str]:
+    """Normalize ingredient names using Ollama, with fallback to simple normalization.
+
+    Args:
+        items: Raw ingredient item strings
+
+    Returns:
+        List of normalized ingredient names (same length as input)
+    """
+    from prompts.meal_suggestion import NORMALIZE_PROMPT
+
+    prompt = NORMALIZE_PROMPT.format(
+        ingredients=json.dumps(items)
+    )
+
+    try:
+        response = requests.post(
+            OLLAMA_URL,
+            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False, "format": "json"},
+            timeout=60,
+        )
+        if response.status_code != 200:
+            return [normalize_ingredient(item) for item in items]
+
+        data = response.json()
+        raw = data.get("response", "")
+
+        parsed = json.loads(raw)
+        if isinstance(parsed, list) and len(parsed) == len(items):
+            return [str(n).lower().strip() for n in parsed]
+
+        return [normalize_ingredient(item) for item in items]
+
+    except (requests.RequestException, json.JSONDecodeError, ValueError):
+        return [normalize_ingredient(item) for item in items]
