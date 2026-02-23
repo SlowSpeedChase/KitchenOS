@@ -629,7 +629,8 @@ def api_suggest_meal():
 
     if plan_file.exists():
         content = plan_file.read_text(encoding="utf-8")
-        parsed = parse_meal_plan(content)
+        year_num, week_num = int(week[:4]), int(week.split("W")[1])
+        parsed = parse_meal_plan(content, year_num, week_num)
 
         for day_data in parsed:
             for meal_type in ("breakfast", "lunch", "dinner"):
