@@ -572,9 +572,9 @@ def api_meal_plan_get(week):
         day_json = {
             "day": day_data["day"],
             "date": day_data["date"].isoformat(),
-            "breakfast": None, "lunch": None, "dinner": None,
+            "breakfast": None, "lunch": None, "snack": None, "dinner": None,
         }
-        for meal in ("breakfast", "lunch", "dinner"):
+        for meal in ("breakfast", "lunch", "snack", "dinner"):
             entry = day_data[meal]
             if entry is not None:
                 day_json[meal] = {"name": entry.name, "servings": entry.servings}
@@ -633,7 +633,7 @@ def api_suggest_meal():
         parsed = parse_meal_plan(content, year_num, week_num)
 
         for day_data in parsed:
-            for meal_type in ("breakfast", "lunch", "dinner"):
+            for meal_type in ("breakfast", "lunch", "snack", "dinner"):
                 entry = day_data.get(meal_type)
                 if entry is not None and entry.name:
                     # Load ingredient items for this recipe
@@ -698,7 +698,7 @@ def add_to_meal_plan_form():
         weeks.append(week_id)
 
     days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-    meals = ['Breakfast', 'Lunch', 'Dinner']
+    meals = ['Breakfast', 'Lunch', 'Snack', 'Dinner']
 
     week_options = ''.join(f'<option value="{w}">{w}</option>' for w in weeks)
     day_options = ''.join(f'<option value="{d}">{d}</option>' for d in days)

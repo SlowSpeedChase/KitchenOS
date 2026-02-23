@@ -758,8 +758,8 @@
     <script>
         // --- Constants ---
         const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-        const MEALS = ['breakfast', 'lunch', 'dinner'];
-        const MEAL_LABELS = { breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner' };
+        const MEALS = ['breakfast', 'lunch', 'snack', 'dinner'];
+        const MEAL_LABELS = { breakfast: 'Breakfast', lunch: 'Lunch', snack: 'Snack', dinner: 'Dinner' };
 
         // --- State ---
         let currentWeek = '';
@@ -955,10 +955,7 @@
             document.querySelectorAll('.grid-cell').forEach(cell => {
                 gridSortables.push(
                     Sortable.create(cell, {
-                        group: { name: 'recipes', pull: true, put: function(to) {
-                            // Allow drop only if cell is empty (no grid-card or recipe-card)
-                            return to.el.querySelectorAll('.grid-card, .recipe-card').length === 0;
-                        }},
+                        group: { name: 'recipes', pull: true, put: true },
                         draggable: '.grid-card',
                         ghostClass: 'sortable-ghost',
                         dragClass: 'sortable-drag',
@@ -968,12 +965,21 @@
                         animation: 150,
                         onAdd: function(evt) {
                             const cell = evt.to;
-                            // Convert sidebar recipe-card to grid-card
                             const item = evt.item;
+                            // Convert sidebar recipe-card to grid-card
                             if (item.classList.contains('recipe-card')) {
                                 const name = item.dataset.name;
                                 const gridCard = createGridCard(name, 1);
                                 item.replaceWith(gridCard);
+                            }
+                            // If target cell had an existing card, move it to source cell (swap)
+                            const existingCards = cell.querySelectorAll('.grid-card');
+                            if (existingCards.length > 1 && evt.from.classList.contains('grid-cell')) {
+                                const older = Array.from(existingCards).find(c => c !== (item.classList.contains('grid-card') ? item : cell.lastElementChild));
+                                if (older) {
+                                    evt.from.appendChild(older);
+                                    updateCellState(evt.from);
+                                }
                             }
                             updateCellState(cell);
                             debounceSave();
@@ -982,7 +988,6 @@
                         onRemove: function(evt) {
                             const cell = evt.from;
                             updateCellState(cell);
-                            debounceSave();
                         },
                         onEnd: function(evt) {
                             if (evt.from !== evt.to) {

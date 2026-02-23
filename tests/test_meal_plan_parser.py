@@ -250,13 +250,13 @@ class TestRebuildMealPlanMarkdown:
     def test_empty_plan_matches_template(self):
         """Empty plan (all nulls) produces valid format."""
         days = [
-            {"day": "Monday", "date": "2026-02-23", "breakfast": None, "lunch": None, "dinner": None},
-            {"day": "Tuesday", "date": "2026-02-24", "breakfast": None, "lunch": None, "dinner": None},
-            {"day": "Wednesday", "date": "2026-02-25", "breakfast": None, "lunch": None, "dinner": None},
-            {"day": "Thursday", "date": "2026-02-26", "breakfast": None, "lunch": None, "dinner": None},
-            {"day": "Friday", "date": "2026-02-27", "breakfast": None, "lunch": None, "dinner": None},
-            {"day": "Saturday", "date": "2026-02-28", "breakfast": None, "lunch": None, "dinner": None},
-            {"day": "Sunday", "date": "2026-03-01", "breakfast": None, "lunch": None, "dinner": None},
+            {"day": "Monday", "date": "2026-02-23", "breakfast": None, "lunch": None, "snack": None, "dinner": None},
+            {"day": "Tuesday", "date": "2026-02-24", "breakfast": None, "lunch": None, "snack": None, "dinner": None},
+            {"day": "Wednesday", "date": "2026-02-25", "breakfast": None, "lunch": None, "snack": None, "dinner": None},
+            {"day": "Thursday", "date": "2026-02-26", "breakfast": None, "lunch": None, "snack": None, "dinner": None},
+            {"day": "Friday", "date": "2026-02-27", "breakfast": None, "lunch": None, "snack": None, "dinner": None},
+            {"day": "Saturday", "date": "2026-02-28", "breakfast": None, "lunch": None, "snack": None, "dinner": None},
+            {"day": "Sunday", "date": "2026-03-01", "breakfast": None, "lunch": None, "snack": None, "dinner": None},
         ]
         result = rebuild_meal_plan_markdown("2026-W09", days)
         assert "# Meal Plan - Week 09" in result
@@ -273,7 +273,7 @@ class TestRebuildMealPlanMarkdown:
              "lunch": None,
              "dinner": {"name": "Pasta Aglio E Olio", "servings": 1}},
         ] + [
-            {"day": d, "date": "2026-02-24", "breakfast": None, "lunch": None, "dinner": None}
+            {"day": d, "date": "2026-02-24", "breakfast": None, "lunch": None, "snack": None, "dinner": None}
             for d in ["Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         ]
         result = rebuild_meal_plan_markdown("2026-W09", days)
@@ -287,7 +287,7 @@ class TestRebuildMealPlanMarkdown:
              "breakfast": {"name": "Pancakes", "servings": 2},
              "lunch": None, "dinner": None},
         ] + [
-            {"day": d, "date": "2026-02-24", "breakfast": None, "lunch": None, "dinner": None}
+            {"day": d, "date": "2026-02-24", "breakfast": None, "lunch": None, "snack": None, "dinner": None}
             for d in ["Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         ]
         result = rebuild_meal_plan_markdown("2026-W09", days)
@@ -300,7 +300,7 @@ class TestRebuildMealPlanMarkdown:
              "breakfast": {"name": "Pancakes", "servings": 1},
              "lunch": None, "dinner": None},
         ] + [
-            {"day": d, "date": "2026-02-24", "breakfast": None, "lunch": None, "dinner": None}
+            {"day": d, "date": "2026-02-24", "breakfast": None, "lunch": None, "snack": None, "dinner": None}
             for d in ["Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         ]
         result = rebuild_meal_plan_markdown("2026-W09", days)
@@ -393,9 +393,9 @@ action kitchenos://generate-shopping-list?week=2026-W09
             day_json = {
                 "day": day_data["day"],
                 "date": day_data["date"].isoformat(),
-                "breakfast": None, "lunch": None, "dinner": None,
+                "breakfast": None, "lunch": None, "snack": None, "dinner": None,
             }
-            for meal in ("breakfast", "lunch", "dinner"):
+            for meal in ("breakfast", "lunch", "snack", "dinner"):
                 entry = day_data[meal]
                 if entry is not None:
                     day_json[meal] = {"name": entry.name, "servings": entry.servings}

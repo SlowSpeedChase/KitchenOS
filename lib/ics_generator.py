@@ -26,12 +26,13 @@ def _format_meal_display(meal) -> str:
     return str(meal)
 
 
-def format_day_summary(breakfast=None, lunch=None, dinner=None) -> str:
+def format_day_summary(breakfast=None, lunch=None, snack=None, dinner=None) -> str:
     """Format meals into a compact summary string.
 
     Args:
         breakfast: MealEntry, recipe name string, or None
         lunch: MealEntry, recipe name string, or None
+        snack: MealEntry, recipe name string, or None
         dinner: MealEntry, recipe name string, or None
 
     Returns:
@@ -40,14 +41,19 @@ def format_day_summary(breakfast=None, lunch=None, dinner=None) -> str:
     b = _format_meal_display(breakfast)
     l = _format_meal_display(lunch)
     d = _format_meal_display(dinner)
-    return f'B: {b} | L: {l} | D: {d}'
+    parts = [f'B: {b}', f'L: {l}']
+    if snack:
+        parts.append(f'S: {_format_meal_display(snack)}')
+    parts.append(f'D: {d}')
+    return ' | '.join(parts)
 
 
 def create_meal_event(
     day_date: date,
     breakfast: str | None,
     lunch: str | None,
-    dinner: str | None
+    dinner: str | None,
+    snack: str | None = None
 ) -> Event | None:
     """Create an all-day calendar event for a day's meals.
 
@@ -56,16 +62,17 @@ def create_meal_event(
         breakfast: Recipe name or None
         lunch: Recipe name or None
         dinner: Recipe name or None
+        snack: Recipe name or None
 
     Returns:
         Event object, or None if no meals planned
     """
     # Skip days with no meals
-    if not any([breakfast, lunch, dinner]):
+    if not any([breakfast, lunch, snack, dinner]):
         return None
 
     event = Event()
-    event.add('summary', format_day_summary(breakfast, lunch, dinner))
+    event.add('summary', format_day_summary(breakfast, lunch, snack, dinner))
     event.add('dtstart', day_date)
     event.add('uid', f'{day_date.isoformat()}@kitchenos')
 
@@ -93,7 +100,8 @@ def generate_ics(days: list[dict]) -> bytes:
             day['date'],
             day.get('breakfast'),
             day.get('lunch'),
-            day.get('dinner')
+            day.get('dinner'),
+            snack=day.get('snack')
         )
         if event:
             cal.add_component(event)

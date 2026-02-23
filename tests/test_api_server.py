@@ -340,12 +340,12 @@ class TestApiMealPlanPut:
                  "breakfast": {"name": "Pancakes", "servings": 2},
                  "lunch": None,
                  "dinner": {"name": "Butter Chicken", "servings": 1}},
-                {"day": "Tuesday", "date": "2026-02-24", "breakfast": None, "lunch": None, "dinner": None},
-                {"day": "Wednesday", "date": "2026-02-25", "breakfast": None, "lunch": None, "dinner": None},
-                {"day": "Thursday", "date": "2026-02-26", "breakfast": None, "lunch": None, "dinner": None},
-                {"day": "Friday", "date": "2026-02-27", "breakfast": None, "lunch": None, "dinner": None},
-                {"day": "Saturday", "date": "2026-02-28", "breakfast": None, "lunch": None, "dinner": None},
-                {"day": "Sunday", "date": "2026-03-01", "breakfast": None, "lunch": None, "dinner": None},
+                {"day": "Tuesday", "date": "2026-02-24", "breakfast": None, "lunch": None, "snack": None, "dinner": None},
+                {"day": "Wednesday", "date": "2026-02-25", "breakfast": None, "lunch": None, "snack": None, "dinner": None},
+                {"day": "Thursday", "date": "2026-02-26", "breakfast": None, "lunch": None, "snack": None, "dinner": None},
+                {"day": "Friday", "date": "2026-02-27", "breakfast": None, "lunch": None, "snack": None, "dinner": None},
+                {"day": "Saturday", "date": "2026-02-28", "breakfast": None, "lunch": None, "snack": None, "dinner": None},
+                {"day": "Sunday", "date": "2026-03-01", "breakfast": None, "lunch": None, "snack": None, "dinner": None},
             ]
         }
 
@@ -369,12 +369,12 @@ class TestApiMealPlanPut:
                 {"day": "Monday", "date": "2026-02-23",
                  "breakfast": {"name": "Toast", "servings": 1},
                  "lunch": None, "dinner": None},
-                {"day": "Tuesday", "date": "2026-02-24", "breakfast": None, "lunch": None, "dinner": None},
-                {"day": "Wednesday", "date": "2026-02-25", "breakfast": None, "lunch": None, "dinner": None},
-                {"day": "Thursday", "date": "2026-02-26", "breakfast": None, "lunch": None, "dinner": None},
-                {"day": "Friday", "date": "2026-02-27", "breakfast": None, "lunch": None, "dinner": None},
-                {"day": "Saturday", "date": "2026-02-28", "breakfast": None, "lunch": None, "dinner": None},
-                {"day": "Sunday", "date": "2026-03-01", "breakfast": None, "lunch": None, "dinner": None},
+                {"day": "Tuesday", "date": "2026-02-24", "breakfast": None, "lunch": None, "snack": None, "dinner": None},
+                {"day": "Wednesday", "date": "2026-02-25", "breakfast": None, "lunch": None, "snack": None, "dinner": None},
+                {"day": "Thursday", "date": "2026-02-26", "breakfast": None, "lunch": None, "snack": None, "dinner": None},
+                {"day": "Friday", "date": "2026-02-27", "breakfast": None, "lunch": None, "snack": None, "dinner": None},
+                {"day": "Saturday", "date": "2026-02-28", "breakfast": None, "lunch": None, "snack": None, "dinner": None},
+                {"day": "Sunday", "date": "2026-03-01", "breakfast": None, "lunch": None, "snack": None, "dinner": None},
             ]
         }
 

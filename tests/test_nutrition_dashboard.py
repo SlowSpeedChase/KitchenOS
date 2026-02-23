@@ -42,7 +42,7 @@ def create_meal_plan(meal_plans_dir: Path, week: str, meals: dict) -> None:
     for i, (day, date_str) in enumerate(zip(days, dates)):
         day_meals = meals.get(day, {})
         section = f"## {day} ({date_str})\n\n"
-        for meal_type in ['breakfast', 'lunch', 'dinner']:
+        for meal_type in ['breakfast', 'lunch', 'snack', 'dinner']:
             section += f"### {meal_type.capitalize()}\n\n"
             if meal_type in day_meals:
                 value = day_meals[meal_type]
