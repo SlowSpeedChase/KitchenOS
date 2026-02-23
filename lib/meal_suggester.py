@@ -7,10 +7,20 @@ from typing import Optional
 
 import requests
 
+try:
+    import anthropic
+    _api_key = os.getenv("ANTHROPIC_API_KEY")
+    anthropic_client = anthropic.Anthropic(api_key=_api_key) if _api_key else None
+except ImportError:
+    anthropic_client = None
+
 PANTRY_CONFIG_PATH = Path(__file__).parent.parent / "config" / "pantry_staples.json"
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "mistral:7b"
+
+CLAUDE_MODEL = "claude-haiku-4-5-20251001"
+CLAUDE_MAX_TOKENS = 200
 
 # Words to strip from ingredient names for normalization
 PREP_WORDS = {
@@ -144,3 +154,123 @@ def normalize_ingredients_ollama(items: list[str]) -> list[str]:
 
     except (requests.RequestException, json.JSONDecodeError, ValueError):
         return [normalize_ingredient(item) for item in items]
+
+
+def suggest_with_claude(
+    planned_meals: list[dict],
+    candidates: list[dict],
+    day: str,
+    meal: str,
+) -> Optional[dict]:
+    """Ask Claude to pick the best candidate or suggest a new idea.
+
+    Args:
+        planned_meals: List of dicts with day, meal, name, ingredients
+        candidates: Ranked list from rank_candidates()
+        day: Target day (e.g., "Tuesday")
+        meal: Target meal (e.g., "dinner")
+
+    Returns:
+        Dict with name, reason, is_new_idea, new_ingredients_needed, or None on failure
+    """
+    if anthropic_client is None:
+        return None
+
+    from prompts.meal_suggestion import SUGGEST_PROMPT
+
+    planned_text = "\n".join(
+        f"- {m['day']} {m['meal']}: **{m['name']}** (ingredients: {', '.join(m['ingredients'])})"
+        for m in planned_meals
+    )
+
+    candidate_text = "\n".join(
+        f"- **{c['name']}** (overlap: {c['score']:.0%}, shared: {', '.join(c['shared_ingredients'])})"
+        for c in candidates[:10]
+    )
+
+    prompt = SUGGEST_PROMPT.format(
+        planned_meals=planned_text,
+        candidates=candidate_text,
+        day=day,
+        meal=meal,
+    )
+
+    try:
+        message = anthropic_client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=CLAUDE_MAX_TOKENS,
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        raw = message.content[0].text
+        json_start = raw.find("{")
+        json_end = raw.rfind("}") + 1
+        if json_start == -1 or json_end == 0:
+            return None
+
+        result = json.loads(raw[json_start:json_end])
+        return {
+            "name": result.get("name", ""),
+            "reason": result.get("reason", ""),
+            "is_new_idea": result.get("is_new_idea", False),
+            "new_ingredients_needed": result.get("new_ingredients_needed", []),
+        }
+
+    except Exception:
+        return None
+
+
+def suggest_for_empty_week(
+    recipe_summaries: list[dict],
+    day: str,
+    meal: str,
+) -> Optional[dict]:
+    """Ask Claude to suggest a starting recipe when the week is empty.
+
+    Args:
+        recipe_summaries: List of dicts with name, cuisine, protein
+        day: Target day
+        meal: Target meal
+
+    Returns:
+        Suggestion dict or None
+    """
+    if anthropic_client is None:
+        return None
+
+    from prompts.meal_suggestion import SUGGEST_EMPTY_WEEK_PROMPT
+
+    summaries_text = "\n".join(
+        f"- {r['name']} ({r.get('cuisine', 'unknown')} / {r.get('protein', 'unknown')})"
+        for r in recipe_summaries[:50]
+    )
+
+    prompt = SUGGEST_EMPTY_WEEK_PROMPT.format(
+        recipe_summaries=summaries_text,
+        day=day,
+        meal=meal,
+    )
+
+    try:
+        message = anthropic_client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=CLAUDE_MAX_TOKENS,
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        raw = message.content[0].text
+        json_start = raw.find("{")
+        json_end = raw.rfind("}") + 1
+        if json_start == -1 or json_end == 0:
+            return None
+
+        result = json.loads(raw[json_start:json_end])
+        return {
+            "name": result.get("name", ""),
+            "reason": result.get("reason", ""),
+            "is_new_idea": result.get("is_new_idea", False),
+            "new_ingredients_needed": result.get("new_ingredients_needed", []),
+        }
+
+    except Exception:
+        return None

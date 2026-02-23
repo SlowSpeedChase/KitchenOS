@@ -164,3 +164,69 @@ class TestOllamaNormalize:
 
         result = normalize_ingredients_ollama(["fresh diced tomatoes", "large eggs"])
         assert result == ["tomatoes", "eggs"]
+
+
+class TestClaudeSuggest:
+    """Test Claude API suggestion call."""
+
+    @patch("lib.meal_suggester.anthropic_client")
+    def test_returns_suggestion_from_claude(self, mock_client):
+        """Claude returns a recipe suggestion with reason."""
+        from lib.meal_suggester import suggest_with_claude
+
+        mock_message = MagicMock()
+        mock_message.content = [MagicMock(text='{"name": "Chicken Fried Rice", "reason": "Uses leftover chicken from Monday", "is_new_idea": false, "new_ingredients_needed": ["rice", "soy sauce", "eggs"]}')]
+        mock_client.messages.create.return_value = mock_message
+
+        result = suggest_with_claude(
+            planned_meals=[
+                {"day": "Monday", "meal": "dinner", "name": "Chicken Shawarma",
+                 "ingredients": ["chicken", "yogurt", "cumin"]},
+            ],
+            candidates=[
+                {"name": "Chicken Fried Rice", "score": 0.4,
+                 "shared_ingredients": ["chicken"],
+                 "ingredient_items": ["chicken", "rice", "soy sauce", "eggs"]},
+            ],
+            day="Tuesday",
+            meal="dinner",
+        )
+        assert result["name"] == "Chicken Fried Rice"
+        assert result["is_new_idea"] is False
+
+    @patch("lib.meal_suggester.anthropic_client", None)
+    def test_returns_none_when_no_api_key(self):
+        """Returns None if no Anthropic API key configured."""
+        from lib.meal_suggester import suggest_with_claude
+
+        result = suggest_with_claude(
+            planned_meals=[{"day": "Monday", "meal": "dinner", "name": "X", "ingredients": ["a"]}],
+            candidates=[{"name": "Y", "score": 0.3, "shared_ingredients": ["a"], "ingredient_items": ["a", "b"]}],
+            day="Tuesday",
+            meal="dinner",
+        )
+        assert result is None
+
+
+class TestClaudeSuggestEmptyWeek:
+    """Test Claude suggestion when no meals planned yet."""
+
+    @patch("lib.meal_suggester.anthropic_client")
+    def test_suggests_starting_recipe(self, mock_client):
+        """When week is empty, suggests a good starting recipe."""
+        from lib.meal_suggester import suggest_for_empty_week
+
+        mock_message = MagicMock()
+        mock_message.content = [MagicMock(text='{"name": "Chicken Shawarma", "reason": "Versatile chicken and yogurt base for multiple meals", "is_new_idea": false, "new_ingredients_needed": []}')]
+        mock_client.messages.create.return_value = mock_message
+
+        result = suggest_for_empty_week(
+            recipe_summaries=[
+                {"name": "Chicken Shawarma", "cuisine": "Middle Eastern", "protein": "chicken"},
+                {"name": "Pasta Aglio", "cuisine": "Italian", "protein": "none"},
+            ],
+            day="Monday",
+            meal="dinner",
+        )
+        assert result["name"] == "Chicken Shawarma"
+        assert result["is_new_idea"] is False
