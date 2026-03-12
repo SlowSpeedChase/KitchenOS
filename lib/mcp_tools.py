@@ -19,20 +19,29 @@ def check_api_health() -> bool:
 
 def extract_recipe(url: str) -> dict:
     """Extract recipe from a YouTube URL via the API."""
-    r = requests.post(f"{API_BASE}/extract", json={"url": url}, timeout=310)
-    return r.json()
+    try:
+        r = requests.post(f"{API_BASE}/extract", json={"url": url}, timeout=310)
+        return r.json()
+    except requests.exceptions.RequestException as e:
+        return {"status": "error", "message": f"API request failed: {e}"}
 
 
 def save_recipe(recipe_data: dict) -> dict:
     """Save a recipe from structured data."""
-    r = requests.post(f"{API_BASE}/api/recipes/save", json=recipe_data, timeout=60)
-    return r.json()
+    try:
+        r = requests.post(f"{API_BASE}/api/recipes/save", json=recipe_data, timeout=60)
+        return r.json()
+    except requests.exceptions.RequestException as e:
+        return {"status": "error", "message": f"API request failed: {e}"}
 
 
 def search_recipes(query: str = None, cuisine: str = None, protein: str = None) -> list:
     """Search recipe library. Filters client-side from cached index."""
-    r = requests.get(f"{API_BASE}/api/recipes", timeout=10)
-    recipes = r.json()
+    try:
+        r = requests.get(f"{API_BASE}/api/recipes", timeout=10)
+        recipes = r.json()
+    except requests.exceptions.RequestException:
+        return []
 
     if query:
         q = query.lower()
@@ -49,44 +58,59 @@ def search_recipes(query: str = None, cuisine: str = None, protein: str = None) 
 
 def get_recipe(name: str) -> dict:
     """Get full recipe details by name."""
-    r = requests.get(f"{API_BASE}/api/recipes/{quote(name)}", timeout=10)
-    return r.json()
+    try:
+        r = requests.get(f"{API_BASE}/api/recipes/{quote(name)}", timeout=10)
+        return r.json()
+    except requests.exceptions.RequestException as e:
+        return {"error": f"API request failed: {e}"}
 
 
 def get_meal_plan(week: str) -> dict:
     """Get meal plan for a given week (e.g., '2026-W11')."""
-    r = requests.get(f"{API_BASE}/api/meal-plan/{week}", timeout=10)
-    return r.json()
+    try:
+        r = requests.get(f"{API_BASE}/api/meal-plan/{week}", timeout=10)
+        return r.json()
+    except requests.exceptions.RequestException as e:
+        return {"error": f"API request failed: {e}"}
 
 
 def update_meal_plan(week: str, days: list) -> dict:
     """Update meal plan for a given week."""
-    r = requests.put(
-        f"{API_BASE}/api/meal-plan/{week}",
-        json={"days": days},
-        timeout=10,
-    )
-    return r.json()
+    try:
+        r = requests.put(
+            f"{API_BASE}/api/meal-plan/{week}",
+            json={"days": days},
+            timeout=10,
+        )
+        return r.json()
+    except requests.exceptions.RequestException as e:
+        return {"status": "error", "message": f"API request failed: {e}"}
 
 
 def generate_shopping_list(week: str) -> dict:
     """Generate shopping list from meal plan."""
-    r = requests.post(
-        f"{API_BASE}/generate-shopping-list",
-        json={"week": week},
-        timeout=30,
-    )
-    return r.json()
+    try:
+        r = requests.post(
+            f"{API_BASE}/generate-shopping-list",
+            json={"week": week},
+            timeout=30,
+        )
+        return r.json()
+    except requests.exceptions.RequestException as e:
+        return {"status": "error", "message": f"API request failed: {e}"}
 
 
 def send_to_reminders(week: str) -> dict:
     """Send shopping list to Apple Reminders."""
-    r = requests.post(
-        f"{API_BASE}/send-to-reminders",
-        json={"week": week},
-        timeout=30,
-    )
-    return r.json()
+    try:
+        r = requests.post(
+            f"{API_BASE}/send-to-reminders",
+            json={"week": week},
+            timeout=30,
+        )
+        return r.json()
+    except requests.exceptions.RequestException as e:
+        return {"status": "error", "message": f"API request failed: {e}"}
 
 
 def create_things_task(title: str, notes: str = None) -> dict:

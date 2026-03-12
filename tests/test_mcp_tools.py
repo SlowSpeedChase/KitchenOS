@@ -106,6 +106,30 @@ class TestUpdateMealPlan:
         assert result["status"] == "saved"
 
 
+class TestGenerateShoppingList:
+    @patch('lib.mcp_tools.requests.post')
+    def test_generate_shopping_list_success(self, mock_post):
+        mock_post.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {"success": True, "item_count": 12, "recipes": ["Pasta", "Chicken"]}
+        )
+        result = generate_shopping_list("2026-W11")
+        assert result["success"] is True
+        assert result["item_count"] == 12
+
+
+class TestSendToReminders:
+    @patch('lib.mcp_tools.requests.post')
+    def test_send_to_reminders_success(self, mock_post):
+        mock_post.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {"success": True, "items_sent": 10, "items_skipped": 2}
+        )
+        result = send_to_reminders("2026-W11")
+        assert result["success"] is True
+        assert result["items_sent"] == 10
+
+
 class TestCreateThingsTask:
     @patch('lib.mcp_tools.subprocess.run')
     def test_create_things_task(self, mock_run):
