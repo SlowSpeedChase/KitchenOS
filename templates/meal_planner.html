@@ -91,10 +91,36 @@
             flex-wrap: wrap;
             gap: 6px;
             padding: 10px 16px;
-            border-bottom: 1px solid var(--border);
             flex-shrink: 0;
-            max-height: 120px;
+            height: 120px;
             overflow-y: auto;
+        }
+
+        .resize-handle {
+            height: 6px;
+            flex-shrink: 0;
+            cursor: row-resize;
+            background: var(--card-bg);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        .resize-handle::after {
+            content: '';
+            width: 32px;
+            height: 3px;
+            border-radius: 2px;
+            background: var(--border);
+            transition: background 0.15s ease;
+        }
+
+        .resize-handle:hover::after,
+        .resize-handle:active::after {
+            background: var(--text-muted);
         }
 
         .chip {
@@ -117,6 +143,17 @@
             background: var(--accent);
             color: #ffffff;
             border-color: var(--accent);
+        }
+
+        .chip.season {
+            border-color: var(--success);
+            color: var(--success);
+        }
+
+        .chip.season.active {
+            background: var(--success);
+            color: #ffffff;
+            border-color: var(--success);
         }
 
         .chip:active {
@@ -173,6 +210,89 @@
 
         .recipe-card.hidden {
             display: none;
+        }
+
+        .recipe-card.has-image {
+            background-size: cover;
+            background-position: center;
+            min-height: 100px;
+            border: none;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .recipe-card.has-image::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(transparent 30%, rgba(0, 0, 0, 0.7) 100%);
+            border-radius: 10px;
+            pointer-events: none;
+        }
+
+        .recipe-card.has-image .recipe-name,
+        .recipe-card.has-image .recipe-meta {
+            position: relative;
+            z-index: 1;
+            color: #ffffff;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+        }
+
+        .recipe-card.has-image .recipe-meta {
+            color: rgba(255, 255, 255, 0.85);
+        }
+
+        .recipe-card .recipe-name-link {
+            color: inherit;
+            text-decoration: none;
+        }
+
+        .recipe-card .recipe-name-link:active {
+            text-decoration: underline;
+        }
+
+        .grid-card.has-image {
+            background-size: cover;
+            background-position: center;
+            border: none;
+            overflow: hidden;
+            min-height: 60px;
+        }
+
+        .grid-card.has-image::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(transparent 10%, rgba(0, 0, 0, 0.65) 100%);
+            border-radius: 8px;
+            pointer-events: none;
+        }
+
+        .grid-card.has-image .grid-card-name {
+            position: relative;
+            z-index: 1;
+            color: #ffffff;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+        }
+
+        .grid-card.has-image .remove-btn {
+            z-index: 1;
+        }
+
+        .grid-card.has-image .servings-btn {
+            z-index: 1;
+            background: rgba(0, 0, 0, 0.4);
+            border-color: rgba(255, 255, 255, 0.3);
+            color: #ffffff;
+        }
+
+        .grid-card .grid-card-name-link {
+            color: inherit;
+            text-decoration: none;
+        }
+
+        .grid-card .grid-card-name-link:active {
+            text-decoration: underline;
         }
 
         .sidebar-count {
@@ -395,6 +515,73 @@
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
         }
 
+        /* --- Suggestion States --- */
+        .grid-cell.suggesting {
+            border-color: var(--accent);
+            border-style: solid;
+            animation: pulse-border 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse-border {
+            0%, 100% { border-color: var(--accent); }
+            50% { border-color: var(--border); }
+        }
+
+        .grid-cell.suggesting .empty-label {
+            display: flex;
+        }
+
+        .grid-cell.suggesting .empty-label::before {
+            content: '';
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 8px;
+        }
+
+        .grid-card .retry-btn {
+            position: absolute;
+            top: 4px;
+            left: 4px;
+            width: 22px;
+            height: 22px;
+            border: none;
+            background: var(--accent);
+            color: #ffffff;
+            border-radius: 50%;
+            font-size: 13px;
+            line-height: 1;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0.7;
+            transition: opacity 0.15s ease;
+        }
+
+        .grid-card .retry-btn:hover,
+        .grid-card .retry-btn:active {
+            opacity: 1;
+        }
+
+        .grid-card.has-image .retry-btn {
+            z-index: 1;
+            background: rgba(0, 113, 227, 0.7);
+        }
+
+        .grid-card.new-idea {
+            border-style: dashed;
+            border-color: var(--accent);
+        }
+
+        .grid-card.new-idea .grid-card-name {
+            font-style: italic;
+        }
+
         /* --- Toast --- */
         .toast {
             position: fixed;
@@ -535,6 +722,7 @@
                 <input type="text" class="search-input" id="search-input" placeholder="Search recipes..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
             </div>
             <div class="filter-chips" id="filter-chips"></div>
+            <div class="resize-handle" id="resize-handle"></div>
             <div class="recipe-list" id="recipe-list"></div>
             <div class="sidebar-count" id="sidebar-count"></div>
         </aside>
@@ -570,17 +758,19 @@
     <script>
         // --- Constants ---
         const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-        const MEALS = ['breakfast', 'lunch', 'dinner'];
-        const MEAL_LABELS = { breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner' };
+        const MEALS = ['breakfast', 'lunch', 'snack', 'dinner'];
+        const MEAL_LABELS = { breakfast: 'Breakfast', lunch: 'Lunch', snack: 'Snack', dinner: 'Dinner' };
 
         // --- State ---
         let currentWeek = '';
         let dayDates = {};       // { Monday: '2026-02-23', ... }
         let allRecipes = [];
         let activeFilters = {};  // { cuisine: Set, protein: Set, meal_occasion: Set }
+        let seasonFilterActive = false;
         let sidebarSortable = null;
         let gridSortables = [];
         let saveTimeout = null;
+        let suggestionSkipIndex = {};  // { "Tuesday-dinner": 0 } — tracks retries per cell
 
         // --- Init ---
         document.addEventListener('DOMContentLoaded', init);
@@ -723,6 +913,12 @@
                     cell.dataset.meal = meal;
                     cell.innerHTML = `<div class="meal-label">${MEAL_LABELS[meal]}</div><div class="empty-label">Drop recipe</div>`;
                     grid.appendChild(cell);
+                    cell.addEventListener('click', function(e) {
+                        // Only trigger on the empty area, not on cards
+                        if (e.target === cell || e.target.classList.contains('empty-label') || e.target.classList.contains('meal-label')) {
+                            suggestMeal(cell);
+                        }
+                    });
                 });
             });
         }
@@ -759,10 +955,7 @@
             document.querySelectorAll('.grid-cell').forEach(cell => {
                 gridSortables.push(
                     Sortable.create(cell, {
-                        group: { name: 'recipes', pull: true, put: function(to) {
-                            // Allow drop only if cell is empty (no grid-card or recipe-card)
-                            return to.el.querySelectorAll('.grid-card, .recipe-card').length === 0;
-                        }},
+                        group: { name: 'recipes', pull: true, put: true },
                         draggable: '.grid-card',
                         ghostClass: 'sortable-ghost',
                         dragClass: 'sortable-drag',
@@ -772,12 +965,21 @@
                         animation: 150,
                         onAdd: function(evt) {
                             const cell = evt.to;
-                            // Convert sidebar recipe-card to grid-card
                             const item = evt.item;
+                            // Convert sidebar recipe-card to grid-card
                             if (item.classList.contains('recipe-card')) {
                                 const name = item.dataset.name;
                                 const gridCard = createGridCard(name, 1);
                                 item.replaceWith(gridCard);
+                            }
+                            // If target cell had an existing card, move it to source cell (swap)
+                            const existingCards = cell.querySelectorAll('.grid-card');
+                            if (existingCards.length > 1 && evt.from.classList.contains('grid-cell')) {
+                                const older = Array.from(existingCards).find(c => c !== (item.classList.contains('grid-card') ? item : cell.lastElementChild));
+                                if (older) {
+                                    evt.from.appendChild(older);
+                                    updateCellState(evt.from);
+                                }
                             }
                             updateCellState(cell);
                             debounceSave();
@@ -786,7 +988,6 @@
                         onRemove: function(evt) {
                             const cell = evt.from;
                             updateCellState(cell);
-                            debounceSave();
                         },
                         onEnd: function(evt) {
                             if (evt.from !== evt.to) {
@@ -806,8 +1007,18 @@
             card.dataset.name = name;
             card.dataset.servings = servings || 1;
 
-            const nameEl = document.createElement('div');
-            nameEl.className = 'grid-card-name';
+            // Find image from recipe data
+            const recipe = allRecipes.find(r => r.name === name);
+            if (recipe && recipe.image) {
+                card.classList.add('has-image');
+                card.style.backgroundImage = `url(/images/${encodeURIComponent(recipe.image)})`;
+            }
+
+            const obsidianUrl = `obsidian://open?vault=KitchenOS&file=${encodeURIComponent('Recipes/' + name)}`;
+
+            const nameEl = document.createElement('a');
+            nameEl.className = 'grid-card-name grid-card-name-link';
+            nameEl.href = obsidianUrl;
             nameEl.textContent = name;
 
             const removeBtn = document.createElement('button');
@@ -966,14 +1177,23 @@
                 card.dataset.protein = recipe.protein || '';
                 card.dataset.mealOccasion = (recipe.meal_occasion || []).join(',');
                 card.dataset.dishType = recipe.dish_type || '';
+                card.dataset.peakMonths = JSON.stringify(recipe.peak_months || []);
 
                 // Build meta text
                 const metaParts = [];
                 if (recipe.cuisine) metaParts.push(recipe.cuisine);
                 if (recipe.protein) metaParts.push(recipe.protein);
 
+                // Apply background image if available
+                if (recipe.image) {
+                    card.classList.add('has-image');
+                    card.style.backgroundImage = `url(/images/${encodeURIComponent(recipe.image)})`;
+                }
+
+                const obsidianUrl = `obsidian://open?vault=KitchenOS&file=${encodeURIComponent('Recipes/' + recipe.name)}`;
+
                 card.innerHTML = `
-                    <div class="recipe-name">${escapeHtml(recipe.name)}</div>
+                    <a href="${obsidianUrl}" class="recipe-name recipe-name-link">${escapeHtml(recipe.name)}</a>
                     ${metaParts.length ? `<div class="recipe-meta">${escapeHtml(metaParts.join(' \u00b7 '))}</div>` : ''}
                 `;
 
@@ -1000,12 +1220,18 @@
         }
 
         function matchesActiveFilters(recipe) {
+            // Special: "In Season" toggle
+            if (seasonFilterActive) {
+                const months = (recipe.peak_months || []).map(m => parseInt(m));
+                const currentMonth = new Date().getMonth() + 1;
+                if (!months.includes(currentMonth)) return false;
+            }
+
             for (const [field, values] of Object.entries(activeFilters)) {
                 if (values.size === 0) continue;
 
                 if (field === 'meal_occasion') {
                     const recipeValues = recipe.meal_occasion || [];
-                    // Recipe must match at least one active value in this field
                     const hasMatch = recipeValues.some(v => values.has(v));
                     if (!hasMatch) return false;
                 } else {
@@ -1020,6 +1246,18 @@
             const chipsContainer = document.getElementById('filter-chips');
             chipsContainer.innerHTML = '';
             activeFilters = {};
+
+            // "In Season" toggle chip — always first
+            seasonFilterActive = false;
+            const seasonChip = document.createElement('button');
+            seasonChip.className = 'chip season';
+            seasonChip.textContent = 'In Season';
+            seasonChip.addEventListener('click', function() {
+                seasonFilterActive = !seasonFilterActive;
+                seasonChip.classList.toggle('active', seasonFilterActive);
+                renderRecipes();
+            });
+            chipsContainer.appendChild(seasonChip);
 
             const chipData = [];
 
@@ -1096,6 +1334,9 @@
                 if (e.key === 'ArrowRight' && !e.target.matches('input')) navigateWeek(1);
             });
 
+            // Resize handle between filter chips and recipe list
+            initResizeHandle();
+
             // Mobile sidebar toggle
             document.getElementById('sidebar-toggle').addEventListener('click', function() {
                 toggleSidebar();
@@ -1106,9 +1347,46 @@
             });
         }
 
+        function initResizeHandle() {
+            const handle = document.getElementById('resize-handle');
+            const chips = document.getElementById('filter-chips');
+            let startY = 0;
+            let startHeight = 0;
+            let dragging = false;
+
+            function onPointerDown(e) {
+                e.preventDefault();
+                dragging = true;
+                startY = e.clientY;
+                startHeight = chips.offsetHeight;
+                document.body.style.cursor = 'row-resize';
+                document.body.style.userSelect = 'none';
+                document.addEventListener('pointermove', onPointerMove);
+                document.addEventListener('pointerup', onPointerUp);
+            }
+
+            function onPointerMove(e) {
+                if (!dragging) return;
+                const delta = e.clientY - startY;
+                const newHeight = Math.max(40, Math.min(startHeight + delta, 400));
+                chips.style.height = newHeight + 'px';
+            }
+
+            function onPointerUp() {
+                dragging = false;
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+                document.removeEventListener('pointermove', onPointerMove);
+                document.removeEventListener('pointerup', onPointerUp);
+            }
+
+            handle.addEventListener('pointerdown', onPointerDown);
+        }
+
         async function navigateWeek(delta) {
             showLoading();
             currentWeek = offsetWeek(currentWeek, delta);
+            suggestionSkipIndex = {};
             updateURL(currentWeek);
             try {
                 await loadMealPlan(currentWeek);
@@ -1170,6 +1448,93 @@
 
         function hideLoading() {
             document.getElementById('loading').classList.add('hidden');
+        }
+
+        // --- Suggestion ---
+
+        async function suggestMeal(cell) {
+            const day = cell.dataset.day;
+            const meal = cell.dataset.meal;
+            const cellKey = `${day}-${meal}`;
+
+            // Already has a recipe or already suggesting
+            if (cell.querySelector('.grid-card') || cell.classList.contains('suggesting')) return;
+
+            // Show spinner
+            cell.classList.add('suggesting');
+            const emptyLabel = cell.querySelector('.empty-label');
+            if (emptyLabel) emptyLabel.textContent = 'Suggesting...';
+
+            const skipIndex = suggestionSkipIndex[cellKey] || 0;
+
+            try {
+                const response = await fetch('/api/suggest-meal', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        week: currentWeek,
+                        day: day,
+                        meal: meal,
+                        skip_index: skipIndex,
+                    }),
+                });
+
+                const data = await response.json();
+
+                cell.classList.remove('suggesting');
+
+                if (!data.suggestion) {
+                    if (emptyLabel) emptyLabel.textContent = 'Drop recipe';
+                    showToast('No suggestions available', 'error');
+                    return;
+                }
+
+                const suggestion = data.suggestion;
+                const card = createSuggestedCard(suggestion, cell);
+                cell.appendChild(card);
+                updateCellState(cell);
+                debounceSave();
+
+                // Show reason toast
+                if (suggestion.reason) {
+                    showToast(suggestion.reason, 'success');
+                }
+
+                // Increment skip index for retry
+                suggestionSkipIndex[cellKey] = skipIndex + 1;
+
+            } catch (err) {
+                console.error('Suggestion failed:', err);
+                cell.classList.remove('suggesting');
+                if (emptyLabel) emptyLabel.textContent = 'Drop recipe';
+                showToast('Suggestion failed', 'error');
+            }
+        }
+
+        function createSuggestedCard(suggestion, cell) {
+            const card = createGridCard(suggestion.name, 1);
+
+            // Mark new ideas
+            if (suggestion.is_new_idea) {
+                card.classList.add('new-idea');
+            }
+
+            // Add retry button
+            const retryBtn = document.createElement('button');
+            retryBtn.className = 'retry-btn';
+            retryBtn.innerHTML = '&#x21bb;';  // ↻
+            retryBtn.setAttribute('aria-label', 'Try another suggestion');
+            retryBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                const parentCell = card.parentElement;
+                card.remove();
+                updateCellState(parentCell);
+                suggestMeal(parentCell);
+            });
+            card.appendChild(retryBtn);
+
+            return card;
         }
 
         // --- Utilities ---

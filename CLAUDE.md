@@ -83,6 +83,25 @@ cd /Users/chaseeasterling/KitchenOS
 .venv/bin/python migrate_recipes.py
 ```
 
+### Clean Up Cuisine Data, Normalize Tags & Populate Seasonal
+
+```bash
+# Preview all corrections (cuisine, tags, seasonal)
+.venv/bin/python migrate_cuisine.py --dry-run
+
+# Apply all fixes
+.venv/bin/python migrate_cuisine.py
+
+# Cuisine + tags only (skip seasonal matching)
+.venv/bin/python migrate_cuisine.py --no-seasonal
+
+# Tags only (skip cuisine and seasonal)
+.venv/bin/python migrate_cuisine.py --no-seasonal
+
+# Force re-match seasonal data (ignore existing)
+.venv/bin/python migrate_cuisine.py --no-tags --force-seasonal
+```
+
 ### Batch Extract from Reminders
 
 ```bash
@@ -314,6 +333,7 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist
 | `/send-to-reminders` | POST | Send unchecked items to Apple Reminders |
 | `/reprocess?file=<name>` | GET | Full re-extraction from YouTube (preserves notes) |
 | `/refresh?file=<name>` | GET | Template refresh only, keeps existing data |
+| `/images/<filename>` | GET | Serve recipe image from vault |
 | `/calendar.ics` | GET | Serves meal plan calendar file |
 | `/refresh-nutrition?week=<week>` | GET | Regenerate nutrition dashboard for week |
 | `/add-to-meal-plan?recipe=<name>` | GET/POST | Pick meal plan slot and add recipe |
@@ -323,6 +343,7 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist
 | `/api/meal-plan/<week>` | PUT | Save meal plan from JSON |
 | `/api/recipes/save` | POST | Save recipe from structured JSON |
 | `/api/recipes/<name>` | GET | Full recipe details as JSON |
+| `/api/suggest-meal` | POST | Suggest recipe for empty meal slot |
 
 ### Configuration
 
@@ -450,6 +471,11 @@ template → Obsidian
 | `templates/meal_planner.html` | Interactive meal planner board (HTML/CSS/JS + SortableJS) |
 | `mcp_server.py` | MCP server for Claude Desktop integration |
 | `lib/mcp_tools.py` | MCP tool implementations (HTTP + Things) |
+| `migrate_cuisine.py` | Cuisine cleanup, tag normalization & seasonal population |
+| `lib/normalizer.py` | Controlled vocabularies and tag normalization |
+| `lib/meal_suggester.py` | Ingredient overlap scoring + Claude/Ollama suggestion |
+| `prompts/meal_suggestion.py` | Prompt templates for ingredient normalization and meal selection |
+| `config/pantry_staples.json` | Pantry staples excluded from overlap scoring |
 
 ### Key Functions
 
@@ -520,6 +546,17 @@ template → Obsidian
 - `has_tools_callout()` - Detects if recipe has Tools callout
 - `add_tools_callout()` - Adds Tools callout to existing recipes
 
+**migrate_cuisine.py:**
+- `apply_cuisine_corrections()` - Deterministic cuisine fix from correction map + per-recipe overrides
+- `update_frontmatter_field()` - Updates single YAML frontmatter field in recipe content
+- `run_cuisine_migration()` - Batch cuisine cleanup across all recipe files
+- `run_tag_migration()` - Batch tag normalization (protein, dish_type, difficulty, dietary, meal_occasion)
+- `run_seasonal_migration()` - Batch seasonal data population (keyword matching + Ollama fallback)
+
+**lib/normalizer.py:**
+- `normalize_field()` - Normalizes a single recipe field against its controlled vocabulary
+- `normalize_recipe_data()` - Normalizes all tag fields in a recipe_data dict
+
 **lib/ingredient_parser.py:**
 - `parse_ingredient()` - Splits ingredient string into amount, unit, item
 - `normalize_unit()` - Standardizes unit abbreviations
@@ -562,7 +599,7 @@ template → Obsidian
 - `rebuild_meal_plan_markdown()` - Converts structured JSON meal plan back to markdown
 
 **lib/recipe_index.py:**
-- `get_recipe_index()` - Scans recipes folder, returns sorted list of recipe metadata dicts
+- `get_recipe_index()` - Scans recipes folder, returns sorted list of recipe metadata dicts (includes image filename)
 
 **lib/ics_generator.py:**
 - `generate_ics()` - Creates ICS calendar content
@@ -585,9 +622,19 @@ template → Obsidian
 
 **lib/seasonality.py:**
 - `load_seasonal_config()` - Loads Texas seasonal produce config
-- `match_ingredients_to_seasonal()` - Ollama fuzzy matching of ingredients to seasonal produce
+- `keyword_match_seasonal()` - Fast keyword-based matching of ingredients to seasonal produce
+- `match_ingredients_to_seasonal()` - Keyword matching first, Ollama fallback for edge cases
 - `calculate_season_score()` - Counts in-season ingredients for a given month
 - `get_peak_months()` - Returns union of peak months for matched ingredients
+
+**lib/meal_suggester.py:**
+- `suggest_meal()` - Top-level orchestrator: scores ingredients, tiers to Claude
+- `score_overlap()` - Scores ingredient overlap between recipe and planned meals
+- `rank_candidates()` - Ranks all recipes by overlap score
+- `normalize_ingredient()` - Normalizes ingredient name for matching
+- `normalize_ingredients_ollama()` - Batch normalize via Ollama with fallback
+- `suggest_with_claude()` - Asks Claude API to pick best candidate
+- `suggest_for_empty_week()` - Asks Claude for starting recipe
 
 ## AI Configuration
 
@@ -658,6 +705,7 @@ Maps YouTube channel names to their recipe website domains. Used to search creat
   - `OPENAI_API_KEY` - Whisper fallback
   - `NUTRITIONIX_APP_ID` - Nutritionix API app ID
   - `NUTRITIONIX_API_KEY` - Nutritionix API key
+  - `ANTHROPIC_API_KEY` - Claude API for meal suggestions
 
 ## Dependencies
 
@@ -669,6 +717,7 @@ openai                    # Whisper API transcription
 python-dotenv             # Environment variables
 requests                  # HTTP requests to Ollama
 duckduckgo-search         # Web search for creator websites
+anthropic                     # Claude API for meal suggestions
 ```
 
 ## Testing
@@ -782,6 +831,7 @@ KitchenOS/
 ├── batch_extract.py       # Batch processor
 ├── recipe_sources.py      # Recipe extraction logic
 ├── migrate_recipes.py     # Schema migration
+├── migrate_cuisine.py     # Cuisine cleanup, tag normalization & seasonal population
 ├── shopping_list.py       # Shopping list from meal plans
 ├── generate_meal_plan.py  # Weekly meal plan generator
 ├── generate_nutrition_dashboard.py  # Nutrition dashboard generator

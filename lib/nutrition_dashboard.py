@@ -59,7 +59,7 @@ def calculate_daily_nutrition(
     total = NutritionData.empty()
     missing = []
 
-    for meal in ['breakfast', 'lunch', 'dinner']:
+    for meal in ['breakfast', 'lunch', 'snack', 'dinner']:
         entry = day_data.get(meal)
         if not entry:
             continue
@@ -157,7 +157,7 @@ def generate_dashboard(
     all_missing = []
 
     for day_data in days:
-        has_meals = any(day_data.get(m) for m in ['breakfast', 'lunch', 'dinner'])
+        has_meals = any(day_data.get(m) for m in ['breakfast', 'lunch', 'snack', 'dinner'])
         if has_meals:
             nutrition, missing = calculate_daily_nutrition(day_data, recipes_dir)
             daily_nutrition.append(nutrition)
@@ -195,7 +195,7 @@ def generate_dashboard(
     # Generate markdown
     daily_rows = []
     for day_data, nutrition in zip(days, daily_nutrition):
-        has_meals = any(day_data.get(m) for m in ['breakfast', 'lunch', 'dinner'])
+        has_meals = any(day_data.get(m) for m in ['breakfast', 'lunch', 'snack', 'dinner'])
         row = format_daily_summary_row(day_data['day'], nutrition, targets, has_meals)
         daily_rows.append(row)
 

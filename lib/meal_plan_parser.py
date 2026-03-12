@@ -33,9 +33,9 @@ def extract_meals_for_day(section: str) -> dict:
     Returns:
         Dict with 'breakfast', 'lunch', 'dinner' keys (None if empty)
     """
-    meals = {'breakfast': None, 'lunch': None, 'dinner': None}
+    meals = {'breakfast': None, 'lunch': None, 'snack': None, 'dinner': None}
 
-    for meal_type in ['breakfast', 'lunch', 'dinner']:
+    for meal_type in ['breakfast', 'lunch', 'snack', 'dinner']:
         pattern = rf'###\s+{meal_type}\s*\n(.*?)(?=###|\Z)'
         match = re.search(pattern, section, re.IGNORECASE | re.DOTALL)
         if match:
@@ -134,7 +134,7 @@ def parse_meal_plan(content: str, year: int, week: int) -> list[dict]:
         pattern = rf'##\s+{day_name}\s+\([^)]+\)(.*?)(?=##\s+(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)|\Z)'
         match = re.search(pattern, content, re.IGNORECASE | re.DOTALL)
 
-        meals = {'breakfast': None, 'lunch': None, 'dinner': None}
+        meals = {'breakfast': None, 'lunch': None, 'snack': None, 'dinner': None}
         if match:
             meals = extract_meals_for_day(match.group(0))
 
@@ -198,6 +198,8 @@ def rebuild_meal_plan_markdown(week: str, days: list[dict]) -> str:
         lines.append(fmt_meal(day_data.get("breakfast")))
         lines.append("### Lunch")
         lines.append(fmt_meal(day_data.get("lunch")))
+        lines.append("### Snack")
+        lines.append(fmt_meal(day_data.get("snack")))
         lines.append("### Dinner")
         lines.append(fmt_meal(day_data.get("dinner")))
         lines.append("### Notes")

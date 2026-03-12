@@ -34,3 +34,19 @@ def test_send_to_reminders_requires_week(client):
     assert response.status_code == 400
     data = response.get_json()
     assert "week" in data.get("error", "").lower()
+
+
+def test_suggest_meal_requires_fields(client):
+    """Suggest endpoint requires week, day, meal fields."""
+    response = client.post('/api/suggest-meal', json={})
+    assert response.status_code == 400
+    data = response.get_json()
+    assert "error" in data
+
+
+def test_suggest_meal_invalid_week(client):
+    """Invalid week format returns 400."""
+    response = client.post('/api/suggest-meal', json={
+        "week": "invalid", "day": "Monday", "meal": "dinner"
+    })
+    assert response.status_code == 400
