@@ -231,6 +231,55 @@ class TestAddToMealPlan:
         assert response.status_code == 400
 
 
+def test_api_recipe_detail_returns_full_recipe(client):
+    """GET /api/recipes/<name> returns full recipe data."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        recipes_path = Path(tmpdir)
+        test_file = recipes_path / "Butter Chicken.md"
+        test_file.write_text(
+            '---\n'
+            'title: "Butter Chicken"\n'
+            'cuisine: "Indian"\n'
+            'protein: "chicken"\n'
+            'servings: 4\n'
+            'prep_time: "15 min"\n'
+            'cook_time: "30 min"\n'
+            '---\n\n'
+            '# Butter Chicken\n\n'
+            '> A creamy Indian classic\n\n'
+            '## Ingredients\n\n'
+            '| Amount | Unit | Ingredient |\n'
+            '|--------|------|------------|\n'
+            '| 500 | g | chicken thighs |\n'
+            '| 2 | tbsp | butter |\n\n'
+            '## Instructions\n\n'
+            '1. Cut the chicken into pieces.\n'
+            '2. Cook in butter until done.\n\n'
+            '## My Notes\n\n'
+            '<!-- Your personal notes, ratings, and modifications go here -->\n',
+            encoding='utf-8'
+        )
+
+        with patch('api_server.OBSIDIAN_RECIPES_PATH', recipes_path):
+            response = client.get('/api/recipes/Butter%20Chicken')
+            assert response.status_code == 200
+            data = response.get_json()
+            assert data['title'] == 'Butter Chicken'
+            assert data['cuisine'] == 'Indian'
+            assert data['servings'] == 4
+            assert len(data['ingredients']) == 2
+            assert data['ingredients'][0]['item'] == 'chicken thighs'
+            assert len(data['instructions']) >= 1
+
+
+def test_api_recipe_detail_not_found(client):
+    """GET /api/recipes/<name> returns 404 for missing recipe."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch('api_server.OBSIDIAN_RECIPES_PATH', Path(tmpdir)):
+            response = client.get('/api/recipes/Nonexistent')
+            assert response.status_code == 404
+
+
 class TestApiRecipes:
     """Tests for GET /api/recipes endpoint."""
 

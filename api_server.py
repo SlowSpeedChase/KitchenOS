@@ -212,6 +212,52 @@ def api_recipes():
     return jsonify(_recipe_cache["data"])
 
 
+@app.route('/api/recipes/<name>', methods=['GET'])
+def api_recipe_detail(name):
+    """Return full recipe details as JSON."""
+    from urllib.parse import unquote
+    name = unquote(name)
+    filepath = OBSIDIAN_RECIPES_PATH / f"{name}.md"
+
+    if not filepath.exists():
+        return jsonify({"error": f"Recipe not found: {name}"}), 404
+
+    try:
+        content = filepath.read_text(encoding='utf-8')
+        parsed = parse_recipe_file(content)
+        fm = parsed['frontmatter']
+        body_data = parse_recipe_body(parsed['body'])
+
+        return jsonify({
+            "title": fm.get('title', name),
+            "cuisine": fm.get('cuisine'),
+            "protein": fm.get('protein'),
+            "dish_type": fm.get('dish_type'),
+            "difficulty": fm.get('difficulty'),
+            "servings": fm.get('servings'),
+            "prep_time": fm.get('prep_time'),
+            "cook_time": fm.get('cook_time'),
+            "total_time": fm.get('total_time'),
+            "dietary": fm.get('dietary', []),
+            "equipment": fm.get('equipment', []),
+            "meal_occasion": fm.get('meal_occasion', []),
+            "calories": fm.get('calories'),
+            "protein_g": fm.get('protein_g'),
+            "carbs_g": fm.get('carbs_g'),
+            "fat_g": fm.get('fat_g'),
+            "seasonal_ingredients": fm.get('seasonal_ingredients', []),
+            "peak_months": fm.get('peak_months', []),
+            "source_url": fm.get('source_url'),
+            "needs_review": fm.get('needs_review', False),
+            "description": body_data.get('description', ''),
+            "ingredients": body_data.get('ingredients', []),
+            "instructions": body_data.get('instructions', []),
+            "video_tips": body_data.get('video_tips', []),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/extract', methods=['POST'])
 def extract_recipe():
     """Run full recipe extraction and save to Obsidian."""
