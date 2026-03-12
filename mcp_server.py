@@ -18,6 +18,18 @@ from lib.mcp_tools import (
 
 mcp = FastMCP("KitchenOS")
 
+API_DOWN_MSG = (
+    "ERROR: KitchenOS API server is not running at localhost:5001. "
+    "Nothing was saved. Start it with: launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist"
+)
+
+
+def _require_api() -> str | None:
+    """Return error message if API is down, None if healthy."""
+    if not check_api_health():
+        return API_DOWN_MSG
+    return None
+
 
 @mcp.tool()
 def extract_recipe(url: str) -> str:
@@ -26,6 +38,8 @@ def extract_recipe(url: str) -> str:
     Args:
         url: YouTube video URL (e.g., https://www.youtube.com/watch?v=abc123)
     """
+    if err := _require_api():
+        return err
     result = _extract_recipe(url)
     if result.get("status") == "success":
         return f"Recipe saved: {result['recipe']}"
@@ -63,6 +77,8 @@ def save_recipe(
         prep_time: Prep time string (e.g., "15 min")
         cook_time: Cook time string (e.g., "30 min")
     """
+    if err := _require_api():
+        return err
     data = {
         "recipe_name": recipe_name,
         "description": description,
@@ -95,6 +111,8 @@ def search_recipes(
         cuisine: Filter by cuisine (e.g., Italian, Indian)
         protein: Filter by protein (e.g., chicken, beef)
     """
+    if err := _require_api():
+        return err
     import json
     results = _search_recipes(query=query, cuisine=cuisine, protein=protein)
     if not results:
@@ -110,6 +128,8 @@ def get_recipe(name: str) -> str:
     Args:
         name: Recipe name (e.g., "Butter Chicken")
     """
+    if err := _require_api():
+        return err
     import json
     result = _get_recipe(name)
     if "error" in result:
@@ -124,6 +144,8 @@ def get_meal_plan(week: str) -> str:
     Args:
         week: Week identifier (e.g., "2026-W11")
     """
+    if err := _require_api():
+        return err
     import json
     result = _get_meal_plan(week)
     if "error" in result:
@@ -142,6 +164,8 @@ def update_meal_plan(week: str, days: list[dict]) -> str:
         week: Week identifier (e.g., "2026-W11")
         days: List of day objects with meal assignments
     """
+    if err := _require_api():
+        return err
     result = _update_meal_plan(week, days)
     if result.get("status") == "saved":
         return f"Meal plan saved for {week}"
@@ -155,6 +179,8 @@ def generate_shopping_list(week: str) -> str:
     Args:
         week: Week identifier (e.g., "2026-W11")
     """
+    if err := _require_api():
+        return err
     result = _generate_shopping_list(week)
     if result.get("success"):
         return f"Shopping list generated: {result['item_count']} items from {len(result.get('recipes', []))} recipes"
@@ -168,6 +194,8 @@ def send_to_reminders(week: str) -> str:
     Args:
         week: Week identifier (e.g., "2026-W11")
     """
+    if err := _require_api():
+        return err
     result = _send_to_reminders(week)
     if result.get("success"):
         return f"Sent {result['items_sent']} items to Reminders (skipped {result['items_skipped']} already checked)"
