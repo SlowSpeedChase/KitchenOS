@@ -321,6 +321,8 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist
 | `/api/recipes` | GET | JSON list of recipe metadata for meal planner |
 | `/api/meal-plan/<week>` | GET | Read meal plan as JSON |
 | `/api/meal-plan/<week>` | PUT | Save meal plan from JSON |
+| `/api/recipes/save` | POST | Save recipe from structured JSON |
+| `/api/recipes/<name>` | GET | Full recipe details as JSON |
 
 ### Configuration
 
@@ -329,6 +331,34 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist
 - **LaunchAgent**: `~/Library/LaunchAgents/com.kitchenos.api.plist`
 
 See `docs/setup/iOS_SHORTCUT_SETUP.md` for iOS Shortcut configuration.
+
+## MCP Server (Claude Desktop Integration)
+
+Claude Desktop can interact with KitchenOS directly via MCP tools.
+
+### Setup
+
+Configured in `~/Library/Application Support/Claude/claude_desktop_config.json`. Requires the API server to be running.
+
+### Available Tools
+
+| Tool | Purpose |
+|------|---------|
+| `extract_recipe` | Extract recipe from YouTube URL |
+| `save_recipe` | Save recipe from conversation |
+| `search_recipes` | Search recipe library |
+| `get_recipe` | Read full recipe details |
+| `get_meal_plan` | View week's meal plan |
+| `update_meal_plan` | Modify meal plan |
+| `generate_shopping_list` | Generate shopping list |
+| `send_to_reminders` | Push to Apple Reminders |
+| `create_things_task` | Create Things 3 task |
+
+### Prerequisites
+
+- KitchenOS API server running (`com.kitchenos.api.plist`)
+- Things 3 installed (for task creation)
+- "KitchenOS" project created in Things
 
 ## QuickAdd Setup (Obsidian)
 
@@ -418,6 +448,8 @@ template → Obsidian
 | `prompts/seasonal_matching.py` | Ollama prompt for fuzzy matching ingredients to seasonal produce |
 | `config/seasonal_ingredients.json` | Texas seasonal produce calendar (~60 items) |
 | `templates/meal_planner.html` | Interactive meal planner board (HTML/CSS/JS + SortableJS) |
+| `mcp_server.py` | MCP server for Claude Desktop integration |
+| `lib/mcp_tools.py` | MCP tool implementations (HTTP + Things) |
 
 ### Key Functions
 
@@ -457,6 +489,20 @@ template → Obsidian
 - `api_meal_plan_get()` - Returns meal plan as structured JSON
 - `api_meal_plan_put()` - Saves meal plan from structured JSON
 - `meal_planner()` - Serves interactive meal planner HTML board
+- `api_recipe_save()` - Saves recipe from Claude conversation, runs validation pipeline
+- `api_recipe_detail()` - Returns full recipe details as JSON
+
+**lib/mcp_tools.py:**
+- `extract_recipe()` - Calls `/extract` endpoint
+- `save_recipe()` - Calls `/api/recipes/save` endpoint
+- `search_recipes()` - Calls `/api/recipes` with client-side filtering
+- `get_recipe()` - Calls `/api/recipes/<name>` endpoint
+- `get_meal_plan()` - Calls `/api/meal-plan/<week>` GET
+- `update_meal_plan()` - Calls `/api/meal-plan/<week>` PUT
+- `generate_shopping_list()` - Calls `/generate-shopping-list` endpoint
+- `send_to_reminders()` - Calls `/send-to-reminders` endpoint
+- `create_things_task()` - Creates Things 3 task via URL scheme
+- `check_api_health()` - Verifies API server is running
 
 **lib/backup.py:**
 - `create_backup()` - Creates timestamped backup in .history/ folder
@@ -739,6 +785,7 @@ KitchenOS/
 ├── shopping_list.py       # Shopping list from meal plans
 ├── generate_meal_plan.py  # Weekly meal plan generator
 ├── generate_nutrition_dashboard.py  # Nutrition dashboard generator
+├── mcp_server.py          # MCP server for Claude Desktop
 │
 ├── lib/                   # Python library modules
 ├── prompts/               # AI prompt templates
