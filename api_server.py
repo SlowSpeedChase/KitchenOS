@@ -25,7 +25,11 @@ from lib.meal_plan_parser import insert_recipe_into_meal_plan, parse_meal_plan, 
 from lib.recipe_parser import parse_recipe_file, extract_my_notes, parse_recipe_body
 from templates.shopping_list_template import generate_shopping_list_markdown, generate_filename as shopping_list_filename
 from templates.recipe_template import format_recipe_markdown
+from templates.recipemd_template import format_recipemd, generate_recipemd_filename
 from templates.meal_plan_template import generate_meal_plan_markdown
+from lib.ingredient_validator import validate_ingredients
+from lib.seasonality import match_ingredients_to_seasonal, get_peak_months
+from lib.nutrition_lookup import calculate_recipe_nutrition
 
 load_dotenv()
 warnings.filterwarnings('ignore', message='urllib3 v2 only supports OpenSSL 1.1.1+')
@@ -210,6 +214,86 @@ def api_recipes():
         _recipe_cache["data"] = get_recipe_index(OBSIDIAN_RECIPES_PATH)
         _recipe_cache["timestamp"] = now
     return jsonify(_recipe_cache["data"])
+
+
+@app.route('/api/recipes/save', methods=['POST'])
+def api_recipe_save():
+    """Save a recipe from structured JSON data (e.g., from Claude conversation)."""
+    data = request.get_json(force=True, silent=True)
+    if not data:
+        return jsonify({"error": "Request body required"}), 400
+
+    recipe_name = data.get('recipe_name')
+    if not recipe_name:
+        return jsonify({"error": "recipe_name is required"}), 400
+
+    try:
+        # Validate ingredients
+        if data.get('ingredients'):
+            data['ingredients'] = validate_ingredients(
+                data['ingredients'], verbose=False
+            )
+
+        # Match seasonal ingredients
+        seasonal_matches = match_ingredients_to_seasonal(
+            data.get('ingredients', [])
+        )
+        data['seasonal_ingredients'] = seasonal_matches
+        data['peak_months'] = get_peak_months(seasonal_matches)
+
+        # Calculate nutrition
+        ingredients = data.get('ingredients', [])
+        try:
+            servings = int(data.get('servings', 1) or 1)
+        except (ValueError, TypeError):
+            servings = 1
+
+        nutrition_result = calculate_recipe_nutrition(ingredients, servings)
+        if nutrition_result:
+            data['calories'] = nutrition_result.nutrition.calories
+            data['protein_g'] = nutrition_result.nutrition.protein
+            data['carbs_g'] = nutrition_result.nutrition.carbs
+            data['fat_g'] = nutrition_result.nutrition.fat
+            data['nutrition_source'] = nutrition_result.source
+
+        # Set source metadata
+        data.setdefault('source', 'claude')
+        data.setdefault('needs_review', False)
+
+        # Generate markdown
+        markdown = format_recipe_markdown(
+            data,
+            video_url=data.get('source_url', ''),
+            video_title='',
+            channel=data.get('source_channel', ''),
+        )
+
+        # Save to Obsidian
+        OBSIDIAN_RECIPES_PATH.mkdir(parents=True, exist_ok=True)
+        safe_name = re.sub(r'[<>:"/\\|?*]', '', recipe_name)
+        safe_name = ' '.join(safe_name.split()).title()
+        filepath = OBSIDIAN_RECIPES_PATH / f"{safe_name}.md"
+        filepath.write_text(markdown, encoding='utf-8')
+
+        # Generate RecipeMD cooking mode version
+        recipemd_content = format_recipemd(data, '', '', '')
+        recipemd_dir = OBSIDIAN_RECIPES_PATH / "Cooking Mode"
+        recipemd_dir.mkdir(parents=True, exist_ok=True)
+        recipemd_filename = generate_recipemd_filename(recipe_name)
+        recipemd_path = recipemd_dir / recipemd_filename
+        recipemd_path.write_text(recipemd_content, encoding='utf-8')
+
+        # Invalidate recipe cache
+        _recipe_cache["data"] = None
+
+        return jsonify({
+            "status": "success",
+            "recipe_name": recipe_name,
+            "file": safe_name + ".md",
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/recipes/<name>', methods=['GET'])

@@ -231,6 +231,50 @@ class TestAddToMealPlan:
         assert response.status_code == 400
 
 
+def test_api_recipe_save_creates_file(client):
+    """POST /api/recipes/save creates recipe markdown file."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        recipes_path = Path(tmpdir)
+
+        with patch('api_server.OBSIDIAN_RECIPES_PATH', recipes_path), \
+             patch('api_server.validate_ingredients', side_effect=lambda x, **kw: x), \
+             patch('api_server.match_ingredients_to_seasonal', return_value=[]), \
+             patch('api_server.get_peak_months', return_value=[]), \
+             patch('api_server.calculate_recipe_nutrition', return_value=None):
+
+            response = client.post('/api/recipes/save', json={
+                'recipe_name': 'Test Recipe',
+                'description': 'A test recipe',
+                'servings': 4,
+                'cuisine': 'American',
+                'ingredients': [
+                    {'amount': '2', 'unit': 'cups', 'item': 'flour'},
+                    {'amount': '1', 'unit': 'tsp', 'item': 'salt'},
+                ],
+                'instructions': [
+                    {'step': 1, 'text': 'Mix flour and salt.', 'time': None},
+                ],
+            })
+
+            assert response.status_code == 200
+            data = response.get_json()
+            assert data['status'] == 'success'
+            assert data['recipe_name'] == 'Test Recipe'
+
+            # Verify file was created
+            recipe_file = recipes_path / "Test Recipe.md"
+            assert recipe_file.exists()
+
+
+def test_api_recipe_save_missing_name(client):
+    """POST /api/recipes/save returns 400 without recipe_name."""
+    response = client.post('/api/recipes/save', json={
+        'ingredients': [],
+        'instructions': [],
+    })
+    assert response.status_code == 400
+
+
 def test_api_recipe_detail_returns_full_recipe(client):
     """GET /api/recipes/<name> returns full recipe data."""
     with tempfile.TemporaryDirectory() as tmpdir:
