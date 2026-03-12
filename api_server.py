@@ -215,9 +215,9 @@ def api_recipes():
 @app.route('/api/recipes/<name>', methods=['GET'])
 def api_recipe_detail(name):
     """Return full recipe details as JSON."""
-    from urllib.parse import unquote
-    name = unquote(name)
-    filepath = OBSIDIAN_RECIPES_PATH / f"{name}.md"
+    filepath = (OBSIDIAN_RECIPES_PATH / f"{name}.md").resolve()
+    if not filepath.is_relative_to(OBSIDIAN_RECIPES_PATH.resolve()):
+        return jsonify({"error": "Invalid recipe name"}), 400
 
     if not filepath.exists():
         return jsonify({"error": f"Recipe not found: {name}"}), 404
