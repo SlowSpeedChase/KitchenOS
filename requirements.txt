@@ -32,3 +32,6 @@ icalendar>=5.0.0
 
 # Claude API for meal suggestions
 anthropic>=0.40.0
+
+# MCP server for Claude Desktop integration
+mcp>=1.0.0
