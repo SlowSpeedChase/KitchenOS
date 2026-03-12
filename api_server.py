@@ -270,9 +270,15 @@ def api_recipe_save():
 
         # Save to Obsidian
         OBSIDIAN_RECIPES_PATH.mkdir(parents=True, exist_ok=True)
-        safe_name = re.sub(r'[<>:"/\\|?*]', '', recipe_name)
+        safe_name = re.sub(r'[<>:"/\\|?*/]', '', recipe_name)
         safe_name = ' '.join(safe_name.split()).title()
-        filepath = OBSIDIAN_RECIPES_PATH / f"{safe_name}.md"
+        filepath = (OBSIDIAN_RECIPES_PATH / f"{safe_name}.md").resolve()
+        if not filepath.is_relative_to(OBSIDIAN_RECIPES_PATH.resolve()):
+            return jsonify({"error": "Invalid recipe name"}), 400
+
+        if filepath.exists():
+            create_backup(filepath)
+
         filepath.write_text(markdown, encoding='utf-8')
 
         # Generate RecipeMD cooking mode version
@@ -280,7 +286,10 @@ def api_recipe_save():
         recipemd_dir = OBSIDIAN_RECIPES_PATH / "Cooking Mode"
         recipemd_dir.mkdir(parents=True, exist_ok=True)
         recipemd_filename = generate_recipemd_filename(recipe_name)
-        recipemd_path = recipemd_dir / recipemd_filename
+        recipemd_path = (recipemd_dir / recipemd_filename).resolve()
+        if not recipemd_path.is_relative_to(recipemd_dir.resolve()):
+            return jsonify({"error": "Invalid recipe name"}), 400
+
         recipemd_path.write_text(recipemd_content, encoding='utf-8')
 
         # Invalidate recipe cache
