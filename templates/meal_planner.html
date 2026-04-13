@@ -210,6 +210,14 @@
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
         }
 
+        .sortable-fallback {
+            opacity: 0.9 !important;
+            z-index: 10000 !important;
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
+            transform: rotate(2deg);
+            pointer-events: none !important;
+        }
+
         .recipe-card.hidden {
             display: none;
         }
@@ -946,6 +954,9 @@
                     draggable: '.recipe-card',
                     ghostClass: 'sortable-ghost',
                     dragClass: 'sortable-drag',
+                    forceFallback: true,
+                    fallbackOnBody: true,
+                    fallbackTolerance: 5,
                     delay: 100,
                     delayOnTouchOnly: true,
                     touchStartThreshold: 5,
@@ -966,6 +977,9 @@
                         draggable: '.grid-card',
                         ghostClass: 'sortable-ghost',
                         dragClass: 'sortable-drag',
+                        forceFallback: true,
+                        fallbackOnBody: true,
+                        fallbackTolerance: 5,
                         delay: 100,
                         delayOnTouchOnly: true,
                         touchStartThreshold: 5,
