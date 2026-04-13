@@ -247,7 +247,7 @@ Accessible via API at: `http://localhost:5001/calendar.ics` (or Tailscale IP)
 
 ## Batch Extract (LaunchAgent)
 
-Processes YouTube URLs from the "Recipies to Process" iOS Reminders list daily at 6:10am.
+Processes YouTube URLs from the "Recipies to Process" iOS Reminders list hourly (at :10 past each hour).
 
 ### Management
 
@@ -819,6 +819,7 @@ These features are planned but not yet implemented:
 | ~~Nutrition tracking~~ | ~~Medium~~ | **Completed** - Macro tracking with dashboard, API lookup (Nutritionix, USDA), AI fallback |
 | ~~Seasonality~~ | ~~Medium~~ | **Completed** - Texas produce calendar, Ollama fuzzy matching, Dashboard "In Season Now", meal plan suggestions |
 | Claude API fallback | Low | Use Claude when Ollama fails |
+| Non-YouTube recipe URLs in batch_extract | Medium | Route non-YouTube URLs in "Recipies to Process" through `scrape_recipe_from_url()` (Serious Eats, NYT Cooking, etc.). Currently `batch_extract.py:212` rejects anything without youtube.com/youtu.be. Decide handling for plain-text notes (skip vs flag). |
 | ~~Image extraction~~ | ~~Low~~ | **Completed** - Downloads recipe website images or YouTube thumbnails to vault |
 
 ## Project Structure

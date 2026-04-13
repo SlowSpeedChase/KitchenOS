@@ -13,8 +13,6 @@
     <true/>
     <key>StartCalendarInterval</key>
     <dict>
-        <key>Hour</key>
-        <integer>6</integer>
         <key>Minute</key>
         <integer>10</integer>
     </dict>
