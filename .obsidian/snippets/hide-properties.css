@@ -1,0 +1,4 @@
+/* Hide frontmatter properties in reading view */
+.is-reading-mode .metadata-container {
+  display: none;
+}

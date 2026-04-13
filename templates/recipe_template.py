@@ -210,6 +210,12 @@ cssclasses:
 
 {image_embed}> {description}
 
+> [!abstract]- Jump to Section
+> - [[#Ingredients]]
+> - [[#Instructions]]
+> - [[#Equipment]]
+> - [[#My Notes]]
+
 ## Ingredients
 
 {ingredients}
