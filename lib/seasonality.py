@@ -145,7 +145,7 @@ def keyword_match_seasonal(ingredients: list[dict]) -> list[str]:
 
     for ing in ingredients:
         item = ing.get("item", "")
-        if not item:
+        if not item or not isinstance(item, str):
             continue
 
         text = item.lower()

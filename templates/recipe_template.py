@@ -312,11 +312,11 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel, date_ad
 
     # Format tags
     tags = []
-    if recipe_data.get('cuisine'):
+    if recipe_data.get('cuisine') and isinstance(recipe_data['cuisine'], str):
         tags.append(f"  - {recipe_data['cuisine'].lower().replace(' ', '-')}")
-    if recipe_data.get('protein'):
+    if recipe_data.get('protein') and isinstance(recipe_data['protein'], str):
         tags.append(f"  - {recipe_data['protein'].lower().replace(' ', '-')}")
-    if recipe_data.get('dish_type'):
+    if recipe_data.get('dish_type') and isinstance(recipe_data['dish_type'], str):
         tags.append(f"  - {recipe_data['dish_type'].lower().replace(' ', '-')}")
     for occasion in recipe_data.get('meal_occasion', []):
         if occasion:

@@ -436,11 +436,13 @@ def normalize_recipe_data(recipe_data):
         if field not in recipe_data:
             continue
         normalized = normalizer(recipe_data[field])
-        recipe_data[field] = normalized
 
-        # Check for unknown tuple
+        # Unwrap unknown tuples — keep original string, flag for review
         if isinstance(normalized, tuple) and len(normalized) == 2 and normalized[0] == "unknown":
             has_unknown = True
+            normalized = normalized[1]
+
+        recipe_data[field] = normalized
 
     if has_unknown:
         recipe_data["needs_review"] = True
