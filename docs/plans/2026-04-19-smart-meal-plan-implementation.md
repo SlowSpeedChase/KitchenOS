@@ -2990,6 +2990,893 @@ git commit -m "chore: smoke-test script for planner engine"
 
 ---
 
+## Phase A.5: Kitchen Inventory
+
+Phase A.5 sits between Phase A (core planner) and Phase B (cook-logging + receipt OCR). It leverages Phase A's cache + scorer with additive changes only — no refactors required. Same TDD cadence as Phase A.
+
+### Task 26: `inventory` SQLite table + cache integration
+
+**Files:**
+- Modify: `lib/cache.py` — add table DDL
+- Modify: `tests/test_cache.py`
+
+**Step 1: Add DDL to `_DDL` string in `lib/cache.py`**
+
+```sql
+CREATE TABLE IF NOT EXISTS inventory (
+  id INTEGER PRIMARY KEY,
+  item TEXT NOT NULL,
+  qty REAL NOT NULL,
+  unit TEXT NOT NULL,
+  category TEXT NOT NULL,
+  added_date DATE NOT NULL,
+  expires_date DATE,
+  notes TEXT,
+  updated_at DATETIME,
+  UNIQUE(item, unit, category)
+);
+
+CREATE INDEX IF NOT EXISTS idx_inventory_item ON inventory(item);
+CREATE INDEX IF NOT EXISTS idx_inventory_expires ON inventory(expires_date);
+```
+
+**Step 2: Extend schema test**
+
+Add to `TestCacheSchema`:
+
+```python
+def test_init_creates_inventory_table(self):
+    with tempfile.TemporaryDirectory() as tmp:
+        db = Path(tmp) / "test.db"
+        cache = Cache(db)
+        cache.init_schema()
+        tables = cache.raw_query(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+        assert any(r[0] == "inventory" for r in tables)
+```
+
+**Step 3: Run tests.** All pass.
+
+**Step 4: Commit**
+
+```bash
+git add lib/cache.py tests/test_cache.py
+git commit -m "feat: inventory SQLite table in cache schema"
+```
+
+---
+
+### Task 27: `lib/inventory.py` — parser + normalizer + round-trip
+
+**Files:**
+- Create: `lib/inventory.py`
+- Create: `templates/inventory_template.py`
+- Create: `tests/test_inventory.py`
+
+**Step 1: Tests covering normalization + markdown↔struct round-trip**
+
+```python
+# tests/test_inventory.py
+import tempfile
+from datetime import date
+from pathlib import Path
+
+from lib.inventory import (
+    normalize_item, normalize_unit, parse_inventory_md,
+    write_inventory_md, default_expiry,
+)
+
+
+class TestNormalize:
+    def test_normalize_item_lowercases_and_singularizes(self):
+        assert normalize_item("Yellow Onions") == "yellow onion"
+        assert normalize_item("EGGS") == "egg"
+        assert normalize_item("  tomatoes  ") == "tomato"
+
+    def test_normalize_unit_aliases(self):
+        assert normalize_unit("lbs") == "lb"
+        assert normalize_unit("Pounds") == "lb"
+        assert normalize_unit("bottles") == "bottle"
+        assert normalize_unit("boxes") == "box"
+        assert normalize_unit("") == "each"
+
+
+class TestDefaultExpiry:
+    def test_produce_default(self):
+        assert default_expiry("produce", date(2026, 4, 19)) == date(2026, 4, 26)
+
+    def test_fridge_default(self):
+        assert default_expiry("fridge", date(2026, 4, 19)) == date(2026, 5, 3)
+
+    def test_freezer_default(self):
+        assert default_expiry("freezer", date(2026, 4, 19)) == date(2026, 7, 18)
+
+    def test_pantry_default_none(self):
+        assert default_expiry("pantry", date(2026, 4, 19)) is None
+
+
+class TestRoundTrip:
+    def test_parse_basic_markdown(self):
+        md = """# Kitchen Inventory
+
+## Pantry
+| Item | Qty | Unit | Added | Expires | Notes |
+|---|---|---|---|---|---|
+| olive oil | 1 | bottle | 2026-03-15 |  |  |
+
+## Fridge
+| Item | Qty | Unit | Added | Expires | Notes |
+|---|---|---|---|---|---|
+| chicken breast | 2 | lb | 2026-04-18 | 2026-04-22 |  |
+"""
+        items = parse_inventory_md(md)
+        assert len(items) == 2
+        assert items[0]["item"] == "olive oil"
+        assert items[0]["category"] == "pantry"
+        assert items[1]["qty"] == 2.0
+        assert items[1]["unit"] == "lb"
+        assert items[1]["expires_date"] == "2026-04-22"
+
+    def test_write_and_reparse_is_lossless(self):
+        items = [
+            {"item": "olive oil", "qty": 1, "unit": "bottle",
+             "category": "pantry", "added_date": "2026-03-15",
+             "expires_date": None, "notes": ""},
+            {"item": "chicken breast", "qty": 2.0, "unit": "lb",
+             "category": "fridge", "added_date": "2026-04-18",
+             "expires_date": "2026-04-22", "notes": ""},
+        ]
+        md = write_inventory_md(items)
+        reparsed = parse_inventory_md(md)
+        assert len(reparsed) == 2
+        assert reparsed[0]["item"] == "olive oil"
+        assert reparsed[1]["expires_date"] == "2026-04-22"
+```
+
+**Step 2: Run — fail.**
+
+**Step 3: Implement `lib/inventory.py`**
+
+```python
+# lib/inventory.py
+"""Kitchen inventory: Inventory.md ↔ SQLite round-trip + normalization."""
+from __future__ import annotations
+
+import re
+from datetime import date, timedelta
+from pathlib import Path
+from typing import Any
+
+CATEGORIES = ("pantry", "fridge", "freezer", "produce")
+
+_UNIT_ALIASES = {
+    "": "each",
+    "ea": "each",
+    "lbs": "lb", "pound": "lb", "pounds": "lb",
+    "ounce": "oz", "ounces": "oz",
+    "bottles": "bottle",
+    "boxes": "box",
+    "cans": "can",
+    "cups": "cup",
+    "bags": "bag",
+    "jars": "jar",
+    "packages": "package", "pkg": "package",
+}
+
+
+def normalize_unit(unit: str) -> str:
+    u = (unit or "").strip().lower()
+    return _UNIT_ALIASES.get(u, u or "each")
+
+
+def normalize_item(name: str) -> str:
+    n = (name or "").strip().lower()
+    # Naive singularization: only strip trailing 's' when it's not clearly plural-of-collective.
+    # Keep 'pasta', 'rice' alone; drop 'onions' → 'onion', 'tomatoes' → 'tomato', 'eggs' → 'egg'.
+    if n.endswith("oes"):
+        return n[:-2]         # tomatoes → tomato
+    if n.endswith("ies"):
+        return n[:-3] + "y"   # berries → berry
+    if n.endswith("s") and not n.endswith("ss"):
+        # Leave uncountables alone
+        uncountables = {"rice", "pasta", "molasses", "hummus"}
+        if n not in uncountables:
+            return n[:-1]
+    return n
+
+
+_EXPIRY_DAYS = {
+    "pantry": None,
+    "fridge": 14,
+    "freezer": 90,
+    "produce": 7,
+}
+
+
+def default_expiry(category: str, added: date) -> date | None:
+    days = _EXPIRY_DAYS.get(category)
+    return added + timedelta(days=days) if days else None
+
+
+_TABLE_ROW_RE = re.compile(r"^\|(.+)\|\s*$")
+
+
+def parse_inventory_md(md: str) -> list[dict[str, Any]]:
+    """Parse Inventory.md into a list of item dicts. Normalizes item name + unit."""
+    items: list[dict[str, Any]] = []
+    current_category: str | None = None
+    in_table = False
+
+    for raw in md.splitlines():
+        line = raw.rstrip()
+        header = re.match(r"^##\s+(\w+)", line)
+        if header:
+            cat = header.group(1).lower()
+            current_category = cat if cat in CATEGORIES else None
+            in_table = False
+            continue
+
+        if current_category is None:
+            continue
+
+        row = _TABLE_ROW_RE.match(line)
+        if not row:
+            continue
+        cells = [c.strip() for c in row.group(1).split("|")]
+        # Skip header + separator rows
+        if cells and set(cells[0].replace("-", "").strip()) <= {""}:
+            in_table = True
+            continue
+        if cells[0].lower() == "item":
+            continue
+        if len(cells) < 5:
+            continue
+
+        item_name, qty_str, unit, added, *rest = cells
+        expires = rest[0] if len(rest) >= 1 else ""
+        notes = rest[1] if len(rest) >= 2 else ""
+        try:
+            qty = float(qty_str.replace(",", "."))
+        except ValueError:
+            continue
+        items.append({
+            "item": normalize_item(item_name),
+            "qty": qty,
+            "unit": normalize_unit(unit),
+            "category": current_category,
+            "added_date": added.strip() or date.today().isoformat(),
+            "expires_date": expires.strip() or None,
+            "notes": notes.strip(),
+        })
+    return items
+
+
+def write_inventory_md(items: list[dict[str, Any]]) -> str:
+    """Serialize items back to Inventory.md format, grouped by category."""
+    from datetime import datetime
+    sections = {c: [] for c in CATEGORIES}
+    for it in items:
+        sections[it.get("category", "pantry")].append(it)
+
+    lines = [
+        "# Kitchen Inventory",
+        f"Last updated: {datetime.now().date().isoformat()}",
+        "",
+    ]
+    for cat in CATEGORIES:
+        lines.append(f"## {cat.capitalize()}")
+        lines.append("| Item | Qty | Unit | Added | Expires | Notes |")
+        lines.append("|---|---|---|---|---|---|")
+        for it in sorted(sections[cat], key=lambda r: r["item"]):
+            expires = it.get("expires_date") or ""
+            notes = it.get("notes") or ""
+            qty = it["qty"]
+            qty_str = f"{int(qty)}" if qty == int(qty) else f"{qty}"
+            lines.append(
+                f"| {it['item']} | {qty_str} | {it['unit']} | "
+                f"{it['added_date']} | {expires} | {notes} |"
+            )
+        lines.append("")
+    return "\n".join(lines)
+
+
+def sync_from_markdown(vault: Path, cache) -> int:
+    """Read Inventory.md → write to cache.inventory table. Returns row count."""
+    path = vault / "Inventory.md"
+    if not path.exists():
+        return 0
+    items = parse_inventory_md(path.read_text(encoding="utf-8"))
+    cache.conn.execute("DELETE FROM inventory")
+    from datetime import datetime, timezone
+    now = datetime.now(tz=timezone.utc).isoformat()
+    for it in items:
+        cache.conn.execute(
+            "INSERT OR REPLACE INTO inventory("
+            "item, qty, unit, category, added_date, expires_date, notes, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (it["item"], it["qty"], it["unit"], it["category"],
+             it["added_date"], it["expires_date"], it["notes"], now),
+        )
+    cache.conn.commit()
+    return len(items)
+
+
+def sync_to_markdown(vault: Path, cache) -> Path:
+    """Read cache.inventory → rewrite Inventory.md."""
+    rows = cache.raw_query(
+        "SELECT item, qty, unit, category, added_date, expires_date, notes FROM inventory"
+    )
+    items = [
+        {"item": r[0], "qty": r[1], "unit": r[2], "category": r[3],
+         "added_date": r[4], "expires_date": r[5], "notes": r[6] or ""}
+        for r in rows
+    ]
+    path = vault / "Inventory.md"
+    path.write_text(write_inventory_md(items), encoding="utf-8")
+    return path
+```
+
+**Step 4: Template skeleton**
+
+```python
+# templates/inventory_template.py
+"""Initial Inventory.md template."""
+from datetime import date
+
+
+def generate_inventory_markdown() -> str:
+    today = date.today().isoformat()
+    return f"""# Kitchen Inventory
+Last updated: {today}
+
+## Pantry
+| Item | Qty | Unit | Added | Expires | Notes |
+|---|---|---|---|---|---|
+
+## Fridge
+| Item | Qty | Unit | Added | Expires | Notes |
+|---|---|---|---|---|---|
+
+## Freezer
+| Item | Qty | Unit | Added | Expires | Notes |
+|---|---|---|---|---|---|
+
+## Produce
+| Item | Qty | Unit | Added | Expires | Notes |
+|---|---|---|---|---|---|
+"""
+```
+
+**Step 5: Run tests.** Pass.
+
+**Step 6: Commit**
+
+```bash
+git add lib/inventory.py templates/inventory_template.py tests/test_inventory.py
+git commit -m "feat: inventory parser + normalizer + round-trip"
+```
+
+---
+
+### Task 28: Inventory CRUD API endpoints
+
+**Files:**
+- Modify: `api_server.py`
+- Modify: `tests/test_api_endpoints.py`
+
+Add four endpoints. TDD one at a time, one commit per endpoint.
+
+**`GET /api/inventory`** — returns full inventory JSON grouped by category.
+
+```python
+@app.route("/api/inventory", methods=["GET"])
+def api_inventory_list():
+    cache = _get_cache()
+    rows = cache.raw_query(
+        "SELECT id, item, qty, unit, category, added_date, expires_date, notes "
+        "FROM inventory ORDER BY category, item"
+    )
+    out: dict[str, list] = {c: [] for c in ("pantry", "fridge", "freezer", "produce")}
+    for r in rows:
+        out[r[4]].append({
+            "id": r[0], "item": r[1], "qty": r[2], "unit": r[3],
+            "category": r[4], "added_date": r[5], "expires_date": r[6],
+            "notes": r[7] or "",
+        })
+    return jsonify(out)
+```
+
+**`POST /api/inventory`** — body `{items: [{item, qty, unit, category, added_date?, expires_date?, notes?}, ...]}`. Normalizes, applies default expiry when missing, writes to SQLite, rewrites `Inventory.md`.
+
+**`PATCH /api/inventory/<id>`** — body with any of `qty`, `unit`, `expires_date`, `notes`. Updates row, rewrites Inventory.md.
+
+**`DELETE /api/inventory/<id>`** — removes row, rewrites Inventory.md.
+
+For each endpoint: write a Flask test that exercises it against a tempdir vault, asserts the response JSON AND the Inventory.md file contents.
+
+**Commit each separately:** `feat: GET /api/inventory`, `feat: POST /api/inventory`, etc.
+
+---
+
+### Task 29: MCP tool `inventory_add` — conversational bulk load
+
+**Files:**
+- Create: `prompts/inventory_parse.py`
+- Modify: `lib/mcp_tools.py`
+- Modify: `mcp_server.py` (register tool)
+- Create: `tests/test_mcp_inventory.py`
+
+**Step 1: Write the Claude prompt**
+
+```python
+# prompts/inventory_parse.py
+"""Claude prompt template: convert natural-language inventory description to structured rows."""
+
+SYSTEM_PROMPT = """Extract kitchen inventory items from the user's natural-language description.
+
+Return ONLY valid JSON, matching this schema:
+
+{
+  "items": [
+    {
+      "item": "chicken breast",
+      "qty": 2,
+      "unit": "lb",
+      "category": "fridge",
+      "notes": ""
+    },
+    ...
+  ]
+}
+
+Rules:
+- item names: lowercase, singular
+- category: one of 'pantry', 'fridge', 'freezer', 'produce'
+- unit: prefer 'each', 'lb', 'oz', 'cup', 'bottle', 'box', 'can', 'bag', 'jar', 'package'
+- If the user didn't specify a category, infer from the item (meat/dairy→fridge, flour/pasta→pantry, lettuce/onion→produce, ice cream→freezer)
+- If quantity isn't stated, use 1
+- Never invent items the user didn't mention
+"""
+
+
+def build_parse_prompt(free_text: str) -> str:
+    return f"User inventory description:\n\n{free_text}\n\nReturn the JSON now."
+```
+
+**Step 2: Implement `inventory_add` tool**
+
+```python
+# in lib/mcp_tools.py
+def inventory_add(free_text: str) -> dict:
+    """Parse free-text into inventory items via Claude, then POST to /api/inventory."""
+    import json, os
+    import anthropic
+
+    from prompts.inventory_parse import SYSTEM_PROMPT, build_parse_prompt
+
+    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    resp = client.messages.create(
+        model="claude-opus-4-7",
+        system=SYSTEM_PROMPT,
+        max_tokens=2048,
+        messages=[{"role": "user", "content": build_parse_prompt(free_text)}],
+    )
+    text = resp.content[0].text.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1].rsplit("```", 1)[0]
+    parsed = json.loads(text)
+
+    # POST to API
+    import requests
+    r = requests.post(
+        "http://localhost:5001/api/inventory",
+        json={"items": parsed["items"]},
+        timeout=30,
+    )
+    r.raise_for_status()
+    return {"added": len(parsed["items"]), "result": r.json()}
+```
+
+**Step 3: Register in `mcp_server.py`** — follow existing pattern for other MCP tools; add to the tool manifest.
+
+**Step 4: Also add `inventory_check(item_name: str)` and `inventory_expiring(days: int = 7)`** as simple wrappers over `GET /api/inventory` with client-side filtering.
+
+**Step 5: Tests** — mock Claude + requests, assert tool returns the expected structure.
+
+**Step 6: Commit**
+
+```bash
+git add prompts/inventory_parse.py lib/mcp_tools.py mcp_server.py tests/test_mcp_inventory.py
+git commit -m "feat: MCP inventory_add/check/expiring tools"
+```
+
+---
+
+### Task 30: Scoring components — `inventory_match` + `expiring_boost`
+
+**Files:**
+- Modify: `config/scoring_weights.json` — add keys
+- Modify: `lib/meal_scorer.py` — add functions + integrate into `score_candidate`
+- Modify: `tests/test_meal_scorer.py`
+
+**Step 1: Add weights**
+
+```json
+"inventory_match_max": 25,
+"expiring_boost_max": 15,
+"expiring_window_days": 3
+```
+
+**Step 2: Tests**
+
+```python
+class TestInventoryMatch:
+    def test_full_match_max_score(self):
+        from lib.meal_scorer import score_inventory_match
+        recipe_ingredients = [
+            {"item": "chicken breast"}, {"item": "onion"}, {"item": "garlic"},
+        ]
+        inventory = {"chicken breast", "onion", "garlic"}
+        staples = set()
+        assert score_inventory_match(recipe_ingredients, inventory, staples, max_score=25) == 25
+
+    def test_staples_count_as_match(self):
+        from lib.meal_scorer import score_inventory_match
+        recipe_ingredients = [{"item": "chicken breast"}, {"item": "salt"}]
+        inventory = {"chicken breast"}
+        staples = {"salt"}
+        assert score_inventory_match(recipe_ingredients, inventory, staples, max_score=25) == 25
+
+    def test_partial_match_proportional(self):
+        from lib.meal_scorer import score_inventory_match
+        recipe_ingredients = [
+            {"item": "chicken breast"}, {"item": "onion"},
+            {"item": "bell pepper"}, {"item": "rice"},
+        ]
+        inventory = {"chicken breast", "onion"}
+        staples = set()
+        # 2/4 = 50% → 12.5 → round to 13 (or 12 depending on rounding; either OK in test)
+        score = score_inventory_match(recipe_ingredients, inventory, staples, max_score=25)
+        assert 10 <= score <= 14
+
+    def test_empty_inventory_zero(self):
+        from lib.meal_scorer import score_inventory_match
+        recipe_ingredients = [{"item": "chicken breast"}, {"item": "onion"}]
+        assert score_inventory_match(recipe_ingredients, set(), set(), max_score=25) == 0
+
+
+class TestExpiringBoost:
+    def test_expiring_within_window_boosts(self):
+        from datetime import date
+        from lib.meal_scorer import score_expiring_boost
+        recipe_ingredients = [{"item": "spinach"}]
+        expiring = {"spinach": date(2026, 4, 21)}  # 2 days from today (2026-04-19)
+        today = date(2026, 4, 19)
+        assert score_expiring_boost(recipe_ingredients, expiring, today, window_days=3, max_score=15) == 15
+
+    def test_outside_window_zero(self):
+        from datetime import date
+        from lib.meal_scorer import score_expiring_boost
+        expiring = {"spinach": date(2026, 4, 28)}
+        today = date(2026, 4, 19)
+        assert score_expiring_boost([{"item": "spinach"}], expiring, today, window_days=3, max_score=15) == 0
+```
+
+**Step 3: Implement**
+
+```python
+# append to lib/meal_scorer.py
+def score_inventory_match(
+    recipe_ingredients: list[dict],
+    inventory_items: set[str],
+    staples: set[str],
+    max_score: int = 25,
+) -> int:
+    """Fraction of recipe ingredients present in inventory or staples → bonus."""
+    if not recipe_ingredients:
+        return 0
+    from lib.inventory import normalize_item
+    normalized_ing = [normalize_item(i.get("item", "")) for i in recipe_ingredients]
+    available = inventory_items | staples
+    matches = sum(1 for item in normalized_ing if item in available or _fuzzy_in(item, available))
+    fraction = matches / len(normalized_ing)
+    return round(fraction * max_score)
+
+
+def _fuzzy_in(needle: str, haystack: set[str]) -> bool:
+    for item in haystack:
+        if item in needle or needle in item:
+            return True
+    return False
+
+
+def score_expiring_boost(
+    recipe_ingredients: list[dict],
+    expiring_map: dict,  # {item_name: expires_date}
+    today,
+    window_days: int = 3,
+    max_score: int = 15,
+) -> int:
+    if not expiring_map:
+        return 0
+    from datetime import timedelta
+    from lib.inventory import normalize_item
+    deadline = today + timedelta(days=window_days)
+    normalized_ing = {normalize_item(i.get("item", "")) for i in recipe_ingredients}
+    for item, exp in expiring_map.items():
+        if exp <= deadline and (item in normalized_ing or _fuzzy_in(item, normalized_ing)):
+            return max_score
+    return 0
+```
+
+**Step 4: Integrate into `score_candidate`** — add components dict entries for `inventory_match` and `expiring_boost`. Update existing `TestScoreCandidate` tests to pass the new `inventory_snapshot` + `expiring_map` via `plan_state`.
+
+**Step 5: Run all scorer tests.** Pass.
+
+**Step 6: Commit**
+
+```bash
+git add config/scoring_weights.json lib/meal_scorer.py tests/test_meal_scorer.py
+git commit -m "feat: scorer — inventory_match + expiring_boost components"
+```
+
+---
+
+### Task 31: Shopping list conservative dedup
+
+**Files:**
+- Modify: `lib/shopping_list_generator.py`
+- Modify: `tests/test_shopping_list.py` (or create if absent)
+
+**Step 1: Tests**
+
+```python
+class TestShoppingListInventoryDedup:
+    def test_skips_when_inventory_covers_2x(self):
+        from lib.shopping_list_generator import dedup_against_inventory
+        required = [{"item": "chicken breast", "qty": 2.0, "unit": "lb"}]
+        inventory = {("chicken breast", "lb"): 5.0}
+        result = dedup_against_inventory(required, inventory)
+        assert result[0]["skipped"] is True
+        assert "in inventory" in result[0]["annotation"]
+
+    def test_buys_when_inventory_is_1x_only(self):
+        from lib.shopping_list_generator import dedup_against_inventory
+        required = [{"item": "chicken breast", "qty": 2.0, "unit": "lb"}]
+        inventory = {("chicken breast", "lb"): 2.0}  # exactly 1x
+        result = dedup_against_inventory(required, inventory)
+        assert result[0]["skipped"] is False
+
+    def test_buys_when_units_differ(self):
+        from lib.shopping_list_generator import dedup_against_inventory
+        required = [{"item": "onion", "qty": 1, "unit": "cup"}]
+        inventory = {("onion", "each"): 10.0}  # units don't match; shop anyway
+        result = dedup_against_inventory(required, inventory)
+        assert result[0]["skipped"] is False
+```
+
+**Step 2: Implement**
+
+```python
+# add to lib/shopping_list_generator.py
+def dedup_against_inventory(
+    required: list[dict],  # [{item, qty, unit}, ...]
+    inventory: dict,       # {(normalized_item, unit): qty}
+) -> list[dict]:
+    """Mark required ingredients as skipped when inventory covers ≥ 2× and units match."""
+    out = []
+    for r in required:
+        key = (r["item"], r["unit"])
+        stocked = inventory.get(key, 0.0)
+        if stocked >= r["qty"] * 2:
+            out.append({**r, "skipped": True, "annotation": "(in inventory)"})
+        else:
+            out.append({**r, "skipped": False, "annotation": ""})
+    return out
+```
+
+**Step 3: Wire into `generate_shopping_list`** — build the `inventory` dict from cache, call `dedup_against_inventory` after aggregation. Pass skipped items through to the template; existing template rendering adds them as `- [x] ~~item~~ (in inventory)`.
+
+**Step 4: Update `templates/shopping_list_template.py`** to render skipped items differently.
+
+**Step 5: Run tests.** Pass.
+
+**Step 6: Commit**
+
+```bash
+git add lib/shopping_list_generator.py templates/shopping_list_template.py tests/test_shopping_list.py
+git commit -m "feat: shopping list conservative 2× inventory dedup"
+```
+
+---
+
+### Task 32: "✓ I shopped" button → confirm endpoint
+
+**Files:**
+- Modify: `api_server.py` — `POST /api/shopping-list/confirm`
+- Modify: `templates/shopping_list_template.py` — button
+- Modify: `scripts/kitchenos-uri-handler/` (existing URI handler, likely needs a new action)
+
+**Step 1: Test the endpoint**
+
+```python
+class TestShoppingListConfirm:
+    def test_checked_items_become_inventory(self, tmp_path):
+        # set up tempdir vault with a shopping list file containing checked items
+        (tmp_path / "Shopping Lists").mkdir()
+        (tmp_path / "Shopping Lists" / "2026-W20.md").write_text("""# Shopping List - W20
+
+- [x] chicken breast 2 lb
+- [x] onion 3 each
+- [ ] celery 1 bunch
+""", encoding="utf-8")
+        # POST to /api/shopping-list/confirm with {file: "2026-W20"}
+        # assert chicken and onion landed in inventory; celery did not
+```
+
+**Step 2: Implement**
+
+```python
+# in api_server.py
+@app.route("/api/shopping-list/confirm", methods=["POST"])
+def api_shopping_list_confirm():
+    from lib.inventory import default_expiry, sync_to_markdown
+    from datetime import date
+
+    payload = request.get_json(silent=True) or {}
+    week = payload.get("week") or payload.get("file")
+    if not week:
+        return jsonify({"error": "week required"}), 400
+    path = VAULT / "Shopping Lists" / f"{week}.md"
+    if not path.exists():
+        return jsonify({"error": "shopping list not found"}), 404
+
+    content = path.read_text(encoding="utf-8")
+    checked = _extract_checked_items(content)  # helper parses `- [x] item qty unit`
+    cache = _get_cache()
+    today = date.today()
+    added = 0
+    for it in checked:
+        category = _infer_category(it["item"])
+        exp = default_expiry(category, today)
+        cache.conn.execute(
+            "INSERT OR REPLACE INTO inventory("
+            "item, qty, unit, category, added_date, expires_date, notes, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+            (it["item"], it["qty"], it["unit"], category,
+             today.isoformat(), exp.isoformat() if exp else None, ""),
+        )
+        added += 1
+    cache.conn.commit()
+    sync_to_markdown(VAULT, cache)
+    return jsonify({"added": added})
+
+
+def _infer_category(item: str) -> str:
+    # Small rules table; conservative default to pantry
+    fridge_hints = ("chicken", "beef", "pork", "fish", "dairy", "milk", "yogurt", "cheese", "eggs", "butter")
+    produce_hints = ("onion", "garlic", "pepper", "tomato", "lettuce", "spinach", "kale", "broccoli", "carrot", "apple", "lemon", "lime", "banana")
+    freezer_hints = ("frozen", "ice cream")
+    lower = item.lower()
+    if any(h in lower for h in freezer_hints):
+        return "freezer"
+    if any(h in lower for h in produce_hints):
+        return "produce"
+    if any(h in lower for h in fridge_hints):
+        return "fridge"
+    return "pantry"
+```
+
+**Step 3: Add button to shopping list template**
+
+```markdown
+\`\`\`button
+name ✓ I shopped
+type link
+action kitchenos://confirm-shopping-list?week={{week}}
+\`\`\`
+```
+
+Add a `confirm-shopping-list` action to `scripts/kitchenos-uri-handler/` that POSTs to the endpoint.
+
+**Step 4: Manual verification** — run the shopping list generator, check a few items in Obsidian, tap the button, verify inventory updates.
+
+**Step 5: Commit**
+
+```bash
+git add api_server.py templates/shopping_list_template.py scripts/kitchenos-uri-handler tests/test_api_endpoints.py
+git commit -m "feat: I-shopped button flows checked items into inventory"
+```
+
+---
+
+### Task 33: Inventory view in meal planner UI
+
+**Files:**
+- Modify: `templates/meal_planner.html`
+
+Add a sidebar panel showing current inventory grouped by category. Highlight items expiring in ≤3 days in amber; ≤1 day in red. Sortable, searchable.
+
+Calls `GET /api/inventory` on load; refreshes when `POST /api/inventory` fires anywhere (via existing event bus or explicit refresh on planner state change).
+
+No unit tests (UI); document manual test steps in commit.
+
+```bash
+git add templates/meal_planner.html
+git commit -m "feat: inventory sidebar panel in meal planner UI"
+```
+
+---
+
+### Task 34: Wednesday digest — "Expiring soon" section + inventory adherence
+
+**Files:**
+- Modify: `lib/weekly_digest.py`
+- Modify: `prompts/weekly_digest.py`
+
+Add to the digest prompt input:
+- List of items expiring in ≤7 days
+- Last week's shopping list: how many items were deduped against inventory vs. bought fresh
+
+Update system prompt to include:
+
+```
+## Expiring soon
+(If any inventory items expire within 7 days: list them and suggest next-week slots that would use them. If nothing expiring, write 'Nothing critical.')
+
+## Inventory usage last week
+(Count of planned ingredients that were in inventory vs. bought. If >50% bought fresh when stock existed, flag it.)
+```
+
+Update `lib/weekly_digest.py` to query `inventory` table for `expires_date <= date('now', '+7 days')` and include in prompt context.
+
+Add a test that mocks Claude and asserts the expiring list reaches the prompt.
+
+```bash
+git add lib/weekly_digest.py prompts/weekly_digest.py tests/test_weekly_digest.py
+git commit -m "feat: digest — expiring-soon section + inventory adherence"
+```
+
+---
+
+### Task 35: Phase A.5 end-to-end verification
+
+**Step 1: Seed inventory via MCP tool**
+
+From a Claude session with the KitchenOS MCP server loaded, use `inventory_add` with a realistic description. Verify `Inventory.md` is populated.
+
+**Step 2: Dry-run Mode D with and without inventory present**
+
+```bash
+.venv/bin/python plan_week.py --week 2026-W24 --dry-run > /tmp/with_inventory.json
+mv Inventory.md /tmp/Inventory.md.bak   # temporarily remove
+.venv/bin/python plan_week.py --week 2026-W24 --dry-run > /tmp/without_inventory.json
+mv /tmp/Inventory.md.bak Inventory.md   # restore
+diff /tmp/without_inventory.json /tmp/with_inventory.json
+```
+
+Expected: different recipe selections, with the inventory run favoring recipes using stocked items.
+
+**Step 3: Generate a shopping list for a week and verify dedup annotations**
+
+```bash
+.venv/bin/python shopping_list.py --week 2026-W24
+```
+
+Open the resulting Shopping Lists file; confirm at least one line is rendered as `- [x] ~~item~~ (in inventory)`.
+
+**Step 4: Commit smoke-test update**
+
+Extend `scripts/smoke_test_planner.sh` to also run `.venv/bin/python -m pytest tests/test_inventory.py tests/test_mcp_inventory.py`.
+
+```bash
+git add scripts/smoke_test_planner.sh
+git commit -m "chore: add inventory tests to smoke-test script"
+```
+
+---
+
 ## Phase B: Structured Feedback Loop (outline)
 
 Activated after Phase A has 2+ weeks of real use. High-level tasks (to be expanded into a separate plan when triggered):
@@ -3000,8 +3887,10 @@ Activated after Phase A has 2+ weeks of real use. High-level tasks (to be expand
 4. **Rolling rating recomputation** — `rating` frontmatter becomes weighted average of last 3 cooks (3×/2×/1× weighting of newest to oldest). Applied on every cook-log write.
 5. **Digest adherence uses cook-log** — instead of assuming planned == cooked, the digest reads actual cook logs for the past 7 days.
 6. **Meal planner UI: cook-log button on each scheduled meal card** — one-tap to open the shortcut.
+7. **Inventory depletion on cook-log** — after cook-log writes, fuzzy-match recipe ingredients against `inventory` table; build a decrement preview; user confirms → quantities reduced (rows with `qty ≤ 0` removed). Implement as `POST /api/inventory/deplete-from-recipe` with `{recipe_name, servings, confirm: bool}`.
+8. **Receipt OCR** — iOS Shortcut: photograph receipt → `POST /api/inventory/from-receipt` (multipart image) → server calls Claude Vision API with `prompts/receipt_parse.py` prompt → returns parsed items → Shortcut shows preview → user confirms → items posted to `POST /api/inventory`. Build the prompt carefully to handle price lines, discount lines, and blurry photos gracefully.
 
-Phase B gate: two full weeks of shortcut-logged cooks; digest accurately reports planned-vs-cooked.
+Phase B gate: two full weeks of shortcut-logged cooks; digest accurately reports planned-vs-cooked; at least one successful receipt OCR import end-to-end; at least one cook depletion round-trip verified by inventory diff.
 
 ---
 

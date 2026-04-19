@@ -13,6 +13,7 @@ Build a goal-directed meal-planning layer on top of KitchenOS that:
 3. Tracks calories and heart-health metrics on every planned day.
 4. Runs a weekly vault review that surfaces patterns from user notes, rating changes, and what actually got cooked.
 5. Supports multi-recipe menus as (a) batch-cook cascades and (b) day-level macro composition.
+6. **Prioritizes recipes that use ingredients already on hand**, minimizing grocery purchases and food waste.
 
 ## Non-goals (explicit YAGNI)
 
@@ -36,6 +37,9 @@ Build a goal-directed meal-planning layer on top of KitchenOS that:
 | Review cadence | Wednesday digest (LaunchAgent). User reviews Wed–Fri. Shopping list generates Fri; week locks. Sat shop, Sun batch cook, Mon–Fri execute |
 | Multi-week | System maintains ≥2 draft weeks ahead; user can trigger Mode D for any future week |
 | Architecture | Approach 2 — planner engine + SQLite cache + Claude API for digest/one-shot + Ollama for per-slot scoring |
+| Inventory source | `Inventory.md` (vault root, markdown table) round-tripping with SQLite `inventory` table. Three input flows: conversational bulk load via MCP tool, "I shopped" close-the-loop from shopping lists, receipt OCR (Phase B) |
+| Inventory × shopping list | Conservative 2× dedup: only skip buying an item if inventory holds ≥ 2× the recipe's required amount (normalized units). No unit-conversion table in Phase A.5 |
+| Staples vs inventory | Static staples stay in `config/pantry_staples.json` (always-on); inventory tracks depletable items. Scorer consults both. |
 
 ## Architecture
 
@@ -190,6 +194,22 @@ CREATE TABLE digests (
   summary_path TEXT,
   patterns_json TEXT
 );
+
+CREATE TABLE inventory (
+  id INTEGER PRIMARY KEY,
+  item TEXT NOT NULL,         -- normalized: lowercase, singular, trimmed
+  qty REAL NOT NULL,
+  unit TEXT NOT NULL,         -- 'each', 'lb', 'oz', 'cup', 'bottle', 'box', ...
+  category TEXT NOT NULL,     -- 'pantry' | 'fridge' | 'freezer' | 'produce'
+  added_date DATE NOT NULL,
+  expires_date DATE,
+  notes TEXT,
+  updated_at DATETIME,
+  UNIQUE(item, unit, category)
+);
+
+CREATE INDEX idx_inventory_item ON inventory(item);
+CREATE INDEX idx_inventory_expires ON inventory(expires_date);
 ```
 
 Cache refresh: **lazy, on read.** Every entry-point script calls `cache.sync()` which stat()s vault files and re-indexes only changed ones. No background watcher.
@@ -208,6 +228,8 @@ Returns a dict (for UI transparency) with weighted components:
 | seasonality | 0 to 5 | +5 if current month in `peak_months` |
 | training_day_bonus | 0 to 10 | +10 if lifting day and recipe is high-protein (≥30g) or high-carb (≥50g) |
 | batch_coherence | 0 to 30 | +30 for a child recipe if its `batch_parent` is scheduled earlier this week with servings remaining |
+| inventory_match | 0 to 25 | Bonus scaled by fraction of recipe ingredients already in inventory or in `pantry_staples.json`. Full +25 when ≥90% of non-staple ingredients are in stock |
+| expiring_boost | 0 to 15 | Extra bonus when recipe uses an inventory item expiring within 3 days (stacks with inventory_match) |
 | heart_health | 0 in Phase A | Reserved for Phase C penalties up to -30 |
 
 **Hard filters** (applied before scoring):
@@ -243,6 +265,81 @@ Tolerance: if no combination lands within ±15% of daily targets, surface the to
 Shopping list integration (`lib/shopping_list_generator.py`):
 - When child recipe is in the plan AND its `batch_parent` is also in the plan: child's ingredients that match any item in parent's `produces` field are suppressed (using existing `normalizer.py` for fuzzy match).
 - Parent's full ingredient list is shopped for once.
+
+### Inventory (`lib/inventory.py`)
+
+The goal is to prioritize recipes that use what's already on hand and to reduce redundant purchases.
+
+**Source of truth:** `Inventory.md` at vault root. Markdown table, sections per category, round-trips with the SQLite `inventory` table (same pattern as meal plans). User can edit on any device; parser normalizes on write.
+
+**File format:**
+
+```markdown
+# Kitchen Inventory
+Last updated: 2026-04-19
+
+## Pantry
+| Item | Qty | Unit | Added | Expires | Notes |
+|---|---|---|---|---|---|
+| pasta (penne) | 2 | box | 2026-04-10 |  |  |
+| olive oil | 1 | bottle | 2026-03-15 |  |  |
+
+## Fridge
+| Item | Qty | Unit | Added | Expires | Notes |
+|---|---|---|---|---|---|
+| chicken breast | 2 | lb | 2026-04-18 | 2026-04-22 |  |
+| eggs | 8 | each | 2026-04-15 | 2026-04-29 |  |
+
+## Freezer
+...
+
+## Produce
+...
+```
+
+**Normalization on read:** item names lowercased and singularized; unit aliases mapped (`lbs`→`lb`, `bottles`→`bottle`, `boxes`→`box`). Stored normalized in SQLite; original row preserved in markdown for human readability.
+
+**Default expiry on add:**
+
+| Category | Default expiry |
+|---|---|
+| pantry | none |
+| fridge | +14 days (user can override) |
+| freezer | +90 days |
+| produce | +7 days |
+
+User can always set an explicit `expires` column; the default only fills in blanks.
+
+**Three input flows:**
+
+1. **Conversational bulk load (initial seeding).** New MCP tool `inventory_add` accepts free-text ("I have 2 pounds of chicken in the fridge, a dozen eggs, 3 onions, a bottle of olive oil in the pantry") → Claude parses into structured rows → writes to `Inventory.md`. Used once to populate; can be rerun for additions.
+2. **Shopping list closes the loop.** Shopping list files already have checkboxes. A new "✓ I shopped" button (`POST /api/shopping-list/confirm`) flows every checked item into inventory with today's `added_date` and default expiry. Unchecked items are ignored.
+3. **Receipt OCR (Phase B).** iOS Shortcut: photo → `POST /api/inventory/from-receipt` → Claude Vision parses → preview for confirmation → added. Handles ad-hoc purchases outside the planner.
+
+**Scoring integration:**
+
+- `score_inventory_match(recipe, inventory_snapshot, staples_snapshot)` returns 0–25 based on fraction of non-staple ingredients present in inventory (or in `pantry_staples.json`). Fuzzy match via existing `lib/normalizer.py`.
+- `score_expiring_boost(recipe, inventory_snapshot, today)` returns 0–15 if the recipe uses any inventory item expiring in ≤3 days. Stacks with `inventory_match`.
+
+**Shopping list dedup (conservative 2× rule):**
+
+- For each required ingredient in the plan, check inventory.
+- **Only skip** buying the item if inventory quantity ≥ 2× recipe requirement *in the same unit* (no unit conversion — recipe "1 cup onion" vs. inventory "3 each onion" don't match and we shop anyway).
+- Rationale: false-negative buys (bought something you already had) are safer and cheaper than false-positive skips (can't cook because you assumed you had it).
+- When a skip happens, the shopping list annotates it: `- [x] ~~chicken breast 2 lb~~ (in inventory)`.
+
+**Cook-time depletion (Phase B):**
+
+When the "I cooked this" shortcut fires:
+1. Fuzzy-match each recipe ingredient to inventory rows (same unit preferred; if unit differs, leave alone).
+2. Decrement quantity; remove row when qty ≤ 0.
+3. Present a preview diff before committing — user confirms or edits.
+
+**Digest integration:**
+
+Wednesday digest gains an "Expiring soon" subsection listing inventory items expiring in ≤7 days and the proposed-week slots that would consume them.
+
+**Staples stay separate:** `config/pantry_staples.json` continues as a static "always on hand" list. The scorer treats staples as always matched (infinite quantity) but the shopping list never includes them by default — same as today. Inventory is strictly for depletable items.
 
 ### Planning modes
 
@@ -349,6 +446,10 @@ Existing `com.kitchenos.mealplan.plist` continues generating blank template week
 | `config/scoring_weights.json` | Tunable weights for meal_scorer |
 | `com.kitchenos.weekly-digest.plist` | Wednesday LaunchAgent |
 | `migrate_schema_v2.py` | One-time migration: add new frontmatter fields to 207 recipes |
+| `lib/inventory.py` | Inventory parser, normalizer, markdown↔SQLite round-trip, CRUD helpers |
+| `templates/inventory_template.py` | `Inventory.md` skeleton (sections + header) |
+| `prompts/inventory_parse.py` | Claude prompt for conversational bulk-load parsing |
+| `prompts/receipt_parse.py` | Claude Vision prompt for receipt OCR (Phase B) |
 
 ### Modified files
 
@@ -359,7 +460,10 @@ Existing `com.kitchenos.mealplan.plist` continues generating blank template week
 | `lib/meal_plan_parser.py` | Parse new `status`, `locked_at`, `intent` frontmatter |
 | `lib/shopping_list_generator.py` | Batch-parent ingredient suppression; transition week to `locked` on generate |
 | `lib/recipe_index.py` | Hydrate cache when stale |
-| `api_server.py` | New endpoints: `POST /api/plan-next-week`, `GET /api/digest-preview`, `POST /api/score-candidates`, `PATCH /api/recipe-rating` |
+| `api_server.py` | New endpoints: `POST /api/plan-next-week`, `GET /api/digest-preview`, `POST /api/score-candidates`, `PATCH /api/recipe-rating`, `GET/POST/PATCH/DELETE /api/inventory`, `POST /api/shopping-list/confirm`, `POST /api/inventory/from-receipt` (Phase B) |
+| `lib/mcp_tools.py` | New MCP tools: `inventory_add`, `inventory_check`, `inventory_expiring` |
+| `lib/meal_scorer.py` | Adds `score_inventory_match` and `score_expiring_boost` components |
+| `templates/shopping_list_template.py` | Annotate skipped items as `~~ingredient~~ (in inventory)` + emit "I shopped" button |
 | `templates/meal_planner.html` | Day-score panel (macros + heart-health metrics), inline rating stars on recipe cards, "Build Full Week" button |
 | `templates/meal_plan_template.py` | Emit `status: draft` in frontmatter on new plans |
 | `templates/my_macros_template.py` | Add `## Training Days` and `## Heart Health` sections |
@@ -387,14 +491,31 @@ Existing `com.kitchenos.mealplan.plist` continues generating blank template week
 
 Phase A gate: user can run Mode D for a sample week and get a plan that hits macros ±15% and explains its choices.
 
-### Phase B — structured feedback
+### Phase A.5 — kitchen inventory
+
+Activated as soon as the user wants to seed inventory. Builds on Phase A's cache + scorer.
+
+1. `lib/inventory.py` — `Inventory.md` parser, normalizer, round-trip with `inventory` SQLite table.
+2. Inventory CRUD API endpoints (`GET`/`POST`/`PATCH`/`DELETE /api/inventory`).
+3. MCP tool `inventory_add` — conversational bulk-load via Claude parser (`prompts/inventory_parse.py`).
+4. Scorer additions: `score_inventory_match` (0–25) and `score_expiring_boost` (0–15). Weights added to `config/scoring_weights.json`.
+5. Shopping list dedup — conservative 2× rule in `lib/shopping_list_generator.py`. Skipped items annotated in output markdown.
+6. "✓ I shopped" button in shopping list template → `POST /api/shopping-list/confirm` flows checked items into inventory.
+7. Expiring-soon digest section — pulled from `inventory` table, included in weekly review.
+8. Inventory view in meal planner UI — sidebar panel showing current stock by category + expiring-soon highlights.
+
+Phase A.5 gate: user has seeded inventory once; the next week's shopping list shows at least one deduped line; the scorer produces different plan outputs with vs. without inventory present (verified by dry-run diff).
+
+### Phase B — structured feedback + inventory depletion + receipt OCR
 
 1. iOS Shortcut: "I cooked [recipe]" → prompts for 1–5 star + optional one-liner → appends structured line to the recipe file.
 2. `recipe_cook_log` SQLite table (per-cook history).
 3. Frontmatter `rating` becomes a weighted rolling average of the last 3 cooks (most recent weighted 3×, second 2×, third 1×).
 4. Digest reads cook log directly for true adherence (planned vs. cooked).
+5. **Cook-time inventory depletion:** after the cook-log writes, fuzzy-match recipe ingredients to inventory rows and decrement quantities (preview diff → user confirms → commit).
+6. **Receipt OCR:** iOS Shortcut photo flow → `POST /api/inventory/from-receipt` → Claude Vision parses with `prompts/receipt_parse.py` → preview screen → user confirms → items added to inventory. Handles ad-hoc purchases outside the planner.
 
-Phase B gate: two full weeks of shortcut-logged cooks; digest accurately reports adherence.
+Phase B gate: two full weeks of shortcut-logged cooks; digest accurately reports adherence; at least one successful receipt OCR import.
 
 ### Phase C — heart-health scoring activation
 
@@ -446,3 +567,16 @@ Every design decision in Sections 3–10 was made by Claude after the user said 
 8. Digest "Patterns spotted" section suppressed until ≥8 weeks of data exist
 9. Mode C doesn't touch Sat/Sun slots (matches user's execution-day constraint)
 10. Phase B unlock = two full weeks of real cook-logged data before rolling-average replaces manual rating
+
+**Phase A.5 (inventory) decisions:**
+
+11. `Inventory.md` at vault root with category sections (Pantry / Fridge / Freezer / Produce) — markdown-native, round-trips with SQLite like meal plans
+12. Item normalization on ingest (lowercase, singular, unit aliases) — but the markdown row preserves the human-readable form
+13. Default expiry: pantry = none, fridge = +14 days, freezer = +90 days, produce = +7 days — overridable per row
+14. `inventory_match` weight = 0–25 max (high because it's the feature's purpose); `expiring_boost` = 0–15 (stacks with match)
+15. Shopping list dedup is conservative: skip only when inventory qty ≥ 2× recipe requirement AND units match exactly; no unit-conversion table in Phase A.5
+16. Skipped shopping lines annotated inline (`~~item~~ (in inventory)`) rather than hidden — preserves the full required-ingredient picture for the user
+17. Staples stay in `config/pantry_staples.json` (static, untracked); inventory strictly tracks depletable items
+18. Receipt OCR deferred to Phase B (shares iOS Shortcut + Claude API infrastructure with cook-log shortcut)
+19. Cook-time depletion also Phase B — requires structured cook events from the shortcut to fire cleanly
+20. MCP tool `inventory_add` handles conversational bulk-load; manual markdown edit remains the fallback for anyone without Claude Desktop
