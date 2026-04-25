@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.kitchenos.cleanup-icloud-old</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/chaseeasterling/KitchenOS/scripts/cleanup_old_icloud.sh</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Month</key>
+        <integer>5</integer>
+        <key>Day</key>
+        <integer>2</integer>
+        <key>Hour</key>
+        <integer>10</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/chaseeasterling/KitchenOS/logs/cleanup_old_icloud.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/chaseeasterling/KitchenOS/logs/cleanup_old_icloud.log</string>
+</dict>
+</plist>
