@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """Add shopping list button to existing meal plans."""
 
+import sys
 from pathlib import Path
 
-VAULT = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS")
-MEAL_PLANS = VAULT / "Meal Plans"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from lib import paths
+
+VAULT = paths.vault_root()
+MEAL_PLANS = paths.meal_plans_dir()
 
 BUTTON_TEMPLATE = '''```button
 name Generate Shopping List

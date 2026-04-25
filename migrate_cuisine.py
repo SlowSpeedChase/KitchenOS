@@ -20,11 +20,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib.backup import create_backup
 from lib.normalizer import normalize_field
 from lib.recipe_parser import parse_recipe_file, parse_ingredient_table
+from lib import paths
 
-OBSIDIAN_RECIPES_PATH = Path(
-    "/Users/chaseeasterling/Library/Mobile Documents/"
-    "iCloud~md~obsidian/Documents/KitchenOS/Recipes"
-)
+OBSIDIAN_RECIPES_PATH = paths.recipes_dir()
 
 TAG_STRING_FIELDS = ("protein", "dish_type", "difficulty")
 TAG_ARRAY_FIELDS = ("dietary", "meal_occasion")

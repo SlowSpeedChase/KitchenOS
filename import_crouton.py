@@ -18,17 +18,15 @@ from pathlib import Path
 
 from lib.crouton_parser import parse_crumb_file
 from lib.normalizer import normalize_recipe_data
+from lib import paths
 from prompts.crouton_enrichment import CROUTON_ENRICHMENT_PROMPT, build_enrichment_prompt
-from templates.recipe_template import format_recipe_markdown, generate_filename, generate_tools_callout
+from templates.recipe_template import format_recipe_markdown, generate_filename
 from templates.recipemd_template import format_recipemd, generate_recipemd_filename
 
 # Configuration (matches extract_recipe.py)
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "mistral:7b"
-OBSIDIAN_RECIPES_PATH = Path(
-    "/Users/chaseeasterling/Library/Mobile Documents"
-    "/iCloud~md~obsidian/Documents/KitchenOS/Recipes"
-)
+OBSIDIAN_RECIPES_PATH = paths.recipes_dir()
 
 
 def enrich_with_ollama(recipe_data: dict) -> dict:

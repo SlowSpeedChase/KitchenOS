@@ -13,7 +13,6 @@ import sys
 import os
 import re
 import requests
-from pathlib import Path
 
 from lib.backup import create_backup
 from lib.recipe_parser import find_existing_recipe, parse_recipe_file, extract_my_notes
@@ -23,6 +22,7 @@ from lib.nutrition_lookup import calculate_recipe_nutrition
 from lib.image_downloader import download_image
 from lib.seasonality import match_ingredients_to_seasonal, calculate_season_score, get_peak_months
 from lib.normalizer import normalize_recipe_data
+from lib import paths
 
 # Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -42,7 +42,7 @@ from recipe_sources import (
 # Configuration
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "mistral:7b"
-OBSIDIAN_RECIPES_PATH = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS/Recipes")
+OBSIDIAN_RECIPES_PATH = paths.recipes_dir()
 
 
 def normalize_instructions(instructions: list) -> list:
@@ -341,7 +341,7 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False, 
             status("Checking first comment for recipe link...")
             comment_link = find_recipe_link(comment_text)
             if comment_link:
-                status(f"Scraping recipe from comment link...")
+                status("Scraping recipe from comment link...")
                 recipe_data = scrape_recipe_from_url(comment_link)
                 if recipe_data:
                     source = "comment_link"
@@ -361,7 +361,7 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False, 
             status(f"Searching {channel}'s website for recipe...")
             creator_url = search_creator_website(channel, title)
             if creator_url:
-                status(f"Scraping recipe from creator website...")
+                status("Scraping recipe from creator website...")
                 recipe_data = scrape_recipe_from_url(creator_url)
                 if recipe_data:
                     source = "creator_website"

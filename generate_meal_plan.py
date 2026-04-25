@@ -21,10 +21,11 @@ from templates.meal_plan_template import generate_meal_plan_markdown, generate_f
 from lib.backup import cleanup_old_backups
 from lib.seasonality import calculate_season_score, load_seasonal_config
 from lib.recipe_parser import parse_recipe_file
+from lib import paths
 
 # Configuration
-OBSIDIAN_VAULT = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS")
-MEAL_PLANS_PATH = OBSIDIAN_VAULT / "Meal Plans"
+OBSIDIAN_VAULT = paths.vault_root()
+MEAL_PLANS_PATH = paths.meal_plans_dir()
 RECIPES_HISTORY_PATH = OBSIDIAN_VAULT / "Recipes" / ".history"
 
 
@@ -155,7 +156,7 @@ def main():
 
     # Check if file exists
     if filepath.exists() and not args.force:
-        print(f"File already exists. Use --force to overwrite.")
+        print("File already exists. Use --force to overwrite.")
         return
 
     # Generate content
