@@ -18,7 +18,6 @@ from lib.ics_generator import generate_ics
 from lib import paths
 
 # Configuration
-OBSIDIAN_VAULT = paths.vault_root()
 MEAL_PLANS_PATH = paths.meal_plans_dir()
 ICS_OUTPUT_PATH = paths.calendar_ics_path()
 

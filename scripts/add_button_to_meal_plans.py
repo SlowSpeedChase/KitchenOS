@@ -8,7 +8,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lib import paths
 
-VAULT = paths.vault_root()
 MEAL_PLANS = paths.meal_plans_dir()
 
 BUTTON_TEMPLATE = '''```button
