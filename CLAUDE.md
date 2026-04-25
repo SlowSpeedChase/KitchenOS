@@ -40,7 +40,7 @@ Development guide for Claude Code when working with this repository.
 | `Recipes/Cooking Mode/` in Obsidian vault | Simplified cooking view files (`.recipe.md`) |
 | `Recipes/Images/` in Obsidian vault | Recipe images (downloaded from source or YouTube thumbnail) |
 
-**Obsidian Vault**: `/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS/`
+**Obsidian Vault**: `~/KitchenOS/vault/` (configurable via `KITCHENOS_VAULT` env var; resolved by `lib/paths.py`)
 
 ## Running Commands
 
@@ -199,11 +199,11 @@ Auto-generates weekly meal plan templates 2 weeks in advance. Runs daily at 6am.
 
 ```bash
 # Install the LaunchAgent
-cp com.kitchenos.mealplan.plist ~/Library/LaunchAgents/
+cp ops/com.kitchenos.mealplan.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.kitchenos.mealplan.plist
 
 # View logs
-tail -f /Users/chaseeasterling/KitchenOS/meal_plan_generator.log
+tail -f ~/KitchenOS/logs/meal_plan_generator.log
 
 # Restart service
 launchctl unload ~/Library/LaunchAgents/com.kitchenos.mealplan.plist
@@ -229,11 +229,11 @@ Syncs meal plans to ICS calendar file daily at 6:05am (after meal plan generator
 
 ```bash
 # Install the LaunchAgent
-cp com.kitchenos.calendar-sync.plist ~/Library/LaunchAgents/
+cp ops/com.kitchenos.calendar-sync.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.kitchenos.calendar-sync.plist
 
 # View logs
-tail -f /Users/chaseeasterling/KitchenOS/calendar_sync.log
+tail -f ~/KitchenOS/logs/calendar_sync.log
 
 # Test run manually
 .venv/bin/python sync_calendar.py
@@ -253,11 +253,11 @@ Processes YouTube URLs from the "Recipies to Process" iOS Reminders list hourly 
 
 ```bash
 # Install the LaunchAgent
-cp com.kitchenos.batch-extract.plist ~/Library/LaunchAgents/
+cp ops/com.kitchenos.batch-extract.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.kitchenos.batch-extract.plist
 
 # View logs
-tail -f /Users/chaseeasterling/KitchenOS/batch_extract.log
+tail -f ~/KitchenOS/logs/batch_extract.log
 
 # Restart service
 launchctl unload ~/Library/LaunchAgents/com.kitchenos.batch-extract.plist
@@ -309,7 +309,7 @@ The API server enables recipe extraction from iOS via Share Sheet. It runs as a 
 curl http://localhost:5001/health
 
 # View logs
-tail -f /Users/chaseeasterling/KitchenOS/server.log
+tail -f ~/KitchenOS/logs/server.log
 
 # Restart service
 launchctl unload ~/Library/LaunchAgents/com.kitchenos.api.plist
