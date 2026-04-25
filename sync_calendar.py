@@ -12,15 +12,14 @@ Usage:
 import argparse
 import re
 import sys
-from pathlib import Path
 
 from lib.meal_plan_parser import parse_meal_plan
 from lib.ics_generator import generate_ics
+from lib import paths
 
 # Configuration
-OBSIDIAN_VAULT = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS")
-MEAL_PLANS_PATH = OBSIDIAN_VAULT / "Meal Plans"
-ICS_OUTPUT_PATH = OBSIDIAN_VAULT / "meal_calendar.ics"
+MEAL_PLANS_PATH = paths.meal_plans_dir()
+ICS_OUTPUT_PATH = paths.calendar_ics_path()
 
 
 def parse_week_from_filename(filename: str) -> tuple[int, int] | None:

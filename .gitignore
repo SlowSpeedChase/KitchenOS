@@ -1,19 +1,12 @@
 # ============================================
-# Obsidian vault content (synced via iCloud, not git)
+# Obsidian vault (lives at vault/, synced via Obsidian Sync)
 # ============================================
-Recipes/
-Meal Plans/
-Shopping Lists/
-*.base
-meal_calendar.ics
-Dashboard.md
-Home.md
-Quick Add Template.md
+vault/
 
-# Obsidian workspace (device-specific, changes constantly)
-.obsidian/workspace.json
-.obsidian/workspace-mobile.json
-.obsidian/bookmarks.json
+# ============================================
+# Logs (gitignored — see logs/ subdir)
+# ============================================
+logs/
 
 # ============================================
 # Environment variables

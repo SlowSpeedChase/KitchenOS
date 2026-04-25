@@ -56,8 +56,9 @@ The recipe will be saved to your Obsidian vault.
 
 5. **Create Obsidian vault folder:**
    ```bash
-   mkdir -p "/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS/Recipes"
+   mkdir -p ~/KitchenOS/vault/Recipes
    ```
+   The vault location is `~/KitchenOS/vault/` by default and is overridable via the `KITCHENOS_VAULT` env var.
 
 ## Usage
 
@@ -237,8 +238,9 @@ Edit these in `extract_recipe.py`:
 ```python
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "mistral:7b"
-OBSIDIAN_RECIPES_PATH = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS/Recipes")
 ```
+
+Vault path is centralized in `lib/paths.py`. Set the `KITCHENOS_VAULT` env var to override the default `~/KitchenOS/vault/`.
 
 ### AI Model
 

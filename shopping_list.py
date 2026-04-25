@@ -29,9 +29,10 @@ from lib.shopping_list_generator import (
     multiply_ingredients,
     MEAL_PLANS_PATH,
 )
+from lib import paths
 
 # Configuration
-OBSIDIAN_VAULT = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS")
+OBSIDIAN_VAULT = paths.vault_root()
 LEGACY_MEAL_PLAN_PATH = OBSIDIAN_VAULT / "Meal Plan.md"
 REMINDERS_LIST = "Shopping"
 

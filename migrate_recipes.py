@@ -20,14 +20,15 @@ import requests
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from lib.backup import create_backup
-from lib.recipe_parser import parse_recipe_file, extract_my_notes, parse_ingredient_table
+from lib.recipe_parser import parse_recipe_file, parse_ingredient_table
 from lib.seasonality import match_ingredients_to_seasonal, get_peak_months
+from lib import paths
 from templates.recipe_template import RECIPE_SCHEMA, generate_tools_callout
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "mistral:7b"
 
-OBSIDIAN_RECIPES_PATH = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS/Recipes")
+OBSIDIAN_RECIPES_PATH = paths.recipes_dir()
 
 
 def has_tools_callout(content: str) -> bool:

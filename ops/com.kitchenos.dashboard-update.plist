@@ -3,23 +3,23 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.kitchenos.batch-extract</string>
+    <string>com.kitchenos.dashboard-update</string>
     <key>ProgramArguments</key>
     <array>
         <string>/Users/chaseeasterling/KitchenOS/.venv/bin/python</string>
-        <string>/Users/chaseeasterling/KitchenOS/batch_extract.py</string>
+        <string>/Users/chaseeasterling/KitchenOS/scripts/update_dashboard_canvas.py</string>
     </array>
-    <key>RunAtLoad</key>
-    <true/>
     <key>StartCalendarInterval</key>
     <dict>
+        <key>Hour</key>
+        <integer>6</integer>
         <key>Minute</key>
-        <integer>10</integer>
+        <integer>15</integer>
     </dict>
     <key>StandardOutPath</key>
-    <string>/Users/chaseeasterling/KitchenOS/batch_extract.log</string>
+    <string>/Users/chaseeasterling/KitchenOS/logs/dashboard_update.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/chaseeasterling/KitchenOS/batch_extract.log</string>
+    <string>/Users/chaseeasterling/KitchenOS/logs/dashboard_update.log</string>
     <key>WorkingDirectory</key>
     <string>/Users/chaseeasterling/KitchenOS</string>
 </dict>

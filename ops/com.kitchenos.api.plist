@@ -6,8 +6,8 @@
     <string>com.kitchenos.api</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/chaseeasterling/Documents/GitHub/KitchenOS/.venv/bin/python</string>
-        <string>/Users/chaseeasterling/Documents/GitHub/KitchenOS/api_server.py</string>
+        <string>/Users/chaseeasterling/KitchenOS/.venv/bin/python</string>
+        <string>/Users/chaseeasterling/KitchenOS/api_server.py</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
@@ -15,14 +15,14 @@
         <string>5001</string>
     </dict>
     <key>WorkingDirectory</key>
-    <string>/Users/chaseeasterling/Documents/GitHub/KitchenOS</string>
+    <string>/Users/chaseeasterling/KitchenOS</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/Users/chaseeasterling/Documents/GitHub/KitchenOS/server.log</string>
+    <string>/Users/chaseeasterling/KitchenOS/logs/server.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/chaseeasterling/Documents/GitHub/KitchenOS/server.log</string>
+    <string>/Users/chaseeasterling/KitchenOS/logs/server.log</string>
 </dict>
 </plist>

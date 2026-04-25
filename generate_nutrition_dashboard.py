@@ -14,16 +14,13 @@ Usage:
 
 import argparse
 from datetime import date
-from pathlib import Path
 
 from lib.nutrition_dashboard import generate_dashboard, save_dashboard
+from lib import paths
 
 
 # Obsidian vault path
-VAULT_PATH = Path(
-    "/Users/chaseeasterling/Library/Mobile Documents"
-    "/iCloud~md~obsidian/Documents/KitchenOS"
-)
+VAULT_PATH = paths.vault_root()
 
 
 def get_current_week() -> str:

@@ -30,13 +30,14 @@ from templates.meal_plan_template import generate_meal_plan_markdown
 from lib.ingredient_validator import validate_ingredients
 from lib.seasonality import match_ingredients_to_seasonal, get_peak_months
 from lib.nutrition_lookup import calculate_recipe_nutrition
+from lib import paths
 
 load_dotenv()
 warnings.filterwarnings('ignore', message='urllib3 v2 only supports OpenSSL 1.1.1+')
 
 YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')
-OBSIDIAN_RECIPES_PATH = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS/Recipes")
-MEAL_PLANS_PATH = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS/Meal Plans")
+OBSIDIAN_RECIPES_PATH = paths.recipes_dir()
+MEAL_PLANS_PATH = paths.meal_plans_dir()
 
 app = Flask(__name__)
 
@@ -150,7 +151,7 @@ def get_transcript(video_id):
             transcript_data = api.fetch(video_id)
 
         return ' '.join([segment.text for segment in transcript_data])
-    except Exception as e:
+    except Exception:
         return None
 
 
@@ -494,7 +495,7 @@ def send_to_reminders_endpoint():
 @app.route('/calendar.ics', methods=['GET'])
 def serve_calendar():
     """Serve the meal plan calendar ICS file."""
-    ics_path = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS/meal_calendar.ics")
+    ics_path = paths.calendar_ics_path()
 
     if not ics_path.exists():
         return "Calendar not generated. Run sync_calendar.py first.", 404
@@ -517,7 +518,7 @@ def refresh_nutrition():
     if not week:
         return error_page("Error: week parameter required (e.g., 2026-W03)"), 400
 
-    vault_path = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS")
+    vault_path = paths.vault_root()
 
     try:
         output_path, warnings = save_dashboard(week, vault_path)

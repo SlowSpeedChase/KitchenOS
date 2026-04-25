@@ -19,9 +19,9 @@
         <integer>5</integer>
     </dict>
     <key>StandardOutPath</key>
-    <string>/Users/chaseeasterling/KitchenOS/calendar_sync.log</string>
+    <string>/Users/chaseeasterling/KitchenOS/logs/calendar_sync.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/chaseeasterling/KitchenOS/calendar_sync.log</string>
+    <string>/Users/chaseeasterling/KitchenOS/logs/calendar_sync.log</string>
     <key>WorkingDirectory</key>
     <string>/Users/chaseeasterling/KitchenOS</string>
 </dict>

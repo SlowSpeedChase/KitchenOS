@@ -8,12 +8,13 @@ from pathlib import Path
 
 from lib.recipe_parser import parse_recipe_file, parse_ingredient_table
 from lib.ingredient_aggregator import aggregate_ingredients, format_ingredient, parse_amount_to_float, format_amount
+from lib import paths
 
 # Configuration
-OBSIDIAN_VAULT = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS")
-MEAL_PLANS_PATH = OBSIDIAN_VAULT / "Meal Plans"
-RECIPES_PATH = OBSIDIAN_VAULT / "Recipes"
-SHOPPING_LISTS_PATH = OBSIDIAN_VAULT / "Shopping Lists"
+OBSIDIAN_VAULT = paths.vault_root()
+MEAL_PLANS_PATH = paths.meal_plans_dir()
+RECIPES_PATH = paths.recipes_dir()
+SHOPPING_LISTS_PATH = paths.shopping_lists_dir()
 
 
 def parse_week_string(week_str: str) -> Path:
