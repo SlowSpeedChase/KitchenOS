@@ -3,25 +3,23 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.kitchenos.calendar-sync</string>
+    <string>com.kitchenos.batch-extract</string>
     <key>ProgramArguments</key>
     <array>
         <string>/Users/chaseeasterling/KitchenOS/.venv/bin/python</string>
-        <string>/Users/chaseeasterling/KitchenOS/sync_calendar.py</string>
+        <string>/Users/chaseeasterling/KitchenOS/batch_extract.py</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
     <key>StartCalendarInterval</key>
     <dict>
-        <key>Hour</key>
-        <integer>6</integer>
         <key>Minute</key>
-        <integer>5</integer>
+        <integer>10</integer>
     </dict>
     <key>StandardOutPath</key>
-    <string>/Users/chaseeasterling/KitchenOS/calendar_sync.log</string>
+    <string>/Users/chaseeasterling/KitchenOS/logs/batch_extract.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/chaseeasterling/KitchenOS/calendar_sync.log</string>
+    <string>/Users/chaseeasterling/KitchenOS/logs/batch_extract.log</string>
     <key>WorkingDirectory</key>
     <string>/Users/chaseeasterling/KitchenOS</string>
 </dict>
