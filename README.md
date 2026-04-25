@@ -145,6 +145,56 @@ Process multiple YouTube URLs at once using iOS Reminders as your queue.
 - Short URL: `https://youtu.be/VIDEO_ID`
 - Video ID only: `VIDEO_ID`
 
+## Kitchen Inventory
+
+Track what's actually in your kitchen — by zone (Main Pantry, Fridge, Freezer,
+Spice Cabinet, …) and by shelf within each zone.
+
+### Define your kitchen
+
+Edit `config/storage_locations.json` once to match your space. Each shelf
+lists which **supply groups** belong on it (e.g. `dairy`, `produce`,
+`oils-vinegars`). Default expiry windows live alongside each group.
+
+### Print shelf labels
+
+```bash
+.venv/bin/python manage_inventory.py --labels
+# writes Kitchen Labels.md to the vault — print from Obsidian.
+```
+
+Each label lists the shelf name and the supply groups assigned to it.
+
+### Add to inventory by pasting a receipt table
+
+Ask Claude to convert your receipt (photo, text, or email) to this minimal
+table:
+
+```
+| Item            | Qty | Unit |
+|-----------------|-----|------|
+| chicken breast  | 2   | lb   |
+| eggs            | 12  | each |
+| black beans     | 4   | can  |
+```
+
+Then paste it into the inventory page (`http://localhost:5001/inventory`) or
+pipe it through the CLI:
+
+```bash
+.venv/bin/python manage_inventory.py --paste --dry-run < receipt.md  # preview
+.venv/bin/python manage_inventory.py --paste < receipt.md            # commit
+```
+
+Each row is auto-routed to a `(group, location)` based on a built-in lookup
+plus your `storage_locations.json`. Optional `Group`, `Location`, `Expires`,
+and `Notes` columns override the defaults. Default expiry is filled when
+blank (e.g. fresh proteins → +4 days, dairy → +14 days).
+
+The MCP tool `inventory_add_paste` exposes the same flow to Claude Desktop —
+hand it the table in chat and it will preview the routed rows before
+committing.
+
 ## Recipe Sources
 
 KitchenOS extracts recipes using a priority chain:

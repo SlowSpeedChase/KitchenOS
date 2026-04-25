@@ -113,6 +113,41 @@ def send_to_reminders(week: str) -> dict:
         return {"status": "error", "message": f"API request failed: {e}"}
 
 
+def inventory_get() -> dict:
+    """Read all inventory rows grouped by location."""
+    try:
+        r = requests.get(f"{API_BASE}/api/inventory", timeout=10)
+        return r.json()
+    except requests.exceptions.RequestException as e:
+        return {"status": "error", "message": f"API request failed: {e}"}
+
+
+def inventory_add_paste(markdown: str, commit: bool = False) -> dict:
+    """Parse a pasted markdown table into routed inventory rows.
+
+    When ``commit`` is False (default), returns a preview payload — Claude can
+    read the routed rows back to the user before committing. When ``commit``
+    is True, the preview is then POSTed to ``/api/inventory/commit``.
+    """
+    try:
+        preview = requests.post(
+            f"{API_BASE}/api/inventory/paste",
+            json={"markdown": markdown},
+            timeout=30,
+        )
+        data = preview.json()
+        if preview.status_code != 200 or not commit:
+            return data
+        commit_resp = requests.post(
+            f"{API_BASE}/api/inventory/commit",
+            json={"rows": data.get("rows", [])},
+            timeout=30,
+        )
+        return {"preview": data, "commit": commit_resp.json()}
+    except requests.exceptions.RequestException as e:
+        return {"status": "error", "message": f"API request failed: {e}"}
+
+
 def create_things_task(title: str, notes: str = None) -> dict:
     """Create a task in Things 3 via URL scheme."""
     params = [f"title={quote(title)}", "list=KitchenOS"]

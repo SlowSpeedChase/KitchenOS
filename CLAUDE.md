@@ -191,6 +191,40 @@ curl -X POST http://localhost:5001/send-to-reminders \
 .venv/bin/python generate_nutrition_dashboard.py --dry-run
 ```
 
+### Manage Kitchen Inventory
+
+```bash
+# Write an empty Inventory.md skeleton (one section per zone+shelf)
+.venv/bin/python manage_inventory.py --init
+
+# Preview a pasted receipt table without writing
+.venv/bin/python manage_inventory.py --paste --dry-run < receipt.md
+
+# Commit a pasted table (stdin or --file)
+.venv/bin/python manage_inventory.py --paste < receipt.md
+
+# Generate Kitchen Labels.md for printing shelf labels
+.venv/bin/python manage_inventory.py --labels
+# (or: .venv/bin/python scripts/generate_labels.py)
+```
+
+Edit `config/storage_locations.json` to match your kitchen — every space, its
+shelves, and which supply groups belong on each. New rows from receipt pastes
+auto-route to the first shelf that lists their group.
+
+**Receipt paste format** (ask Claude to convert a receipt to this table, then
+paste it into the inventory UI or pipe into `manage_inventory.py --paste`):
+
+```
+| Item            | Qty | Unit |
+|-----------------|-----|------|
+| chicken breast  | 2   | lb   |
+| eggs            | 12  | each |
+```
+
+Optional `Group`, `Location`, `Expires`, and `Notes` columns override the
+auto-routed defaults.
+
 ## Meal Plan Generator (LaunchAgent)
 
 Auto-generates weekly meal plan templates 2 weeks in advance. Runs daily at 6am.
@@ -344,6 +378,11 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist
 | `/api/recipes/save` | POST | Save recipe from structured JSON |
 | `/api/recipes/<name>` | GET | Full recipe details as JSON |
 | `/api/suggest-meal` | POST | Suggest recipe for empty meal slot |
+| `/inventory` | GET | Interactive kitchen inventory page |
+| `/api/inventory/layout` | GET | Kitchen layout (spaces, shelves, groups) JSON |
+| `/api/inventory` | GET | Inventory rows grouped by location (auto-creates skeleton) |
+| `/api/inventory/paste` | POST | Parse a markdown table into routed rows (preview only) |
+| `/api/inventory/commit` | POST | Append routed rows to `Inventory.md` |
 
 ### Configuration
 
@@ -374,6 +413,8 @@ Configured in `~/Library/Application Support/Claude/claude_desktop_config.json`.
 | `generate_shopping_list` | Generate shopping list |
 | `send_to_reminders` | Push to Apple Reminders |
 | `create_things_task` | Create Things 3 task |
+| `inventory_get` | Read current kitchen inventory |
+| `inventory_add_paste` | Parse a markdown table from a receipt and add rows |
 
 ### Prerequisites
 
@@ -476,6 +517,14 @@ template → Obsidian
 | `lib/meal_suggester.py` | Ingredient overlap scoring + Claude/Ollama suggestion |
 | `prompts/meal_suggestion.py` | Prompt templates for ingredient normalization and meal selection |
 | `config/pantry_staples.json` | Pantry staples excluded from overlap scoring |
+| `manage_inventory.py` | Inventory CLI: `--init` skeleton, `--paste` ingest table, `--labels` export |
+| `lib/inventory.py` | Layout loader, item routing, `Inventory.md` round-trip, append/merge |
+| `lib/receipt_paster.py` | Parse a pasted markdown table into routed inventory rows |
+| `templates/inventory_template.py` | Empty `Inventory.md` skeleton renderer |
+| `templates/labels_template.py` | `Kitchen Labels.md` printable shelf-card renderer |
+| `templates/inventory.html` | Interactive inventory page with paste-from-Claude modal |
+| `scripts/generate_labels.py` | One-shot wrapper to write `Kitchen Labels.md` |
+| `config/storage_locations.json` | Kitchen layout: spaces, shelves, supply groups, default expiries |
 
 ### Key Functions
 
@@ -635,6 +684,28 @@ template → Obsidian
 - `normalize_ingredients_ollama()` - Batch normalize via Ollama with fallback
 - `suggest_with_claude()` - Asks Claude API to pick best candidate
 - `suggest_for_empty_week()` - Asks Claude for starting recipe
+
+**lib/inventory.py:**
+- `load_layout()` - Load and validate `config/storage_locations.json`
+- `lookup_group(item)` - Map a raw item name to a supply group id (with fallback)
+- `route_item(item, layout, ...)` - Pick `(group, location)` for a new row, with optional overrides
+- `apply_default_expiry(row, layout, today)` - Fill `expires` from group defaults when blank
+- `parse_inventory_md(content, layout)` - Read `Inventory.md` back into `InventoryRow` objects
+- `render_inventory_md(rows, layout, updated)` - Render rows to markdown grouped by location
+- `append_rows(rows, layout, vault_path)` - Merge new rows into `Inventory.md` (sums qty for matching keys)
+
+**lib/receipt_paster.py:**
+- `parse_table(markdown)` - Extract first markdown table to canonical row dicts (header aliases supported)
+- `rows_to_inventory(rows, layout, today)` - Route parsed rows to `InventoryRow` with default expiry applied
+- `parse_paste(markdown, layout, today)` - Convenience: table + routing in one call
+
+**templates/inventory_template.py / templates/labels_template.py:**
+- `render_skeleton(layout, updated)` - Emit empty `Inventory.md` (one section per shelf)
+- `render_labels(layout, generated)` - Emit `Kitchen Labels.md` with one printable card per shelf
+
+**lib/mcp_tools.py:**
+- `inventory_get()` - Read current inventory via API
+- `inventory_add_paste(markdown, commit)` - Parse + (optionally) commit a pasted receipt table
 
 ## AI Configuration
 
@@ -821,6 +892,7 @@ These features are planned but not yet implemented:
 | Claude API fallback | Low | Use Claude when Ollama fails |
 | Non-YouTube recipe URLs in batch_extract | Medium | Route non-YouTube URLs in "Recipies to Process" through `scrape_recipe_from_url()` (Serious Eats, NYT Cooking, etc.). Currently `batch_extract.py:212` rejects anything without youtube.com/youtu.be. Decide handling for plain-text notes (skip vs flag). |
 | ~~Image extraction~~ | ~~Low~~ | **Completed** - Downloads recipe website images or YouTube thumbnails to vault |
+| Kitchen inventory (zone+shelf) | High | **In progress** - `Inventory.md` round-trip, paste-table ingest, printable shelf labels. Receipt OCR (Phase B), shopping-list dedup, scorer integration still pending. |
 
 ## Project Structure
 
@@ -836,6 +908,7 @@ KitchenOS/
 ├── shopping_list.py       # Shopping list from meal plans
 ├── generate_meal_plan.py  # Weekly meal plan generator
 ├── generate_nutrition_dashboard.py  # Nutrition dashboard generator
+├── manage_inventory.py    # Kitchen inventory CLI (init / paste / labels)
 ├── mcp_server.py          # MCP server for Claude Desktop
 │
 ├── lib/                   # Python library modules

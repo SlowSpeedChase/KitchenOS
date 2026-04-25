@@ -19,6 +19,14 @@ from lib.shopping_list_generator import (
     extract_manual_items,
     SHOPPING_LISTS_PATH,
 )
+from lib.inventory import (
+    INVENTORY_FILENAME,
+    append_rows as inventory_append_rows,
+    load_layout as load_inventory_layout,
+    parse_inventory_md,
+)
+from lib.receipt_paster import parse_paste as parse_receipt_paste
+from templates.inventory_template import render_skeleton as render_inventory_skeleton
 from lib.backup import create_backup
 from lib.recipe_index import get_recipe_index
 from lib.meal_plan_parser import insert_recipe_into_meal_plan, parse_meal_plan, rebuild_meal_plan_markdown
@@ -35,8 +43,9 @@ load_dotenv()
 warnings.filterwarnings('ignore', message='urllib3 v2 only supports OpenSSL 1.1.1+')
 
 YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')
-OBSIDIAN_RECIPES_PATH = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS/Recipes")
-MEAL_PLANS_PATH = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS/Meal Plans")
+OBSIDIAN_VAULT_PATH = Path("/Users/chaseeasterling/Library/Mobile Documents/iCloud~md~obsidian/Documents/KitchenOS")
+OBSIDIAN_RECIPES_PATH = OBSIDIAN_VAULT_PATH / "Recipes"
+MEAL_PLANS_PATH = OBSIDIAN_VAULT_PATH / "Meal Plans"
 
 app = Flask(__name__)
 
@@ -930,6 +939,140 @@ def add_to_meal_plan():
 def meal_planner():
     """Serve the interactive meal planner board."""
     return send_file('templates/meal_planner.html', mimetype='text/html')
+
+
+# ---------------------------------------------------------------------------
+# Kitchen inventory
+# ---------------------------------------------------------------------------
+
+
+def _layout_to_json(layout):
+    """Serialize layout for the UI dropdowns/sidebar."""
+    return {
+        "groups": {
+            gid: {"label": g.label, "default_expiry_days": g.default_expiry_days}
+            for gid, g in layout.groups.items()
+        },
+        "spaces": [
+            {
+                "id": shelf.space_id,
+                "label": shelf.space_label,
+                "shelf_id": shelf.shelf_id,
+                "shelf_label": shelf.shelf_label,
+                "location": shelf.location_id,
+                "heading": shelf.section_heading,
+                "groups": list(shelf.groups),
+            }
+            for shelf in layout.shelves
+        ],
+    }
+
+
+@app.route('/api/inventory/layout', methods=['GET'])
+def api_inventory_layout():
+    """Return the kitchen layout (groups + shelves) for the UI."""
+    try:
+        layout = load_inventory_layout()
+    except Exception as e:
+        return jsonify({"error": f"failed to load layout: {e}"}), 500
+    return jsonify(_layout_to_json(layout))
+
+
+@app.route('/api/inventory', methods=['GET'])
+def api_inventory_get():
+    """Return all inventory rows grouped by location."""
+    try:
+        layout = load_inventory_layout()
+    except Exception as e:
+        return jsonify({"error": f"failed to load layout: {e}"}), 500
+
+    inv_path = OBSIDIAN_VAULT_PATH / INVENTORY_FILENAME
+    if not inv_path.exists():
+        OBSIDIAN_VAULT_PATH.mkdir(parents=True, exist_ok=True)
+        inv_path.write_text(render_inventory_skeleton(layout), encoding='utf-8')
+
+    rows = parse_inventory_md(inv_path.read_text(encoding='utf-8'), layout)
+    by_location = {}
+    for r in rows:
+        by_location.setdefault(r.location, []).append(r.to_dict())
+
+    sections = []
+    for shelf in layout.shelves:
+        sections.append({
+            "location": shelf.location_id,
+            "heading": shelf.section_heading,
+            "space_id": shelf.space_id,
+            "shelf_id": shelf.shelf_id,
+            "rows": by_location.get(shelf.location_id, []),
+        })
+
+    return jsonify({"sections": sections, "row_count": len(rows)})
+
+
+@app.route('/api/inventory/paste', methods=['POST'])
+def api_inventory_paste():
+    """Parse a pasted markdown table and return a routed-row preview (no write)."""
+    data = request.get_json(force=True, silent=True) or {}
+    markdown = data.get("markdown", "")
+    if not markdown.strip():
+        return jsonify({"error": "missing 'markdown' field"}), 400
+
+    try:
+        layout = load_inventory_layout()
+    except Exception as e:
+        return jsonify({"error": f"failed to load layout: {e}"}), 500
+
+    rows, warnings = parse_receipt_paste(markdown, layout)
+    return jsonify({
+        "rows": [r.to_dict() for r in rows],
+        "warnings": warnings,
+    })
+
+
+@app.route('/api/inventory/commit', methods=['POST'])
+def api_inventory_commit():
+    """Commit a list of routed rows (typically the preview, possibly edited)."""
+    data = request.get_json(force=True, silent=True) or {}
+    rows_in = data.get("rows", [])
+    if not isinstance(rows_in, list) or not rows_in:
+        return jsonify({"error": "'rows' must be a non-empty list"}), 400
+
+    try:
+        layout = load_inventory_layout()
+    except Exception as e:
+        return jsonify({"error": f"failed to load layout: {e}"}), 500
+
+    from lib.inventory import InventoryRow
+    rows = []
+    for r in rows_in:
+        item = (r.get("item") or "").strip()
+        if not item:
+            continue
+        location = r.get("location") or ""
+        if not layout.shelf_by_location(location):
+            return jsonify({"error": f"unknown location '{location}' for item '{item}'"}), 400
+        rows.append(InventoryRow(
+            item=item,
+            qty=str(r.get("qty") or "1"),
+            unit=r.get("unit") or "each",
+            group=r.get("group") or "",
+            location=location,
+            added=r.get("added") or "",
+            expires=r.get("expires") or "",
+            notes=r.get("notes") or "",
+        ))
+
+    if not rows:
+        return jsonify({"error": "no valid rows to commit"}), 400
+
+    inv_path = inventory_append_rows(rows, layout, OBSIDIAN_VAULT_PATH)
+    return jsonify({"status": "committed", "rows": len(rows), "file": str(inv_path)})
+
+
+@app.route('/inventory', methods=['GET'])
+def inventory_page():
+    """Serve the inventory UI."""
+    return send_file('templates/inventory.html', mimetype='text/html')
 
 
 if __name__ == '__main__':

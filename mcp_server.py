@@ -14,6 +14,8 @@ from lib.mcp_tools import (
     generate_shopping_list as _generate_shopping_list,
     send_to_reminders as _send_to_reminders,
     create_things_task as _create_things_task,
+    inventory_get as _inventory_get,
+    inventory_add_paste as _inventory_add_paste,
 )
 
 mcp = FastMCP("KitchenOS")
@@ -200,6 +202,66 @@ def send_to_reminders(week: str) -> str:
     if result.get("success"):
         return f"Sent {result['items_sent']} items to Reminders (skipped {result['items_skipped']} already checked)"
     return f"Error: {result.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def inventory_get() -> str:
+    """Read the current kitchen inventory grouped by zone and shelf."""
+    if err := _require_api():
+        return err
+    data = _inventory_get()
+    if data.get("status") == "error":
+        return f"Error: {data['message']}"
+    sections = data.get("sections", [])
+    populated = [s for s in sections if s["rows"]]
+    if not populated:
+        return "Inventory is empty. Add items via inventory_add_paste."
+    lines = [f"Inventory ({data.get('row_count', 0)} items):"]
+    for s in populated:
+        lines.append(f"\n## {s['heading']}")
+        for r in s["rows"]:
+            exp = f" (exp {r['expires']})" if r.get("expires") else ""
+            lines.append(f"- {r['qty']} {r['unit']} {r['item']}{exp}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def inventory_add_paste(markdown: str, commit: bool = False) -> str:
+    """Add inventory rows from a pasted markdown table.
+
+    Provide a table with columns ``Item``, ``Qty``, ``Unit`` (and optionally
+    ``Group``, ``Location``, ``Expires``, ``Notes``). Each row is routed to a
+    zone+shelf using ``config/storage_locations.json``.
+
+    Args:
+        markdown: Markdown table text (e.g. produced from a receipt photo).
+        commit: When False, returns a routed-row preview only. When True, the
+            preview is also written to ``Inventory.md``.
+    """
+    if err := _require_api():
+        return err
+    data = _inventory_add_paste(markdown, commit=commit)
+    if data.get("status") == "error":
+        return f"Error: {data['message']}"
+    if commit:
+        committed = data.get("commit", {})
+        if committed.get("status") != "committed":
+            return f"Error: {committed.get('error', 'commit failed')}"
+        rows = data.get("preview", {}).get("rows", [])
+        return f"Committed {committed['rows']} row(s) to inventory:\n" + "\n".join(
+            f"- {r['qty']} {r['unit']} {r['item']} -> {r['location']}" for r in rows
+        )
+    rows = data.get("rows", [])
+    if not rows:
+        return "No rows parsed from input."
+    lines = [f"Preview {len(rows)} row(s) (commit=False; call again with commit=True to save):"]
+    for r in rows:
+        exp = f", exp {r['expires']}" if r.get("expires") else ""
+        lines.append(f"- {r['qty']} {r['unit']} {r['item']} -> {r['location']} ({r['group']}{exp})")
+    warnings = data.get("warnings", [])
+    if warnings:
+        lines.append("\nWarnings: " + "; ".join(warnings))
+    return "\n".join(lines)
 
 
 @mcp.tool()

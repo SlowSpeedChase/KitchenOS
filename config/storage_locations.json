@@ -1,0 +1,52 @@
+{
+  "groups": {
+    "dry-goods":       {"label": "Dry Goods",         "default_expiry_days": null},
+    "canned":          {"label": "Canned",            "default_expiry_days": null},
+    "spices":          {"label": "Spices",            "default_expiry_days": null},
+    "snacks":          {"label": "Snacks",            "default_expiry_days": 60},
+    "baking":          {"label": "Baking",            "default_expiry_days": null},
+    "oils-vinegars":   {"label": "Oils & Vinegars",   "default_expiry_days": 365},
+    "dairy":           {"label": "Dairy",             "default_expiry_days": 14},
+    "produce":         {"label": "Produce",           "default_expiry_days": 7},
+    "proteins-fresh":  {"label": "Fresh Proteins",    "default_expiry_days": 4},
+    "proteins-frozen": {"label": "Frozen Proteins",   "default_expiry_days": 90},
+    "frozen-veg":      {"label": "Frozen Vegetables", "default_expiry_days": 180},
+    "leftovers":       {"label": "Leftovers",         "default_expiry_days": 4},
+    "condiments":      {"label": "Condiments",        "default_expiry_days": 60},
+    "beverages":       {"label": "Beverages",         "default_expiry_days": 30}
+  },
+  "spaces": {
+    "main-pantry": {
+      "label": "Main Pantry",
+      "shelves": [
+        {"id": "top",    "label": "Top Shelf",    "groups": ["snacks", "baking"]},
+        {"id": "middle", "label": "Middle Shelf", "groups": ["dry-goods", "canned"]},
+        {"id": "bottom", "label": "Bottom Shelf", "groups": ["oils-vinegars", "beverages"]}
+      ]
+    },
+    "spice-cabinet": {
+      "label": "Spice Cabinet",
+      "shelves": [
+        {"id": "main", "label": "Spice Cabinet", "groups": ["spices"]}
+      ]
+    },
+    "fridge": {
+      "label": "Fridge",
+      "shelves": [
+        {"id": "top",    "label": "Top Shelf",      "groups": ["leftovers", "dairy"]},
+        {"id": "middle", "label": "Middle Shelf",   "groups": ["proteins-fresh"]},
+        {"id": "bottom", "label": "Bottom Shelf",   "groups": ["proteins-fresh"]},
+        {"id": "drawer", "label": "Produce Drawer", "groups": ["produce"]},
+        {"id": "door",   "label": "Door",           "groups": ["condiments", "beverages"]}
+      ]
+    },
+    "freezer": {
+      "label": "Freezer",
+      "shelves": [
+        {"id": "top",    "label": "Top Shelf",    "groups": ["frozen-veg"]},
+        {"id": "middle", "label": "Middle Shelf", "groups": ["proteins-frozen"]},
+        {"id": "bottom", "label": "Bottom Shelf", "groups": ["proteins-frozen"]}
+      ]
+    }
+  }
+}
