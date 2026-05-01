@@ -762,3 +762,47 @@ class TestScheduleMeal:
 
         assert response.status_code == 400
         assert b'Invalid week format' in response.data
+
+
+class TestAddToMealPlanFormRender:
+    """GET /add-to-meal-plan — branch picker form."""
+
+    def test_form_lists_three_radios(self, client, tmp_path, monkeypatch):
+        meals_dir = tmp_path / "Meals"
+        meals_dir.mkdir()
+        monkeypatch.setattr('lib.meal_loader.paths.meals_dir', lambda: meals_dir)
+
+        response = client.get('/add-to-meal-plan?recipe=Pan-Seared%20Salmon')
+        body = response.data
+        assert response.status_code == 200
+        assert b'Pan-Seared Salmon' in body
+        assert b'value="direct"' in body
+        assert b'value="existing"' in body
+        assert b'value="new"' in body
+        # Default selection
+        assert b'value="direct" checked' in body
+
+    def test_existing_disabled_when_no_meals(self, client, tmp_path, monkeypatch):
+        meals_dir = tmp_path / "Meals"
+        meals_dir.mkdir()
+        monkeypatch.setattr('lib.meal_loader.paths.meals_dir', lambda: meals_dir)
+
+        response = client.get('/add-to-meal-plan?recipe=X')
+        # The existing radio is rendered with `disabled`.
+        assert b'value="existing" disabled' in response.data
+        assert b'(none yet)' in response.data
+
+    def test_existing_enabled_when_meals_exist(self, client, tmp_path, monkeypatch):
+        meals_dir = tmp_path / "Meals"
+        meals_dir.mkdir()
+        from lib import meal_loader as ml
+        ml.save_meal(
+            ml.Meal(name="Salmon Dinner",
+                    sub_recipes=[ml.SubRecipe(recipe="Pan-Seared Salmon")]),
+            meals_dir=meals_dir,
+        )
+        monkeypatch.setattr('lib.meal_loader.paths.meals_dir', lambda: meals_dir)
+
+        response = client.get('/add-to-meal-plan?recipe=X')
+        assert b'value="existing" disabled' not in response.data
+        assert b'<option value="Salmon Dinner">' in response.data
