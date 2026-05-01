@@ -30,7 +30,7 @@ from templates.meal_plan_template import generate_meal_plan_markdown
 from lib.ingredient_validator import validate_ingredients
 from lib.seasonality import match_ingredients_to_seasonal, get_peak_months
 from lib.nutrition_lookup import calculate_recipe_nutrition
-from lib import paths
+from lib import meal_loader, pantry as pantry_module, paths, task_extractor
 
 load_dotenv()
 warnings.filterwarnings('ignore', message='urllib3 v2 only supports OpenSSL 1.1.1+')
@@ -717,7 +717,15 @@ def api_meal_plan_get(week):
         for meal in ("breakfast", "lunch", "snack", "dinner"):
             entry = day_data[meal]
             if entry is not None:
-                day_json[meal] = {"name": entry.name, "servings": entry.servings}
+                slot_json = {"name": entry.name, "servings": entry.servings, "kind": entry.kind}
+                if entry.kind == "meal":
+                    meal_def = meal_loader.load_meal(entry.name)
+                    if meal_def is not None:
+                        slot_json["sub_recipes"] = [
+                            {"recipe": s.recipe, "servings": s.servings}
+                            for s in meal_def.sub_recipes
+                        ]
+                day_json[meal] = slot_json
         days.append(day_json)
 
     return jsonify({"week": week, "days": days})
@@ -931,6 +939,178 @@ def add_to_meal_plan():
 def meal_planner():
     """Serve the interactive meal planner board."""
     return send_file('templates/meal_planner.html', mimetype='text/html')
+
+
+# ----- Meals (composite recipe bundles) -----
+
+def _meal_to_json(meal):
+    return {
+        "name": meal.name,
+        "description": meal.description,
+        "tags": list(meal.tags),
+        "sub_recipes": [
+            {"recipe": s.recipe, "servings": s.servings} for s in meal.sub_recipes
+        ],
+    }
+
+
+@app.route('/api/meals', methods=['GET'])
+def api_meals_list():
+    return jsonify({"meals": [_meal_to_json(m) for m in meal_loader.list_meals()]})
+
+
+@app.route('/api/meals', methods=['POST'])
+def api_meals_create():
+    data = request.get_json(force=True, silent=True) or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "name required"}), 400
+    if meal_loader.load_meal(name) is not None:
+        return jsonify({"error": f"meal '{name}' already exists"}), 409
+    sub_recipes = data.get("sub_recipes") or []
+    if not isinstance(sub_recipes, list) or not sub_recipes:
+        return jsonify({"error": "sub_recipes must be a non-empty list"}), 400
+    meal = meal_loader.Meal(
+        name=name,
+        description=data.get("description", ""),
+        tags=list(data.get("tags") or []),
+        sub_recipes=[
+            meal_loader.SubRecipe(
+                recipe=str(s.get("recipe", "")),
+                servings=int(s.get("servings", 1) or 1),
+            )
+            for s in sub_recipes
+            if s.get("recipe")
+        ],
+        body=data.get("body", ""),
+    )
+    meal_loader.save_meal(meal)
+    return jsonify(_meal_to_json(meal)), 201
+
+
+@app.route('/api/meals/<name>', methods=['GET'])
+def api_meals_get(name):
+    meal = meal_loader.load_meal(name)
+    if meal is None:
+        return jsonify({"error": f"meal '{name}' not found"}), 404
+    return jsonify(_meal_to_json(meal))
+
+
+@app.route('/api/meals/<name>', methods=['PUT'])
+def api_meals_update(name):
+    existing = meal_loader.load_meal(name)
+    if existing is None:
+        return jsonify({"error": f"meal '{name}' not found"}), 404
+    data = request.get_json(force=True, silent=True) or {}
+    new_name = (data.get("name") or name).strip()
+    if new_name != name:
+        # rename: write new file, delete old
+        meal_loader.delete_meal(name)
+    sub_recipes = data.get("sub_recipes")
+    if sub_recipes is None:
+        sub_records = existing.sub_recipes
+    elif isinstance(sub_recipes, list) and sub_recipes:
+        sub_records = [
+            meal_loader.SubRecipe(
+                recipe=str(s.get("recipe", "")),
+                servings=int(s.get("servings", 1) or 1),
+            )
+            for s in sub_recipes
+            if s.get("recipe")
+        ]
+    else:
+        return jsonify({"error": "sub_recipes must be a non-empty list"}), 400
+    meal = meal_loader.Meal(
+        name=new_name,
+        description=data.get("description", existing.description),
+        tags=list(data.get("tags") if data.get("tags") is not None else existing.tags),
+        sub_recipes=sub_records,
+        body=data.get("body", existing.body),
+    )
+    meal_loader.save_meal(meal)
+    return jsonify(_meal_to_json(meal))
+
+
+@app.route('/api/meals/<name>', methods=['DELETE'])
+def api_meals_delete(name):
+    if not meal_loader.delete_meal(name):
+        return jsonify({"error": f"meal '{name}' not found"}), 404
+    return jsonify({"status": "deleted", "name": name})
+
+
+# ----- Pantry inventory -----
+
+@app.route('/api/pantry', methods=['GET'])
+def api_pantry_get():
+    return jsonify({"items": pantry_module.load_pantry()})
+
+
+@app.route('/api/pantry', methods=['PUT'])
+def api_pantry_put():
+    data = request.get_json(force=True, silent=True) or {}
+    items = data.get("items")
+    if not isinstance(items, list):
+        return jsonify({"error": "items must be a list"}), 400
+    pantry_module.save_pantry(items)
+    return jsonify({"status": "saved", "count": len(items)})
+
+
+# ----- Pantry-aware shopping list flow -----
+
+@app.route('/api/shopping-list/preview', methods=['POST'])
+def api_shopping_list_preview():
+    data = request.get_json(force=True, silent=True) or {}
+    week = data.get("week")
+    if not week or not re.match(r'^\d{4}-W\d{2}$', week):
+        return jsonify({"error": "week required (YYYY-WNN)"}), 400
+    pantry = pantry_module.load_pantry()
+    result = generate_shopping_list(week, pantry=pantry if data.get("use_pantry", True) else None)
+    return jsonify(result)
+
+
+@app.route('/api/shopping-list/confirm', methods=['POST'])
+def api_shopping_list_confirm():
+    data = request.get_json(force=True, silent=True) or {}
+    week = data.get("week")
+    items = data.get("items_to_buy")
+    decisions = data.get("decisions") or []
+    if not week or not isinstance(items, list):
+        return jsonify({"error": "week and items_to_buy required"}), 400
+
+    SHOPPING_LISTS_PATH.mkdir(parents=True, exist_ok=True)
+    markdown = generate_shopping_list_markdown(week, items)
+    filename = shopping_list_filename(week)
+    out_path = SHOPPING_LISTS_PATH / filename
+    out_path.write_text(markdown, encoding="utf-8")
+
+    if decisions:
+        pantry = pantry_module.load_pantry()
+        updated = pantry_module.apply_decisions(decisions, pantry)
+        pantry_module.save_pantry(updated)
+
+    return jsonify({"status": "saved", "filename": filename, "items": len(items)})
+
+
+# ----- Cross-recipe prep tasks -----
+
+@app.route('/api/tasks/<week>', methods=['GET'])
+def api_tasks_get(week):
+    if not re.match(r'^\d{4}-W\d{2}$', week):
+        return jsonify({"error": "Invalid week format. Expected YYYY-WNN"}), 400
+    force = request.args.get("force") in ("1", "true", "yes")
+    payload = task_extractor.extract_tasks(week, force=force)
+    return jsonify(payload)
+
+
+@app.route('/api/tasks/<week>/<task_id>/done', methods=['POST'])
+def api_task_mark_done(week, task_id):
+    if not re.match(r'^\d{4}-W\d{2}$', week):
+        return jsonify({"error": "Invalid week format. Expected YYYY-WNN"}), 400
+    data = request.get_json(force=True, silent=True) or {}
+    done = bool(data.get("done", True))
+    result = task_extractor.mark_task_done(week, task_id, done)
+    status = 200 if result.get("success") else 404
+    return jsonify(result), status
 
 
 if __name__ == '__main__':

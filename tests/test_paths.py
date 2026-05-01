@@ -30,6 +30,11 @@ def test_meal_plans_dir_is_under_vault(monkeypatch, tmp_path):
     assert paths.meal_plans_dir() == tmp_path / "Meal Plans"
 
 
+def test_meals_dir_is_under_vault(monkeypatch, tmp_path):
+    monkeypatch.setenv("KITCHENOS_VAULT", str(tmp_path))
+    assert paths.meals_dir() == tmp_path / "Meals"
+
+
 def test_shopping_lists_dir_is_under_vault(monkeypatch, tmp_path):
     monkeypatch.setenv("KITCHENOS_VAULT", str(tmp_path))
     assert paths.shopping_lists_dir() == tmp_path / "Shopping Lists"

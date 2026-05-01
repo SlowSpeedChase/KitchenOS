@@ -2,7 +2,15 @@
 
 import pytest
 from datetime import date
-from lib.meal_plan_parser import parse_meal_plan, extract_meals_for_day, insert_recipe_into_meal_plan, MealEntry, rebuild_meal_plan_markdown
+from lib.meal_plan_parser import (
+    MealEntry,
+    extract_meals_for_day,
+    flatten_to_recipes,
+    insert_recipe_into_meal_plan,
+    parse_meal_plan,
+    rebuild_meal_plan_markdown,
+)
+from lib.meal_loader import Meal, SubRecipe, save_meal
 
 
 class TestParseMealPlan:
@@ -79,6 +87,40 @@ class TestParseMealPlan:
 
         # Use first recipe only for simplicity
         assert result[0]['breakfast'] == MealEntry('Eggs', 1)
+
+    def test_extracts_meal_link(self):
+        content = """# Meal Plan - Week 04 (Jan 19 - Jan 25, 2026)
+
+## Monday (Jan 19)
+### Breakfast
+
+### Lunch
+
+### Dinner
+[[Meal: Salmon Dinner]]
+### Notes
+"""
+        result = parse_meal_plan(content, 2026, 4)
+
+        entry = result[0]['dinner']
+        assert entry == MealEntry(name='Salmon Dinner', servings=1, kind='meal')
+
+    def test_extracts_meal_link_with_multiplier(self):
+        content = """# Meal Plan - Week 04 (Jan 19 - Jan 25, 2026)
+
+## Monday (Jan 19)
+### Breakfast
+
+### Lunch
+
+### Dinner
+[[Meal: Salmon Dinner]] x2
+### Notes
+"""
+        result = parse_meal_plan(content, 2026, 4)
+        entry = result[0]['dinner']
+        assert entry.kind == 'meal'
+        assert entry.servings == 2
 
     def test_extracts_servings_multiplier(self):
         content = """# Meal Plan - Week 04 (Jan 19 - Jan 25, 2026)
@@ -408,3 +450,72 @@ action kitchenos://generate-shopping-list?week=2026-W09
         assert reparsed[0]["dinner"] == MealEntry("Butter Chicken", 1)
         assert reparsed[1]["dinner"] == MealEntry("Pasta Aglio E Olio", 1)
         assert reparsed[2]["breakfast"] is None
+
+    def test_meal_entry_round_trips_through_rebuild(self):
+        days = [
+            {"day": "Monday", "date": "2026-02-23",
+             "breakfast": None,
+             "lunch": None,
+             "dinner": {"name": "Salmon Dinner", "servings": 1, "kind": "meal"}},
+        ] + [
+            {"day": d, "date": "2026-02-24",
+             "breakfast": None, "lunch": None, "snack": None, "dinner": None}
+            for d in ["Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        ]
+        rebuilt = rebuild_meal_plan_markdown("2026-W09", days)
+        assert "[[Meal: Salmon Dinner]]" in rebuilt
+        reparsed = parse_meal_plan(rebuilt, 2026, 9)
+        assert reparsed[0]["dinner"] == MealEntry(name="Salmon Dinner", servings=1, kind="meal")
+
+
+class TestFlattenToRecipes:
+    """flatten_to_recipes resolves meals to their sub-recipes."""
+
+    def test_recipe_entries_pass_through(self):
+        entries = [MealEntry("Pancakes", 2), MealEntry("Salad", 1)]
+        flat = flatten_to_recipes(entries)
+        assert flat == entries
+
+    def test_meal_entry_expands_to_sub_recipes(self, tmp_path):
+        save_meal(
+            Meal(
+                name="Salmon Dinner",
+                sub_recipes=[
+                    SubRecipe(recipe="Pan-Seared Salmon", servings=1),
+                    SubRecipe(recipe="Asparagus", servings=1),
+                ],
+            ),
+            meals_dir=tmp_path,
+        )
+        entries = [MealEntry(name="Salmon Dinner", servings=1, kind="meal")]
+        flat = flatten_to_recipes(entries, meals_dir=tmp_path)
+        assert flat == [
+            MealEntry(name="Pan-Seared Salmon", servings=1, kind="recipe"),
+            MealEntry(name="Asparagus", servings=1, kind="recipe"),
+        ]
+
+    def test_outer_multiplier_propagates_to_sub_recipes(self, tmp_path):
+        save_meal(
+            Meal(
+                name="Salmon Dinner",
+                sub_recipes=[
+                    SubRecipe(recipe="Pan-Seared Salmon", servings=1),
+                    SubRecipe(recipe="Wild Rice Pilaf", servings=2),
+                ],
+            ),
+            meals_dir=tmp_path,
+        )
+        entries = [MealEntry(name="Salmon Dinner", servings=3, kind="meal")]
+        flat = flatten_to_recipes(entries, meals_dir=tmp_path)
+        assert flat[0] == MealEntry(name="Pan-Seared Salmon", servings=3, kind="recipe")
+        assert flat[1] == MealEntry(name="Wild Rice Pilaf", servings=6, kind="recipe")
+
+    def test_unknown_meal_passes_through_as_is(self, tmp_path):
+        entry = MealEntry(name="Phantom Meal", servings=1, kind="meal")
+        flat = flatten_to_recipes([entry], meals_dir=tmp_path)
+        assert flat == [entry]
+
+    def test_handles_none_and_single_entry(self, tmp_path):
+        assert flatten_to_recipes(None, meals_dir=tmp_path) == []
+        single = MealEntry("Pancakes", 1)
+        assert flatten_to_recipes(single, meals_dir=tmp_path) == [single]

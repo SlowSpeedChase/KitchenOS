@@ -26,6 +26,10 @@ def meal_plans_dir() -> Path:
     return vault_root() / "Meal Plans"
 
 
+def meals_dir() -> Path:
+    return vault_root() / "Meals"
+
+
 def shopping_lists_dir() -> Path:
     return vault_root() / "Shopping Lists"
 

@@ -5,10 +5,11 @@ Core logic extracted from shopping_list.py for API use.
 
 import re
 from pathlib import Path
+from typing import Optional
 
 from lib.recipe_parser import parse_recipe_file, parse_ingredient_table
 from lib.ingredient_aggregator import aggregate_ingredients, format_ingredient, parse_amount_to_float, format_amount
-from lib import paths
+from lib import meal_loader, paths
 
 # Configuration
 OBSIDIAN_VAULT = paths.vault_root()
@@ -35,14 +36,31 @@ def parse_week_string(week_str: str) -> Path:
 
 
 def extract_recipe_links(meal_plan_path: Path) -> list[tuple[str, int]]:
-    """Extract [[recipe]] links from meal plan with optional servings multiplier.
+    """Extract recipe references from a meal plan, expanding any meals.
+
+    Recognizes both `[[Recipe Name]]` and `[[Meal: Bundle Name]]` (the latter
+    is resolved to its sub-recipes via lib.meal_loader). Outer `xN`
+    multipliers propagate through to each sub-recipe and stack with the
+    sub-recipe's own per-bundle servings override.
 
     Returns:
-        List of (recipe_name, servings) tuples. Servings defaults to 1.
+        List of (recipe_name, servings) tuples. Unknown meals are emitted
+        as-is so the caller can surface a "Recipe not found" warning.
     """
     content = meal_plan_path.read_text(encoding='utf-8')
-    matches = re.findall(r'\[\[([^\]]+)\]\]\s*(?:x(\d+))?', content)
-    return [(name, int(mult) if mult else 1) for name, mult in matches]
+    matches = re.findall(r'\[\[(Meal:\s*)?([^\]]+)\]\]\s*(?:x(\d+))?', content)
+    out: list[tuple[str, int]] = []
+    for prefix, name, mult in matches:
+        servings = int(mult) if mult else 1
+        name = name.strip()
+        if prefix:
+            meal = meal_loader.load_meal(name)
+            if meal and meal.sub_recipes:
+                for sub in meal.sub_recipes:
+                    out.append((sub.recipe, servings * max(1, int(sub.servings or 1))))
+                continue
+        out.append((name, servings))
+    return out
 
 
 def slugify(text: str) -> str:
@@ -116,24 +134,62 @@ def load_recipe_ingredients(recipe_name: str) -> tuple[list[dict], str | None]:
         return [], f"Could not parse {recipe_name}: {e}"
 
 
-def generate_shopping_list(week: str) -> dict:
-    """Generate shopping list from meal plan.
+def compute_lines(aggregated: list[dict], pantry: Optional[list[dict]] = None) -> list[dict]:
+    """Build per-line shopping records, optionally split against pantry inventory.
 
-    Args:
-        week: Week identifier like '2026-W04'
+    Each record has the shape:
+        {
+            "item": str,                            # normalized item name
+            "needed": {amount, unit},               # what the recipes call for
+            "from_pantry": {amount, unit} | None,   # what to take from pantry
+            "to_buy": {amount, unit} | None,        # what still needs purchasing
+            "display": str,                         # full formatted ingredient
+            "warning": str | None,                  # cross-family mismatch, etc.
+        }
 
-    Returns:
-        Dict with keys:
-            - success: bool
-            - items: list of formatted ingredient strings
-            - recipes: list of recipe names found
-            - warnings: list of warning messages
-            - error: error message (if success=False)
+    When `pantry` is None, every line has `from_pantry=None` and
+    `to_buy=needed`. When `pantry` is provided, lib.pantry.split_against_pantry()
+    is consulted to subtract.
     """
-    try:
-        meal_plan_path = parse_week_string(week)
-    except ValueError as e:
-        return {"success": False, "error": str(e)}
+    splitter = None
+    if pantry is not None:
+        from lib import pantry as pantry_module  # local import to avoid cycle
+        splitter = pantry_module.split_against_pantry
+
+    lines: list[dict] = []
+    for ing in aggregated:
+        amount = ing.get("amount", "")
+        unit = ing.get("unit", "")
+        item = ing.get("item", "")
+        needed = {"amount": amount, "unit": unit}
+        from_pantry: Optional[dict] = None
+        to_buy: Optional[dict] = needed
+        warning: Optional[str] = None
+
+        if splitter is not None:
+            split = splitter(item, amount, unit, pantry)
+            from_pantry = split.get("from_pantry")
+            to_buy = split.get("to_buy")
+            warning = split.get("warning")
+
+        lines.append({
+            "item": item,
+            "needed": needed,
+            "from_pantry": from_pantry,
+            "to_buy": to_buy,
+            "display": format_ingredient(ing),
+            "warning": warning,
+        })
+    return lines
+
+
+def generate_shopping_list_from_path(meal_plan_path: Path, pantry: Optional[list[dict]] = None) -> dict:
+    """Same contract as `generate_shopping_list` but operates on a path.
+
+    Used by the CLI which supports `--plan custom.md` in addition to weeks.
+    """
+    if not meal_plan_path.exists():
+        return {"success": False, "error": f"Meal plan not found: {meal_plan_path}"}
 
     recipe_links = extract_recipe_links(meal_plan_path)
     if not recipe_links:
@@ -159,14 +215,46 @@ def generate_shopping_list(week: str) -> dict:
         }
 
     aggregated = aggregate_ingredients(all_ingredients)
-    formatted = [format_ingredient(ing) for ing in aggregated]
+    lines = compute_lines(aggregated, pantry=pantry)
+
+    if pantry is None:
+        formatted = [line["display"] for line in lines]
+    else:
+        formatted = []
+        for line in lines:
+            tb = line.get("to_buy")
+            if tb is None:
+                continue
+            buy_ing = {"amount": tb.get("amount", ""), "unit": tb.get("unit", ""), "item": line["item"]}
+            formatted.append(format_ingredient(buy_ing))
 
     return {
         "success": True,
         "items": sorted(formatted),
+        "lines": lines,
         "recipes": loaded_recipes,
         "warnings": warnings
     }
+
+
+def generate_shopping_list(week: str, pantry: Optional[list[dict]] = None) -> dict:
+    """Generate shopping list from a week's meal plan.
+
+    Args:
+        week: Week identifier like '2026-W04'
+        pantry: Optional pantry inventory (list of {item, amount, unit} dicts).
+            When supplied, each returned line is split into `from_pantry` and
+            `to_buy` portions and the top-level `items` reflects only what
+            still needs purchasing.
+
+    Returns:
+        Dict with keys: success, items, lines, recipes, warnings, error.
+    """
+    try:
+        meal_plan_path = parse_week_string(week)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    return generate_shopping_list_from_path(meal_plan_path, pantry=pantry)
 
 
 def parse_shopping_list_file(week: str) -> dict:

@@ -91,6 +91,51 @@ def test_extract_recipe_links_empty():
     assert links == []
 
 
+def test_extract_recipe_links_expands_meal(tmp_path, monkeypatch):
+    """Meal links resolve to their sub-recipes."""
+    from lib.meal_loader import Meal, SubRecipe, save_meal
+
+    monkeypatch.setenv("KITCHENOS_VAULT", str(tmp_path))
+    save_meal(Meal(
+        name="Salmon Dinner",
+        sub_recipes=[
+            SubRecipe(recipe="Pan-Seared Salmon", servings=1),
+            SubRecipe(recipe="Asparagus", servings=2),
+        ],
+    ))
+
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_text("## Monday\n[[Meal: Salmon Dinner]]\n[[Garlic Bread]]\n")
+    links = extract_recipe_links(plan_path)
+    assert ("Pan-Seared Salmon", 1) in links
+    assert ("Asparagus", 2) in links
+    assert ("Garlic Bread", 1) in links
+
+
+def test_extract_recipe_links_meal_multiplier_propagates(tmp_path, monkeypatch):
+    """`[[Meal: X]] x2` doubles every sub-recipe's servings."""
+    from lib.meal_loader import Meal, SubRecipe, save_meal
+
+    monkeypatch.setenv("KITCHENOS_VAULT", str(tmp_path))
+    save_meal(Meal(
+        name="Burrito Night",
+        sub_recipes=[SubRecipe(recipe="Beans", servings=1), SubRecipe(recipe="Rice", servings=3)],
+    ))
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_text("[[Meal: Burrito Night]] x2\n")
+    links = extract_recipe_links(plan_path)
+    assert ("Beans", 2) in links
+    assert ("Rice", 6) in links
+
+
+def test_extract_recipe_links_unknown_meal_passes_through(tmp_path, monkeypatch):
+    """Missing meal definition emits the meal name itself so warning surfaces."""
+    monkeypatch.setenv("KITCHENOS_VAULT", str(tmp_path))
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_text("[[Meal: Phantom Meal]]\n")
+    assert extract_recipe_links(plan_path) == [("Phantom Meal", 1)]
+
+
 def test_slugify():
     """Slugify converts text to lowercase slug."""
     assert slugify("Pasta Aglio e Olio") == "pasta-aglio-e-olio"
@@ -103,15 +148,63 @@ def test_slugify_special_chars():
     assert slugify("--multiple---dashes--") == "multiple-dashes"
 
 
-def test_generate_shopping_list_no_recipes():
+def test_generate_shopping_list_includes_lines(tmp_path, monkeypatch):
+    """Result includes structured `lines` field with per-ingredient records."""
+    from lib import shopping_list_generator as slg
+
+    plan = tmp_path / "Meal Plans"
+    plan.mkdir()
+    (plan / "2026-W04.md").write_text("## Monday\n### Dinner\n[[Test Pasta]]\n")
+    monkeypatch.setattr(slg, "MEAL_PLANS_PATH", plan)
+    monkeypatch.setattr(slg, "load_recipe_ingredients",
+                        lambda name: ([{"amount": "1", "unit": "cup", "item": "flour"}], None))
+
+    result = slg.generate_shopping_list("2026-W04")
+    assert result["success"] is True
+    assert "lines" in result
+    assert len(result["lines"]) == 1
+    line = result["lines"][0]
+    assert line["item"] == "flour"
+    assert line["needed"] == {"amount": "1", "unit": "cup"}
+    assert line["from_pantry"] is None
+    assert line["to_buy"] == {"amount": "1", "unit": "cup"}
+
+
+def test_generate_shopping_list_with_pantry_splits_lines(tmp_path, monkeypatch):
+    """When pantry covers a line, `to_buy` is None and `items` excludes it."""
+    from lib import shopping_list_generator as slg
+
+    plan = tmp_path / "Meal Plans"
+    plan.mkdir()
+    (plan / "2026-W04.md").write_text("## Monday\n### Dinner\n[[Test Pasta]]\n")
+    monkeypatch.setattr(slg, "MEAL_PLANS_PATH", plan)
+    monkeypatch.setattr(slg, "load_recipe_ingredients", lambda name: ([
+        {"amount": "1", "unit": "cup", "item": "flour"},
+        {"amount": "2", "unit": "tbsp", "item": "olive oil"},
+    ], None))
+
+    pantry = [{"item": "flour", "amount": "10", "unit": "cup"}]
+    result = slg.generate_shopping_list("2026-W04", pantry=pantry)
+    assert result["success"] is True
+    by_item = {line["item"]: line for line in result["lines"]}
+    assert by_item["flour"]["to_buy"] is None
+    assert by_item["flour"]["from_pantry"] == {"amount": "1", "unit": "cup"}
+    assert by_item["olive oil"]["to_buy"] == {"amount": "2", "unit": "tbsp"}
+    # `items` reflects only what still needs purchasing
+    assert any("olive oil" in s for s in result["items"])
+    assert not any("flour" in s for s in result["items"])
+
+
+def test_generate_shopping_list_no_recipes(tmp_path, monkeypatch):
     """Returns error when meal plan has no recipes."""
-    with patch('lib.shopping_list_generator.parse_week_string') as mock_parse:
-        mock_path = Path("/fake/plan.md")
-        mock_parse.return_value = mock_path
+    from lib import shopping_list_generator as slg
 
-        with patch.object(Path, 'read_text', return_value="# Empty Meal Plan\n"):
-            result = generate_shopping_list("2026-W04")
+    plan = tmp_path / "Meal Plans"
+    plan.mkdir()
+    (plan / "2026-W04.md").write_text("# Empty Meal Plan\n")
+    monkeypatch.setattr(slg, "MEAL_PLANS_PATH", plan)
 
+    result = slg.generate_shopping_list("2026-W04")
     assert result["success"] is False
     assert "No recipes found" in result["error"]
 
