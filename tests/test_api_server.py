@@ -720,3 +720,45 @@ class TestAddToMealPlanNew:
 
         assert response.status_code == 400
         assert b"can't contain" in response.data or b'can&#39;t contain' in response.data
+
+
+class TestScheduleMeal:
+    """mode=schedule_meal — Screen 2 submit. Inserts [[Meal: X]] into the plan."""
+
+    def test_inserts_meal_token_into_plan(self, client, tmp_path, monkeypatch):
+        plans_dir = tmp_path / "Meal Plans"
+        plans_dir.mkdir()
+        monkeypatch.setattr('api_server.MEAL_PLANS_PATH', plans_dir)
+
+        response = client.post('/add-to-meal-plan', data={
+            'recipe': 'Pan-Seared Salmon',  # carried through, not used here
+            'mode': 'schedule_meal',
+            'meal_name': 'Salmon Dinner',
+            'week': '2026-W19',
+            'day': 'Tuesday',
+            'meal': 'Dinner',
+        })
+
+        assert response.status_code == 200
+        assert b'Added!' in response.data
+        plan_text = (plans_dir / "2026-W19.md").read_text()
+        assert '[[Meal: Salmon Dinner]]' in plan_text
+        # The wikilink is NOT a plain recipe link.
+        assert '[[Pan-Seared Salmon]]' not in plan_text
+
+    def test_invalid_week_returns_error(self, client, tmp_path, monkeypatch):
+        plans_dir = tmp_path / "Meal Plans"
+        plans_dir.mkdir()
+        monkeypatch.setattr('api_server.MEAL_PLANS_PATH', plans_dir)
+
+        response = client.post('/add-to-meal-plan', data={
+            'recipe': 'X',
+            'mode': 'schedule_meal',
+            'meal_name': 'Salmon Dinner',
+            'week': 'not-a-week',
+            'day': 'Tuesday',
+            'meal': 'Dinner',
+        })
+
+        assert response.status_code == 400
+        assert b'Invalid week format' in response.data

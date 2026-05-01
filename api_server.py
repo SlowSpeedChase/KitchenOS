@@ -1025,6 +1025,32 @@ def _render_schedule_prompt(recipe: str, meal_name: str, action: str, info: str 
 </body></html>'''
 
 
+def _schedule_meal_token(meal_name: str, week: str, day: str, meal: str):
+    """Insert ``[[Meal: <meal_name>]]`` into the plan slot. Mirrors _schedule_recipe_directly."""
+    try:
+        parts = week.split('-W')
+        year = int(parts[0])
+        week_num = int(parts[1])
+    except (ValueError, IndexError):
+        return error_page(f"Error: Invalid week format: {week}"), 400
+
+    MEAL_PLANS_PATH.mkdir(parents=True, exist_ok=True)
+    plan_file = MEAL_PLANS_PATH / f"{week}.md"
+    if not plan_file.exists():
+        content = generate_meal_plan_markdown(year, week_num)
+        plan_file.write_text(content, encoding='utf-8')
+
+    content = plan_file.read_text(encoding='utf-8')
+    token = f"Meal: {meal_name}"
+    try:
+        new_content = insert_recipe_into_meal_plan(content, day, meal, token)
+    except ValueError as e:
+        return error_page(f"Error: {str(e)}"), 400
+
+    plan_file.write_text(new_content, encoding='utf-8')
+    return _success_page_for_wikilink(token, day, meal, week)
+
+
 def _schedule_recipe_directly(recipe: str, week: str, day: str, meal: str):
     """The original direct flow, extracted unchanged."""
     try:
@@ -1111,6 +1137,15 @@ def add_to_meal_plan():
         )
         meal_loader.save_meal(meal)
         return _render_schedule_prompt(recipe, meal_name, action='created')
+
+    if mode == 'schedule_meal':
+        meal_name = (request.form.get('meal_name') or '').strip()
+        week = request.form.get('week')
+        day = request.form.get('day')
+        meal = request.form.get('meal')
+        if not all([meal_name, week, day, meal]):
+            return error_page("Error: meal_name, week, day, and meal are all required"), 400
+        return _schedule_meal_token(meal_name, week, day, meal)
 
     return error_page(f"Unknown mode: {mode}"), 400
 
