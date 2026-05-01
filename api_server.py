@@ -840,6 +840,22 @@ def _generate_week_options(weeks_ahead: int = 4) -> list[str]:
     return weeks
 
 
+_INVALID_MEAL_NAME_CHARS = ('/', ':', '\\')
+
+
+def _validate_meal_name(name: str) -> str | None:
+    """Return an error message if the name is invalid, else None."""
+    name = name.strip()
+    if not name:
+        return "Meal name is required."
+    if name.startswith('.'):
+        return "Meal name can't start with a dot."
+    for ch in _INVALID_MEAL_NAME_CHARS:
+        if ch in name:
+            return "Meal name can't contain / : or \\."
+    return None
+
+
 def _render_add_form(recipe_display: str, error: str | None = None) -> str:
     """Screen 1: branch picker + conditional fields."""
     weeks = _generate_week_options()
@@ -1077,6 +1093,24 @@ def add_to_meal_plan():
         meal_loader.save_meal(meal)
         info = f'{recipe} is already in this meal.' if already_present else None
         return _render_schedule_prompt(recipe, meal_name, action='added', info=info)
+
+    if mode == 'new':
+        meal_name = (request.form.get('meal_name') or '').strip()
+        recipe_display = recipe.replace('.md', '')
+        err = _validate_meal_name(meal_name)
+        if err:
+            return _render_add_form(recipe_display, error=err), 400
+        if meal_loader.load_meal(meal_name) is not None:
+            return _render_add_form(
+                recipe_display,
+                error=f'A meal called "{meal_name}" already exists.'
+            ), 409
+        meal = meal_loader.Meal(
+            name=meal_name,
+            sub_recipes=[meal_loader.SubRecipe(recipe=recipe, servings=1)],
+        )
+        meal_loader.save_meal(meal)
+        return _render_schedule_prompt(recipe, meal_name, action='created')
 
     return error_page(f"Unknown mode: {mode}"), 400
 

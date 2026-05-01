@@ -650,3 +650,73 @@ class TestAddToMealPlanExisting:
 
         assert b'Add to Meal Plan' in response.data
         assert b'Meal not found' in response.data
+
+
+class TestAddToMealPlanNew:
+    """mode=new — create a new meal seeded with the current recipe."""
+
+    def test_creates_new_meal_with_seed_recipe(self, client, tmp_path, monkeypatch):
+        meals_dir = tmp_path / "Meals"
+        meals_dir.mkdir()
+        monkeypatch.setattr('lib.meal_loader.paths.meals_dir', lambda: meals_dir)
+
+        response = client.post('/add-to-meal-plan', data={
+            'recipe': 'Pan-Seared Salmon',
+            'mode': 'new',
+            'meal_name': 'Salmon Dinner',
+        })
+
+        assert response.status_code == 200
+        assert b'Schedule it now?' in response.data
+        from lib import meal_loader as ml
+        loaded = ml.load_meal('Salmon Dinner', meals_dir=meals_dir)
+        assert loaded is not None
+        assert [s.recipe for s in loaded.sub_recipes] == ['Pan-Seared Salmon']
+
+    def test_empty_meal_name_re_renders_with_error(self, client, tmp_path, monkeypatch):
+        meals_dir = tmp_path / "Meals"
+        meals_dir.mkdir()
+        monkeypatch.setattr('lib.meal_loader.paths.meals_dir', lambda: meals_dir)
+
+        response = client.post('/add-to-meal-plan', data={
+            'recipe': 'Pan-Seared Salmon',
+            'mode': 'new',
+            'meal_name': '   ',
+        })
+
+        assert b'Meal name is required' in response.data
+        assert response.status_code == 400
+
+    def test_collision_re_renders_with_error(self, client, tmp_path, monkeypatch):
+        meals_dir = tmp_path / "Meals"
+        meals_dir.mkdir()
+        from lib import meal_loader as ml
+        ml.save_meal(
+            ml.Meal(name="Salmon Dinner",
+                    sub_recipes=[ml.SubRecipe(recipe="Pan-Seared Salmon")]),
+            meals_dir=meals_dir,
+        )
+        monkeypatch.setattr('lib.meal_loader.paths.meals_dir', lambda: meals_dir)
+
+        response = client.post('/add-to-meal-plan', data={
+            'recipe': 'Lemon Asparagus',
+            'mode': 'new',
+            'meal_name': 'Salmon Dinner',
+        })
+
+        assert response.status_code == 409
+        assert b'already exists' in response.data
+
+    def test_filesystem_unsafe_name_re_renders_with_error(self, client, tmp_path, monkeypatch):
+        meals_dir = tmp_path / "Meals"
+        meals_dir.mkdir()
+        monkeypatch.setattr('lib.meal_loader.paths.meals_dir', lambda: meals_dir)
+
+        response = client.post('/add-to-meal-plan', data={
+            'recipe': 'Pan-Seared Salmon',
+            'mode': 'new',
+            'meal_name': 'Bad/Name',
+        })
+
+        assert response.status_code == 400
+        assert b"can't contain" in response.data or b'can&#39;t contain' in response.data
