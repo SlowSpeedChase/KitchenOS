@@ -954,6 +954,61 @@ def _success_page_for_wikilink(wikilink_target: str, day: str, meal: str, week: 
 </body></html>'''
 
 
+def _render_schedule_prompt(recipe: str, meal_name: str, action: str, info: str | None = None) -> str:
+    """Screen 2 — hybrid optional schedule prompt after meal save."""
+    from urllib.parse import quote
+    weeks = _generate_week_options()
+    days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    meals = ['Breakfast', 'Lunch', 'Snack', 'Dinner']
+    week_options = ''.join(f'<option value="{w}">{w}</option>' for w in weeks)
+    day_options = ''.join(f'<option value="{d}">{d}</option>' for d in days)
+    meal_options = ''.join(f'<option value="{m}">{m}</option>' for m in meals)
+    encoded_meal = quote(f"Meals/{meal_name}", safe='')
+
+    if action == 'created':
+        banner = f'Created meal &ldquo;{meal_name}&rdquo; with {recipe}.'
+    elif action == 'added':
+        banner = f'Added {recipe} to &ldquo;{meal_name}&rdquo;.'
+    else:
+        banner = f'Saved &ldquo;{meal_name}&rdquo;.'
+
+    info_html = f'<div class="info">{info}</div>' if info else ''
+
+    return f'''<!DOCTYPE html>
+<html><head>
+<title>Schedule Meal</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+    body {{ font-family: system-ui; padding: 1.5rem; max-width: 480px; margin: 0 auto; background: #fafafa; }}
+    .ok {{ background: #efe; border: 1px solid #0a0; color: #060; padding: 0.75rem; border-radius: 8px; margin-bottom: 1rem; }}
+    .info {{ background: #eef; border: 1px solid #66c; color: #336; padding: 0.5rem 0.75rem; border-radius: 8px; margin-bottom: 1rem; font-size: 14px; }}
+    h3 {{ margin-top: 0.5rem; }}
+    label {{ display: block; font-weight: 600; margin-bottom: 0.25rem; margin-top: 1rem; }}
+    select {{ width: 100%; padding: 0.75rem; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; background: white; -webkit-appearance: none; }}
+    button {{ width: 100%; padding: 1rem; font-size: 18px; font-weight: 600; background: #2563eb; color: white; border: none; border-radius: 8px; margin-top: 1.5rem; cursor: pointer; }}
+    .skip {{ display: block; text-align: center; margin-top: 1rem; color: #666; }}
+</style>
+</head>
+<body>
+<div class="ok"><strong>&#10003;</strong> {banner}</div>
+{info_html}
+<h3>Schedule it now? <span style="font-weight: 400; color: #888;">(optional)</span></h3>
+<form method="POST" action="/add-to-meal-plan">
+    <input type="hidden" name="recipe" value="{recipe}">
+    <input type="hidden" name="mode" value="schedule_meal">
+    <input type="hidden" name="meal_name" value="{meal_name}">
+    <label for="week">Week</label>
+    <select name="week" id="week">{week_options}</select>
+    <label for="day">Day</label>
+    <select name="day" id="day">{day_options}</select>
+    <label for="meal">Slot</label>
+    <select name="meal" id="meal">{meal_options}</select>
+    <button type="submit">Schedule meal</button>
+</form>
+<a class="skip" href="obsidian://open?vault=KitchenOS&file={encoded_meal}">Skip &mdash; open in Obsidian</a>
+</body></html>'''
+
+
 def _schedule_recipe_directly(recipe: str, week: str, day: str, meal: str):
     """The original direct flow, extracted unchanged."""
     try:
@@ -1007,6 +1062,21 @@ def add_to_meal_plan():
         if not all([week, day, meal]):
             return error_page("Error: recipe, week, day, and meal are all required"), 400
         return _schedule_recipe_directly(recipe, week, day, meal)
+
+    if mode == 'existing':
+        meal_name = (request.form.get('meal_name') or '').strip()
+        if not meal_name:
+            recipe_display = recipe.replace('.md', '')
+            return _render_add_form(recipe_display, error="Pick a meal."), 400
+        meal = meal_loader.load_meal(meal_name)
+        if meal is None:
+            recipe_display = recipe.replace('.md', '')
+            return _render_add_form(recipe_display, error=f'Meal not found: "{meal_name}".'), 404
+        already_present = any(s.recipe == recipe for s in meal.sub_recipes)
+        meal_loader.append_sub_recipe(meal, recipe_name=recipe)
+        meal_loader.save_meal(meal)
+        info = f'{recipe} is already in this meal.' if already_present else None
+        return _render_schedule_prompt(recipe, meal_name, action='added', info=info)
 
     return error_page(f"Unknown mode: {mode}"), 400
 

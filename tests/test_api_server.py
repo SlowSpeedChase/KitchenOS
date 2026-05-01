@@ -588,3 +588,65 @@ class TestAddToMealPlanDirect:
 
         assert response.status_code == 200
         assert b'Added!' in response.data
+
+
+class TestAddToMealPlanExisting:
+    """mode=existing — append a recipe to an existing meal."""
+
+    def test_appends_recipe_to_existing_meal(self, client, tmp_path, monkeypatch):
+        meals_dir = tmp_path / "Meals"
+        meals_dir.mkdir()
+        from lib import meal_loader as ml
+        ml.save_meal(
+            ml.Meal(name="Salmon Dinner",
+                    sub_recipes=[ml.SubRecipe(recipe="Pan-Seared Salmon", servings=1)]),
+            meals_dir=meals_dir,
+        )
+        monkeypatch.setattr('lib.meal_loader.paths.meals_dir', lambda: meals_dir)
+
+        response = client.post('/add-to-meal-plan', data={
+            'recipe': 'Lemon Asparagus',
+            'mode': 'existing',
+            'meal_name': 'Salmon Dinner',
+        })
+
+        assert response.status_code == 200
+        assert b'Schedule it now?' in response.data
+        loaded = ml.load_meal('Salmon Dinner', meals_dir=meals_dir)
+        assert [s.recipe for s in loaded.sub_recipes] == ['Pan-Seared Salmon', 'Lemon Asparagus']
+
+    def test_idempotent_when_recipe_already_in_meal(self, client, tmp_path, monkeypatch):
+        meals_dir = tmp_path / "Meals"
+        meals_dir.mkdir()
+        from lib import meal_loader as ml
+        ml.save_meal(
+            ml.Meal(name="Dinner",
+                    sub_recipes=[ml.SubRecipe(recipe="Pan-Seared Salmon", servings=1)]),
+            meals_dir=meals_dir,
+        )
+        monkeypatch.setattr('lib.meal_loader.paths.meals_dir', lambda: meals_dir)
+
+        response = client.post('/add-to-meal-plan', data={
+            'recipe': 'Pan-Seared Salmon',
+            'mode': 'existing',
+            'meal_name': 'Dinner',
+        })
+
+        assert response.status_code == 200
+        assert b'already in' in response.data.lower()
+        loaded = ml.load_meal('Dinner', meals_dir=meals_dir)
+        assert len(loaded.sub_recipes) == 1
+
+    def test_meal_not_found_re_renders_form_with_error(self, client, tmp_path, monkeypatch):
+        meals_dir = tmp_path / "Meals"
+        meals_dir.mkdir()
+        monkeypatch.setattr('lib.meal_loader.paths.meals_dir', lambda: meals_dir)
+
+        response = client.post('/add-to-meal-plan', data={
+            'recipe': 'Lemon Asparagus',
+            'mode': 'existing',
+            'meal_name': 'Does Not Exist',
+        })
+
+        assert b'Add to Meal Plan' in response.data
+        assert b'Meal not found' in response.data
