@@ -14,6 +14,10 @@ from lib.mcp_tools import (
     generate_shopping_list as _generate_shopping_list,
     send_to_reminders as _send_to_reminders,
     create_things_task as _create_things_task,
+    add_to_inventory as _add_to_inventory,
+    list_inventory as _list_inventory,
+    remove_from_inventory as _remove_from_inventory,
+    update_inventory_item as _update_inventory_item,
 )
 
 mcp = FastMCP("KitchenOS")
@@ -200,6 +204,101 @@ def send_to_reminders(week: str) -> str:
     if result.get("success"):
         return f"Sent {result['items_sent']} items to Reminders (skipped {result['items_skipped']} already checked)"
     return f"Error: {result.get('error', 'Unknown error')}"
+
+
+@mcp.tool()
+def add_to_inventory(items: list[dict]) -> str:
+    """Add items to the kitchen inventory.
+
+    Use this after parsing a receipt photo or grocery email. Each item dict
+    should have:
+        - name: Normalized item name (e.g., "Whole milk", not "GV WHL MLK")
+        - quantity: Numeric quantity (default 1)
+        - unit: Unit of measure (gal, lb, oz, ct, etc.)
+        - category: produce, dairy, meat, seafood, pantry, frozen, bakery,
+                    beverages, household, other
+        - location: fridge, freezer, pantry, counter, other (default pantry)
+        - purchased: Date in YYYY-MM-DD format (optional)
+        - source: receipt, manual, or claude (default claude)
+        - notes: Optional context (e.g., raw receipt line)
+
+    Items matching by (name, unit, location) merge — quantities sum.
+
+    Args:
+        items: List of item dicts.
+    """
+    if err := _require_api():
+        return err
+    result = _add_to_inventory(items)
+    if result.get("status") == "ok":
+        return (
+            f"Inventory updated: {result['added']} added, "
+            f"{result['merged']} merged ({result['total']} total)"
+        )
+    return f"Error: {result.get('message', result.get('error', 'Unknown error'))}"
+
+
+@mcp.tool()
+def list_inventory(category: str = None, location: str = None) -> str:
+    """List items in the kitchen inventory.
+
+    Args:
+        category: Filter by category (produce, dairy, meat, etc.)
+        location: Filter by location (fridge, freezer, pantry, etc.)
+    """
+    if err := _require_api():
+        return err
+    items = _list_inventory(category=category, location=location)
+    if not items:
+        return "No items in inventory matching those filters."
+    lines = []
+    for it in items:
+        lines.append(
+            f"- {it.get('name')}: {it.get('quantity')} {it.get('unit', '')} "
+            f"({it.get('category')}, {it.get('location')})"
+        )
+    return f"{len(items)} items:\n" + "\n".join(lines)
+
+
+@mcp.tool()
+def remove_from_inventory(name: str, location: str = None) -> str:
+    """Remove an item from inventory (e.g., when used up).
+
+    Args:
+        name: Item name
+        location: Optional location to disambiguate
+    """
+    if err := _require_api():
+        return err
+    result = _remove_from_inventory(name, location=location)
+    status = result.get("status")
+    if status == "removed":
+        return f"Removed {name} from inventory"
+    if status == "not_found":
+        return f"Item not found: {name}"
+    return f"Error: {result.get('message', 'Unknown error')}"
+
+
+@mcp.tool()
+def update_inventory_item(
+    name: str, quantity: float, location: str = None
+) -> str:
+    """Update the quantity of an inventory item.
+
+    Args:
+        name: Item name
+        quantity: New quantity (e.g., 0.5 for half-used)
+        location: Optional location to disambiguate
+    """
+    if err := _require_api():
+        return err
+    result = _update_inventory_item(name, quantity, location=location)
+    status = result.get("status")
+    if status == "updated":
+        return f"Updated {name} to {quantity}"
+    if status == "not_found":
+        return f"Item not found: {name}"
+    return f"Error: {result.get('message', 'Unknown error')}"
 
 
 @mcp.tool()

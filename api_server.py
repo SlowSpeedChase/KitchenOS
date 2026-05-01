@@ -933,6 +933,100 @@ def meal_planner():
     return send_file('templates/meal_planner.html', mimetype='text/html')
 
 
+@app.route('/api/inventory', methods=['GET'])
+def api_inventory_list():
+    """List inventory items, with optional category/location filters."""
+    from lib.inventory import read_inventory
+
+    items = read_inventory()
+    category = (request.args.get('category') or '').lower().strip()
+    location = (request.args.get('location') or '').lower().strip()
+    if category:
+        items = [i for i in items if i.category == category]
+    if location:
+        items = [i for i in items if i.location == location]
+    return jsonify([i.to_dict() for i in items])
+
+
+@app.route('/api/inventory/add', methods=['POST'])
+def api_inventory_add():
+    """Add items to inventory. Body: {items: [{name, quantity, unit, ...}]}."""
+    from lib.inventory import (
+        InventoryItem, add_items,
+        normalize_category, normalize_location, normalize_source,
+    )
+
+    data = request.get_json(force=True, silent=True)
+    if not data or 'items' not in data:
+        return jsonify({"error": "Request body must include 'items' array"}), 400
+
+    raw_items = data['items']
+    if not isinstance(raw_items, list) or not raw_items:
+        return jsonify({"error": "'items' must be a non-empty array"}), 400
+
+    parsed: list[InventoryItem] = []
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            continue
+        name = (raw.get('name') or '').strip()
+        if not name:
+            continue
+        try:
+            quantity = float(raw.get('quantity', 1) or 1)
+        except (ValueError, TypeError):
+            quantity = 1.0
+        parsed.append(InventoryItem(
+            name=name,
+            quantity=quantity,
+            unit=(raw.get('unit') or 'ct').strip(),
+            category=normalize_category(raw.get('category')),
+            location=normalize_location(raw.get('location')),
+            purchased=(raw.get('purchased') or None),
+            source=normalize_source(raw.get('source') or 'claude'),
+            notes=(raw.get('notes') or '').strip(),
+        ))
+
+    if not parsed:
+        return jsonify({"error": "No valid items provided"}), 400
+
+    result = add_items(parsed)
+    return jsonify({"status": "ok", **result})
+
+
+@app.route('/api/inventory/remove', methods=['POST'])
+def api_inventory_remove():
+    """Remove an item. Body: {name, location?}."""
+    from lib.inventory import remove_item
+
+    data = request.get_json(force=True, silent=True)
+    if not data or not data.get('name'):
+        return jsonify({"error": "'name' is required"}), 400
+
+    removed = remove_item(data['name'], data.get('location'))
+    if not removed:
+        return jsonify({"status": "not_found"}), 404
+    return jsonify({"status": "removed"})
+
+
+@app.route('/api/inventory/update', methods=['POST'])
+def api_inventory_update():
+    """Update an item's quantity. Body: {name, quantity, location?}."""
+    from lib.inventory import update_quantity
+
+    data = request.get_json(force=True, silent=True)
+    if not data or not data.get('name') or 'quantity' not in data:
+        return jsonify({"error": "'name' and 'quantity' are required"}), 400
+    try:
+        quantity = float(data['quantity'])
+    except (ValueError, TypeError):
+        return jsonify({"error": "'quantity' must be a number"}), 400
+
+    updated = update_quantity(data['name'], quantity, data.get('location'))
+    if not updated:
+        return jsonify({"status": "not_found"}), 404
+    return jsonify({"status": "updated"})
+
+
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
