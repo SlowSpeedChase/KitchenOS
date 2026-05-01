@@ -134,13 +134,26 @@ def split_against_pantry(item: str, amount, unit: str, pantry: list[dict]) -> di
             "warning": None,
         }
 
-    # count / other: only combine if same unit (case-insensitive).
-    if (p_unit or "").lower() == (unit or "").lower():
+    # count / other: combine if same unit, or if either side is the generic
+    # "whole" / empty (the auto-fallback when no unit is parsed). This treats
+    # "6 cloves garlic" as covering "10 whole garlic" 1:1, which is correct
+    # for almost every count ingredient (cloves, lemons, eggs, onions, ...).
+    p_unit_lower = (p_unit or "").lower()
+    n_unit_lower = (unit or "").lower()
+    generic = {"", "whole"}
+    units_compatible = (
+        p_unit_lower == n_unit_lower
+        or p_unit_lower in generic
+        or n_unit_lower in generic
+    )
+    if units_compatible:
+        # Display in the recipe's unit if specified, else the pantry's.
+        out_unit = unit if n_unit_lower not in generic else (p_unit or unit)
         if p_amt >= n_amt:
             return {"from_pantry": needed, "to_buy": None, "warning": None}
         return {
-            "from_pantry": {"amount": format_amount(p_amt), "unit": unit},
-            "to_buy": {"amount": format_amount(n_amt - p_amt), "unit": unit},
+            "from_pantry": {"amount": format_amount(p_amt), "unit": out_unit},
+            "to_buy": {"amount": format_amount(n_amt - p_amt), "unit": out_unit},
             "warning": None,
         }
 

@@ -4,7 +4,7 @@ Combines like ingredients across recipes, handling unit conversion
 within unit families (volume, weight, count).
 """
 
-from typing import Dict, List, Optional
+from typing import List, Optional
 import re
 
 # Unit conversion factors (to base unit within family)
@@ -32,6 +32,8 @@ COUNT_UNITS = {
     'can', 'cans',
     'package', 'packages',
     'sprig', 'sprigs',
+    'ct', 'count',
+    'each', 'ea',
     'whole',
 }
 
