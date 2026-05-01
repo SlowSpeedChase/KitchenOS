@@ -2,7 +2,6 @@
 import json
 from pathlib import Path
 
-import pytest
 
 from lib import pantry as pantry_module
 
@@ -126,3 +125,40 @@ def test_apply_decisions_skips_unmatched_item():
         [{"item": "saffron", "amount": "1", "unit": "tsp"}], pantry
     )
     assert updated == pantry
+
+
+def test_split_count_whole_wildcard_pantry_covers():
+    # Pantry "6 cloves garlic" should cover recipe "5 whole garlic" 1:1.
+    pantry = [{"item": "garlic", "amount": "6", "unit": "cloves"}]
+    result = pantry_module.split_against_pantry("garlic", "5", "whole", pantry)
+    assert result["from_pantry"] == {"amount": "5", "unit": "whole"}
+    assert result["to_buy"] is None
+    assert result["warning"] is None
+
+
+def test_split_count_whole_wildcard_partial_cover():
+    # Pantry "6 cloves" partially covers recipe "10 whole" → buy the rest.
+    pantry = [{"item": "garlic", "amount": "6", "unit": "cloves"}]
+    result = pantry_module.split_against_pantry("garlic", "10", "whole", pantry)
+    assert result["from_pantry"] == {"amount": "6", "unit": "cloves"}
+    assert result["to_buy"] == {"amount": "4", "unit": "cloves"}
+    assert result["warning"] is None
+
+
+def test_split_count_ct_alias_classifies_as_count():
+    # "ct" is now in COUNT_UNITS, so pantry "5 ct" + recipe "5 whole" combine.
+    pantry = [{"item": "lemons", "amount": "5", "unit": "ct"}]
+    result = pantry_module.split_against_pantry("lemons", "5", "whole", pantry)
+    assert result["from_pantry"] == {"amount": "5", "unit": "whole"}
+    assert result["to_buy"] is None
+    assert result["warning"] is None
+
+
+def test_split_count_distinct_units_still_warns():
+    # Slices vs cloves are both count but neither is "whole" — must still warn.
+    pantry = [{"item": "bread", "amount": "1", "unit": "loaf"}]
+    result = pantry_module.split_against_pantry("bread", "2", "slices", pantry)
+    # "loaf" is not in COUNT_UNITS → cross-family warning fires upstream.
+    assert result["from_pantry"] is None
+    assert result["to_buy"] == {"amount": "2", "unit": "slices"}
+    assert result["warning"]

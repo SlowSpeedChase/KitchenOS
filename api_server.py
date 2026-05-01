@@ -970,18 +970,21 @@ def api_meals_create():
     sub_recipes = data.get("sub_recipes") or []
     if not isinstance(sub_recipes, list) or not sub_recipes:
         return jsonify({"error": "sub_recipes must be a non-empty list"}), 400
+    parsed_subs = [
+        meal_loader.SubRecipe(
+            recipe=str(s.get("recipe", "")),
+            servings=int(s.get("servings", 1) or 1),
+        )
+        for s in sub_recipes
+        if isinstance(s, dict) and s.get("recipe")
+    ]
+    if not parsed_subs:
+        return jsonify({"error": "every sub_recipes entry must include a 'recipe' key"}), 400
     meal = meal_loader.Meal(
         name=name,
         description=data.get("description", ""),
         tags=list(data.get("tags") or []),
-        sub_recipes=[
-            meal_loader.SubRecipe(
-                recipe=str(s.get("recipe", "")),
-                servings=int(s.get("servings", 1) or 1),
-            )
-            for s in sub_recipes
-            if s.get("recipe")
-        ],
+        sub_recipes=parsed_subs,
         body=data.get("body", ""),
     )
     meal_loader.save_meal(meal)
