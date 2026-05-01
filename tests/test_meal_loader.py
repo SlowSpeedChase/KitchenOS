@@ -108,3 +108,41 @@ def test_save_meal_creates_dir(tmp_path: Path):
     meal = Meal(name="Cereal", sub_recipes=[SubRecipe(recipe="Cornflakes")])
     save_meal(meal, meals_dir=target)
     assert (target / "Cereal.meal.md").exists()
+
+
+from lib.meal_loader import append_sub_recipe
+
+
+def test_append_sub_recipe_to_empty_meal():
+    meal = Meal(name="Empty", sub_recipes=[])
+    result = append_sub_recipe(meal, recipe_name="Pan-Seared Salmon")
+    assert result is meal  # in-place mutation returns same object
+    assert meal.sub_recipes == [SubRecipe(recipe="Pan-Seared Salmon", servings=1)]
+
+
+def test_append_sub_recipe_to_existing_meal():
+    meal = Meal(
+        name="Salmon Dinner",
+        sub_recipes=[SubRecipe(recipe="Pan-Seared Salmon", servings=1)],
+    )
+    append_sub_recipe(meal, recipe_name="Lemon Asparagus")
+    assert meal.sub_recipes == [
+        SubRecipe(recipe="Pan-Seared Salmon", servings=1),
+        SubRecipe(recipe="Lemon Asparagus", servings=1),
+    ]
+
+
+def test_append_sub_recipe_idempotent_on_duplicate():
+    meal = Meal(
+        name="Dinner",
+        sub_recipes=[SubRecipe(recipe="Pan-Seared Salmon", servings=1)],
+    )
+    append_sub_recipe(meal, recipe_name="Pan-Seared Salmon")
+    append_sub_recipe(meal, recipe_name="Pan-Seared Salmon")
+    assert meal.sub_recipes == [SubRecipe(recipe="Pan-Seared Salmon", servings=1)]
+
+
+def test_append_sub_recipe_custom_servings():
+    meal = Meal(name="Dinner", sub_recipes=[])
+    append_sub_recipe(meal, recipe_name="Wild Rice Pilaf", servings=2)
+    assert meal.sub_recipes == [SubRecipe(recipe="Wild Rice Pilaf", servings=2)]
