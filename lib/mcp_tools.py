@@ -113,6 +113,61 @@ def send_to_reminders(week: str) -> dict:
         return {"status": "error", "message": f"API request failed: {e}"}
 
 
+def add_to_inventory(items: list) -> dict:
+    """Add items to the kitchen inventory."""
+    try:
+        r = requests.post(
+            f"{API_BASE}/api/inventory/add", json={"items": items}, timeout=15
+        )
+        return r.json()
+    except requests.exceptions.RequestException as e:
+        return {"status": "error", "message": f"API request failed: {e}"}
+
+
+def list_inventory(category: str = None, location: str = None) -> list:
+    """List inventory items with optional filters."""
+    params = {}
+    if category:
+        params["category"] = category
+    if location:
+        params["location"] = location
+    try:
+        r = requests.get(f"{API_BASE}/api/inventory", params=params, timeout=10)
+        return r.json()
+    except requests.exceptions.RequestException:
+        return []
+
+
+def remove_from_inventory(name: str, location: str = None) -> dict:
+    """Remove an item from inventory."""
+    body = {"name": name}
+    if location:
+        body["location"] = location
+    try:
+        r = requests.post(
+            f"{API_BASE}/api/inventory/remove", json=body, timeout=10
+        )
+        return r.json()
+    except requests.exceptions.RequestException as e:
+        return {"status": "error", "message": f"API request failed: {e}"}
+
+
+def update_inventory_item(
+    name: str, quantity: float, location: str = None
+) -> dict:
+    """Update an inventory item's quantity."""
+    body = {"name": name, "quantity": quantity}
+    if location:
+        body["location"] = location
+    try:
+        r = requests.post(
+            f"{API_BASE}/api/inventory/update", json=body, timeout=10
+        )
+        return r.json()
+    except requests.exceptions.RequestException as e:
+        return {"status": "error", "message": f"API request failed: {e}"}
+
+
 def create_things_task(title: str, notes: str = None) -> dict:
     """Create a task in Things 3 via URL scheme."""
     params = [f"title={quote(title)}", "list=KitchenOS"]

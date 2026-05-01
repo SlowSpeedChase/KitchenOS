@@ -344,6 +344,10 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist
 | `/api/recipes/save` | POST | Save recipe from structured JSON |
 | `/api/recipes/<name>` | GET | Full recipe details as JSON |
 | `/api/suggest-meal` | POST | Suggest recipe for empty meal slot |
+| `/api/inventory` | GET | List inventory items (filter by `category`/`location`) |
+| `/api/inventory/add` | POST | Add items in batch (merges by `name`+`unit`+`location`) |
+| `/api/inventory/remove` | POST | Remove an item by name (optional `location`) |
+| `/api/inventory/update` | POST | Update an item's quantity |
 
 ### Configuration
 
@@ -373,6 +377,10 @@ Configured in `~/Library/Application Support/Claude/claude_desktop_config.json`.
 | `update_meal_plan` | Modify meal plan |
 | `generate_shopping_list` | Generate shopping list |
 | `send_to_reminders` | Push to Apple Reminders |
+| `add_to_inventory` | Add items to pantry inventory (from receipt photo/email) |
+| `list_inventory` | List inventory items with category/location filters |
+| `remove_from_inventory` | Remove an item from inventory (used up) |
+| `update_inventory_item` | Adjust an item's quantity |
 | `create_things_task` | Create Things 3 task |
 
 ### Prerequisites
@@ -380,6 +388,40 @@ Configured in `~/Library/Application Support/Claude/claude_desktop_config.json`.
 - KitchenOS API server running (`com.kitchenos.api.plist`)
 - Things 3 installed (for task creation)
 - "KitchenOS" project created in Things
+
+## Receipt → Inventory Workflow
+
+KitchenOS tracks pantry inventory in a single `Inventory.md` at the vault root. New items enter via Claude Desktop:
+
+1. **Photo receipt or email** — share with Claude in a conversation (Claude Desktop, the web app, or via the iOS app's Share Sheet).
+2. **Claude parses** the items, normalizes the cryptic receipt strings (e.g. `GV WHL MLK 1G` → `Whole milk, 1 gal`), assigns a category and storage location, and calls the `add_to_inventory` MCP tool.
+3. **The tool** posts to `/api/inventory/add`, which writes to `Inventory.md` (merging duplicates by `name+unit+location`).
+
+### Item Schema
+
+| Field | Required | Vocab |
+|-------|----------|-------|
+| `name` | yes | Free text, normalized |
+| `quantity` | yes | Numeric (default 1) |
+| `unit` | yes | Free text (`gal`, `lb`, `oz`, `ct`, …) |
+| `category` | no | `produce`, `dairy`, `meat`, `seafood`, `pantry`, `frozen`, `bakery`, `beverages`, `household`, `other` |
+| `location` | no | `fridge`, `freezer`, `pantry`, `counter`, `other` (default `pantry`) |
+| `purchased` | no | `YYYY-MM-DD` |
+| `source` | no | `receipt`, `manual`, `claude` |
+| `notes` | no | Free text (often the raw receipt line) |
+
+### MCP Tools
+
+| Tool | Purpose |
+|------|---------|
+| `add_to_inventory(items)` | Batch add — Claude calls this after parsing a receipt |
+| `list_inventory(category?, location?)` | List items, with optional filters |
+| `remove_from_inventory(name, location?)` | Remove an item (used up) |
+| `update_inventory_item(name, quantity, location?)` | Adjust quantity (e.g., 0.5 for half-used) |
+
+### Storage
+
+`Inventory.md` is a markdown table: human-editable in Obsidian, machine-parseable. Items sort by category then name on every write. Duplicate `(name, unit, location)` rows merge — quantities sum.
 
 ## QuickAdd Setup (Obsidian)
 
@@ -465,6 +507,7 @@ template → Obsidian
 | `lib/macro_targets.py` | Parses My Macros.md targets |
 | `lib/nutrition_dashboard.py` | Dashboard generation logic |
 | `lib/recipe_index.py` | Scans recipe files, returns frontmatter metadata for filtering |
+| `lib/inventory.py` | Pantry inventory storage in `Inventory.md` (read/write/merge items) |
 | `lib/seasonality.py` | Seasonal ingredient matching and scoring |
 | `prompts/seasonal_matching.py` | Ollama prompt for fuzzy matching ingredients to seasonal produce |
 | `config/seasonal_ingredients.json` | Texas seasonal produce calendar (~60 items) |
@@ -517,6 +560,9 @@ template → Obsidian
 - `meal_planner()` - Serves interactive meal planner HTML board
 - `api_recipe_save()` - Saves recipe from Claude conversation, runs validation pipeline
 - `api_recipe_detail()` - Returns full recipe details as JSON
+- `api_inventory_list()` - Lists inventory items, optional `category`/`location` filters
+- `api_inventory_add()` - Batch-adds items with merge-on-conflict
+- `api_inventory_remove()` / `api_inventory_update()` - Mutate single items
 
 **lib/mcp_tools.py:**
 - `extract_recipe()` - Calls `/extract` endpoint
@@ -528,6 +574,10 @@ template → Obsidian
 - `generate_shopping_list()` - Calls `/generate-shopping-list` endpoint
 - `send_to_reminders()` - Calls `/send-to-reminders` endpoint
 - `create_things_task()` - Creates Things 3 task via URL scheme
+- `add_to_inventory()` - Calls `/api/inventory/add` endpoint
+- `list_inventory()` - Calls `/api/inventory` with optional filters
+- `remove_from_inventory()` - Calls `/api/inventory/remove` endpoint
+- `update_inventory_item()` - Calls `/api/inventory/update` endpoint
 - `check_api_health()` - Verifies API server is running
 
 **lib/backup.py:**
@@ -600,6 +650,14 @@ template → Obsidian
 
 **lib/recipe_index.py:**
 - `get_recipe_index()` - Scans recipes folder, returns sorted list of recipe metadata dicts (includes image filename)
+
+**lib/inventory.py:**
+- `read_inventory()` - Parses the markdown table in `Inventory.md` into `InventoryItem` dataclasses
+- `write_inventory()` - Writes items back to `Inventory.md`, sorted by category then name
+- `add_items()` - Adds items with merge-on-conflict by `(name, unit, location)` (quantities sum)
+- `remove_item()` / `update_quantity()` - Single-item mutations, optional `location` filter
+- `normalize_category()` / `normalize_location()` / `normalize_source()` - Validate against controlled vocabularies (CATEGORIES, LOCATIONS, SOURCES)
+- Storage: single `Inventory.md` at vault root with frontmatter (`type: inventory`, `last_updated`) + a markdown table
 
 **lib/ics_generator.py:**
 - `generate_ics()` - Creates ICS calendar content
@@ -821,6 +879,9 @@ These features are planned but not yet implemented:
 | Claude API fallback | Low | Use Claude when Ollama fails |
 | Non-YouTube recipe URLs in batch_extract | Medium | Route non-YouTube URLs in "Recipies to Process" through `scrape_recipe_from_url()` (Serious Eats, NYT Cooking, etc.). Currently `batch_extract.py:212` rejects anything without youtube.com/youtu.be. Decide handling for plain-text notes (skip vs flag). |
 | ~~Image extraction~~ | ~~Low~~ | **Completed** - Downloads recipe website images or YouTube thumbnails to vault |
+| ~~Receipt-to-inventory~~ | ~~Medium~~ | **Completed** - `Inventory.md` at vault root + MCP tools (`add_to_inventory`, `list_inventory`, `remove_from_inventory`, `update_inventory_item`). Claude parses receipt photo or grocery email in conversation and calls the tool. |
+| Inventory ↔ shopping list integration | Medium | Subtract on-hand inventory from generated shopping lists; add a "Restock" pass that auto-adds low-stock staples |
+| Email IMAP polling for receipts | Low | Currently the user pastes/forwards receipt content into Claude. IMAP would auto-ingest from HEB/Whole Foods/Instacart inboxes. |
 
 ## Project Structure
 
