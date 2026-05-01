@@ -549,3 +549,42 @@ class TestServeImages:
                 response = c.get('/images/..%2F..%2Fetc%2Fpasswd')
 
         assert response.status_code == 404
+
+
+class TestAddToMealPlanDirect:
+    """Regression guard for the existing direct schedule flow."""
+
+    def test_direct_schedules_recipe(self, client, tmp_path, monkeypatch):
+        plans_dir = tmp_path / "Meal Plans"
+        plans_dir.mkdir()
+        monkeypatch.setattr('api_server.MEAL_PLANS_PATH', plans_dir)
+
+        response = client.post('/add-to-meal-plan', data={
+            'recipe': 'Pan-Seared Salmon',
+            'mode': 'direct',
+            'week': '2026-W18',
+            'day': 'Monday',
+            'meal': 'Dinner',
+        })
+
+        assert response.status_code == 200
+        assert b'Added!' in response.data
+        plan_file = plans_dir / "2026-W18.md"
+        assert plan_file.exists()
+        assert '[[Pan-Seared Salmon]]' in plan_file.read_text()
+
+    def test_direct_without_mode_param_still_works(self, client, tmp_path, monkeypatch):
+        """Backwards compat: forms posted without 'mode' default to direct."""
+        plans_dir = tmp_path / "Meal Plans"
+        plans_dir.mkdir()
+        monkeypatch.setattr('api_server.MEAL_PLANS_PATH', plans_dir)
+
+        response = client.post('/add-to-meal-plan', data={
+            'recipe': 'Pan-Seared Salmon',
+            'week': '2026-W18',
+            'day': 'Monday',
+            'meal': 'Dinner',
+        })
+
+        assert response.status_code == 200
+        assert b'Added!' in response.data
