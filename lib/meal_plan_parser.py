@@ -5,13 +5,22 @@ Extracts recipe links from weekly meal plan files for calendar generation.
 
 import re
 from datetime import date, timedelta
-from typing import NamedTuple
+from pathlib import Path
+from typing import NamedTuple, Optional
 
 
 class MealEntry(NamedTuple):
-    """A recipe reference in a meal plan with optional servings multiplier."""
+    """A recipe or meal reference in a meal plan with optional servings multiplier.
+
+    `kind` is either "recipe" (a normal `[[Recipe]]` link) or "meal"
+    (a `[[Meal: Bundle]]` link that expands to multiple sub-recipes).
+    `sub_recipes` is empty for recipe entries; populated by `flatten_to_recipes()`
+    for meal entries.
+    """
     name: str
     servings: int = 1
+    kind: str = "recipe"
+    sub_recipes: tuple = ()
 
 
 def get_week_start_date(year: int, week: int) -> date:
@@ -40,14 +49,56 @@ def extract_meals_for_day(section: str) -> dict:
         match = re.search(pattern, section, re.IGNORECASE | re.DOTALL)
         if match:
             content = match.group(1).strip()
-            # Extract first [[recipe]] link with optional xN multiplier
-            link_match = re.search(r'\[\[([^\]]+)\]\]\s*(?:x(\d+))?', content)
+            # Match either `[[Recipe]]` or `[[Meal: Bundle Name]]`, with optional xN
+            link_match = re.search(r'\[\[(Meal:\s*)?([^\]]+)\]\]\s*(?:x(\d+))?', content)
             if link_match:
-                name = link_match.group(1)
-                servings = int(link_match.group(2)) if link_match.group(2) else 1
-                meals[meal_type] = MealEntry(name=name, servings=servings)
+                kind = "meal" if link_match.group(1) else "recipe"
+                name = link_match.group(2).strip()
+                servings = int(link_match.group(3)) if link_match.group(3) else 1
+                meals[meal_type] = MealEntry(name=name, servings=servings, kind=kind)
 
     return meals
+
+
+def flatten_to_recipes(entries, meals_dir: Optional[Path] = None) -> list[MealEntry]:
+    """Expand any meal entries to their sub-recipes; pass recipe entries through.
+
+    Multiplies the outer entry's `servings` through to each sub-recipe's
+    own per-sub-recipe `servings` override. Unknown meal references (file
+    missing) are emitted as-is so callers can surface a warning.
+
+    Accepts a single `MealEntry`, a list of them, or `None` (returns []).
+    """
+    if entries is None:
+        return []
+    if isinstance(entries, MealEntry):
+        entries = [entries]
+
+    # Lazy import to avoid pulling meal_loader unless we hit a meal entry
+    _loader = None
+
+    flat: list[MealEntry] = []
+    for entry in entries:
+        if entry is None:
+            continue
+        if entry.kind != "meal":
+            flat.append(entry)
+            continue
+        if _loader is None:
+            from lib import meal_loader as _loader  # noqa: WPS433
+        meal = _loader.load_meal(entry.name, meals_dir=meals_dir)
+        if meal is None or not meal.sub_recipes:
+            flat.append(entry)
+            continue
+        for sub in meal.sub_recipes:
+            flat.append(
+                MealEntry(
+                    name=sub.recipe,
+                    servings=entry.servings * max(1, int(sub.servings or 1)),
+                    kind="recipe",
+                )
+            )
+    return flat
 
 
 def insert_recipe_into_meal_plan(content: str, day: str, meal: str, recipe_name: str) -> str:
@@ -175,9 +226,11 @@ def rebuild_meal_plan_markdown(week: str, days: list[dict]) -> str:
             return ""
         name = meal_data["name"]
         servings = meal_data.get("servings", 1)
+        kind = meal_data.get("kind", "recipe")
+        link = f"[[Meal: {name}]]" if kind == "meal" else f"[[{name}]]"
         if servings > 1:
-            return f"[[{name}]] x{servings}"
-        return f"[[{name}]]"
+            return f"{link} x{servings}"
+        return link
 
     lines = [
         f"# Meal Plan - Week {week_num:02d} ({fmt_date(start_date)} - {fmt_date(end_date)}, {year})",

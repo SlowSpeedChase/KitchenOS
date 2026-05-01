@@ -7,7 +7,7 @@ from typing import Optional
 
 from lib.nutrition import NutritionData
 from lib.macro_targets import load_macro_targets
-from lib.meal_plan_parser import parse_meal_plan, MealEntry
+from lib.meal_plan_parser import parse_meal_plan, MealEntry, flatten_to_recipes
 from lib.recipe_parser import parse_recipe_file
 
 
@@ -64,19 +64,18 @@ def calculate_daily_nutrition(
         if not entry:
             continue
 
-        # Support both MealEntry objects and plain strings
+        # Expand meal bundles to their sub-recipes so each contributes nutrition.
         if isinstance(entry, MealEntry):
-            recipe_name = entry.name
-            servings = entry.servings
+            recipes = flatten_to_recipes(entry)
         else:
-            recipe_name = entry
-            servings = 1
+            recipes = [MealEntry(name=str(entry), servings=1)]
 
-        nutrition = get_recipe_nutrition(recipe_name, recipes_dir)
-        if nutrition:
-            total = total + nutrition * servings
-        else:
-            missing.append(recipe_name)
+        for recipe_entry in recipes:
+            nutrition = get_recipe_nutrition(recipe_entry.name, recipes_dir)
+            if nutrition:
+                total = total + nutrition * recipe_entry.servings
+            else:
+                missing.append(recipe_entry.name)
 
     return total, missing
 

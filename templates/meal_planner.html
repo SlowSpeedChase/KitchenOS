@@ -726,6 +726,168 @@
                 display: none;
             }
         }
+
+        /* --- Sidebar tabs (Recipes / Meals) --- */
+        .sidebar-tabs {
+            display: flex;
+            gap: 4px;
+            padding: 0 16px;
+            border-bottom: 1px solid var(--border);
+        }
+        .sidebar-tab {
+            flex: 1;
+            background: none;
+            border: none;
+            padding: 10px 8px;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-muted);
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+        }
+        .sidebar-tab.active {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+        }
+        .meals-list { display: none; padding: 8px; gap: 8px; flex-direction: column; }
+        .meals-list.active { display: flex; }
+        .recipe-list.hidden-tab { display: none !important; }
+
+        .meal-card {
+            background: #fff;
+            border: 1px solid var(--border);
+            border-left: 3px solid #ff9500;
+            border-radius: 10px;
+            padding: 10px 12px;
+            cursor: grab;
+            user-select: none;
+        }
+        .meal-card .meal-card-name {
+            font-weight: 600;
+            color: var(--text);
+            font-size: 14px;
+        }
+        .meal-card .meal-card-meta {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+        .new-meal-btn {
+            width: calc(100% - 16px);
+            margin: 8px;
+            padding: 10px;
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        /* --- Meal slot (composite recipe in grid) --- */
+        .grid-card.is-meal {
+            border-left: 3px solid #ff9500;
+        }
+        .grid-card .meal-header {
+            font-weight: 700;
+            font-size: 13px;
+            color: #ff9500;
+        }
+        .sub-recipe-chip {
+            display: inline-block;
+            background: #fff7ec;
+            color: #b8650a;
+            border-radius: 6px;
+            padding: 2px 6px;
+            margin: 2px 2px 0 0;
+            font-size: 11px;
+        }
+
+        /* --- Today's Prep panel --- */
+        .prep-panel {
+            position: fixed;
+            right: 16px;
+            bottom: 16px;
+            width: 320px;
+            max-height: 60dvh;
+            background: #fff;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+            overflow: auto;
+            z-index: 50;
+            font-size: 13px;
+        }
+        .prep-panel header {
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 700;
+            position: sticky;
+            top: 0;
+            background: #fff;
+        }
+        .prep-panel.collapsed { max-height: 44px; overflow: hidden; }
+        .prep-toggle {
+            background: none; border: none; cursor: pointer; font-size: 18px; color: var(--text-muted);
+        }
+        .prep-section { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+        .prep-section h4 { font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px; }
+        .prep-task { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; }
+        .prep-task input[type=checkbox] { margin-top: 3px; transform: scale(1.2); }
+        .prep-task .meta { font-size: 11px; color: var(--text-muted); }
+        .prep-task .badge {
+            display: inline-block;
+            font-size: 10px;
+            padding: 1px 6px;
+            border-radius: 4px;
+            margin-right: 4px;
+            text-transform: uppercase;
+            font-weight: 700;
+        }
+        .badge.prep { background: #e3f2ff; color: #0071e3; }
+        .badge.active { background: #ffeed4; color: #c2680a; }
+        .badge.passive { background: #e9e9eb; color: #6e6e73; }
+        .prep-task.done span { text-decoration: line-through; color: var(--text-muted); }
+
+        /* --- Modal (meal editor + pantry confirm) --- */
+        .modal-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.4);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+        }
+        .modal-backdrop.visible { display: flex; }
+        .modal {
+            background: #fff;
+            border-radius: 14px;
+            width: 90%;
+            max-width: 520px;
+            max-height: 86dvh;
+            overflow: auto;
+            padding: 20px 22px;
+        }
+        .modal h3 { margin-bottom: 12px; }
+        .modal label { display: block; font-size: 12px; color: var(--text-muted); margin: 10px 0 4px; }
+        .modal input[type=text], .modal textarea, .modal select {
+            width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px;
+            font-family: inherit;
+        }
+        .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+        .modal-actions button {
+            padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border); background: #fff;
+            cursor: pointer; font-weight: 600;
+        }
+        .modal-actions button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+        .sub-recipe-row { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+        .sub-recipe-row select { flex: 1; }
+        .sub-recipe-row input { width: 60px; }
+        .sub-recipe-row button { padding: 4px 8px; }
     </style>
 </head>
 <body>
@@ -733,12 +895,19 @@
         <!-- Sidebar -->
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-header">
-                <h2>Recipes</h2>
-                <input type="text" class="search-input" id="search-input" placeholder="Search recipes..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+                <h2 id="sidebar-title">Recipes</h2>
+                <input type="text" class="search-input" id="search-input" placeholder="Search..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+            </div>
+            <div class="sidebar-tabs">
+                <button class="sidebar-tab active" data-tab="recipes" id="tab-recipes">Recipes</button>
+                <button class="sidebar-tab" data-tab="meals" id="tab-meals">Meals</button>
             </div>
             <div class="filter-chips" id="filter-chips"></div>
             <div class="resize-handle" id="resize-handle"></div>
             <div class="recipe-list" id="recipe-list"></div>
+            <div class="meals-list" id="meals-list">
+                <button class="new-meal-btn" id="new-meal-btn">+ New Meal</button>
+            </div>
             <div class="sidebar-count" id="sidebar-count"></div>
         </aside>
 
@@ -762,6 +931,50 @@
     <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Toggle recipes">+</button>
     <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
 
+    <!-- Today's Prep panel -->
+    <aside class="prep-panel collapsed" id="prep-panel">
+        <header>
+            <span>Today's Prep</span>
+            <button class="prep-toggle" id="prep-toggle" aria-label="Toggle prep panel">▾</button>
+        </header>
+        <div id="prep-body"></div>
+    </aside>
+
+    <!-- Meal editor modal -->
+    <div class="modal-backdrop" id="meal-modal">
+        <div class="modal">
+            <h3 id="meal-modal-title">New Meal</h3>
+            <label>Name</label>
+            <input type="text" id="meal-name" placeholder="e.g. Salmon Dinner">
+            <label>Description</label>
+            <input type="text" id="meal-description" placeholder="Optional short description">
+            <label>Tags (comma-separated)</label>
+            <input type="text" id="meal-tags" placeholder="weeknight, fish">
+            <label>Sub-recipes</label>
+            <div id="sub-recipes-container"></div>
+            <button id="add-sub-recipe" style="margin-top: 8px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: #fff; cursor: pointer;">+ Add sub-recipe</button>
+            <div class="modal-actions">
+                <button id="meal-modal-cancel">Cancel</button>
+                <button class="primary" id="meal-modal-save">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pantry confirmation modal -->
+    <div class="modal-backdrop" id="pantry-modal">
+        <div class="modal">
+            <h3>Confirm pantry usage</h3>
+            <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">
+                These ingredients overlap with your pantry. Choose how much to take from the pantry.
+            </p>
+            <div id="pantry-modal-body"></div>
+            <div class="modal-actions">
+                <button id="pantry-modal-cancel">Cancel</button>
+                <button class="primary" id="pantry-modal-confirm">Generate List</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast -->
     <div class="toast" id="toast"></div>
 
@@ -780,12 +993,18 @@
         let currentWeek = '';
         let dayDates = {};       // { Monday: '2026-02-23', ... }
         let allRecipes = [];
+        let allMeals = [];
+        let activeTab = 'recipes';  // 'recipes' or 'meals'
         let activeFilters = {};  // { cuisine: Set, protein: Set, meal_occasion: Set }
         let seasonFilterActive = false;
         let sidebarSortable = null;
         let gridSortables = [];
         let saveTimeout = null;
         let suggestionSkipIndex = {};  // { "Tuesday-dinner": 0 } — tracks retries per cell
+        let editingMealName = null;     // null => creating; string => editing existing meal
+        let mealsByName = {};           // lookup helper for slot rendering
+        let weekTasks = null;           // { week, tasks: [...] } — populated by loadTasks()
+        let pendingShoppingPreview = null;  // result of /api/shopping-list/preview during pantry modal flow
 
         // --- Init ---
         document.addEventListener('DOMContentLoaded', init);
@@ -799,12 +1018,16 @@
             try {
                 await Promise.all([
                     loadRecipes(),
+                    loadMeals(),
                     loadMealPlan(currentWeek)
                 ]);
             } catch (err) {
                 showToast('Failed to load data', 'error');
                 console.error(err);
             }
+
+            // Load tasks last so it can reference the meal plan
+            loadTasks(currentWeek).catch(err => console.error('tasks load failed', err));
 
             hideLoading();
         }
@@ -940,28 +1163,45 @@
 
         // --- SortableJS Setup ---
 
+        let mealsSidebarSortable = null;
+
         function initSidebarSortable() {
             if (sidebarSortable) {
                 sidebarSortable.destroy();
                 sidebarSortable = null;
             }
+            if (mealsSidebarSortable) {
+                mealsSidebarSortable.destroy();
+                mealsSidebarSortable = null;
+            }
+
+            const sortableOptions = {
+                group: { name: 'recipes', pull: 'clone', put: false },
+                sort: false,
+                ghostClass: 'sortable-ghost',
+                dragClass: 'sortable-drag',
+                forceFallback: true,
+                fallbackOnBody: true,
+                fallbackTolerance: 5,
+                delay: 100,
+                delayOnTouchOnly: true,
+                touchStartThreshold: 5,
+                animation: 150,
+                filter: '.hidden, .new-meal-btn'
+            };
 
             const recipeList = document.getElementById('recipe-list');
             if (recipeList) {
                 sidebarSortable = Sortable.create(recipeList, {
-                    group: { name: 'recipes', pull: 'clone', put: false },
-                    sort: false,
+                    ...sortableOptions,
                     draggable: '.recipe-card',
-                    ghostClass: 'sortable-ghost',
-                    dragClass: 'sortable-drag',
-                    forceFallback: true,
-                    fallbackOnBody: true,
-                    fallbackTolerance: 5,
-                    delay: 100,
-                    delayOnTouchOnly: true,
-                    touchStartThreshold: 5,
-                    animation: 150,
-                    filter: '.hidden'
+                });
+            }
+            const mealsList = document.getElementById('meals-list');
+            if (mealsList) {
+                mealsSidebarSortable = Sortable.create(mealsList, {
+                    ...sortableOptions,
+                    draggable: '.meal-card',
                 });
             }
         }
@@ -991,6 +1231,12 @@
                             if (item.classList.contains('recipe-card')) {
                                 const name = item.dataset.name;
                                 const gridCard = createGridCard(name, 1);
+                                item.replaceWith(gridCard);
+                            } else if (item.classList.contains('meal-card')) {
+                                // Meals replace whatever was in the slot (per design)
+                                const name = item.dataset.name;
+                                cell.querySelectorAll('.grid-card').forEach(c => c.remove());
+                                const gridCard = createMealGridCard(name, 1);
                                 item.replaceWith(gridCard);
                             }
                             // If target cell had an existing card, move it to source cell (swap)
@@ -1121,7 +1367,9 @@
                                 `.grid-cell[data-day="${dayName}"][data-meal="${meal}"]`
                             );
                             if (cell) {
-                                const card = createGridCard(mealData.name, mealData.servings || 1);
+                                const card = (mealData.kind === 'meal')
+                                    ? createMealGridCard(mealData.name, mealData.servings || 1, mealData.sub_recipes || [])
+                                    : createGridCard(mealData.name, mealData.servings || 1);
                                 cell.appendChild(card);
                                 updateCellState(cell);
                             }
@@ -1135,6 +1383,62 @@
 
             // Re-init grid sortables after populating
             initGridSortables();
+        }
+
+        function createMealGridCard(name, servings, subRecipes) {
+            const card = document.createElement('div');
+            card.className = 'grid-card is-meal';
+            card.dataset.kind = 'meal';
+            card.dataset.name = name;
+            card.dataset.servings = servings || 1;
+
+            const headerEl = document.createElement('div');
+            headerEl.className = 'meal-header';
+            headerEl.textContent = name;
+
+            const meta = mealsByName[name];
+            const subList = (subRecipes && subRecipes.length)
+                ? subRecipes
+                : (meta ? meta.sub_recipes : []);
+            const chipsWrap = document.createElement('div');
+            (subList || []).forEach(sub => {
+                const chip = document.createElement('span');
+                chip.className = 'sub-recipe-chip';
+                chip.textContent = sub.recipe + (sub.servings && sub.servings !== 1 ? ` x${sub.servings}` : '');
+                chipsWrap.appendChild(chip);
+            });
+
+            const removeBtn = document.createElement('button');
+            removeBtn.className = 'remove-btn';
+            removeBtn.innerHTML = '&times;';
+            removeBtn.setAttribute('aria-label', 'Remove meal');
+            removeBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                const parentCell = card.parentElement;
+                card.remove();
+                updateCellState(parentCell);
+                debounceSave();
+            });
+
+            const servingsBtn = document.createElement('button');
+            servingsBtn.className = 'servings-btn';
+            servingsBtn.textContent = `×${servings || 1}`;
+            servingsBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                let s = parseInt(card.dataset.servings) || 1;
+                s = s >= 3 ? 1 : s + 1;
+                card.dataset.servings = s;
+                servingsBtn.textContent = `×${s}`;
+                debounceSave();
+            });
+
+            card.appendChild(headerEl);
+            card.appendChild(chipsWrap);
+            card.appendChild(removeBtn);
+            card.appendChild(servingsBtn);
+            return card;
         }
 
         function debounceSave() {
@@ -1155,9 +1459,11 @@
                     );
                     const card = cell ? cell.querySelector('.grid-card') : null;
                     if (card) {
+                        const kind = card.dataset.kind || 'recipe';
                         dayData[meal] = {
                             name: card.dataset.name,
-                            servings: parseInt(card.dataset.servings) || 1
+                            servings: parseInt(card.dataset.servings) || 1,
+                            kind: kind
                         };
                     } else {
                         dayData[meal] = null;
@@ -1411,6 +1717,7 @@
             updateURL(currentWeek);
             try {
                 await loadMealPlan(currentWeek);
+                loadTasks(currentWeek).catch(err => console.error('tasks load failed', err));
             } catch (err) {
                 showToast('Failed to load meal plan', 'error');
                 console.error(err);
@@ -1470,6 +1777,401 @@
         function hideLoading() {
             document.getElementById('loading').classList.add('hidden');
         }
+
+        // --- Sidebar tabs (Recipes / Meals) ---
+
+        function setActiveTab(tab) {
+            activeTab = tab;
+            document.querySelectorAll('.sidebar-tab').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.tab === tab);
+            });
+            const recipeList = document.getElementById('recipe-list');
+            const mealsList = document.getElementById('meals-list');
+            const chips = document.getElementById('filter-chips');
+            const title = document.getElementById('sidebar-title');
+            const search = document.getElementById('search-input');
+            if (tab === 'recipes') {
+                recipeList.classList.remove('hidden-tab');
+                mealsList.classList.remove('active');
+                chips.style.display = '';
+                title.textContent = 'Recipes';
+                search.placeholder = 'Search recipes...';
+            } else {
+                recipeList.classList.add('hidden-tab');
+                mealsList.classList.add('active');
+                chips.style.display = 'none';
+                title.textContent = 'Meals';
+                search.placeholder = 'Search meals...';
+            }
+        }
+
+        // --- Meals API + rendering ---
+
+        async function loadMeals() {
+            try {
+                const resp = await fetch('/api/meals');
+                if (!resp.ok) return;
+                const data = await resp.json();
+                allMeals = data.meals || [];
+                mealsByName = {};
+                allMeals.forEach(m => { mealsByName[m.name] = m; });
+                renderMeals();
+            } catch (err) {
+                console.error('Failed to load meals', err);
+            }
+        }
+
+        function renderMeals() {
+            const list = document.getElementById('meals-list');
+            // keep the New Meal button as the first child
+            list.querySelectorAll('.meal-card').forEach(c => c.remove());
+            const search = (document.getElementById('search-input').value || '').toLowerCase();
+            allMeals.forEach(meal => {
+                if (search && !meal.name.toLowerCase().includes(search)) return;
+                const card = document.createElement('div');
+                card.className = 'meal-card';
+                card.dataset.name = meal.name;
+                card.dataset.kind = 'meal';
+                const sub = (meal.sub_recipes || []).length;
+                card.innerHTML = `
+                    <div class="meal-card-name">${escapeHtml(meal.name)}</div>
+                    <div class="meal-card-meta">${sub} sub-recipe${sub === 1 ? '' : 's'}${meal.description ? ' · ' + escapeHtml(meal.description) : ''}</div>
+                `;
+                card.addEventListener('dblclick', () => openMealEditor(meal.name));
+                list.appendChild(card);
+            });
+            initSidebarSortable();
+        }
+
+        // --- Meal editor modal ---
+
+        function openMealEditor(name) {
+            editingMealName = name || null;
+            const modal = document.getElementById('meal-modal');
+            const title = document.getElementById('meal-modal-title');
+            const nameInput = document.getElementById('meal-name');
+            const descInput = document.getElementById('meal-description');
+            const tagsInput = document.getElementById('meal-tags');
+            const container = document.getElementById('sub-recipes-container');
+
+            container.innerHTML = '';
+            if (name && mealsByName[name]) {
+                const m = mealsByName[name];
+                title.textContent = 'Edit Meal';
+                nameInput.value = m.name;
+                descInput.value = m.description || '';
+                tagsInput.value = (m.tags || []).join(', ');
+                (m.sub_recipes || []).forEach(s => addSubRecipeRow(s.recipe, s.servings || 1));
+            } else {
+                title.textContent = 'New Meal';
+                nameInput.value = '';
+                descInput.value = '';
+                tagsInput.value = '';
+                addSubRecipeRow('', 1);
+            }
+            modal.classList.add('visible');
+        }
+
+        function closeMealEditor() {
+            document.getElementById('meal-modal').classList.remove('visible');
+            editingMealName = null;
+        }
+
+        function addSubRecipeRow(recipe, servings) {
+            const container = document.getElementById('sub-recipes-container');
+            const row = document.createElement('div');
+            row.className = 'sub-recipe-row';
+            const select = document.createElement('select');
+            const blank = document.createElement('option');
+            blank.value = ''; blank.textContent = '— pick a recipe —';
+            select.appendChild(blank);
+            allRecipes.forEach(r => {
+                const opt = document.createElement('option');
+                opt.value = r.name; opt.textContent = r.name;
+                if (r.name === recipe) opt.selected = true;
+                select.appendChild(opt);
+            });
+            const qty = document.createElement('input');
+            qty.type = 'number'; qty.min = '1'; qty.value = servings || 1;
+            const remove = document.createElement('button');
+            remove.textContent = '×';
+            remove.addEventListener('click', () => row.remove());
+            row.appendChild(select);
+            row.appendChild(qty);
+            row.appendChild(remove);
+            container.appendChild(row);
+        }
+
+        async function saveMealFromModal() {
+            const name = document.getElementById('meal-name').value.trim();
+            if (!name) { showToast('Name required', 'error'); return; }
+            const description = document.getElementById('meal-description').value.trim();
+            const tagsRaw = document.getElementById('meal-tags').value.trim();
+            const tags = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [];
+            const subRows = document.querySelectorAll('#sub-recipes-container .sub-recipe-row');
+            const sub_recipes = [];
+            subRows.forEach(row => {
+                const sel = row.querySelector('select');
+                const qty = row.querySelector('input');
+                if (sel.value) {
+                    sub_recipes.push({ recipe: sel.value, servings: parseInt(qty.value) || 1 });
+                }
+            });
+            if (!sub_recipes.length) { showToast('Add at least one sub-recipe', 'error'); return; }
+
+            const payload = { name, description, tags, sub_recipes };
+            const isUpdate = !!editingMealName;
+            const url = isUpdate ? `/api/meals/${encodeURIComponent(editingMealName)}` : '/api/meals';
+            const method = isUpdate ? 'PUT' : 'POST';
+            try {
+                const resp = await fetch(url, {
+                    method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    showToast(err.error || 'Failed to save meal', 'error');
+                    return;
+                }
+                showToast(isUpdate ? 'Meal updated' : 'Meal created');
+                closeMealEditor();
+                await loadMeals();
+            } catch (err) {
+                console.error(err);
+                showToast('Failed to save meal', 'error');
+            }
+        }
+
+        // --- Today's Prep panel ---
+
+        async function loadTasks(week) {
+            try {
+                const resp = await fetch(`/api/tasks/${week}`);
+                if (!resp.ok) return;
+                weekTasks = await resp.json();
+                renderPrepPanel();
+            } catch (err) {
+                console.error('tasks load failed', err);
+            }
+        }
+
+        function renderPrepPanel() {
+            const body = document.getElementById('prep-body');
+            body.innerHTML = '';
+            if (!weekTasks || !weekTasks.tasks || !weekTasks.tasks.length) {
+                body.innerHTML = '<div class="prep-section" style="color: var(--text-muted); font-size: 13px;">No tasks yet. Add some recipes to the plan.</div>';
+                return;
+            }
+            const today = DAYS[(new Date().getDay() + 6) % 7];
+
+            const todays = weekTasks.tasks.filter(t => t.day === today);
+            const aheads = weekTasks.tasks.filter(t => t.day !== today && t.can_do_ahead);
+
+            if (todays.length) {
+                body.appendChild(buildPrepSection('Today', todays));
+            }
+            if (aheads.length) {
+                body.appendChild(buildPrepSection('Get ahead', aheads));
+            }
+        }
+
+        function buildPrepSection(label, tasks) {
+            const wrap = document.createElement('div');
+            wrap.className = 'prep-section';
+            const h4 = document.createElement('h4'); h4.textContent = label;
+            wrap.appendChild(h4);
+            // group by recipe within section
+            const byRecipe = {};
+            tasks.forEach(t => {
+                (byRecipe[t.recipe] ||= []).push(t);
+            });
+            Object.entries(byRecipe).forEach(([recipe, ts]) => {
+                const recipeLabel = document.createElement('div');
+                recipeLabel.style.cssText = 'font-size: 12px; color: var(--text-muted); margin-top: 4px;';
+                recipeLabel.textContent = recipe;
+                wrap.appendChild(recipeLabel);
+                ts.sort((a, b) => a.step - b.step).forEach(t => {
+                    const row = document.createElement('label');
+                    row.className = 'prep-task' + (t.done ? ' done' : '');
+                    const cb = document.createElement('input');
+                    cb.type = 'checkbox';
+                    cb.checked = !!t.done;
+                    cb.addEventListener('change', () => toggleTaskDone(t.id, cb.checked, row));
+                    const text = document.createElement('span');
+                    text.innerHTML = `<span class="badge ${t.type}">${t.type}</span>${escapeHtml(t.text)}`;
+                    const meta = document.createElement('div');
+                    meta.className = 'meta';
+                    meta.textContent = `${t.day} ${t.slot} · ~${t.time_minutes}m`;
+                    const col = document.createElement('div');
+                    col.style.flex = '1';
+                    col.appendChild(text);
+                    col.appendChild(meta);
+                    row.appendChild(cb);
+                    row.appendChild(col);
+                    wrap.appendChild(row);
+                });
+            });
+            return wrap;
+        }
+
+        async function toggleTaskDone(taskId, done, row) {
+            try {
+                const resp = await fetch(`/api/tasks/${currentWeek}/${taskId}/done`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ done }),
+                });
+                if (!resp.ok) {
+                    showToast('Failed to update task', 'error');
+                    return;
+                }
+                row.classList.toggle('done', done);
+                if (weekTasks && weekTasks.tasks) {
+                    const t = weekTasks.tasks.find(x => x.id === taskId);
+                    if (t) t.done = done;
+                }
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        // --- Pantry-aware shopping list flow ---
+
+        async function startShoppingListFlow() {
+            try {
+                const resp = await fetch('/api/shopping-list/preview', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ week: currentWeek, use_pantry: true }),
+                });
+                const data = await resp.json();
+                if (!data.success) {
+                    showToast(data.error || 'Failed to generate', 'error');
+                    return;
+                }
+                pendingShoppingPreview = data;
+                const overlapping = (data.lines || []).filter(line => line.from_pantry !== null);
+                if (!overlapping.length) {
+                    // No pantry overlap — confirm immediately
+                    await confirmShoppingList([]);
+                    return;
+                }
+                openPantryModal(overlapping);
+            } catch (err) {
+                console.error(err);
+                showToast('Failed to generate', 'error');
+            }
+        }
+
+        function openPantryModal(overlapping) {
+            const body = document.getElementById('pantry-modal-body');
+            body.innerHTML = '';
+            overlapping.forEach((line, idx) => {
+                const row = document.createElement('div');
+                row.style.cssText = 'border-bottom: 1px solid var(--border); padding: 8px 0;';
+                const from = line.from_pantry;
+                row.innerHTML = `
+                    <div style="font-weight: 600;">${escapeHtml(line.item)}</div>
+                    <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 6px;">
+                        Need ${escapeHtml(line.needed.amount + ' ' + line.needed.unit)}, pantry has ~${escapeHtml(from.amount + ' ' + from.unit)}
+                    </div>
+                    <div>
+                        <label><input type="radio" name="line-${idx}" value="all" checked> Use pantry</label>
+                        <label style="margin-left: 12px;"><input type="radio" name="line-${idx}" value="none"> Buy fresh</label>
+                    </div>
+                `;
+                row.dataset.idx = idx;
+                body.appendChild(row);
+            });
+            body._overlapping = overlapping;
+            document.getElementById('pantry-modal').classList.add('visible');
+        }
+
+        async function confirmFromPantryModal() {
+            const body = document.getElementById('pantry-modal-body');
+            const overlapping = body._overlapping || [];
+            const decisions = [];
+            const skipItems = new Set();
+
+            overlapping.forEach((line, idx) => {
+                const choice = body.querySelector(`input[name="line-${idx}"]:checked`)?.value;
+                if (choice === 'all') {
+                    decisions.push({
+                        item: line.item,
+                        amount: line.from_pantry.amount,
+                        unit: line.from_pantry.unit,
+                    });
+                    if (line.to_buy === null) skipItems.add(line.item);
+                }
+            });
+
+            const itemsToBuy = (pendingShoppingPreview.items || [])
+                .filter(s => ![...skipItems].some(i => s.toLowerCase().includes(i.toLowerCase())));
+
+            await confirmShoppingList(decisions, itemsToBuy);
+            document.getElementById('pantry-modal').classList.remove('visible');
+        }
+
+        async function confirmShoppingList(decisions, itemsToBuy) {
+            try {
+                const items = itemsToBuy || (pendingShoppingPreview ? pendingShoppingPreview.items : []);
+                const resp = await fetch('/api/shopping-list/confirm', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        week: currentWeek,
+                        items_to_buy: items,
+                        decisions: decisions || [],
+                    }),
+                });
+                const data = await resp.json();
+                if (data.status === 'saved') {
+                    showToast(`Shopping list saved (${data.items} items)`);
+                } else {
+                    showToast(data.error || 'Failed to save shopping list', 'error');
+                }
+            } catch (err) {
+                console.error(err);
+                showToast('Failed to save shopping list', 'error');
+            }
+        }
+
+        // --- Wire UI listeners (added on top of existing setupEventListeners) ---
+        document.addEventListener('DOMContentLoaded', () => {
+            document.querySelectorAll('.sidebar-tab').forEach(btn => {
+                btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
+            });
+            const newBtn = document.getElementById('new-meal-btn');
+            if (newBtn) newBtn.addEventListener('click', () => openMealEditor(null));
+            const cancelBtn = document.getElementById('meal-modal-cancel');
+            if (cancelBtn) cancelBtn.addEventListener('click', closeMealEditor);
+            const saveBtn = document.getElementById('meal-modal-save');
+            if (saveBtn) saveBtn.addEventListener('click', saveMealFromModal);
+            const addSubBtn = document.getElementById('add-sub-recipe');
+            if (addSubBtn) addSubBtn.addEventListener('click', () => addSubRecipeRow('', 1));
+            const prepToggle = document.getElementById('prep-toggle');
+            const prepPanel = document.getElementById('prep-panel');
+            if (prepToggle && prepPanel) {
+                prepToggle.addEventListener('click', () => {
+                    prepPanel.classList.toggle('collapsed');
+                });
+            }
+            const pcCancel = document.getElementById('pantry-modal-cancel');
+            const pcConfirm = document.getElementById('pantry-modal-confirm');
+            if (pcCancel) pcCancel.addEventListener('click', () => {
+                document.getElementById('pantry-modal').classList.remove('visible');
+            });
+            if (pcConfirm) pcConfirm.addEventListener('click', confirmFromPantryModal);
+
+            // Re-render meals list whenever search input changes
+            const search = document.getElementById('search-input');
+            if (search) {
+                search.addEventListener('input', () => {
+                    if (activeTab === 'meals') renderMeals();
+                });
+            }
+        });
 
         // --- Suggestion ---
 

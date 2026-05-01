@@ -221,6 +221,16 @@ Template includes Monday-Sunday with Breakfast/Lunch/Dinner/Notes sections.
 
 **Servings multiplier:** Use `[[Recipe Name]] x2` to indicate multiple servings. The `xN` goes outside the wiki link so Obsidian links still resolve. Affects nutrition dashboard calculations and shopping list ingredient scaling.
 
+**Composite meals:** Reference a meal bundle with `[[Meal: Salmon Dinner]]` (the `Meal:` prefix is the parser discriminator). Meal definitions live in `vault/Meals/<Name>.meal.md` with frontmatter listing `sub_recipes`. The parser keeps the meal name in the markdown; `flatten_to_recipes()` expands meals downstream for shopping lists, nutrition, and tasks. Outer `xN` multipliers stack with each sub-recipe's `servings` override.
+
+**Pantry-aware shopping list flow:**
+1. `/api/shopping-list/preview` returns per-line records split into `from_pantry` / `to_buy`.
+2. UI shows a confirmation modal for any pantry-overlapping line.
+3. `/api/shopping-list/confirm` saves the markdown and decrements `config/pantry.json`.
+The CLI (`shopping_list.py`) implements the same flow with `[a]ll / [s]ome / [n]one` prompts when stdin is a tty (`--no-interactive` skips, `--no-pantry` ignores inventory entirely).
+
+**Cross-recipe prep tasks (Today's Prep panel):** `lib/task_extractor.py` runs once per week, classifying each scheduled recipe's instructions into prep / active / passive with do-ahead and dependency flags. Cached in a `<week>.tasks.json` sidecar next to the meal plan. The meal-planner UI shows today's tasks plus a "Get ahead" section for upcoming `can_do_ahead` items. Done flags persist across plan edits via stable task IDs.
+
 ## Calendar Sync (LaunchAgent)
 
 Syncs meal plans to ICS calendar file daily at 6:05am (after meal plan generator).
@@ -344,6 +354,14 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist
 | `/api/recipes/save` | POST | Save recipe from structured JSON |
 | `/api/recipes/<name>` | GET | Full recipe details as JSON |
 | `/api/suggest-meal` | POST | Suggest recipe for empty meal slot |
+| `/api/meals` | GET | List composite meal bundles |
+| `/api/meals` | POST | Create a new meal (frontmatter saved to `vault/Meals/<name>.meal.md`) |
+| `/api/meals/<name>` | GET / PUT / DELETE | Read / edit / remove a meal |
+| `/api/pantry` | GET / PUT | Read / overwrite `config/pantry.json` inventory |
+| `/api/shopping-list/preview` | POST `{week, use_pantry?}` | Returns per-line records with pantry split |
+| `/api/shopping-list/confirm` | POST `{week, items_to_buy, decisions}` | Saves shopping list markdown + decrements pantry |
+| `/api/tasks/<week>` | GET (`?force=1` to recompute) | Returns the prep-task sidecar payload |
+| `/api/tasks/<week>/<task_id>/done` | POST `{done}` | Toggle a task's done flag |
 | `/api/inventory` | GET | List inventory items (filter by `category`/`location`) |
 | `/api/inventory/add` | POST | Add items in batch (merges by `name`+`unit`+`location`) |
 | `/api/inventory/remove` | POST | Remove an item by name (optional `location`) |
@@ -518,7 +536,12 @@ template → Obsidian
 | `lib/normalizer.py` | Controlled vocabularies and tag normalization |
 | `lib/meal_suggester.py` | Ingredient overlap scoring + Claude/Ollama suggestion |
 | `prompts/meal_suggestion.py` | Prompt templates for ingredient normalization and meal selection |
-| `config/pantry_staples.json` | Pantry staples excluded from overlap scoring |
+| `config/pantry_staples.json` | Flat keyword list — staples excluded from seasonal overlap scoring (NOT inventory) |
+| `lib/meal_loader.py` | Read/write composite **meal** definitions (`vault/Meals/<Name>.meal.md`) |
+| `lib/pantry.py` | Structured pantry inventory (`config/pantry.json`); split shopping demand against pantry; decrement on confirm |
+| `lib/task_extractor.py` | Cross-recipe prep/active/passive task classification with sidecar cache (`<week>.tasks.json`) |
+| `prompts/task_classification.py` | Prompt template for the task classifier |
+| `config/pantry.json` | Structured pantry inventory: `[{item, amount, unit}, ...]` |
 
 ### Key Functions
 
@@ -693,6 +716,34 @@ template → Obsidian
 - `normalize_ingredients_ollama()` - Batch normalize via Ollama with fallback
 - `suggest_with_claude()` - Asks Claude API to pick best candidate
 - `suggest_for_empty_week()` - Asks Claude for starting recipe
+
+**lib/meal_loader.py:**
+- `Meal` / `SubRecipe` - Dataclasses for composite meals
+- `parse_meal_file(content)` - Parses `.meal.md` frontmatter + body
+- `load_meal(name, meals_dir=None)` / `list_meals()` - Read meals from `vault/Meals/`
+- `save_meal(meal)` / `delete_meal(name)` - Persist meal definitions
+
+**lib/meal_plan_parser.py (composite meals):**
+- `MealEntry` now has `kind` ("recipe" | "meal") and `sub_recipes` fields. Backward compatible — existing `[[Recipe]]` parses with `kind="recipe"`.
+- `flatten_to_recipes(entries)` - Expand any `kind="meal"` entries to their sub-recipes (multiplier propagates and stacks with per-sub-recipe servings overrides)
+
+**lib/pantry.py:**
+- `load_pantry()` / `save_pantry(items)` - Atomic JSON I/O over `config/pantry.json`
+- `find_match(item_name, pantry)` - Normalized lookup with substring fallback
+- `split_against_pantry(item, amount, unit, pantry)` - Returns `{from_pantry, to_buy, warning}`; auto-converts within unit family, warns on cross-family mismatch
+- `apply_decisions(decisions, pantry)` - Subtract confirmed pantry usage; remove depleted entries
+
+**lib/shopping_list_generator.py (pantry-aware):**
+- `extract_recipe_links(path)` now resolves `[[Meal: X]]` to its sub-recipes
+- `compute_lines(aggregated, pantry=None)` - Per-line records `{item, needed, from_pantry, to_buy, display, warning}`
+- `generate_shopping_list(week, pantry=None)` - When pantry supplied, splits each line; `items` reflects only what's still needed to buy
+- `generate_shopping_list_from_path(path, pantry=None)` - Same contract, used by the CLI for custom plan paths
+
+**lib/task_extractor.py:**
+- `extract_tasks(week, force=False)` - Loads scheduled meals, classifies steps via Claude Haiku (Ollama mistral:7b fallback, heuristic last resort); caches in `vault/Meal Plans/<week>.tasks.json`. Cache fresh when sidecar mtime ≥ plan mtime
+- `mark_task_done(week, task_id, done)` - Persist a single task's done flag in the sidecar
+- `load_cached_tasks(week)` - Read sidecar JSON without recomputation
+- Task IDs are `sha1(recipe|day|slot|step)[:12]` — stable across regeneration so `done` flags survive plan edits
 
 ## AI Configuration
 
