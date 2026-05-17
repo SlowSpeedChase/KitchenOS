@@ -146,12 +146,12 @@ Exclude:
 - Banter, jokes, personal stories
 - Sponsorships, outros
 
-Return a JSON array of 3-5 short tip strings. If no useful tips found, return [].
+Return a JSON object with a "tips" key containing an array of 3-5 short tip strings. If no useful tips found, return {"tips": []}.
 
 Example output:
-["Watch for the garlic to turn golden, not brown - it burns quickly",
+{"tips": ["Watch for the garlic to turn golden, not brown - it burns quickly",
  "Reserve pasta water before draining - you'll need about 1/4 cup",
- "Let the pan cool slightly before adding the pasta to avoid splattering"]"""
+ "Let the pan cool slightly before adding the pasta to avoid splattering"]}"""
 
 TIPS_USER_TEMPLATE = """Extract cooking tips from this video that aren't in the recipe.
 
