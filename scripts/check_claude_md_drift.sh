@@ -30,7 +30,7 @@ case "$FILE" in
     *) exit 0 ;;
 esac
 
-CLAUDE_MD="/Users/chaseeasterling/KitchenOS/CLAUDE.md"
+CLAUDE_MD="/Users/chaseeasterling/GitHub/KitchenOS/CLAUDE.md"
 [ -f "$CLAUDE_MD" ] || exit 0
 
 # Skip test files

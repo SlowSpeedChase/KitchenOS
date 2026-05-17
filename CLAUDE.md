@@ -34,7 +34,7 @@ Development guide for Claude Code when working with this repository.
 
 | Path | Purpose |
 |------|---------|
-| `/Users/chaseeasterling/KitchenOS/` | Project root |
+| `/Users/chaseeasterling/GitHub/KitchenOS/` | Project root |
 | `.venv/` | Python virtual environment |
 | `Recipes/` in Obsidian vault | Main recipe files (title case, e.g., `Butter Biscuits.md`) |
 | `Recipes/Cooking Mode/` in Obsidian vault | Simplified cooking view files (`.recipe.md`) |
@@ -47,7 +47,7 @@ Development guide for Claude Code when working with this repository.
 ### Extract a Recipe (Primary Use)
 
 ```bash
-cd /Users/chaseeasterling/KitchenOS
+cd /Users/chaseeasterling/GitHub/KitchenOS
 .venv/bin/python extract_recipe.py "https://www.youtube.com/watch?v=VIDEO_ID"
 
 # Dry run (preview without saving)
@@ -203,7 +203,7 @@ cp ops/com.kitchenos.mealplan.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.kitchenos.mealplan.plist
 
 # View logs
-tail -f ~/KitchenOS/logs/meal_plan_generator.log
+tail -f ~/GitHub/KitchenOS/logs/meal_plan_generator.log
 
 # Restart service
 launchctl unload ~/Library/LaunchAgents/com.kitchenos.mealplan.plist
@@ -243,7 +243,7 @@ cp ops/com.kitchenos.calendar-sync.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.kitchenos.calendar-sync.plist
 
 # View logs
-tail -f ~/KitchenOS/logs/calendar_sync.log
+tail -f ~/GitHub/KitchenOS/logs/calendar_sync.log
 
 # Test run manually
 .venv/bin/python sync_calendar.py
@@ -267,7 +267,7 @@ cp ops/com.kitchenos.batch-extract.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.kitchenos.batch-extract.plist
 
 # View logs
-tail -f ~/KitchenOS/logs/batch_extract.log
+tail -f ~/GitHub/KitchenOS/logs/batch_extract.log
 
 # Restart service
 launchctl unload ~/Library/LaunchAgents/com.kitchenos.batch-extract.plist
@@ -319,7 +319,7 @@ The API server enables recipe extraction from iOS via Share Sheet. It runs as a 
 curl http://localhost:5001/health
 
 # View logs
-tail -f ~/KitchenOS/logs/server.log
+tail -f ~/GitHub/KitchenOS/logs/server.log
 
 # Restart service
 launchctl unload ~/Library/LaunchAgents/com.kitchenos.api.plist

@@ -380,7 +380,7 @@ def extract_recipe():
             ['.venv/bin/python', 'extract_recipe.py', url],
             capture_output=True,
             text=True,
-            cwd='/Users/chaseeasterling/KitchenOS',
+            cwd='/Users/chaseeasterling/GitHub/KitchenOS',
             timeout=300  # 5 min timeout
         )
 
@@ -662,7 +662,7 @@ def reprocess_recipe():
             ['.venv/bin/python', 'extract_recipe.py', source_url],
             capture_output=True,
             text=True,
-            cwd='/Users/chaseeasterling/KitchenOS',
+            cwd='/Users/chaseeasterling/GitHub/KitchenOS',
             timeout=300
         )
 
