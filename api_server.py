@@ -38,6 +38,7 @@ warnings.filterwarnings('ignore', message='urllib3 v2 only supports OpenSSL 1.1.
 YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')
 OBSIDIAN_RECIPES_PATH = paths.recipes_dir()
 MEAL_PLANS_PATH = paths.meal_plans_dir()
+VAULT_NAME = paths.vault_root().name
 
 app = Flask(__name__)
 
@@ -53,7 +54,7 @@ def error_page(message: str) -> str:
 <div style="background: #fee; border: 1px solid #c00; padding: 1rem; border-radius: 8px;">
 <strong style="color: #c00;">Error</strong><br>{message}
 </div>
-<p><a href="obsidian://open?vault=KitchenOS">Return to Obsidian</a></p>
+<p><a href="obsidian://open?vault={VAULT_NAME}">Return to Obsidian</a></p>
 </body></html>'''
 
 
@@ -67,7 +68,7 @@ def success_page(message: str, filename: str) -> str:
 <div style="background: #efe; border: 1px solid #0a0; padding: 1rem; border-radius: 8px;">
 <strong style="color: #0a0;">Success</strong><br>{message}
 </div>
-<p><a href="obsidian://open?vault=KitchenOS&file=Recipes/{encoded_filename}">Return to {filename}</a></p>
+<p><a href="obsidian://open?vault={VAULT_NAME}&file=Recipes/{encoded_filename}">Return to {filename}</a></p>
 </body></html>'''
 
 
@@ -536,7 +537,7 @@ def refresh_nutrition():
 <strong style="color: #0a0;">Success</strong><br>Dashboard updated for {week}
 </div>
 {warnings_html}
-<p><a href="obsidian://open?vault=KitchenOS&file=Nutrition%20Dashboard">View Dashboard</a></p>
+<p><a href="obsidian://open?vault={VAULT_NAME}&file=Nutrition%20Dashboard">View Dashboard</a></p>
 </body></html>'''
 
     except FileNotFoundError as e:
@@ -965,8 +966,8 @@ def _success_page_for_wikilink(wikilink_target: str, day: str, meal: str, week: 
 <strong style="color: #0a0;">Added!</strong><br>
 [[{wikilink_target}]] &rarr; {day} {meal} ({week})
 </div>
-<p><a href="obsidian://open?vault=KitchenOS&file={encoded_file}">View Meal Plan</a></p>
-<p><a href="obsidian://open?vault=KitchenOS">Back to Obsidian</a></p>
+<p><a href="obsidian://open?vault={VAULT_NAME}&file={encoded_file}">View Meal Plan</a></p>
+<p><a href="obsidian://open?vault={VAULT_NAME}">Back to Obsidian</a></p>
 </body></html>'''
 
 
@@ -1021,7 +1022,7 @@ def _render_schedule_prompt(recipe: str, meal_name: str, action: str, info: str 
     <select name="meal" id="meal">{meal_options}</select>
     <button type="submit">Schedule meal</button>
 </form>
-<a class="skip" href="obsidian://open?vault=KitchenOS&file={encoded_meal}">Skip &mdash; open in Obsidian</a>
+<a class="skip" href="obsidian://open?vault={VAULT_NAME}&file={encoded_meal}">Skip &mdash; open in Obsidian</a>
 </body></html>'''
 
 
@@ -1153,7 +1154,9 @@ def add_to_meal_plan():
 @app.route('/meal-planner', methods=['GET'])
 def meal_planner():
     """Serve the interactive meal planner board."""
-    return send_file('templates/meal_planner.html', mimetype='text/html')
+    html = open('templates/meal_planner.html').read()
+    html = html.replace('vault=KitchenOS', f'vault={VAULT_NAME}')
+    return html, 200, {'Content-Type': 'text/html'}
 
 
 # ----- Meals (composite recipe bundles) -----
