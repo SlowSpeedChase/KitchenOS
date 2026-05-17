@@ -38,6 +38,7 @@ warnings.filterwarnings('ignore', message='urllib3 v2 only supports OpenSSL 1.1.
 YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')
 OBSIDIAN_RECIPES_PATH = paths.recipes_dir()
 MEAL_PLANS_PATH = paths.meal_plans_dir()
+VAULT_NAME = paths.vault_root().name
 
 app = Flask(__name__)
 
@@ -53,7 +54,7 @@ def error_page(message: str) -> str:
 <div style="background: #fee; border: 1px solid #c00; padding: 1rem; border-radius: 8px;">
 <strong style="color: #c00;">Error</strong><br>{message}
 </div>
-<p><a href="obsidian://open?vault=KitchenOS">Return to Obsidian</a></p>
+<p><a href="obsidian://open?vault={VAULT_NAME}">Return to Obsidian</a></p>
 </body></html>'''
 
 
@@ -67,7 +68,7 @@ def success_page(message: str, filename: str) -> str:
 <div style="background: #efe; border: 1px solid #0a0; padding: 1rem; border-radius: 8px;">
 <strong style="color: #0a0;">Success</strong><br>{message}
 </div>
-<p><a href="obsidian://open?vault=KitchenOS&file=Recipes/{encoded_filename}">Return to {filename}</a></p>
+<p><a href="obsidian://open?vault={VAULT_NAME}&file=Recipes/{encoded_filename}">Return to {filename}</a></p>
 </body></html>'''
 
 
@@ -380,7 +381,7 @@ def extract_recipe():
             ['.venv/bin/python', 'extract_recipe.py', url],
             capture_output=True,
             text=True,
-            cwd='/Users/chaseeasterling/KitchenOS',
+            cwd='/Users/chaseeasterling/GitHub/KitchenOS',
             timeout=300  # 5 min timeout
         )
 
@@ -536,7 +537,7 @@ def refresh_nutrition():
 <strong style="color: #0a0;">Success</strong><br>Dashboard updated for {week}
 </div>
 {warnings_html}
-<p><a href="obsidian://open?vault=KitchenOS&file=Nutrition%20Dashboard">View Dashboard</a></p>
+<p><a href="obsidian://open?vault={VAULT_NAME}&file=Nutrition%20Dashboard">View Dashboard</a></p>
 </body></html>'''
 
     except FileNotFoundError as e:
@@ -662,7 +663,7 @@ def reprocess_recipe():
             ['.venv/bin/python', 'extract_recipe.py', source_url],
             capture_output=True,
             text=True,
-            cwd='/Users/chaseeasterling/KitchenOS',
+            cwd='/Users/chaseeasterling/GitHub/KitchenOS',
             timeout=300
         )
 
@@ -822,35 +823,59 @@ def api_suggest_meal():
     return jsonify({"suggestion": result})
 
 
-@app.route('/add-to-meal-plan', methods=['GET'])
-def add_to_meal_plan_form():
-    """Serve HTML form for picking meal plan slot."""
-    from urllib.parse import unquote
+# ----- Add to Meal Plan (recipe button) -----
+
+def _list_meal_names() -> list[str]:
+    """Sorted meal names from vault/Meals/, used by the form."""
+    return [m.name for m in meal_loader.list_meals()]
+
+
+def _generate_week_options(weeks_ahead: int = 4) -> list[str]:
     from datetime import date
-
-    recipe = request.args.get('recipe')
-    if not recipe:
-        return error_page("Error: recipe parameter required"), 400
-
-    recipe = unquote(recipe)
-    # Strip .md extension for display
-    recipe_display = recipe.replace('.md', '')
-
-    # Generate week options: current week + next 3
     today = date.today()
-    weeks = []
-    for i in range(4):
+    weeks: list[str] = []
+    for i in range(weeks_ahead):
         d = today + timedelta(days=7 * i)
         iso = d.isocalendar()
-        week_id = f"{iso[0]}-W{iso[1]:02d}"
-        weeks.append(week_id)
+        weeks.append(f"{iso[0]}-W{iso[1]:02d}")
+    return weeks
 
+
+_INVALID_MEAL_NAME_CHARS = ('/', ':', '\\')
+
+
+def _validate_meal_name(name: str) -> str | None:
+    """Return an error message if the name is invalid, else None."""
+    name = name.strip()
+    if not name:
+        return "Meal name is required."
+    if name.startswith('.'):
+        return "Meal name can't start with a dot."
+    for ch in _INVALID_MEAL_NAME_CHARS:
+        if ch in name:
+            return "Meal name can't contain / : or \\."
+    return None
+
+
+def _render_add_form(recipe_display: str, error: str | None = None) -> str:
+    """Screen 1: branch picker + conditional fields."""
+    weeks = _generate_week_options()
     days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     meals = ['Breakfast', 'Lunch', 'Snack', 'Dinner']
+    meal_names = _list_meal_names()
 
     week_options = ''.join(f'<option value="{w}">{w}</option>' for w in weeks)
     day_options = ''.join(f'<option value="{d}">{d}</option>' for d in days)
     meal_options = ''.join(f'<option value="{m}">{m}</option>' for m in meals)
+    meal_name_options = ''.join(f'<option value="{n}">{n}</option>' for n in meal_names)
+
+    has_meals = bool(meal_names)
+    existing_disabled = '' if has_meals else 'disabled'
+    existing_label = 'Add to an existing meal' if has_meals else 'Add to an existing meal (none yet)'
+
+    error_html = (
+        f'<div class="error">{error}</div>' if error else ''
+    )
 
     return f'''<!DOCTYPE html>
 <html><head>
@@ -860,8 +885,14 @@ def add_to_meal_plan_form():
     body {{ font-family: system-ui; padding: 1.5rem; max-width: 480px; margin: 0 auto; background: #fafafa; }}
     h2 {{ margin-top: 0; }}
     .recipe-name {{ background: #f0f0f0; padding: 0.75rem; border-radius: 8px; margin-bottom: 1.5rem; font-weight: 600; }}
+    .error {{ background: #fee; border: 1px solid #c00; color: #c00; padding: 0.75rem; border-radius: 8px; margin-bottom: 1rem; }}
+    .branch {{ display: block; padding: 0.75rem; margin-bottom: 0.5rem; border: 1px solid #ddd; border-radius: 8px; cursor: pointer; background: white; }}
+    .branch input[type="radio"] {{ margin-right: 0.5rem; }}
+    .branch.disabled {{ opacity: 0.5; cursor: not-allowed; }}
+    .fields {{ display: none; margin-top: 1rem; }}
+    .fields.active {{ display: block; }}
     label {{ display: block; font-weight: 600; margin-bottom: 0.25rem; margin-top: 1rem; }}
-    select {{ width: 100%; padding: 0.75rem; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; background: white; -webkit-appearance: none; }}
+    select, input[type="text"] {{ width: 100%; padding: 0.75rem; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; background: white; -webkit-appearance: none; box-sizing: border-box; }}
     button {{ width: 100%; padding: 1rem; font-size: 18px; font-weight: 600; background: #2563eb; color: white; border: none; border-radius: 8px; margin-top: 1.5rem; cursor: pointer; }}
     button:active {{ background: #1d4ed8; }}
 </style>
@@ -869,56 +900,61 @@ def add_to_meal_plan_form():
 <body>
 <h2>Add to Meal Plan</h2>
 <div class="recipe-name">{recipe_display}</div>
+{error_html}
 <form method="POST" action="/add-to-meal-plan">
     <input type="hidden" name="recipe" value="{recipe_display}">
-    <label for="week">Week</label>
-    <select name="week" id="week">{week_options}</select>
-    <label for="day">Day</label>
-    <select name="day" id="day">{day_options}</select>
-    <label for="meal">Meal</label>
-    <select name="meal" id="meal">{meal_options}</select>
-    <button type="submit">Add to Meal Plan</button>
+
+    <label class="branch"><input type="radio" name="mode" value="direct" checked onchange="toggleFields(this.value)">Schedule directly</label>
+    <label class="branch {('disabled' if not has_meals else '')}"><input type="radio" name="mode" value="existing" {existing_disabled} onchange="toggleFields(this.value)">{existing_label}</label>
+    <label class="branch"><input type="radio" name="mode" value="new" onchange="toggleFields(this.value)">Start a new meal</label>
+
+    <div id="fields-direct" class="fields active">
+        <label for="week">Week</label>
+        <select name="week" id="week">{week_options}</select>
+        <label for="day">Day</label>
+        <select name="day" id="day">{day_options}</select>
+        <label for="meal">Meal</label>
+        <select name="meal" id="meal">{meal_options}</select>
+    </div>
+
+    <div id="fields-existing" class="fields">
+        <label for="meal_name_existing">Meal</label>
+        <select name="meal_name" id="meal_name_existing" form="ignored">{meal_name_options}</select>
+    </div>
+
+    <div id="fields-new" class="fields">
+        <label for="meal_name_new">New meal name</label>
+        <input type="text" name="meal_name" id="meal_name_new" placeholder="e.g. Salmon Dinner" form="ignored">
+    </div>
+
+    <button type="submit">Submit</button>
 </form>
+
+<script>
+    function toggleFields(mode) {{
+        ['direct', 'existing', 'new'].forEach(function(m) {{
+            var el = document.getElementById('fields-' + m);
+            if (!el) return;
+            el.classList.toggle('active', m === mode);
+            // Re-attach the active panel's name=meal_name input to the form,
+            // and detach the inactive ones (so only one meal_name is posted).
+            el.querySelectorAll('[form]').forEach(function(input) {{
+                if (m === mode) input.removeAttribute('form');
+                else input.setAttribute('form', 'ignored');
+            }});
+        }});
+    }}
+    // Sync on initial load (covers back-button restoration).
+    document.addEventListener('DOMContentLoaded', function() {{
+        var checked = document.querySelector('input[name="mode"]:checked');
+        if (checked) toggleFields(checked.value);
+    }});
+</script>
 </body></html>'''
 
 
-@app.route('/add-to-meal-plan', methods=['POST'])
-def add_to_meal_plan():
-    """Add recipe to a meal plan slot."""
-    recipe = request.form.get('recipe')
-    week = request.form.get('week')
-    day = request.form.get('day')
-    meal = request.form.get('meal')
-
-    if not all([recipe, week, day, meal]):
-        return error_page("Error: recipe, week, day, and meal are all required"), 400
-
-    # Parse week string (e.g. "2026-W07")
-    try:
-        parts = week.split('-W')
-        year = int(parts[0])
-        week_num = int(parts[1])
-    except (ValueError, IndexError):
-        return error_page(f"Error: Invalid week format: {week}"), 400
-
-    # Find or create meal plan file
-    MEAL_PLANS_PATH.mkdir(parents=True, exist_ok=True)
-    plan_file = MEAL_PLANS_PATH / f"{week}.md"
-
-    if not plan_file.exists():
-        content = generate_meal_plan_markdown(year, week_num)
-        plan_file.write_text(content, encoding='utf-8')
-
-    # Read current content and insert recipe
-    content = plan_file.read_text(encoding='utf-8')
-    try:
-        new_content = insert_recipe_into_meal_plan(content, day, meal, recipe)
-    except ValueError as e:
-        return error_page(f"Error: {str(e)}"), 400
-
-    plan_file.write_text(new_content, encoding='utf-8')
-
-    # Success page with link to meal plan in Obsidian
+def _success_page_for_wikilink(wikilink_target: str, day: str, meal: str, week: str) -> str:
+    """Green confirmation card after a slot insert. Works for [[Recipe]] or [[Meal: X]]."""
     from urllib.parse import quote
     encoded_file = quote(f"Meal Plans/{week}", safe='')
     return f'''<!DOCTYPE html>
@@ -928,17 +964,199 @@ def add_to_meal_plan():
 <body style="font-family: system-ui; padding: 2rem; max-width: 600px; margin: 0 auto;">
 <div style="background: #efe; border: 1px solid #0a0; padding: 1rem; border-radius: 8px;">
 <strong style="color: #0a0;">Added!</strong><br>
-[[{recipe}]] &rarr; {day} {meal} ({week})
+[[{wikilink_target}]] &rarr; {day} {meal} ({week})
 </div>
-<p><a href="obsidian://open?vault=KitchenOS&file={encoded_file}">View Meal Plan</a></p>
-<p><a href="obsidian://open?vault=KitchenOS">Back to Obsidian</a></p>
+<p><a href="obsidian://open?vault={VAULT_NAME}&file={encoded_file}">View Meal Plan</a></p>
+<p><a href="obsidian://open?vault={VAULT_NAME}">Back to Obsidian</a></p>
 </body></html>'''
+
+
+def _render_schedule_prompt(recipe: str, meal_name: str, action: str, info: str | None = None) -> str:
+    """Screen 2 — hybrid optional schedule prompt after meal save."""
+    from urllib.parse import quote
+    weeks = _generate_week_options()
+    days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    meals = ['Breakfast', 'Lunch', 'Snack', 'Dinner']
+    week_options = ''.join(f'<option value="{w}">{w}</option>' for w in weeks)
+    day_options = ''.join(f'<option value="{d}">{d}</option>' for d in days)
+    meal_options = ''.join(f'<option value="{m}">{m}</option>' for m in meals)
+    encoded_meal = quote(f"Meals/{meal_name}", safe='')
+
+    if action == 'created':
+        banner = f'Created meal &ldquo;{meal_name}&rdquo; with {recipe}.'
+    elif action == 'added':
+        banner = f'Added {recipe} to &ldquo;{meal_name}&rdquo;.'
+    else:
+        banner = f'Saved &ldquo;{meal_name}&rdquo;.'
+
+    info_html = f'<div class="info">{info}</div>' if info else ''
+
+    return f'''<!DOCTYPE html>
+<html><head>
+<title>Schedule Meal</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+    body {{ font-family: system-ui; padding: 1.5rem; max-width: 480px; margin: 0 auto; background: #fafafa; }}
+    .ok {{ background: #efe; border: 1px solid #0a0; color: #060; padding: 0.75rem; border-radius: 8px; margin-bottom: 1rem; }}
+    .info {{ background: #eef; border: 1px solid #66c; color: #336; padding: 0.5rem 0.75rem; border-radius: 8px; margin-bottom: 1rem; font-size: 14px; }}
+    h3 {{ margin-top: 0.5rem; }}
+    label {{ display: block; font-weight: 600; margin-bottom: 0.25rem; margin-top: 1rem; }}
+    select {{ width: 100%; padding: 0.75rem; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; background: white; -webkit-appearance: none; }}
+    button {{ width: 100%; padding: 1rem; font-size: 18px; font-weight: 600; background: #2563eb; color: white; border: none; border-radius: 8px; margin-top: 1.5rem; cursor: pointer; }}
+    .skip {{ display: block; text-align: center; margin-top: 1rem; color: #666; }}
+</style>
+</head>
+<body>
+<div class="ok"><strong>&#10003;</strong> {banner}</div>
+{info_html}
+<h3>Schedule it now? <span style="font-weight: 400; color: #888;">(optional)</span></h3>
+<form method="POST" action="/add-to-meal-plan">
+    <input type="hidden" name="recipe" value="{recipe}">
+    <input type="hidden" name="mode" value="schedule_meal">
+    <input type="hidden" name="meal_name" value="{meal_name}">
+    <label for="week">Week</label>
+    <select name="week" id="week">{week_options}</select>
+    <label for="day">Day</label>
+    <select name="day" id="day">{day_options}</select>
+    <label for="meal">Slot</label>
+    <select name="meal" id="meal">{meal_options}</select>
+    <button type="submit">Schedule meal</button>
+</form>
+<a class="skip" href="obsidian://open?vault={VAULT_NAME}&file={encoded_meal}">Skip &mdash; open in Obsidian</a>
+</body></html>'''
+
+
+def _schedule_meal_token(meal_name: str, week: str, day: str, meal: str):
+    """Insert ``[[Meal: <meal_name>]]`` into the plan slot. Mirrors _schedule_recipe_directly."""
+    try:
+        parts = week.split('-W')
+        year = int(parts[0])
+        week_num = int(parts[1])
+    except (ValueError, IndexError):
+        return error_page(f"Error: Invalid week format: {week}"), 400
+
+    MEAL_PLANS_PATH.mkdir(parents=True, exist_ok=True)
+    plan_file = MEAL_PLANS_PATH / f"{week}.md"
+    if not plan_file.exists():
+        content = generate_meal_plan_markdown(year, week_num)
+        plan_file.write_text(content, encoding='utf-8')
+
+    content = plan_file.read_text(encoding='utf-8')
+    token = f"Meal: {meal_name}"
+    try:
+        new_content = insert_recipe_into_meal_plan(content, day, meal, token)
+    except ValueError as e:
+        return error_page(f"Error: {str(e)}"), 400
+
+    plan_file.write_text(new_content, encoding='utf-8')
+    return _success_page_for_wikilink(token, day, meal, week)
+
+
+def _schedule_recipe_directly(recipe: str, week: str, day: str, meal: str):
+    """The original direct flow, extracted unchanged."""
+    try:
+        parts = week.split('-W')
+        year = int(parts[0])
+        week_num = int(parts[1])
+    except (ValueError, IndexError):
+        return error_page(f"Error: Invalid week format: {week}"), 400
+
+    MEAL_PLANS_PATH.mkdir(parents=True, exist_ok=True)
+    plan_file = MEAL_PLANS_PATH / f"{week}.md"
+
+    if not plan_file.exists():
+        content = generate_meal_plan_markdown(year, week_num)
+        plan_file.write_text(content, encoding='utf-8')
+
+    content = plan_file.read_text(encoding='utf-8')
+    try:
+        new_content = insert_recipe_into_meal_plan(content, day, meal, recipe)
+    except ValueError as e:
+        return error_page(f"Error: {str(e)}"), 400
+
+    plan_file.write_text(new_content, encoding='utf-8')
+    return _success_page_for_wikilink(recipe, day, meal, week)
+
+
+@app.route('/add-to-meal-plan', methods=['GET'])
+def add_to_meal_plan_form():
+    """Screen 1 — branch picker."""
+    from urllib.parse import unquote
+    recipe = request.args.get('recipe')
+    if not recipe:
+        return error_page("Error: recipe parameter required"), 400
+    recipe_display = unquote(recipe).replace('.md', '')
+    return _render_add_form(recipe_display)
+
+
+@app.route('/add-to-meal-plan', methods=['POST'])
+def add_to_meal_plan():
+    """Branches on `mode`. Modes: direct, existing, new, schedule_meal."""
+    recipe = request.form.get('recipe')
+    mode = request.form.get('mode', 'direct')
+
+    if not recipe:
+        return error_page("Error: recipe parameter required"), 400
+
+    if mode == 'direct':
+        week = request.form.get('week')
+        day = request.form.get('day')
+        meal = request.form.get('meal')
+        if not all([week, day, meal]):
+            return error_page("Error: recipe, week, day, and meal are all required"), 400
+        return _schedule_recipe_directly(recipe, week, day, meal)
+
+    if mode == 'existing':
+        meal_name = (request.form.get('meal_name') or '').strip()
+        if not meal_name:
+            recipe_display = recipe.replace('.md', '')
+            return _render_add_form(recipe_display, error="Pick a meal."), 400
+        meal = meal_loader.load_meal(meal_name)
+        if meal is None:
+            recipe_display = recipe.replace('.md', '')
+            return _render_add_form(recipe_display, error=f'Meal not found: "{meal_name}".'), 404
+        already_present = any(s.recipe == recipe for s in meal.sub_recipes)
+        meal_loader.append_sub_recipe(meal, recipe_name=recipe)
+        meal_loader.save_meal(meal)
+        info = f'{recipe} is already in this meal.' if already_present else None
+        return _render_schedule_prompt(recipe, meal_name, action='added', info=info)
+
+    if mode == 'new':
+        meal_name = (request.form.get('meal_name') or '').strip()
+        recipe_display = recipe.replace('.md', '')
+        err = _validate_meal_name(meal_name)
+        if err:
+            return _render_add_form(recipe_display, error=err), 400
+        if meal_loader.load_meal(meal_name) is not None:
+            return _render_add_form(
+                recipe_display,
+                error=f'A meal called "{meal_name}" already exists.'
+            ), 409
+        meal = meal_loader.Meal(
+            name=meal_name,
+            sub_recipes=[meal_loader.SubRecipe(recipe=recipe, servings=1)],
+        )
+        meal_loader.save_meal(meal)
+        return _render_schedule_prompt(recipe, meal_name, action='created')
+
+    if mode == 'schedule_meal':
+        meal_name = (request.form.get('meal_name') or '').strip()
+        week = request.form.get('week')
+        day = request.form.get('day')
+        meal = request.form.get('meal')
+        if not all([meal_name, week, day, meal]):
+            return error_page("Error: meal_name, week, day, and meal are all required"), 400
+        return _schedule_meal_token(meal_name, week, day, meal)
+
+    return error_page(f"Unknown mode: {mode}"), 400
 
 
 @app.route('/meal-planner', methods=['GET'])
 def meal_planner():
     """Serve the interactive meal planner board."""
-    return send_file('templates/meal_planner.html', mimetype='text/html')
+    html = open('templates/meal_planner.html').read()
+    html = html.replace('vault=KitchenOS', f'vault={VAULT_NAME}')
+    return html, 200, {'Content-Type': 'text/html'}
 
 
 # ----- Meals (composite recipe bundles) -----
@@ -970,18 +1188,21 @@ def api_meals_create():
     sub_recipes = data.get("sub_recipes") or []
     if not isinstance(sub_recipes, list) or not sub_recipes:
         return jsonify({"error": "sub_recipes must be a non-empty list"}), 400
+    parsed_subs = [
+        meal_loader.SubRecipe(
+            recipe=str(s.get("recipe", "")),
+            servings=int(s.get("servings", 1) or 1),
+        )
+        for s in sub_recipes
+        if isinstance(s, dict) and s.get("recipe")
+    ]
+    if not parsed_subs:
+        return jsonify({"error": "every sub_recipes entry must include a 'recipe' key"}), 400
     meal = meal_loader.Meal(
         name=name,
         description=data.get("description", ""),
         tags=list(data.get("tags") or []),
-        sub_recipes=[
-            meal_loader.SubRecipe(
-                recipe=str(s.get("recipe", "")),
-                servings=int(s.get("servings", 1) or 1),
-            )
-            for s in sub_recipes
-            if s.get("recipe")
-        ],
+        sub_recipes=parsed_subs,
         body=data.get("body", ""),
     )
     meal_loader.save_meal(meal)

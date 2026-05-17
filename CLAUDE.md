@@ -34,7 +34,7 @@ Development guide for Claude Code when working with this repository.
 
 | Path | Purpose |
 |------|---------|
-| `/Users/chaseeasterling/KitchenOS/` | Project root |
+| `/Users/chaseeasterling/GitHub/KitchenOS/` | Project root |
 | `.venv/` | Python virtual environment |
 | `Recipes/` in Obsidian vault | Main recipe files (title case, e.g., `Butter Biscuits.md`) |
 | `Recipes/Cooking Mode/` in Obsidian vault | Simplified cooking view files (`.recipe.md`) |
@@ -47,7 +47,7 @@ Development guide for Claude Code when working with this repository.
 ### Extract a Recipe (Primary Use)
 
 ```bash
-cd /Users/chaseeasterling/KitchenOS
+cd /Users/chaseeasterling/GitHub/KitchenOS
 .venv/bin/python extract_recipe.py "https://www.youtube.com/watch?v=VIDEO_ID"
 
 # Dry run (preview without saving)
@@ -116,7 +116,7 @@ cd /Users/chaseeasterling/KitchenOS
 
 ```
 Open in browser: http://localhost:5001/meal-planner
-iPad via Tailscale: http://100.111.6.10:5001/meal-planner
+iPad via Tailscale: http://100.103.114.106:5001/meal-planner
 ```
 
 Drag-and-drop board for planning weekly meals. Recipe sidebar with search and filter chips. Reads/writes the same Obsidian markdown files.
@@ -203,7 +203,7 @@ cp ops/com.kitchenos.mealplan.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.kitchenos.mealplan.plist
 
 # View logs
-tail -f ~/KitchenOS/logs/meal_plan_generator.log
+tail -f ~/GitHub/KitchenOS/logs/meal_plan_generator.log
 
 # Restart service
 launchctl unload ~/Library/LaunchAgents/com.kitchenos.mealplan.plist
@@ -243,7 +243,7 @@ cp ops/com.kitchenos.calendar-sync.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.kitchenos.calendar-sync.plist
 
 # View logs
-tail -f ~/KitchenOS/logs/calendar_sync.log
+tail -f ~/GitHub/KitchenOS/logs/calendar_sync.log
 
 # Test run manually
 .venv/bin/python sync_calendar.py
@@ -267,7 +267,7 @@ cp ops/com.kitchenos.batch-extract.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.kitchenos.batch-extract.plist
 
 # View logs
-tail -f ~/KitchenOS/logs/batch_extract.log
+tail -f ~/GitHub/KitchenOS/logs/batch_extract.log
 
 # Restart service
 launchctl unload ~/Library/LaunchAgents/com.kitchenos.batch-extract.plist
@@ -319,7 +319,7 @@ The API server enables recipe extraction from iOS via Share Sheet. It runs as a 
 curl http://localhost:5001/health
 
 # View logs
-tail -f ~/KitchenOS/logs/server.log
+tail -f ~/GitHub/KitchenOS/logs/server.log
 
 # Restart service
 launchctl unload ~/Library/LaunchAgents/com.kitchenos.api.plist
@@ -334,43 +334,23 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist
 
 ### Endpoints
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/health` | GET | Health check |
-| `/transcript` | GET/POST | Returns transcript + description (no extraction) |
-| `/extract` | POST | Full extraction, saves to Obsidian |
-| `/generate-shopping-list` | POST | Generate shopping list markdown from meal plan |
-| `/send-to-reminders` | POST | Send unchecked items to Apple Reminders |
-| `/reprocess?file=<name>` | GET | Full re-extraction from YouTube (preserves notes) |
-| `/refresh?file=<name>` | GET | Template refresh only, keeps existing data |
-| `/images/<filename>` | GET | Serve recipe image from vault |
-| `/calendar.ics` | GET | Serves meal plan calendar file |
-| `/refresh-nutrition?week=<week>` | GET | Regenerate nutrition dashboard for week |
-| `/add-to-meal-plan?recipe=<name>` | GET/POST | Pick meal plan slot and add recipe |
-| `/meal-planner` | GET | Interactive drag-and-drop meal planner board |
-| `/api/recipes` | GET | JSON list of recipe metadata for meal planner |
-| `/api/meal-plan/<week>` | GET | Read meal plan as JSON |
-| `/api/meal-plan/<week>` | PUT | Save meal plan from JSON |
-| `/api/recipes/save` | POST | Save recipe from structured JSON |
-| `/api/recipes/<name>` | GET | Full recipe details as JSON |
-| `/api/suggest-meal` | POST | Suggest recipe for empty meal slot |
-| `/api/meals` | GET | List composite meal bundles |
-| `/api/meals` | POST | Create a new meal (frontmatter saved to `vault/Meals/<name>.meal.md`) |
-| `/api/meals/<name>` | GET / PUT / DELETE | Read / edit / remove a meal |
-| `/api/pantry` | GET / PUT | Read / overwrite `config/pantry.json` inventory |
-| `/api/shopping-list/preview` | POST `{week, use_pantry?}` | Returns per-line records with pantry split |
-| `/api/shopping-list/confirm` | POST `{week, items_to_buy, decisions}` | Saves shopping list markdown + decrements pantry |
-| `/api/tasks/<week>` | GET (`?force=1` to recompute) | Returns the prep-task sidecar payload |
-| `/api/tasks/<week>/<task_id>/done` | POST `{done}` | Toggle a task's done flag |
-| `/api/inventory` | GET | List inventory items (filter by `category`/`location`) |
-| `/api/inventory/add` | POST | Add items in batch (merges by `name`+`unit`+`location`) |
-| `/api/inventory/remove` | POST | Remove an item by name (optional `location`) |
-| `/api/inventory/update` | POST | Update an item's quantity |
+For the full route list, grep `@app.route` in `api_server.py`. Endpoints with non-obvious contracts:
+
+| Endpoint | Notes |
+|----------|-------|
+| `/reprocess?file=<name>` (GET) | Full re-extraction from YouTube. **Preserves the `## My Notes` section.** |
+| `/refresh?file=<name>` (GET) | Template refresh only — keeps existing extracted data, just re-renders. |
+| `/meal-planner` (GET) | Interactive drag-and-drop meal planner board (HTML). |
+| `/api/meal-plan/<week>` (GET/PUT) | Programmatic meal plan as JSON; PUT round-trips through `rebuild_meal_plan_markdown`. |
+| `/api/meals` (POST) | Create meal — frontmatter saved to `vault/Meals/<name>.meal.md`. |
+| `/api/shopping-list/preview` `/confirm` | See "Pantry-aware shopping list flow" above. |
+| `/api/tasks/<week>` (GET, `?force=1`) | Prep-task sidecar payload; cached in `<week>.tasks.json`. |
+| `/add-to-meal-plan` (GET/POST) | Recipe-button entry. POST branches on `mode={direct,existing,new,schedule_meal}`. `existing`/`new` mutate `vault/Meals/<name>.meal.md` and end on an optional schedule prompt. |
 
 ### Configuration
 
 - **Port**: 5001 (configured in LaunchAgent)
-- **Tailscale IP**: `100.111.6.10`
+- **Tailscale IP**: `100.103.114.106`
 - **LaunchAgent**: `~/Library/LaunchAgents/com.kitchenos.api.plist`
 
 See `docs/setup/iOS_SHORTCUT_SETUP.md` for iOS Shortcut configuration.
@@ -543,207 +523,17 @@ template → Obsidian
 | `prompts/task_classification.py` | Prompt template for the task classifier |
 | `config/pantry.json` | Structured pantry inventory: `[{item, amount, unit}, ...]` |
 
-### Key Functions
+### Function Reference
 
-**extract_recipe.py:**
-- `extract_recipe_with_ollama()` - Sends data to Ollama, returns parsed JSON
-- `save_recipe_to_obsidian()` - Formats and writes markdown file
-- `main()` - CLI entry point with `--dry-run` support
+There is no maintained function index — it drifts. To find a function, `grep -rn "def name" .` or read the module docstring. Most modules in `lib/` have docstrings explaining their role.
 
-**main.py:**
-- `youtube_parser(url)` - Extracts video ID from various URL formats
-- `get_video_metadata(video_id)` - Fetches title, channel, description, thumbnail_url
-- `get_transcript(video_id)` - Gets transcript (YouTube or Whisper fallback)
-- `get_first_comment(video_id)` - Fetches first (usually pinned) comment via YouTube API
-- `get_thumbnail_url(video_id)` - Constructs YouTube thumbnail URL from video ID
+A few non-obvious invariants worth knowing:
 
-**templates/recipe_template.py:**
-- `format_recipe_markdown()` - Converts recipe JSON to Obsidian markdown
-- `generate_filename()` - Creates `YYYY-MM-DD-recipe-slug.md` filename
-- `generate_tools_callout()` - Generates Tools callout with reprocess buttons
-
-**recipe_sources.py:**
-- `find_recipe_link()` - Detects recipe URLs in video descriptions
-- `scrape_recipe_from_url()` - Fetches and parses JSON-LD from recipe websites
-- `parse_recipe_from_description()` - Extracts inline recipes from descriptions
-- `extract_cooking_tips()` - Pulls practical tips from transcripts
-- `load_creator_mapping()` - Loads channel → website mapping from config
-- `search_for_recipe_url()` - Searches DuckDuckGo for recipe URL
-- `search_creator_website()` - Orchestrates creator website search
-- `_extract_image_url()` - Extracts image URL from JSON-LD image field (string, list, or ImageObject)
-
-**api_server.py:**
-- `refresh_template()` - Regenerates recipe with current template, preserves data/notes
-- `reprocess_recipe()` - Full re-extraction from YouTube, preserves My Notes section
-- `add_to_meal_plan_form()` - Serves mobile-friendly form to pick week/day/meal
-- `add_to_meal_plan()` - Inserts recipe wikilink into meal plan file
-- `api_recipes()` - Returns recipe metadata JSON for meal planner (cached 5min)
-- `api_meal_plan_get()` - Returns meal plan as structured JSON
-- `api_meal_plan_put()` - Saves meal plan from structured JSON
-- `meal_planner()` - Serves interactive meal planner HTML board
-- `api_recipe_save()` - Saves recipe from Claude conversation, runs validation pipeline
-- `api_recipe_detail()` - Returns full recipe details as JSON
-- `api_inventory_list()` - Lists inventory items, optional `category`/`location` filters
-- `api_inventory_add()` - Batch-adds items with merge-on-conflict
-- `api_inventory_remove()` / `api_inventory_update()` - Mutate single items
-
-**lib/mcp_tools.py:**
-- `extract_recipe()` - Calls `/extract` endpoint
-- `save_recipe()` - Calls `/api/recipes/save` endpoint
-- `search_recipes()` - Calls `/api/recipes` with client-side filtering
-- `get_recipe()` - Calls `/api/recipes/<name>` endpoint
-- `get_meal_plan()` - Calls `/api/meal-plan/<week>` GET
-- `update_meal_plan()` - Calls `/api/meal-plan/<week>` PUT
-- `generate_shopping_list()` - Calls `/generate-shopping-list` endpoint
-- `send_to_reminders()` - Calls `/send-to-reminders` endpoint
-- `create_things_task()` - Creates Things 3 task via URL scheme
-- `add_to_inventory()` - Calls `/api/inventory/add` endpoint
-- `list_inventory()` - Calls `/api/inventory` with optional filters
-- `remove_from_inventory()` - Calls `/api/inventory/remove` endpoint
-- `update_inventory_item()` - Calls `/api/inventory/update` endpoint
-- `check_api_health()` - Verifies API server is running
-
-**lib/backup.py:**
-- `create_backup()` - Creates timestamped backup in .history/ folder
-- `cleanup_old_backups()` - Removes backups older than 30 days
-
-**lib/recipe_parser.py:**
-- `parse_recipe_file()` - Parses frontmatter and body from recipe markdown
-- `extract_my_notes()` - Extracts content from ## My Notes section
-- `parse_recipe_body()` - Extracts ingredients/instructions from markdown body
-- `find_existing_recipe()` - Finds recipe file by video ID
-
-**migrate_recipes.py:**
-- `migrate_recipe_file()` - Updates single recipe to current schema
-- `run_migration()` - Batch migrates all recipes
-- `has_tools_callout()` - Detects if recipe has Tools callout
-- `add_tools_callout()` - Adds Tools callout to existing recipes
-
-**migrate_cuisine.py:**
-- `apply_cuisine_corrections()` - Deterministic cuisine fix from correction map + per-recipe overrides
-- `update_frontmatter_field()` - Updates single YAML frontmatter field in recipe content
-- `run_cuisine_migration()` - Batch cuisine cleanup across all recipe files
-- `run_tag_migration()` - Batch tag normalization (protein, dish_type, difficulty, dietary, meal_occasion)
-- `run_seasonal_migration()` - Batch seasonal data population (keyword matching + Ollama fallback)
-
-**lib/normalizer.py:**
-- `normalize_field()` - Normalizes a single recipe field against its controlled vocabulary
-- `normalize_recipe_data()` - Normalizes all tag fields in a recipe_data dict
-
-**lib/ingredient_parser.py:**
-- `parse_ingredient()` - Splits ingredient string into amount, unit, item
-- `normalize_unit()` - Standardizes unit abbreviations
-- `is_informal_measurement()` - Detects "a pinch", "to taste", etc.
-- `parse_amount()` - Parses fractions, ranges, word numbers
-
-**lib/ingredient_validator.py:**
-- `validate_ingredients()` - Validates/repairs list of ingredients from AI extraction
-- `is_malformed_ingredient()` - Detects AI errors (unit in amount, empty item, etc.)
-- `repair_ingredient()` - Re-parses malformed ingredient using ingredient_parser
-
-**lib/image_downloader.py:**
-- `download_image()` - Downloads image from URL, saves to local path, validates content-type
-
-**lib/crouton_parser.py:**
-- `parse_crumb_file()` - Parses .crumb JSON dict into KitchenOS recipe_data format
-- `map_quantity_type()` - Maps Crouton quantityType enum to unit string
-- `map_ingredient()` - Converts Crouton ingredient object to {amount, unit, item}
-- `map_steps()` - Converts Crouton steps with section header support
-
-**lib/failure_logger.py:**
-- `classify_error()` - Categorizes errors (network, ollama, youtube, parsing, io, unknown)
-- `log_failures()` - Writes structured failure JSON to `failures/` directory
-- `cleanup_old_failure_logs()` - Removes failure logs older than 30 days
-
-**lib/shopping_list_generator.py:**
-- `extract_recipe_links()` - Extracts `[[recipe]]` links with optional `xN` multiplier, returns `list[tuple[str, int]]`
-- `multiply_ingredients()` - Scales ingredient amounts by a multiplier
-- `generate_shopping_list()` - Generates aggregated shopping list from meal plan
-
-**sync_calendar.py:**
-- `collect_all_days()` - Collects all days from meal plan files
-- `parse_week_from_filename()` - Extracts year/week from filename
-
-**lib/meal_plan_parser.py:**
-- `MealEntry` - NamedTuple with `name: str` and `servings: int` (default 1)
-- `parse_meal_plan()` - Parses meal plan markdown into structured data (returns `MealEntry` objects)
-- `extract_meals_for_day()` - Extracts meals from a day section, supports `[[Recipe]] x2` multiplier syntax
-- `insert_recipe_into_meal_plan()` - Inserts `[[recipe]]` wikilink into meal plan markdown at specified day/meal slot
-- `rebuild_meal_plan_markdown()` - Converts structured JSON meal plan back to markdown
-
-**lib/recipe_index.py:**
-- `get_recipe_index()` - Scans recipes folder, returns sorted list of recipe metadata dicts (includes image filename)
-
-**lib/inventory.py:**
-- `read_inventory()` - Parses the markdown table in `Inventory.md` into `InventoryItem` dataclasses
-- `write_inventory()` - Writes items back to `Inventory.md`, sorted by category then name
-- `add_items()` - Adds items with merge-on-conflict by `(name, unit, location)` (quantities sum)
-- `remove_item()` / `update_quantity()` - Single-item mutations, optional `location` filter
-- `normalize_category()` / `normalize_location()` / `normalize_source()` - Validate against controlled vocabularies (CATEGORIES, LOCATIONS, SOURCES)
-- Storage: single `Inventory.md` at vault root with frontmatter (`type: inventory`, `last_updated`) + a markdown table
-
-**lib/ics_generator.py:**
-- `generate_ics()` - Creates ICS calendar content
-- `create_meal_event()` - Creates single calendar event
-- `format_day_summary()` - Formats "B: X | L: Y | D: Z" string
-
-**lib/nutrition_lookup.py:**
-- `lookup_nutritionix()` - Queries Nutritionix API for ingredient nutrition
-- `lookup_usda()` - Queries USDA FoodData Central API
-- `estimate_with_ai()` - Uses Ollama to estimate nutrition when APIs fail
-- `calculate_recipe_nutrition()` - Sums ingredient nutrition, divides by servings
-
-**lib/nutrition_dashboard.py:**
-- `generate_dashboard()` - Creates nutrition dashboard markdown
-- `get_recipe_nutrition()` - Loads nutrition data from recipe file
-- `calculate_daily_nutrition()` - Sums meals for a day
-
-**lib/macro_targets.py:**
-- `load_macro_targets()` - Loads targets from My Macros.md
-
-**lib/seasonality.py:**
-- `load_seasonal_config()` - Loads Texas seasonal produce config
-- `keyword_match_seasonal()` - Fast keyword-based matching of ingredients to seasonal produce
-- `match_ingredients_to_seasonal()` - Keyword matching first, Ollama fallback for edge cases
-- `calculate_season_score()` - Counts in-season ingredients for a given month
-- `get_peak_months()` - Returns union of peak months for matched ingredients
-
-**lib/meal_suggester.py:**
-- `suggest_meal()` - Top-level orchestrator: scores ingredients, tiers to Claude
-- `score_overlap()` - Scores ingredient overlap between recipe and planned meals
-- `rank_candidates()` - Ranks all recipes by overlap score
-- `normalize_ingredient()` - Normalizes ingredient name for matching
-- `normalize_ingredients_ollama()` - Batch normalize via Ollama with fallback
-- `suggest_with_claude()` - Asks Claude API to pick best candidate
-- `suggest_for_empty_week()` - Asks Claude for starting recipe
-
-**lib/meal_loader.py:**
-- `Meal` / `SubRecipe` - Dataclasses for composite meals
-- `parse_meal_file(content)` - Parses `.meal.md` frontmatter + body
-- `load_meal(name, meals_dir=None)` / `list_meals()` - Read meals from `vault/Meals/`
-- `save_meal(meal)` / `delete_meal(name)` - Persist meal definitions
-
-**lib/meal_plan_parser.py (composite meals):**
-- `MealEntry` now has `kind` ("recipe" | "meal") and `sub_recipes` fields. Backward compatible — existing `[[Recipe]]` parses with `kind="recipe"`.
-- `flatten_to_recipes(entries)` - Expand any `kind="meal"` entries to their sub-recipes (multiplier propagates and stacks with per-sub-recipe servings overrides)
-
-**lib/pantry.py:**
-- `load_pantry()` / `save_pantry(items)` - Atomic JSON I/O over `config/pantry.json`
-- `find_match(item_name, pantry)` - Normalized lookup with substring fallback
-- `split_against_pantry(item, amount, unit, pantry)` - Returns `{from_pantry, to_buy, warning}`; auto-converts within unit family, warns on cross-family mismatch
-- `apply_decisions(decisions, pantry)` - Subtract confirmed pantry usage; remove depleted entries
-
-**lib/shopping_list_generator.py (pantry-aware):**
-- `extract_recipe_links(path)` now resolves `[[Meal: X]]` to its sub-recipes
-- `compute_lines(aggregated, pantry=None)` - Per-line records `{item, needed, from_pantry, to_buy, display, warning}`
-- `generate_shopping_list(week, pantry=None)` - When pantry supplied, splits each line; `items` reflects only what's still needed to buy
-- `generate_shopping_list_from_path(path, pantry=None)` - Same contract, used by the CLI for custom plan paths
-
-**lib/task_extractor.py:**
-- `extract_tasks(week, force=False)` - Loads scheduled meals, classifies steps via Claude Haiku (Ollama mistral:7b fallback, heuristic last resort); caches in `vault/Meal Plans/<week>.tasks.json`. Cache fresh when sidecar mtime ≥ plan mtime
-- `mark_task_done(week, task_id, done)` - Persist a single task's done flag in the sidecar
-- `load_cached_tasks(week)` - Read sidecar JSON without recomputation
-- Task IDs are `sha1(recipe|day|slot|step)[:12]` — stable across regeneration so `done` flags survive plan edits
+- **Vault paths**: always go through `lib/paths.py` helpers (`vault_root()`, `recipes_dir()`, `meal_plans_dir()`, `meals_dir()`). Never hardcode.
+- **Task IDs** (`lib/task_extractor.py`): `sha1(recipe|day|slot|step)[:12]` — stable across plan edits so `done` flags survive regeneration.
+- **Pantry split** (`lib/pantry.py`): `split_against_pantry()` auto-converts within a unit family (e.g. tsp↔tbsp↔cup) but returns a `warning` on cross-family mismatch rather than guessing.
+- **Composite meals** (`lib/meal_plan_parser.py`): `[[Meal: X]]` entries keep the meal name in the markdown; `flatten_to_recipes()` expands them downstream. Outer `xN` stacks with per-sub-recipe `servings` overrides.
+- **Tasks cache freshness** (`lib/task_extractor.py`): sidecar is fresh when `sidecar_mtime >= plan_mtime`. Pass `force=True` to recompute.
 
 ## AI Configuration
 
@@ -884,20 +674,21 @@ When finishing a feature or fix, follow this checklist:
 
 | Change Type | Update This |
 |-------------|-------------|
-| New feature/function | CLAUDE.md → "Key Functions" |
+| New non-obvious invariant | CLAUDE.md → "Function Reference" bullets (only if it's load-bearing across modules; otherwise put it in the module docstring) |
+| New `lib/` convention | `lib/CLAUDE.md` |
 | Architecture change | CLAUDE.md → "Architecture" |
-| New config option | CLAUDE.md → "AI Configuration" |
+| New config option / model / API key | CLAUDE.md → "AI Configuration" or "Development Environment" |
 | New constraint/gotcha | CLAUDE.md → "Constraints" or "Common Issues" |
-| New design principle | CLAUDE.md → "Design Principles" |
+| New API endpoint with non-obvious contract | CLAUDE.md → "Endpoints" (otherwise just add the route — `grep` will find it) |
 | User-facing change | README.md → relevant section |
-| Major feature complete | Future Enhancements → mark done or remove |
+| Major feature complete | Future Enhancements → remove the row |
 | Lessons learned | docs/IMPLEMENTATION_SUMMARY.md → "Lessons Learned" |
 
 **Documentation standards:**
-- Keep CLAUDE.md concise - it's loaded every session
-- Use tables for structured data
-- Include code examples for commands
-- Update the JSON schema if recipe structure changes
+- Keep CLAUDE.md concise — it's loaded every session. **Do not add a function index.** Function listings drift; rely on docstrings + `grep`.
+- Use tables for structured data.
+- Include code examples for commands.
+- Update the JSON schema if recipe structure changes.
 
 ### 4. Commit
 
@@ -916,54 +707,12 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 
 ## Future Enhancements
 
-These features are planned but not yet implemented:
-
 | Feature | Priority | Notes |
 |---------|----------|-------|
-| ~~Recipe link detection~~ | ~~High~~ | **Completed** - Priority chain: webpage → description → AI |
-| ~~iOS Shortcut~~ | ~~Medium~~ | **Completed** - /extract endpoint + Tailscale, see docs/setup/iOS_SHORTCUT_SETUP.md |
-| ~~Batch processing~~ | ~~Medium~~ | **Completed** - Processes URLs from iOS Reminders list |
-| ~~YouTube Shorts support~~ | ~~Medium~~ | **Completed** - yt-dlp fetches metadata for /shorts/ URLs |
-| ~~Recipe reprocess buttons~~ | ~~Medium~~ | **Completed** - Tools callout with Re-extract/Refresh buttons |
-| ~~Nutrition tracking~~ | ~~Medium~~ | **Completed** - Macro tracking with dashboard, API lookup (Nutritionix, USDA), AI fallback |
-| ~~Seasonality~~ | ~~Medium~~ | **Completed** - Texas produce calendar, Ollama fuzzy matching, Dashboard "In Season Now", meal plan suggestions |
 | Claude API fallback | Low | Use Claude when Ollama fails |
-| Non-YouTube recipe URLs in batch_extract | Medium | Route non-YouTube URLs in "Recipies to Process" through `scrape_recipe_from_url()` (Serious Eats, NYT Cooking, etc.). Currently `batch_extract.py:212` rejects anything without youtube.com/youtu.be. Decide handling for plain-text notes (skip vs flag). |
-| ~~Image extraction~~ | ~~Low~~ | **Completed** - Downloads recipe website images or YouTube thumbnails to vault |
-| ~~Receipt-to-inventory~~ | ~~Medium~~ | **Completed** - `Inventory.md` at vault root + MCP tools (`add_to_inventory`, `list_inventory`, `remove_from_inventory`, `update_inventory_item`). Claude parses receipt photo or grocery email in conversation and calls the tool. |
-| Inventory ↔ shopping list integration | Medium | Subtract on-hand inventory from generated shopping lists; add a "Restock" pass that auto-adds low-stock staples |
+| Non-YouTube recipe URLs in `batch_extract` | Medium | Route non-YouTube URLs in "Recipies to Process" through `scrape_recipe_from_url()` (Serious Eats, NYT Cooking, etc.). Currently `batch_extract.py:212` rejects anything without youtube.com/youtu.be. Decide handling for plain-text notes (skip vs flag). |
+| Inventory ↔ shopping list integration | Medium | Subtract on-hand inventory from generated shopping lists; add a "Restock" pass that auto-adds low-stock staples. |
 | Email IMAP polling for receipts | Low | Currently the user pastes/forwards receipt content into Claude. IMAP would auto-ingest from HEB/Whole Foods/Instacart inboxes. |
-
-## Project Structure
-
-```
-KitchenOS/
-├── extract_recipe.py      # Main entry point
-├── main.py                # Video data fetcher
-├── api_server.py          # Flask API for iOS
-├── batch_extract.py       # Batch processor
-├── recipe_sources.py      # Recipe extraction logic
-├── migrate_recipes.py     # Schema migration
-├── migrate_cuisine.py     # Cuisine cleanup, tag normalization & seasonal population
-├── shopping_list.py       # Shopping list from meal plans
-├── generate_meal_plan.py  # Weekly meal plan generator
-├── generate_nutrition_dashboard.py  # Nutrition dashboard generator
-├── mcp_server.py          # MCP server for Claude Desktop
-│
-├── lib/                   # Python library modules
-├── prompts/               # AI prompt templates
-├── templates/             # Recipe + meal plan templates
-├── tests/                 # Test suite
-├── scripts/               # Shell scripts
-│
-├── docs/                  # Documentation
-│   ├── setup/             # Setup guides (iOS, HOW_TO_RUN)
-│   ├── plans/             # Design documents
-│   └── stories/           # User stories
-│
-├── com.kitchenos.mealplan.plist  # LaunchAgent for meal plan generation
-└── KitchenOSApp/          # macOS menu bar app
-```
 
 ## Documentation
 

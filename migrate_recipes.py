@@ -211,7 +211,7 @@ def migrate_recipe_content(content: str, filename: str = None) -> Tuple[str, Lis
 
     # Migrate localhost URLs to Tailscale IP
     if "localhost:5001" in new_content:
-        new_content = new_content.replace("http://localhost:5001", "http://100.111.6.10:5001")
+        new_content = new_content.replace("http://localhost:5001", "http://100.103.114.106:5001")
         changes.append("Updated button URLs from localhost to Tailscale IP")
 
     # Add "Add to Meal Plan" button if Tools callout exists but button is missing
@@ -222,7 +222,7 @@ def migrate_recipe_content(content: str, filename: str = None) -> Tuple[str, Lis
             f'> ```button\n'
             f'> name Add to Meal Plan\n'
             f'> type link\n'
-            f'> url http://100.111.6.10:5001/add-to-meal-plan?recipe={encoded_filename}\n'
+            f'> url http://100.103.114.106:5001/add-to-meal-plan?recipe={encoded_filename}\n'
             f'> ```\n'
         )
         # Insert before the closing of the tools callout (before the blank line after last ```)

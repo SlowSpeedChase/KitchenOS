@@ -7,7 +7,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/chaseeasterling/KitchenOS/scripts/cleanup_old_icloud.sh</string>
+        <string>/Users/chaseeasterling/GitHub/KitchenOS/scripts/cleanup_old_icloud.sh</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
@@ -21,8 +21,8 @@
         <integer>0</integer>
     </dict>
     <key>StandardOutPath</key>
-    <string>/Users/chaseeasterling/KitchenOS/logs/cleanup_old_icloud.log</string>
+    <string>/Users/chaseeasterling/GitHub/KitchenOS/logs/cleanup_old_icloud.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/chaseeasterling/KitchenOS/logs/cleanup_old_icloud.log</string>
+    <string>/Users/chaseeasterling/GitHub/KitchenOS/logs/cleanup_old_icloud.log</string>
 </dict>
 </plist>

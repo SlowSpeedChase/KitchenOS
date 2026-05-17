@@ -50,3 +50,14 @@ def test_suggest_meal_invalid_week(client):
         "week": "invalid", "day": "Monday", "meal": "dinner"
     })
     assert response.status_code == 400
+
+
+def test_create_meal_rejects_subs_without_recipe_key(client):
+    """Sub_recipes entries missing the 'recipe' key must 400, not silently save empty."""
+    response = client.post('/api/meals', json={
+        "name": "Test Meal Bad Subs",
+        "sub_recipes": [{"name": "Salmon Onigiri"}, {"recipe": ""}],
+    })
+    assert response.status_code == 400
+    data = response.get_json()
+    assert "recipe" in data.get("error", "").lower()

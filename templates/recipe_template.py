@@ -7,7 +7,7 @@ from urllib.parse import quote
 
 from lib.ingredient_parser import parse_ingredient
 
-API_BASE_URL = "http://100.111.6.10:5001"
+API_BASE_URL = "http://100.103.114.106:5001"
 
 # Schema definition for recipe frontmatter
 # Used by migration to add missing fields

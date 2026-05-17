@@ -20,7 +20,7 @@ def test_generate_tools_callout():
 
 
 def test_api_base_url_uses_tailscale():
-    assert API_BASE_URL == "http://100.111.6.10:5001"
+    assert API_BASE_URL == "http://100.103.114.106:5001"
 
 
 def test_tools_callout_contains_add_to_meal_plan():
@@ -32,7 +32,7 @@ def test_tools_callout_contains_add_to_meal_plan():
 
 def test_tools_callout_uses_tailscale_ip():
     result = generate_tools_callout("Test.md")
-    assert "100.111.6.10:5001" in result
+    assert "100.103.114.106:5001" in result
     assert "localhost" not in result
 
 

@@ -50,6 +50,19 @@ class Meal:
         }
 
 
+def append_sub_recipe(meal: Meal, recipe_name: str, servings: int = 1) -> Meal:
+    """Append a SubRecipe to ``meal.sub_recipes`` in place.
+
+    No-op if a SubRecipe with the same ``recipe`` name is already present —
+    callers should treat the operation as idempotent. Returns the same Meal
+    instance to allow chaining.
+    """
+    if any(s.recipe == recipe_name for s in meal.sub_recipes):
+        return meal
+    meal.sub_recipes.append(SubRecipe(recipe=recipe_name, servings=servings))
+    return meal
+
+
 def _parse_inline_list(value: str) -> list[str]:
     inner = value.strip()[1:-1].strip()
     if not inner:

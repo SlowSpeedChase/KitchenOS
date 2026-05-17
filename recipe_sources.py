@@ -446,7 +446,7 @@ def extract_cooking_tips(transcript: str, recipe: Dict[str, Any]) -> List[str]:
 
     prompt = "{}\n\n{}".format(
         TIPS_EXTRACTION_PROMPT,
-        build_tips_prompt(recipe, transcript)
+        build_tips_prompt(recipe, transcript[:4000])
     )
 
     try:
@@ -462,11 +462,16 @@ def extract_cooking_tips(transcript: str, recipe: Dict[str, Any]) -> List[str]:
         )
         response.raise_for_status()
         result = response.json()
-        tips_json = result.get("response", "[]")
+        tips_json = result.get("response", "{}")
         tips = json.loads(tips_json)
 
         if isinstance(tips, list):
             return [str(t) for t in tips if t][:5]
+        if isinstance(tips, dict):
+            tips_list = tips.get("tips", [])
+            if not isinstance(tips_list, list):
+                tips_list = list(tips.values())
+            return [str(t) for t in tips_list if t][:5]
         return []
     except Exception as e:
         print(f"  -> Tips extraction failed: {e}")
@@ -592,6 +597,6 @@ def search_creator_website(channel: str, title: str) -> Optional[str]:
     if url:
         print(f"  -> Found: {url}")
     else:
-        print(f"  -> No recipe URL found")
+        print("  -> No recipe URL found")
 
     return url
