@@ -109,7 +109,8 @@ class TestNutritionSection:
         assert "nutrition_protein: 25" in result
         assert "nutrition_carbs: 45" in result
         assert "nutrition_fat: 18" in result
-        assert "nutrition_source:" in result
+        assert 'serving_size: "1 cup"' in result
+        assert 'nutrition_source: "nutritionix"' in result
         assert "\ncalories:" not in result
         assert "\ncarbs:" not in result
         assert "\nfat:" not in result
