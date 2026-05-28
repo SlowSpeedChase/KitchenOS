@@ -53,16 +53,18 @@ class TestBackfillNutrition:
         ])
         recipe_path = tmp_path / "Test Recipe.md"
 
+        # calculate_recipe_nutrition already returns per-serving values internally,
+        # so the mock result IS the final per-serving value (no further division).
         mock_result = NutritionLookupResult(
-            NutritionData(calories=300, protein=8, carbs=60, fat=1),
+            NutritionData(calories=150, protein=4, carbs=30, fat=0),
             source="usda"
         )
-        with patch("backfill_nutrition.lookup_usda_ai", return_value=mock_result):
+        with patch("backfill_nutrition.calculate_recipe_nutrition", return_value=mock_result):
             updated = backfill_recipe(recipe_path, dry_run=False)
 
         assert updated is True
         content = recipe_path.read_text()
-        assert "nutrition_calories: 150" in content   # 300 / 2 servings
+        assert "nutrition_calories: 150" in content
         assert "nutrition_protein: 4" in content
         assert "nutrition_carbs: 30" in content
         assert "nutrition_fat: 0" in content
@@ -76,15 +78,16 @@ class TestBackfillNutrition:
         ])
         recipe_path = tmp_path / "No Servings.md"
 
+        # Mock returns per-serving value (calculate_recipe_nutrition already divided by 1)
         mock_result = NutritionLookupResult(
             NutritionData(calories=400, protein=8, carbs=80, fat=1),
             source="ai"
         )
-        with patch("backfill_nutrition.lookup_usda_ai", return_value=mock_result):
+        with patch("backfill_nutrition.calculate_recipe_nutrition", return_value=mock_result):
             backfill_recipe(recipe_path, dry_run=False)
 
         content = recipe_path.read_text()
-        assert "nutrition_calories: 400" in content   # 400 / 1 = 400
+        assert "nutrition_calories: 400" in content
 
     def test_dry_run_does_not_write_file(self, tmp_path):
         from backfill_nutrition import backfill_recipe
@@ -99,7 +102,7 @@ class TestBackfillNutrition:
             NutritionData(calories=300, protein=10, carbs=50, fat=5),
             source="usda"
         )
-        with patch("backfill_nutrition.lookup_usda_ai", return_value=mock_result):
+        with patch("backfill_nutrition.calculate_recipe_nutrition", return_value=mock_result):
             backfill_recipe(recipe_path, dry_run=True)
 
         assert recipe_path.read_text() == original
@@ -110,7 +113,41 @@ class TestBackfillNutrition:
         make_recipe_file(tmp_path, "Empty Recipe", ingredients=None)
         recipe_path = tmp_path / "Empty Recipe.md"
 
-        with patch("backfill_nutrition.lookup_usda_ai") as mock_lookup:
+        with patch("backfill_nutrition.calculate_recipe_nutrition") as mock_lookup:
             result = backfill_recipe(recipe_path, dry_run=False)
             mock_lookup.assert_not_called()
         assert result is False
+
+    def test_force_overwrites_existing_numeric_values(self, tmp_path):
+        from backfill_nutrition import backfill_recipe
+
+        make_recipe_file(tmp_path, "Force Recipe", nutrition_calories=450, ingredients=[
+            {"amount": "1", "unit": "cup", "item": "butter"},
+        ])
+        recipe_path = tmp_path / "Force Recipe.md"
+
+        mock_result = NutritionLookupResult(
+            NutritionData(calories=900, protein=1, carbs=0, fat=100),
+            source="nutritionix"
+        )
+        with patch("backfill_nutrition.calculate_recipe_nutrition", return_value=mock_result):
+            updated = backfill_recipe(recipe_path, dry_run=False, force=True)
+
+        assert updated is True
+        content = recipe_path.read_text()
+        assert "nutrition_calories: 900" in content
+        assert "nutrition_fat: 100" in content
+
+    def test_collect_skips_unreadable_files(self, tmp_path):
+        from backfill_nutrition import collect_recipes_needing_backfill
+
+        make_recipe_file(tmp_path, "Good Recipe", nutrition_calories=None)
+        # Create a file that will cause parse_recipe_file to raise
+        bad_file = tmp_path / "Bad Recipe.md"
+        bad_file.write_bytes(b"\xff\xfe invalid utf-8 \x80\x81")
+
+        # Should not raise; should return only the good recipe
+        recipes = collect_recipes_needing_backfill(tmp_path)
+        names = [r.stem for r in recipes]
+        assert "Good Recipe" in names
+        assert "Bad Recipe" not in names
