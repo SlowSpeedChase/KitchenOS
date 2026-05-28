@@ -10,7 +10,7 @@ import re
 import subprocess
 import time
 import warnings
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -831,7 +831,6 @@ def _list_meal_names() -> list[str]:
 
 
 def _generate_week_options(weeks_ahead: int = 4) -> list[str]:
-    from datetime import date
     today = date.today()
     weeks: list[str] = []
     for i in range(weeks_ahead):
@@ -1160,23 +1159,21 @@ def meal_planner():
 @app.route('/current/meal-plan', methods=['GET'])
 def current_meal_plan_redirect():
     """Redirect to the current week's meal plan in Obsidian."""
-    from datetime import date
     today = date.today()
     iso = today.isocalendar()
     week = f"{iso[0]}-W{iso[1]:02d}"
     encoded = quote(f"Meal Plans/{week}", safe='')
-    return redirect(f"obsidian://open?vault={VAULT_NAME}&file={encoded}")
+    return redirect(f"obsidian://open?vault={paths.vault_root().name}&file={encoded}")
 
 
 @app.route('/current/shopping-list', methods=['GET'])
 def current_shopping_list_redirect():
     """Redirect to the current week's shopping list in Obsidian."""
-    from datetime import date
     today = date.today()
     iso = today.isocalendar()
     week = f"{iso[0]}-W{iso[1]:02d}"
     encoded = quote(f"Shopping Lists/{week}", safe='')
-    return redirect(f"obsidian://open?vault={VAULT_NAME}&file={encoded}")
+    return redirect(f"obsidian://open?vault={paths.vault_root().name}&file={encoded}")
 
 
 # ----- Meals (composite recipe bundles) -----
