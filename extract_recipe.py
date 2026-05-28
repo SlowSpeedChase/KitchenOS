@@ -445,10 +445,10 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False, 
         nutrition_result = calculate_recipe_nutrition(ingredients, servings)
 
         if nutrition_result:
-            recipe_data["calories"] = nutrition_result.nutrition.calories
-            recipe_data["protein_g"] = nutrition_result.nutrition.protein
-            recipe_data["carbs_g"] = nutrition_result.nutrition.carbs
-            recipe_data["fat_g"] = nutrition_result.nutrition.fat
+            recipe_data["nutrition_calories"] = nutrition_result.nutrition.calories
+            recipe_data["nutrition_protein"] = nutrition_result.nutrition.protein
+            recipe_data["nutrition_carbs"] = nutrition_result.nutrition.carbs
+            recipe_data["nutrition_fat"] = nutrition_result.nutrition.fat
             recipe_data["nutrition_source"] = nutrition_result.source
             recipe_data["serving_size"] = recipe_data.get("serving_size", "1 serving")
 
