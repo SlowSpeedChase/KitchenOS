@@ -138,6 +138,50 @@ class TestBackfillNutrition:
         assert "nutrition_calories: 900" in content
         assert "nutrition_fat: 100" in content
 
+    def test_force_is_idempotent_on_already_backfilled_recipe(self, tmp_path):
+        from backfill_nutrition import backfill_recipe
+
+        # Recipe already backfilled — serving_size is a quoted string, not null
+        content = '''---
+title: "Already Backfilled"
+source_url: "https://youtube.com/watch?v=abc"
+nutrition_calories: 300
+nutrition_protein: 10
+nutrition_carbs: 40
+nutrition_fat: 8
+nutrition_source: "usda"
+servings: 2
+serving_size: "1 serving"
+---
+
+# Already Backfilled
+
+## Ingredients
+
+| Amount | Unit | Ingredient |
+|--------|------|------------|
+| 1 | cup | oats |
+
+## Instructions
+
+1. Cook it.
+'''
+        recipe_path = tmp_path / "Already Backfilled.md"
+        recipe_path.write_text(content)
+
+        mock_result = NutritionLookupResult(
+            NutritionData(calories=250, protein=9, carbs=35, fat=6),
+            source="usda"
+        )
+        with patch("backfill_nutrition.calculate_recipe_nutrition", return_value=mock_result):
+            backfill_recipe(recipe_path, dry_run=False, force=True)
+
+        result = recipe_path.read_text()
+        # serving_size must appear exactly once, not duplicated
+        assert result.count('"1 serving"') == 1
+        # Values updated to new mock result
+        assert "nutrition_calories: 250" in result
+
     def test_collect_skips_unreadable_files(self, tmp_path):
         from backfill_nutrition import collect_recipes_needing_backfill
 

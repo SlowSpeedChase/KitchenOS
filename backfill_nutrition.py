@@ -61,7 +61,7 @@ def write_nutrition_to_file(
 
     for key, value in replacements.items():
         if force:
-            pattern = rf"(?m)^(\s*{re.escape(key)}:\s*)\S+"
+            pattern = rf"(?m)^(\s*{re.escape(key)}:\s*).+"
         else:
             pattern = rf"(?m)^(\s*{re.escape(key)}:\s*)null"
         frontmatter = re.sub(pattern, rf"\g<1>{value}", frontmatter)
