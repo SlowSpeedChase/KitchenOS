@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Simple API server for iOS Shortcuts integration."""
 
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, redirect
+from urllib.parse import quote
 from youtube_transcript_api import YouTubeTranscriptApi
 from googleapiclient.discovery import build
 import os
@@ -9,7 +10,7 @@ import re
 import subprocess
 import time
 import warnings
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -251,10 +252,10 @@ def api_recipe_save():
 
         nutrition_result = calculate_recipe_nutrition(ingredients, servings)
         if nutrition_result:
-            data['calories'] = nutrition_result.nutrition.calories
-            data['protein_g'] = nutrition_result.nutrition.protein
-            data['carbs_g'] = nutrition_result.nutrition.carbs
-            data['fat_g'] = nutrition_result.nutrition.fat
+            data['nutrition_calories'] = nutrition_result.nutrition.calories
+            data['nutrition_protein'] = nutrition_result.nutrition.protein
+            data['nutrition_carbs'] = nutrition_result.nutrition.carbs
+            data['nutrition_fat'] = nutrition_result.nutrition.fat
             data['nutrition_source'] = nutrition_result.source
 
         # Set source metadata
@@ -335,10 +336,10 @@ def api_recipe_detail(name):
             "dietary": fm.get('dietary', []),
             "equipment": fm.get('equipment', []),
             "meal_occasion": fm.get('meal_occasion', []),
-            "calories": fm.get('calories'),
-            "protein_g": fm.get('protein_g'),
-            "carbs_g": fm.get('carbs_g'),
-            "fat_g": fm.get('fat_g'),
+            "nutrition_calories": fm.get('nutrition_calories'),
+            "nutrition_protein": fm.get('nutrition_protein'),
+            "nutrition_carbs": fm.get('nutrition_carbs'),
+            "nutrition_fat": fm.get('nutrition_fat'),
             "seasonal_ingredients": fm.get('seasonal_ingredients', []),
             "peak_months": fm.get('peak_months', []),
             "source_url": fm.get('source_url'),
@@ -830,7 +831,6 @@ def _list_meal_names() -> list[str]:
 
 
 def _generate_week_options(weeks_ahead: int = 4) -> list[str]:
-    from datetime import date
     today = date.today()
     weeks: list[str] = []
     for i in range(weeks_ahead):
@@ -1154,6 +1154,26 @@ def add_to_meal_plan():
 def meal_planner():
     """Serve the interactive meal planner board."""
     return send_file('templates/meal_planner.html', mimetype='text/html')
+
+
+@app.route('/current/meal-plan', methods=['GET'])
+def current_meal_plan_redirect():
+    """Redirect to the current week's meal plan in Obsidian."""
+    today = date.today()
+    iso = today.isocalendar()
+    week = f"{iso[0]}-W{iso[1]:02d}"
+    encoded = quote(f"Meal Plans/{week}", safe='')
+    return redirect(f"obsidian://open?vault={paths.vault_root().name}&file={encoded}")
+
+
+@app.route('/current/shopping-list', methods=['GET'])
+def current_shopping_list_redirect():
+    """Redirect to the current week's shopping list in Obsidian."""
+    today = date.today()
+    iso = today.isocalendar()
+    week = f"{iso[0]}-W{iso[1]:02d}"
+    encoded = quote(f"Shopping Lists/{week}", safe='')
+    return redirect(f"obsidian://open?vault={paths.vault_root().name}&file={encoded}")
 
 
 # ----- Meals (composite recipe bundles) -----
