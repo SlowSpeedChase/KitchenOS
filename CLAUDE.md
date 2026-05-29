@@ -28,26 +28,26 @@ Development guide for Claude Code when working with this repository.
 - **Python 3.11** - Full f-string support including backslashes
 - **Ollama local** - Must be running for extraction to work
 - **YouTube API key required** - For metadata fetching
-- **iCloud path** - Obsidian vault is in iCloud, path has spaces (escaped)
+- **Obsidian Sync** - Vault uses Obsidian Sync (not iCloud); no spaces in path
 
 ## Key Paths
 
 | Path | Purpose |
 |------|---------|
-| `/Users/chaseeasterling/GitHub/KitchenOS/` | Project root |
+| `/Users/chaseeasterling/KitchenOS/` | Project root |
 | `.venv/` | Python virtual environment |
 | `Recipes/` in Obsidian vault | Main recipe files (title case, e.g., `Butter Biscuits.md`) |
 | `Recipes/Cooking Mode/` in Obsidian vault | Simplified cooking view files (`.recipe.md`) |
 | `Recipes/Images/` in Obsidian vault | Recipe images (downloaded from source or YouTube thumbnail) |
 
-**Obsidian Vault**: `~/KitchenOS/vault/` (configurable via `KITCHENOS_VAULT` env var; resolved by `lib/paths.py`)
+**Obsidian Vault**: `~/KitchenOS/KitchenOS_Vault/` (configurable via `KITCHENOS_VAULT` env var; resolved by `lib/paths.py`)
 
 ## Running Commands
 
 ### Extract a Recipe (Primary Use)
 
 ```bash
-cd /Users/chaseeasterling/GitHub/KitchenOS
+cd /Users/chaseeasterling/KitchenOS
 .venv/bin/python extract_recipe.py "https://www.youtube.com/watch?v=VIDEO_ID"
 
 # Dry run (preview without saving)
@@ -712,6 +712,7 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 | Non-YouTube recipe URLs in `batch_extract` | Medium | Route non-YouTube URLs in "Recipies to Process" through `scrape_recipe_from_url()` (Serious Eats, NYT Cooking, etc.). Currently `batch_extract.py:212` rejects anything without youtube.com/youtu.be. Decide handling for plain-text notes (skip vs flag). |
 | Inventory ↔ shopping list integration | Medium | Subtract on-hand inventory from generated shopping lists; add a "Restock" pass that auto-adds low-stock staples. |
 | Email IMAP polling for receipts | Low | Currently the user pastes/forwards receipt content into Claude. IMAP would auto-ingest from HEB/Whole Foods/Instacart inboxes. |
+| Serving size correction | Medium | Workflow to correct `servings: null` on existing recipes; affects per-serving accuracy of backfilled nutrition. |
 
 ## Documentation
 
