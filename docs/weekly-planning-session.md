@@ -41,7 +41,7 @@ cd /Users/chaseeasterling/KitchenOS
 .venv/bin/python extract_recipe.py --dry-run "https://www.youtube.com/watch?v=VIDEO_ID"
 ```
 
-Each extracted recipe gets a full markdown file in `Recipes/`, a stripped-down cooking view in `Recipes/Cooking Mode/`, an image in `Recipes/Images/`, and three Obsidian buttons baked into the body (Reprocess, Refresh, Add to Meal Plan).
+Each extracted recipe gets a full markdown file in `Recipes/`, an image in `Recipes/Images/`, and three Obsidian buttons baked into the body (Reprocess, Refresh, Add to Meal Plan).
 
 ---
 
@@ -127,8 +127,6 @@ To force a fresh task classification (e.g., after swapping a recipe mid-week), a
 
 ## Stage 5 — Cook: at the stove
 
-**Cooking Mode files** (`Recipes/Cooking Mode/<Recipe>.recipe.md`) are stripped-down versions — ingredients + numbered steps only, no metadata. These are easier to follow on an iPad.
-
 **Calendar:** Every meal plan is compiled into `meal_calendar.ics` daily at 6:05 AM. Apple Calendar (or Obsidian Full Calendar plugin) can subscribe to `http://localhost:5001/calendar.ics`.
 
 **If the AI got a recipe wrong:** Click **Reprocess** on the recipe in Obsidian. Full re-extraction from YouTube. Your `## My Notes` section is preserved.
@@ -174,7 +172,7 @@ To rebuild manually:
 | Sunday evening | Open meal planner → drag recipes onto the week → click Shopping List → Send to Reminders |
 | After shopping | Photo the receipt → share with Claude Desktop → `Inventory.md` updates |
 | Each morning | Open meal planner → check Today's Prep panel → mark tasks done |
-| At the stove | Open the Cooking Mode file on iPad |
+| At the stove | Open the recipe on iPad |
 | End of week | Check the Nutrition Dashboard against macro targets |
 
 ---

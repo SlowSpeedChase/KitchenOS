@@ -26,7 +26,6 @@ from lib.meal_plan_parser import insert_recipe_into_meal_plan, parse_meal_plan, 
 from lib.recipe_parser import parse_recipe_file, extract_my_notes, parse_recipe_body
 from templates.shopping_list_template import generate_shopping_list_markdown, generate_filename as shopping_list_filename
 from templates.recipe_template import format_recipe_markdown
-from templates.recipemd_template import format_recipemd, generate_recipemd_filename
 from templates.meal_plan_template import generate_meal_plan_markdown
 from lib.ingredient_validator import validate_ingredients
 from lib.seasonality import match_ingredients_to_seasonal, get_peak_months
@@ -282,17 +281,6 @@ def api_recipe_save():
             create_backup(filepath)
 
         filepath.write_text(markdown, encoding='utf-8')
-
-        # Generate RecipeMD cooking mode version
-        recipemd_content = format_recipemd(data, '', '', '')
-        recipemd_dir = OBSIDIAN_RECIPES_PATH / "Cooking Mode"
-        recipemd_dir.mkdir(parents=True, exist_ok=True)
-        recipemd_filename = generate_recipemd_filename(recipe_name)
-        recipemd_path = (recipemd_dir / recipemd_filename).resolve()
-        if not recipemd_path.is_relative_to(recipemd_dir.resolve()):
-            return jsonify({"error": "Invalid recipe name"}), 400
-
-        recipemd_path.write_text(recipemd_content, encoding='utf-8')
 
         # Invalidate recipe cache
         _recipe_cache["data"] = None

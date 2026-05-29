@@ -37,7 +37,6 @@ Development guide for Claude Code when working with this repository.
 | `/Users/chaseeasterling/KitchenOS/` | Project root |
 | `.venv/` | Python virtual environment |
 | `Recipes/` in Obsidian vault | Main recipe files (title case, e.g., `Butter Biscuits.md`) |
-| `Recipes/Cooking Mode/` in Obsidian vault | Simplified cooking view files (`.recipe.md`) |
 | `Recipes/Images/` in Obsidian vault | Recipe images (downloaded from source or YouTube thumbnail) |
 
 **Obsidian Vault**: `~/KitchenOS/KitchenOS_Vault/` (configurable via `KITCHENOS_VAULT` env var; resolved by `lib/paths.py`)
@@ -647,8 +646,6 @@ Falls back to Whisper (requires OpenAI key) or proceeds with description only.
 Recipe files use title case with spaces: `{Recipe Name}.md`
 
 Example: `Pasta Aglio E Olio.md`
-
-Cooking mode files are stored in a subdirectory: `Recipes/Cooking Mode/{Recipe Name}.recipe.md`
 
 ## Completing Work
 

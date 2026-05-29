@@ -13,7 +13,6 @@ Everything is markdown in the Obsidian vault (`~/KitchenOS/vault/`, or wherever 
 | Folder / file | What lives here |
 |---|---|
 | `Recipes/` | One markdown file per recipe (frontmatter + body) |
-| `Recipes/Cooking Mode/` | Stripped-down `.recipe.md` mirror for cooking view |
 | `Recipes/Images/` | Recipe images (downloaded thumbnails or scraped hero shots) |
 | `Meals/` | Composite-meal definitions (`<Name>.meal.md` — frontmatter lists `sub_recipes`) |
 | `Meal Plans/` | One file per ISO week (`2026-W18.md`) |
@@ -137,7 +136,6 @@ Calendar reminders for prep ride along with the meal-plan calendar (Stage 5).
 
 ## 5. Cook — at the stove
 
-- **Cooking Mode files** (`Recipes/Cooking Mode/<Recipe>.recipe.md`) are stripped-down versions written at extraction time — just ingredients + numbered steps, easier to read on an iPad.
 - **Calendar** — `com.kitchenos.calendar-sync` runs daily at 6:05 AM, regenerating `meal_calendar.ics` from every meal plan. Apple Calendar (or Obsidian Full Calendar plugin) subscribes to `http://localhost:5001/calendar.ics`.
 - **Re-render or re-extract** — the per-recipe buttons:
   - **Refresh template** (`/refresh`) — re-renders from existing extracted data. Use after editing the template.
@@ -189,7 +187,7 @@ Logs: `~/KitchenOS/logs/<service>.log`. Reload all: `scripts/reload_launch_agent
 2. Click **Shopping List** → confirm pantry pulls in the modal → click **Send to Reminders**. Phone now has the grocery list.
 3. **Mon morning** — receipt photo from Sunday's shop → share with Claude → `Inventory.md` updates.
 4. **Each morning** — meal planner shows **Today's Prep** (e.g., "marinate chicken — 5 min, can do ahead"). Check off as you go.
-5. **At the stove** — open the Cooking Mode file on iPad. Calendar subscription has already put dinner on the calendar.
+5. **At the stove** — open the recipe on iPad. Calendar subscription has already put dinner on the calendar.
 6. **End of week** — glance at the Nutrition Dashboard to see how the week landed against macro targets.
 
 ---
