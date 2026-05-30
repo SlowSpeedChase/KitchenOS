@@ -1,7 +1,7 @@
 """Centralized vault path resolution.
 
 The vault location is configurable via the KITCHENOS_VAULT environment
-variable. Default is ~/KitchenOS/vault/.
+variable. Default is ~/KitchenOS/KitchenOSApp/.
 
 All recipe-data paths in the codebase should be derived from these
 helpers — never hardcoded.
@@ -15,7 +15,7 @@ def vault_root() -> Path:
     raw = os.environ.get("KITCHENOS_VAULT")
     if raw:
         return Path(os.path.expanduser(raw))
-    return Path.home() / "KitchenOS" / "vault"
+    return Path.home() / "KitchenOS" / "KitchenOS_Vault"
 
 
 def recipes_dir() -> Path:

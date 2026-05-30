@@ -7,7 +7,7 @@ from lib import paths
 
 def test_default_vault_is_home_kitchenos_vault(monkeypatch):
     monkeypatch.delenv("KITCHENOS_VAULT", raising=False)
-    assert paths.vault_root() == Path.home() / "KitchenOS" / "vault"
+    assert paths.vault_root() == Path.home() / "KitchenOS" / "KitchenOS_Vault"
 
 
 def test_env_override_is_respected(monkeypatch, tmp_path):

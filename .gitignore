@@ -1,7 +1,9 @@
 # ============================================
-# Obsidian vault (lives at vault/, synced via Obsidian Sync)
+# Obsidian vault (synced via Obsidian Sync — not tracked in git)
 # ============================================
 vault/
+KitchenOSApp/
+KitchenOS_Vault/
 
 # ============================================
 # Logs (gitignored — see logs/ subdir)
