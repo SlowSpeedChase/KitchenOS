@@ -67,7 +67,10 @@ def parse_receipt_text(
 ) -> dict:
     """Extract structured receipt data. Raises on Ollama/JSON failure."""
     raw = ollama_call(build_receipt_prompt(text))
-    return json.loads(raw)
+    parsed = json.loads(raw)
+    if not isinstance(parsed, dict):
+        raise ValueError("receipt JSON is not an object")
+    return parsed
 
 
 def validate_receipt(parsed: dict) -> tuple[bool, list[str]]:

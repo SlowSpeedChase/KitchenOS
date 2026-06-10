@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+"""Ingest HEB receipt emails into the KitchenOS DB.
+
+Run hourly by ops/com.kitchenos.receipt-ingest.plist. For each new email
+(dedup by Message-ID against trips.source_id): parse with Ollama, validate,
+record trip + purchases, update inventory (skipping fee lines), regenerate
+the Inventory.md view and the price dashboard.
+
+Usage:
+    .venv/bin/python ingest_receipts.py                 # normal hourly run
+    .venv/bin/python ingest_receipts.py --dry-run       # parse, write nothing
+    .venv/bin/python ingest_receipts.py --since-days 30
+    .venv/bin/python ingest_receipts.py --file r.eml    # one local file (.eml or .html)
+"""
+import argparse
+import sys
+import traceback
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from lib.email_fetcher import extract_email_payload, fetch_receipt_emails  # noqa: E402
+from lib.failure_logger import classify_error, log_failures  # noqa: E402
+from lib.inventory import InventoryItem, add_items  # noqa: E402
+from lib.inventory_db import record_trip, trip_exists  # noqa: E402
+from lib.receipt_parser import (  # noqa: E402
+    build_purchases,
+    default_location,
+    email_to_text,
+    parse_receipt_text,
+    to_cents,
+    validate_receipt,
+)
+
+
+def _source_for(parsed: dict) -> str:
+    return (
+        "email_curbside"
+        if (parsed.get("order_type") or "").startswith("curb")
+        else "email_receipt"
+    )
+
+
+def process_email(payload: dict, dry_run: bool = False) -> str:
+    """Process one email payload. Returns 'ingested'|'needs_review'|'skipped'."""
+    msg_id = payload.get("message_id") or ""
+    if msg_id and trip_exists(msg_id):
+        return "skipped"
+
+    text = email_to_text(payload.get("html") or "")
+    parsed = parse_receipt_text(text)
+    ok, problems = validate_receipt(parsed)
+    purchases = build_purchases(parsed)
+
+    trip = {
+        "date": parsed.get("date") or "",
+        "store": parsed.get("store") or "HEB",
+        "source": _source_for(parsed),
+        "source_id": msg_id or None,
+        "total_cents": to_cents(parsed.get("total")),
+        "needs_review": not ok,
+        "raw_text": text if not ok else None,
+    }
+
+    if dry_run:
+        status = "OK" if ok else f"NEEDS REVIEW ({'; '.join(problems)})"
+        print(f"[dry-run] {trip['date']} {trip['source']} "
+              f"total={trip['total_cents']} items={len(purchases)} — {status}")
+        for p in purchases:
+            print(f"    {p['canonical_name']:30s} {p['quantity']} {p['unit']}"
+                  f"  {p['total_cents']}c  [{p['category']}]")
+        return "ingested" if ok else "needs_review"
+
+    if record_trip(trip, purchases) is None:
+        return "skipped"
+
+    if not ok:
+        print(f"  ⚠️  needs review: {'; '.join(problems)}")
+        return "needs_review"
+
+    stock = [
+        InventoryItem(
+            name=p["canonical_name"],
+            quantity=float(p["quantity"] or 1),
+            unit=p["unit"],
+            category=p["category"],
+            location=default_location(p["category"]),
+            purchased=trip["date"],
+            source="receipt",
+        )
+        for p in purchases
+        if p["category"] != "fee"
+    ]
+    if stock:
+        add_items(stock)
+    return "ingested"
+
+
+def ingest(since_days: int = 14, dry_run: bool = False,
+           file: str = None) -> dict:
+    summary = {"ingested": 0, "skipped": 0, "needs_review": 0, "failed": 0}
+    failures = []
+
+    if file:
+        p = Path(file)
+        raw = p.read_bytes()
+        if p.suffix == ".eml":
+            emails = [extract_email_payload(raw)]
+        else:
+            emails = [{"message_id": f"<file-{p.name}>", "from": "file",
+                       "subject": p.name, "date": "", "html": raw.decode("utf-8")}]
+    else:
+        emails = fetch_receipt_emails(since_days=since_days)
+
+    print(f"Found {len(emails)} candidate email(s)")
+    for payload in emails:
+        try:
+            result = process_email(payload, dry_run=dry_run)
+            summary[result] += 1
+        except Exception as e:
+            summary["failed"] += 1
+            failures.append({
+                "subject": payload.get("subject", ""),
+                "message_id": payload.get("message_id", ""),
+                "error": str(e),
+                "error_category": classify_error(str(e), type(e)),
+                "traceback": traceback.format_exc(),
+            })
+            print(f"  ❌ {payload.get('subject', '?')}: {e}")
+
+    if failures and not dry_run:
+        log_failures(failures, total_processed=len(emails))
+
+    if summary["ingested"] and not dry_run:
+        try:
+            from lib.price_dashboard import save_dashboard
+            save_dashboard()
+        except ImportError:
+            pass  # dashboard module lands in a later task
+
+    print(f"Done: {summary}")
+    return summary
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--since-days", type=int, default=14)
+    ap.add_argument("--file", help="parse one local .eml or .html file")
+    args = ap.parse_args()
+    try:
+        ingest(since_days=args.since_days, dry_run=args.dry_run, file=args.file)
+    except Exception as e:
+        print(f"FATAL: {e}", file=sys.stderr)
+        sys.exit(1)

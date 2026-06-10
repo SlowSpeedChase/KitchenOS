@@ -2,6 +2,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from lib import receipt_parser as rp
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -35,6 +37,11 @@ def test_parse_receipt_text_uses_ollama():
     assert parsed["date"] == "2026-06-09"
     assert len(parsed["items"]) == 4
     assert "some receipt text" in calls["prompt"]
+
+
+def test_parse_receipt_text_rejects_non_object():
+    with pytest.raises(ValueError):
+        rp.parse_receipt_text("x", ollama_call=lambda p: "[1, 2]")
 
 
 def test_validate_receipt_ok():
