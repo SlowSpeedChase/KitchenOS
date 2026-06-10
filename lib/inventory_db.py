@@ -157,6 +157,7 @@ def fetch_inventory_rows() -> list[dict]:
     try:
         rows = conn.execute(
             f"SELECT {', '.join(_INVENTORY_COLS)} FROM inventory"
+            " ORDER BY category, name COLLATE NOCASE"
         ).fetchall()
         return [dict(r) for r in rows]
     finally:

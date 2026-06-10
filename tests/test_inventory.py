@@ -177,6 +177,13 @@ class TestGeneratedView:
         assert "| Milk | 1 | gal | dairy | fridge |" in content
         assert "generated" in content.lower()  # view banner present
 
+    def test_hand_edits_to_md_are_invisible(self, tmp_vault, tmp_db):
+        add_items([InventoryItem(name="Milk", quantity=1, unit="gal")])
+        # simulate a user hand-editing the generated view
+        inventory_path().write_text("| Item |...| Beer | 99 | ct |", encoding="utf-8")
+        items = read_inventory()
+        assert [it.name for it in items] == ["Milk"]
+
 
 class TestParsing:
     def test_parse_inventory_markdown_still_works(self, tmp_vault, tmp_db):

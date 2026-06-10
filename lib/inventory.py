@@ -9,6 +9,7 @@ Obsidian, but edits there are overwritten. Items with the same
 
 from __future__ import annotations
 
+import sys
 from dataclasses import asdict, dataclass
 from datetime import date
 from pathlib import Path
@@ -63,8 +64,8 @@ def normalize_category(cat: Optional[str]) -> str:
 def normalize_location(loc: Optional[str]) -> str:
     if not loc:
         return "pantry"
-    l = loc.lower().strip()
-    return l if l in LOCATIONS else "other"
+    norm = loc.lower().strip()
+    return norm if norm in LOCATIONS else "other"
 
 
 def normalize_source(src: Optional[str]) -> str:
@@ -178,11 +179,21 @@ def write_inventory(items: list[InventoryItem]) -> None:
     from lib import inventory_db
 
     inventory_db.replace_inventory_rows([it.to_dict() for it in items])
-    path = inventory_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_inventory_md(items), encoding="utf-8")
+    # The DB (source of truth) has already committed at this point. A failed
+    # view write must not propagate: raising would make the API return 500,
+    # and a client retry would double-add quantities.
+    try:
+        path = inventory_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(render_inventory_md(items), encoding="utf-8")
+    except OSError as e:
+        print(f"⚠️  Inventory view write failed: {e}", file=sys.stderr)
 
 
+# TODO(receipt-ingestion plan, task 9): read→merge→replace can lose updates
+# with concurrent writers (Flask threads + ingest LaunchAgent). Switch to
+# INSERT ... ON CONFLICT(name, unit, location) DO UPDATE SET
+# quantity = quantity + excluded.quantity inside one transaction.
 def add_items(new_items: list[InventoryItem]) -> dict:
     """Add items, merging by (name, unit, location). Quantities sum on merge."""
     existing = read_inventory()
