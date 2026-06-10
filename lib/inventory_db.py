@@ -9,8 +9,9 @@ tests use this). Three tables:
 - ``purchases``  append-only price ledger, one row per receipt line item.
                  Never deleted. ``category='fee'`` rows (tax, totes, tips)
                  count toward spending but never touch inventory.
-- ``inventory``  current on-hand stock, merged by (name, unit, location)
-                 case-insensitively.
+- ``inventory``  current on-hand stock. The schema enforces case-insensitive
+                 uniqueness on (name, unit, location); merging duplicate
+                 items is the caller's job (see ``lib/inventory.py``).
 
 All money columns are integer cents.
 """
@@ -78,6 +79,8 @@ def connect(path: Optional[Path] = None) -> sqlite3.Connection:
     conn = sqlite3.connect(p)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 5000")
     conn.executescript(_SCHEMA)
     return conn
 
@@ -120,8 +123,10 @@ def record_trip(trip: dict, purchases: list[dict]) -> Optional[int]:
                         trip.get("raw_text"),
                     ),
                 )
-            except sqlite3.IntegrityError:
-                return None
+            except sqlite3.IntegrityError as e:
+                if "trips.source_id" in str(e):
+                    return None
+                raise
             trip_id = cur.lastrowid
             conn.executemany(
                 "INSERT INTO purchases"

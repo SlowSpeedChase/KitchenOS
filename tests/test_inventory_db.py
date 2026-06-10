@@ -1,4 +1,8 @@
 """Tests for lib/inventory_db.py — schema, trips, purchases, inventory rows."""
+import sqlite3
+
+import pytest
+
 from lib import inventory_db as idb
 
 
@@ -39,6 +43,15 @@ def test_record_trip_and_dedup(tmp_db):
     assert conn.execute("SELECT COUNT(*) FROM trips").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM purchases").fetchone()[0] == 2
     conn.close()
+
+
+def test_record_trip_raises_on_bad_data(tmp_db):
+    # A NOT NULL violation (date=None) must surface, not be swallowed
+    # as a "duplicate receipt" None return.
+    with pytest.raises(sqlite3.IntegrityError):
+        idb.record_trip(
+            {"date": None, "source": "manual", "source_id": "<x@y>"}, []
+        )
 
 
 def test_trip_exists_false_for_unknown(tmp_db):
