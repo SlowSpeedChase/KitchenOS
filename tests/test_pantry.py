@@ -1,33 +1,26 @@
 """Tests for lib.pantry."""
-import json
-from pathlib import Path
-
-
 from lib import pantry as pantry_module
 
 
-def test_load_pantry_missing_file_returns_empty(tmp_path: Path):
-    assert pantry_module.load_pantry(tmp_path / "missing.json") == []
+def test_load_pantry_empty_inventory_returns_empty(tmp_vault, tmp_db):
+    assert pantry_module.load_pantry() == []
 
 
-def test_save_and_load_round_trip(tmp_path: Path):
+def test_save_and_load_round_trip(tmp_vault, tmp_db):
     items = [
         {"item": "flour", "amount": "5", "unit": "cup"},
         {"item": "olive oil", "amount": "500", "unit": "ml"},
     ]
-    path = tmp_path / "pantry.json"
-    pantry_module.save_pantry(items, path)
-    assert json.loads(path.read_text()) == items
-    assert pantry_module.load_pantry(path) == items
+    pantry_module.save_pantry(items)
+    loaded = sorted(pantry_module.load_pantry(), key=lambda e: e["item"])
+    assert loaded == items
 
 
-def test_save_pantry_drops_blank_items(tmp_path: Path):
-    path = tmp_path / "pantry.json"
+def test_save_pantry_drops_blank_items(tmp_vault, tmp_db):
     pantry_module.save_pantry(
         [{"item": "", "amount": "1", "unit": "x"}, {"item": "salt", "amount": "1", "unit": "tsp"}],
-        path,
     )
-    loaded = pantry_module.load_pantry(path)
+    loaded = pantry_module.load_pantry()
     assert len(loaded) == 1
     assert loaded[0]["item"] == "salt"
 
@@ -162,3 +155,43 @@ def test_split_count_distinct_units_still_warns():
     assert result["from_pantry"] is None
     assert result["to_buy"] == {"amount": "2", "unit": "slices"}
     assert result["warning"]
+
+
+def test_load_pantry_reads_inventory_db(tmp_vault, tmp_db):
+    from lib.inventory import InventoryItem, add_items
+    from lib.pantry import load_pantry
+    add_items([
+        InventoryItem(name="Flour", quantity=5, unit="lb"),
+        InventoryItem(name="Butter", quantity=1, unit="lb", location="fridge"),
+        InventoryItem(name="Butter", quantity=0.5, unit="lb", location="freezer"),
+    ])
+    pantry = load_pantry()
+    by_item = {e["item"]: e for e in pantry}
+    assert by_item["Flour"]["amount"] == "5"
+    assert by_item["Flour"]["unit"] == "lb"
+    assert by_item["Butter"]["amount"] == "1.5"  # summed across locations
+
+
+def test_save_pantry_decrements_and_removes(tmp_vault, tmp_db):
+    from lib.inventory import InventoryItem, add_items, read_inventory
+    from lib.pantry import load_pantry, save_pantry
+    add_items([
+        InventoryItem(name="Flour", quantity=5, unit="lb"),
+        InventoryItem(name="Sugar", quantity=2, unit="lb"),
+    ])
+    # simulate apply_decisions output: flour reduced, sugar used up
+    save_pantry([{"item": "Flour", "amount": "3", "unit": "lb"}])
+    items = {it.name: it for it in read_inventory()}
+    assert items["Flour"].quantity == 3.0
+    assert "Sugar" not in items
+    assert load_pantry() == [{"item": "Flour", "amount": "3", "unit": "lb"}]
+
+
+def test_save_pantry_inserts_new_items(tmp_vault, tmp_db):
+    from lib.inventory import read_inventory
+    from lib.pantry import save_pantry
+    save_pantry([{"item": "Olive oil", "amount": "16", "unit": "oz"}])
+    items = read_inventory()
+    assert items[0].name == "Olive oil"
+    assert items[0].location == "pantry"
+    assert items[0].source == "manual"

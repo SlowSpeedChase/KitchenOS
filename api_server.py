@@ -1339,7 +1339,7 @@ def api_task_mark_done(week, task_id):
     return jsonify(result), status
 
 
-# ----- Inventory (receipt-to-pantry, separate from config/pantry.json) -----
+# ----- Inventory (receipt-to-pantry; same DB table the pantry API adapts) -----
 
 @app.route('/api/inventory', methods=['GET'])
 def api_inventory_list():
