@@ -72,3 +72,13 @@ def test_ingest_dry_run_writes_nothing(tmp_vault, tmp_db, alias_tmp, monkeypatch
     summary = ir.ingest(dry_run=True)
     assert summary["ingested"] == 1  # counted, not written
     assert not idb.trip_exists("<m1@heb.com>")
+
+
+def test_ingest_dedups_emails_without_message_id(tmp_vault, tmp_db, alias_tmp, monkeypatch):
+    email = _email(msg_id="")
+    monkeypatch.setattr(ir, "fetch_receipt_emails", lambda since_days: [email])
+    monkeypatch.setattr(ir, "parse_receipt_text", lambda text, **kw: dict(PARSED_OK))
+    assert ir.ingest()["ingested"] == 1
+    summary = ir.ingest()  # same content refetched
+    assert summary["ingested"] == 0
+    assert summary["skipped"] == 1

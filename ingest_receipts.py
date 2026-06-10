@@ -8,11 +8,15 @@ the Inventory.md view and the price dashboard.
 
 Usage:
     .venv/bin/python ingest_receipts.py                 # normal hourly run
-    .venv/bin/python ingest_receipts.py --dry-run       # parse, write nothing
+    .venv/bin/python ingest_receipts.py --dry-run       # no DB/inventory/failure-log
+                                                        # writes; may still prime the
+                                                        # item-alias cache
+                                                        # (config/item_aliases.json)
     .venv/bin/python ingest_receipts.py --since-days 30
     .venv/bin/python ingest_receipts.py --file r.eml    # one local file (.eml or .html)
 """
 import argparse
+import hashlib
 import sys
 import traceback
 from pathlib import Path
@@ -46,7 +50,11 @@ def _source_for(parsed: dict) -> str:
 def process_email(payload: dict, dry_run: bool = False) -> str:
     """Process one email payload. Returns 'ingested'|'needs_review'|'skipped'."""
     msg_id = payload.get("message_id") or ""
-    if msg_id and trip_exists(msg_id):
+    if not msg_id:
+        # No Message-ID → dedup on content hash so a refetch can't re-ingest
+        html = payload.get("html") or ""
+        msg_id = f"<sha1-{hashlib.sha1(html.encode('utf-8')).hexdigest()[:16]}>"
+    if trip_exists(msg_id):
         return "skipped"
 
     text = email_to_text(payload.get("html") or "")
@@ -58,7 +66,7 @@ def process_email(payload: dict, dry_run: bool = False) -> str:
         "date": parsed.get("date") or "",
         "store": parsed.get("store") or "HEB",
         "source": _source_for(parsed),
-        "source_id": msg_id or None,
+        "source_id": msg_id,
         "total_cents": to_cents(parsed.get("total")),
         "needs_review": not ok,
         "raw_text": text if not ok else None,
