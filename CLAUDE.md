@@ -190,6 +190,42 @@ curl -X POST http://localhost:5001/send-to-reminders \
 .venv/bin/python generate_nutrition_dashboard.py --dry-run
 ```
 
+### Ingest Receipt Emails
+
+```bash
+# Fetch HEB receipt emails from Gmail, parse, record trip + inventory
+.venv/bin/python ingest_receipts.py
+
+# Preview without DB/inventory writes
+.venv/bin/python ingest_receipts.py --dry-run
+
+# Look further back than the default 14 days
+.venv/bin/python ingest_receipts.py --since-days 30
+
+# Parse a single local file instead of Gmail
+.venv/bin/python ingest_receipts.py --file receipt.eml   # or .html
+```
+
+### Generate Price Dashboard
+
+```bash
+# Write Price Tracker.md to the vault root
+.venv/bin/python generate_price_dashboard.py
+
+# Print markdown without saving
+.venv/bin/python generate_price_dashboard.py --dry-run
+```
+
+### Migrate Inventory to SQLite (One-Time)
+
+```bash
+# Preview legacy Inventory.md import
+.venv/bin/python migrate_inventory_db.py --dry-run
+
+# Import into data/kitchenos.db (refuses if inventory table already has rows)
+.venv/bin/python migrate_inventory_db.py
+```
+
 ## Meal Plan Generator (LaunchAgent)
 
 Auto-generates weekly meal plan templates 2 weeks in advance. Runs daily at 6am.
@@ -225,7 +261,7 @@ Template includes Monday-Sunday with Breakfast/Lunch/Dinner/Notes sections.
 **Pantry-aware shopping list flow:**
 1. `/api/shopping-list/preview` returns per-line records split into `from_pantry` / `to_buy`.
 2. UI shows a confirmation modal for any pantry-overlapping line.
-3. `/api/shopping-list/confirm` saves the markdown and decrements `config/pantry.json`.
+3. `/api/shopping-list/confirm` saves the markdown and decrements the DB inventory (`data/kitchenos.db`).
 The CLI (`shopping_list.py`) implements the same flow with `[a]ll / [s]ome / [n]one` prompts when stdin is a tty (`--no-interactive` skips, `--no-pantry` ignores inventory entirely).
 
 **Cross-recipe prep tasks (Today's Prep panel):** `lib/task_extractor.py` runs once per week, classifying each scheduled recipe's instructions into prep / active / passive with do-ahead and dependency flags. Cached in a `<week>.tasks.json` sidecar next to the meal plan. The meal-planner UI shows today's tasks plus a "Get ahead" section for upcoming `can_do_ahead` items. Done flags persist across plan edits via stable task IDs.
@@ -274,6 +310,28 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.batch-extract.plist
 
 # Test run manually
 .venv/bin/python batch_extract.py
+```
+
+## Receipt Ingest (LaunchAgent)
+
+Ingests HEB receipt emails from Gmail hourly (at :25 past each hour). Parses with Ollama, records trips/purchases in `data/kitchenos.db`, updates inventory, then regenerates `Inventory.md` and `Price Tracker.md`.
+
+### Management
+
+```bash
+# Install the LaunchAgent
+cp ops/com.kitchenos.receipt-ingest.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.kitchenos.receipt-ingest.plist
+
+# View logs
+tail -f ~/GitHub/KitchenOS/logs/receipt_ingest.log
+
+# Restart service
+launchctl unload ~/Library/LaunchAgents/com.kitchenos.receipt-ingest.plist
+launchctl load ~/Library/LaunchAgents/com.kitchenos.receipt-ingest.plist
+
+# Test run manually
+.venv/bin/python ingest_receipts.py
 ```
 
 ## Failure Analysis Agent
@@ -344,6 +402,7 @@ For the full route list, grep `@app.route` in `api_server.py`. Endpoints with no
 | `/api/meals` (POST) | Create meal — frontmatter saved to `vault/Meals/<name>.meal.md`. |
 | `/api/shopping-list/preview` `/confirm` | See "Pantry-aware shopping list flow" above. |
 | `/api/tasks/<week>` (GET, `?force=1`) | Prep-task sidecar payload; cached in `<week>.tasks.json`. |
+| `/api/inventory/add` (POST) | Accepts optional `trip` `{date, store, total, source_id, source}` + per-item `unit_price`/`line_total` → records into the price ledger. See "Receipt → Inventory Workflow". |
 | `/add-to-meal-plan` (GET/POST) | Recipe-button entry. POST branches on `mode={direct,existing,new,schedule_meal}`. `existing`/`new` mutate `vault/Meals/<name>.meal.md` and end on an optional schedule prompt. |
 
 ### Configuration
@@ -388,11 +447,13 @@ Configured in `~/Library/Application Support/Claude/claude_desktop_config.json`.
 
 ## Receipt → Inventory Workflow
 
-KitchenOS tracks pantry inventory in a single `Inventory.md` at the vault root. New items enter via Claude Desktop:
+Inventory and price history live in one SQLite database: `data/kitchenos.db` (`lib/inventory_db.py`). `Inventory.md` at the vault root is a **generated read-only view** with a do-not-edit banner — it is rewritten on every inventory change; hand edits are overwritten.
 
-1. **Photo receipt or email** — share with Claude in a conversation (Claude Desktop, the web app, or via the iOS app's Share Sheet).
-2. **Claude parses** the items, normalizes the cryptic receipt strings (e.g. `GV WHL MLK 1G` → `Whole milk, 1 gal`), assigns a category and storage location, and calls the `add_to_inventory` MCP tool.
-3. **The tool** posts to `/api/inventory/add`, which writes to `Inventory.md` (merging duplicates by `name+unit+location`).
+Items enter via three paths:
+
+1. **Email (automatic)** — the hourly receipt-ingest LaunchAgent fetches HEB receipt emails over IMAP (`GMAIL_ADDRESS` + `GMAIL_APP_PASSWORD` in `.env`; sender domains in `config/receipt_senders.json`), parses them with Ollama, and validates line totals against the receipt total (tolerance: max($1, 2%)). Pass → trip + purchases recorded, inventory updated. Fail → trip stored with `needs_review` + raw text, **no** inventory update; failures also logged via `lib/failure_logger`. Dedup is by Gmail Message-ID (`trips.source_id` UNIQUE; content-hash fallback). Raw receipt strings are canonicalized through `config/item_aliases.json` — a saved alias always wins over the model's suggestion, and the file is hand-correctable.
+2. **Photo receipt (Claude)** — share a receipt photo with Claude (Desktop, web, or iOS Share Sheet). Claude parses the items, normalizes the cryptic receipt strings (e.g. `GV WHL MLK 1G` → `Whole milk, 1 gal`), assigns category/location, and calls `add_to_inventory` — optionally with per-item `unit_price`/`line_total` and a `trip` block so photo receipts feed the same price ledger.
+3. **Manual** — `add_to_inventory` via MCP, or POST `/api/inventory/add` directly.
 
 ### Item Schema
 
@@ -411,14 +472,26 @@ KitchenOS tracks pantry inventory in a single `Inventory.md` at the vault root. 
 
 | Tool | Purpose |
 |------|---------|
-| `add_to_inventory(items)` | Batch add — Claude calls this after parsing a receipt |
+| `add_to_inventory(items, trip?)` | Batch add — items may carry optional `unit_price`/`line_total`; optional `trip` `{date, store, total, source_id, source}` records into the price ledger |
 | `list_inventory(category?, location?)` | List items, with optional filters |
 | `remove_from_inventory(name, location?)` | Remove an item (used up) |
 | `update_inventory_item(name, quantity, location?)` | Adjust quantity (e.g., 0.5 for half-used) |
 
 ### Storage
 
-`Inventory.md` is a markdown table: human-editable in Obsidian, machine-parseable. Items sort by category then name on every write. Duplicate `(name, unit, location)` rows merge — quantities sum.
+`data/kitchenos.db` (SQLite, WAL mode; override path with `KITCHENOS_DB`). Money columns are integer cents. Tables:
+
+| Table | Notes |
+|-------|-------|
+| `trips` | One row per receipt; `source_id` UNIQUE drives ingest dedup |
+| `purchases` | Append-only price ledger; `category='fee'` rows (tax, totes, tips) count toward spending but never touch inventory |
+| `inventory` | Current stock; duplicate `(name, unit, location)` rows merge — quantities sum |
+
+`Inventory.md` is regenerated from the DB on every write — items sorted by category then name.
+
+### Price Tracker
+
+`generate_price_dashboard.py` writes `Price Tracker.md` at the vault root: spending for the last 4 weeks, by-category totals for the last 12 months, average trip cost, top-20 item price trends vs 90-day average (▲/▼), collapsible per-item price history, and a needs-review list. Regenerated automatically after each successful email ingest.
 
 ## QuickAdd Setup (Obsidian)
 
@@ -504,7 +577,7 @@ template → Obsidian
 | `lib/macro_targets.py` | Parses My Macros.md targets |
 | `lib/nutrition_dashboard.py` | Dashboard generation logic |
 | `lib/recipe_index.py` | Scans recipe files, returns frontmatter metadata for filtering |
-| `lib/inventory.py` | Pantry inventory storage in `Inventory.md` (read/write/merge items) |
+| `lib/inventory.py` | DB-backed inventory operations; regenerates the read-only `Inventory.md` view |
 | `lib/seasonality.py` | Seasonal ingredient matching and scoring |
 | `prompts/seasonal_matching.py` | Ollama prompt for fuzzy matching ingredients to seasonal produce |
 | `config/seasonal_ingredients.json` | Texas seasonal produce calendar (~60 items) |
@@ -517,10 +590,20 @@ template → Obsidian
 | `prompts/meal_suggestion.py` | Prompt templates for ingredient normalization and meal selection |
 | `config/pantry_staples.json` | Flat keyword list — staples excluded from seasonal overlap scoring (NOT inventory) |
 | `lib/meal_loader.py` | Read/write composite **meal** definitions (`vault/Meals/<Name>.meal.md`) |
-| `lib/pantry.py` | Structured pantry inventory (`config/pantry.json`); split shopping demand against pantry; decrement on confirm |
+| `lib/pantry.py` | Pantry adapter over the DB inventory table; split shopping demand against pantry; decrement on confirm |
 | `lib/task_extractor.py` | Cross-recipe prep/active/passive task classification with sidecar cache (`<week>.tasks.json`) |
 | `prompts/task_classification.py` | Prompt template for the task classifier |
-| `config/pantry.json` | Structured pantry inventory: `[{item, amount, unit}, ...]` |
+| `ingest_receipts.py` | Hourly email receipt ingestion (IMAP fetch → Ollama parse → ledger + inventory) |
+| `lib/inventory_db.py` | SQLite store (`data/kitchenos.db`): trips, purchases ledger, inventory |
+| `lib/receipt_parser.py` | Receipt email HTML → text → Ollama extraction → line-total validation |
+| `lib/email_fetcher.py` | Gmail IMAP fetcher for receipt emails (read-only mailbox) |
+| `lib/item_aliases.py` | Raw receipt string → canonical item name cache |
+| `lib/price_dashboard.py` | Price Tracker dashboard generation from the purchases ledger |
+| `generate_price_dashboard.py` | CLI — writes `Price Tracker.md` to the vault root |
+| `prompts/receipt_extraction.py` | Ollama prompt for structured receipt extraction |
+| `config/receipt_senders.json` | Receipt sender domains per store (HEB) |
+| `config/item_aliases.json` | Saved receipt-string aliases (hand-correctable; alias wins over model) |
+| `migrate_inventory_db.py` | One-time import of legacy `Inventory.md` into the DB |
 
 ### Function Reference
 
@@ -533,6 +616,7 @@ A few non-obvious invariants worth knowing:
 - **Pantry split** (`lib/pantry.py`): `split_against_pantry()` auto-converts within a unit family (e.g. tsp↔tbsp↔cup) but returns a `warning` on cross-family mismatch rather than guessing.
 - **Composite meals** (`lib/meal_plan_parser.py`): `[[Meal: X]]` entries keep the meal name in the markdown; `flatten_to_recipes()` expands them downstream. Outer `xN` stacks with per-sub-recipe `servings` overrides.
 - **Tasks cache freshness** (`lib/task_extractor.py`): sidecar is fresh when `sidecar_mtime >= plan_mtime`. Pass `force=True` to recompute.
+- **Inventory/pantry truth** (`lib/inventory_db.py`): lives in `data/kitchenos.db` — `Inventory.md` is a generated view and `config/pantry.json` is gone. Money columns are integer cents; `trips.source_id` UNIQUE drives ingest dedup; DB path overridable via `KITCHENOS_DB` (tests use this).
 
 ## AI Configuration
 
@@ -604,6 +688,8 @@ Maps YouTube channel names to their recipe website domains. Used to search creat
   - `NUTRITIONIX_APP_ID` - Nutritionix API app ID
   - `NUTRITIONIX_API_KEY` - Nutritionix API key
   - `ANTHROPIC_API_KEY` - Claude API for meal suggestions
+  - `GMAIL_ADDRESS` - Gmail account for receipt-email ingestion
+  - `GMAIL_APP_PASSWORD` - Google app password for IMAP (requires 2-step verification)
 
 ## Dependencies
 
@@ -708,8 +794,7 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 |---------|----------|-------|
 | Claude API fallback | Low | Use Claude when Ollama fails |
 | Non-YouTube recipe URLs in `batch_extract` | Medium | Route non-YouTube URLs in "Recipies to Process" through `scrape_recipe_from_url()` (Serious Eats, NYT Cooking, etc.). Currently `batch_extract.py:212` rejects anything without youtube.com/youtu.be. Decide handling for plain-text notes (skip vs flag). |
-| Inventory ↔ shopping list integration | Medium | Subtract on-hand inventory from generated shopping lists; add a "Restock" pass that auto-adds low-stock staples. |
-| Email IMAP polling for receipts | Low | Currently the user pastes/forwards receipt content into Claude. IMAP would auto-ingest from HEB/Whole Foods/Instacart inboxes. |
+| Auto-restock for low staples | Medium | Pantry subtraction from shopping lists now works via the unified inventory DB; remaining idea is a "Restock" pass that auto-adds low-stock staples. |
 | Serving size correction | Medium | Workflow to correct `servings: null` on existing recipes; affects per-serving accuracy of backfilled nutrition. |
 
 ## Documentation
