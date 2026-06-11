@@ -806,3 +806,39 @@ class TestAddToMealPlanFormRender:
         response = client.get('/add-to-meal-plan?recipe=X')
         assert b'value="existing" disabled' not in response.data
         assert b'<option value="Salmon Dinner">' in response.data
+
+
+# ---------------------------------------------------------------------------
+# /api/inventory/add — optional trip + prices (price ledger)
+# ---------------------------------------------------------------------------
+
+def test_inventory_add_with_trip_records_purchases(client, tmp_vault, tmp_db):
+    payload = {
+        "items": [
+            {"name": "chicken breast", "quantity": 2, "unit": "lb",
+             "category": "meat", "location": "fridge",
+             "purchased": "2026-06-09", "source": "receipt",
+             "unit_price": 5.49, "line_total": 10.98},
+        ],
+        "trip": {"date": "2026-06-09", "store": "HEB", "total": 10.98,
+                 "source_id": "photo-abc123"},
+    }
+    resp = client.post("/api/inventory/add", json=payload)
+    assert resp.status_code == 200
+    from lib import inventory_db as idb
+    assert idb.trip_exists("photo-abc123")
+    conn = idb.connect()
+    row = conn.execute("SELECT canonical_name, total_cents FROM purchases").fetchone()
+    conn.close()
+    assert row[0] == "chicken breast"
+    assert row[1] == 1098
+
+
+def test_inventory_add_without_trip_unchanged(client, tmp_vault, tmp_db):
+    resp = client.post("/api/inventory/add", json={
+        "items": [{"name": "rice", "quantity": 2, "unit": "lb"}]})
+    assert resp.status_code == 200
+    from lib import inventory_db as idb
+    conn = idb.connect()
+    assert conn.execute("SELECT COUNT(*) FROM trips").fetchone()[0] == 0
+    conn.close()

@@ -1398,6 +1398,41 @@ def api_inventory_add():
         return jsonify({"error": "No valid items provided"}), 400
 
     result = add_items(parsed)
+
+    # Optional price ledger: a "trip" object turns this add into a recorded
+    # shopping trip (photo receipts from the Claude flow). Uses the RAW
+    # request dicts so unit_price/line_total survive InventoryItem parsing.
+    trip_payload = data.get('trip')
+    if trip_payload:
+        from lib.inventory_db import record_trip
+        from lib.receipt_parser import to_cents
+
+        purchases = [
+            {
+                "raw_name": it.get('notes') or it.get('name', ''),
+                "canonical_name": (it.get('name') or '').lower().strip(),
+                "quantity": it.get('quantity', 1),
+                "unit": it.get('unit', 'ct'),
+                "unit_price_cents": to_cents(it.get('unit_price')),
+                "total_cents": to_cents(it.get('line_total')),
+                "category": it.get('category', 'other'),
+            }
+            for it in raw_items
+            if isinstance(it, dict)
+        ]
+        # record_trip returns None on a duplicate source_id (same receipt
+        # shared twice) — that's fine, the inventory add still succeeded.
+        record_trip(
+            {
+                "date": trip_payload.get('date', ''),
+                "store": trip_payload.get('store', 'HEB'),
+                "source": trip_payload.get('source', 'photo'),
+                "source_id": trip_payload.get('source_id'),
+                "total_cents": to_cents(trip_payload.get('total')),
+            },
+            purchases,
+        )
+
     return jsonify({"status": "ok", **result})
 
 
