@@ -113,11 +113,14 @@ def send_to_reminders(week: str) -> dict:
         return {"status": "error", "message": f"API request failed: {e}"}
 
 
-def add_to_inventory(items: list) -> dict:
-    """Add items to the kitchen inventory."""
+def add_to_inventory(items: list, trip: dict = None) -> dict:
+    """Add items to the kitchen inventory, optionally recording a shopping trip."""
+    payload = {"items": items}
+    if trip:
+        payload["trip"] = trip
     try:
         r = requests.post(
-            f"{API_BASE}/api/inventory/add", json={"items": items}, timeout=15
+            f"{API_BASE}/api/inventory/add", json=payload, timeout=15
         )
         return r.json()
     except requests.exceptions.RequestException as e:
