@@ -19,11 +19,11 @@ Everything is markdown in the Obsidian vault (`~/KitchenOS/vault/`, or wherever 
 | `Meal Plans/<week>.tasks.json` | Sidecar cache for the prep-task panel |
 | `Shopping Lists/` | One markdown checklist per week |
 | `Nutrition Dashboard/` | One per week |
-| `Inventory.md` | Pantry inventory (table) |
+| `Inventory.md` | Generated read-only view of the inventory DB (`data/kitchenos.db`) |
 | `meal_calendar.ics` | All weeks merged into one calendar feed |
 
-Plus repo config:
-- `config/pantry.json` — *structured* pantry used for shopping splits (different from `Inventory.md`; see Stage 3)
+Plus repo data/config:
+- `data/kitchenos.db` — unified inventory + price ledger (single source of truth for pantry stock; see Stage 3)
 - `config/seasonal_ingredients.json` — Texas seasonal calendar
 - `config/creator_websites.json` — YouTube channel → recipe site mapping
 
@@ -93,17 +93,15 @@ This is the primary way to go from "I'm reading a recipe" to "this is in next we
 
 Always starts from a meal plan; ends in a `Shopping Lists/<week>.md` checklist plus (optionally) Apple Reminders.
 
-### Pantry vs. Inventory — they're different things
-- **`config/pantry.json`** — small structured list (`item, amount, unit`) for **shopping splits**. This is what gets checked when generating a shopping list.
-- **`Inventory.md`** — rich receipt-driven table (category, location, purchased date, source). Tracks what's in the kitchen but is **not** currently used by the shopping list generator. Receipts populate it via Claude Desktop + MCP (Stage 6).
-
-> **Today's gap:** the two don't talk to each other. Listed in CLAUDE.md → Future Enhancements → "Inventory ↔ shopping list integration."
+### Pantry and Inventory — one unified store
+- **`data/kitchenos.db`** — the single source of truth for what's in the kitchen. Receipts (email ingest or Claude photo parse, Stage 6) **increment** it; confirming a shopping list **decrements** it.
+- **`Inventory.md`** — generated read-only view of the DB, rewritten on every inventory change. Hand edits are overwritten.
 
 ### The flow (UI)
 1. From the meal planner, click **Shopping List** for the active week.
-2. UI calls `POST /api/shopping-list/preview` → `lib/shopping_list_generator.py` collects all recipe ingredients across the week, aggregates likes, and splits each line against `config/pantry.json`.
+2. UI calls `POST /api/shopping-list/preview` → `lib/shopping_list_generator.py` collects all recipe ingredients across the week, aggregates likes, and splits each line against the inventory in `data/kitchenos.db`.
 3. If any line has overlap with pantry, a **confirmation modal** appears: per line, "Use pantry" or "Buy fresh." Cross-unit-family conflicts surface as a `warning` instead of guessing (e.g. "need 2 cups, pantry has 8 oz").
-4. Submit → `POST /api/shopping-list/confirm` → writes `Shopping Lists/<week>.md` and decrements `config/pantry.json` for the items the user chose to pull from pantry.
+4. Submit → `POST /api/shopping-list/confirm` → writes `Shopping Lists/<week>.md` and decrements the DB inventory for the items the user chose to pull from pantry.
 5. Optional: click **Send to Reminders** → `POST /send-to-reminders` → AppleScript pushes unchecked items into the macOS "Shopping" Reminders list, which syncs to phone.
 
 ### The flow (CLI)
@@ -149,10 +147,10 @@ Not part of the linear cook flow, but feeds back into Stage 3 eventually.
 
 1. Take a photo of a grocery receipt (or forward an HEB/Whole Foods email) and share with Claude Desktop.
 2. Claude parses the receipt, normalizes cryptic line items (`GV WHL MLK 1G` → `Whole milk, 1 gal`), assigns category + location, and calls the `add_to_inventory` MCP tool.
-3. MCP → `POST /api/inventory/add` → `lib/inventory.py` merges into `Inventory.md` by `(name, unit, location)`. Quantities sum on duplicates.
-4. Inspect / edit in Obsidian directly, or via MCP tools (`list_inventory`, `update_inventory_item`, `remove_from_inventory`).
+3. MCP → `POST /api/inventory/add` → `lib/inventory.py` merges into the DB inventory by `(name, unit, location)`. Quantities sum on duplicates.
+4. Inspect in Obsidian (`Inventory.md`, the generated view), or edit via MCP tools (`list_inventory`, `update_inventory_item`, `remove_from_inventory`).
 
-`Inventory.md` is human-editable markdown; the parser round-trips it on every write.
+`Inventory.md` is regenerated from `data/kitchenos.db` on every write — don't hand-edit it.
 
 ---
 

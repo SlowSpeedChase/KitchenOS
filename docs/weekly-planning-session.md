@@ -95,9 +95,9 @@ From the meal planner, click **Shopping List** for the active week. (Or run it f
 
 ### Pantry confirmation modal
 
-If any ingredient overlaps with `config/pantry.json`, a confirmation modal appears per line:
+If any ingredient overlaps with the pantry inventory (`data/kitchenos.db`), a confirmation modal appears per line:
 
-- **Use pantry** — pulls from your pantry stock; the quantity is decremented in `config/pantry.json`.
+- **Use pantry** — pulls from your pantry stock; the quantity is decremented in the inventory DB.
 - **Buy fresh** — adds it to the shopping list regardless.
 
 Cross-unit-family conflicts (e.g., "need 2 cups, pantry has 8 oz") surface as a warning rather than a guess — you decide.
@@ -106,7 +106,7 @@ Cross-unit-family conflicts (e.g., "need 2 cups, pantry has 8 oz") surface as a 
 
 After confirming, click **Send to Reminders**. KitchenOS pushes all unchecked items into the macOS "Shopping" Reminders list, which syncs to your iPhone. You're done planning.
 
-> **Note on pantry vs. inventory:** `config/pantry.json` is what the shopping list splits against. `Inventory.md` is the richer receipt-driven table you update via Claude — those two don't talk to each other yet. If something is in `Inventory.md` but not in `config/pantry.json`, the shopping list won't know about it.
+> **Note on pantry vs. inventory:** they're the same thing now — one unified store in `data/kitchenos.db`. Receipts (email ingest or Claude photo parse) increment it; confirming a shopping list decrements it. `Inventory.md` is just a generated read-only view of the DB.
 
 ---
 

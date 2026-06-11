@@ -63,6 +63,13 @@ def test_validate_receipt_missing_date():
     assert ok is False
 
 
+def test_validate_receipt_rejects_non_iso_date():
+    bad = dict(PARSED_OK, date="06/09/2026")
+    ok, problems = rp.validate_receipt(bad)
+    assert ok is False
+    assert any("format" in p or "YYYY" in p for p in problems)
+
+
 def test_validate_receipt_no_items():
     bad = dict(PARSED_OK, items=[])
     ok, problems = rp.validate_receipt(bad)

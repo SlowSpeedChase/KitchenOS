@@ -834,6 +834,35 @@ def test_inventory_add_with_trip_records_purchases(client, tmp_vault, tmp_db):
     assert row[1] == 1098
 
 
+def test_inventory_add_fee_items_skip_inventory(client, tmp_vault, tmp_db):
+    payload = {
+        "items": [
+            {"name": "chicken breast", "quantity": 2, "unit": "lb",
+             "category": "meat", "location": "fridge",
+             "unit_price": 5.49, "line_total": 10.98},
+            {"name": "sales tax", "quantity": 1, "unit": "ct",
+             "category": "fee", "line_total": 0.91},
+        ],
+        "trip": {"date": "2026-06-09", "store": "HEB", "total": 11.89,
+                 "source_id": "photo-fee-test"},
+    }
+    resp = client.post("/api/inventory/add", json=payload)
+    assert resp.status_code == 200
+
+    from lib.inventory import read_inventory
+    names = [it.name for it in read_inventory()]
+    assert "chicken breast" in names
+    assert "sales tax" not in names
+
+    from lib import inventory_db as idb
+    conn = idb.connect()
+    rows = conn.execute(
+        "SELECT canonical_name, category FROM purchases ORDER BY id").fetchall()
+    conn.close()
+    assert len(rows) == 2
+    assert ("sales tax", "fee") in [(r[0], r[1]) for r in rows]
+
+
 def test_inventory_add_without_trip_unchanged(client, tmp_vault, tmp_db):
     resp = client.post("/api/inventory/add", json={
         "items": [{"name": "rice", "quantity": 2, "unit": "lb"}]})

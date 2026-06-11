@@ -8,6 +8,7 @@ dicts ready for inventory_db.record_trip().
 from __future__ import annotations
 
 import json
+from datetime import date
 from typing import Callable, Optional
 
 import requests
@@ -76,8 +77,14 @@ def parse_receipt_text(
 def validate_receipt(parsed: dict) -> tuple[bool, list[str]]:
     """Sanity-check a parsed receipt. Returns (ok, problems)."""
     problems: list[str] = []
-    if not parsed.get("date"):
+    d = parsed.get("date")
+    if not d:
         problems.append("missing date")
+    else:
+        try:
+            date.fromisoformat(str(d))
+        except ValueError:
+            problems.append(f"date not in YYYY-MM-DD format: {d!r}")
     items = parsed.get("items") or []
     if not items:
         problems.append("no line items")

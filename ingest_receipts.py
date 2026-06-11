@@ -146,7 +146,9 @@ def ingest(since_days: int = 14, dry_run: bool = False,
             from lib.price_dashboard import save_dashboard
             save_dashboard()
         except ImportError:
-            pass  # dashboard module lands in a later task
+            # Tolerate a partially-deployed checkout where price_dashboard is
+            # missing — dashboard regeneration is non-critical to ingestion.
+            pass
 
     print(f"Done: {summary}")
     return summary

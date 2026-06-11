@@ -48,6 +48,18 @@ def test_dashboard_spending_totals(tmp_vault, tmp_db):
     assert "$10.00" in md or "$12.00" in md or "$22.00" in md
 
 
+def test_dashboard_survives_malformed_trip_date(tmp_vault, tmp_db):
+    idb.record_trip(
+        {"date": "06/09/2026", "store": "HEB", "source": "email_receipt",
+         "source_id": "<bad-date>", "total_cents": 500},
+        [{"raw_name": "EGGS", "canonical_name": "eggs", "quantity": 1,
+          "unit": "ct", "unit_price_cents": 500, "total_cents": 500,
+          "category": "dairy"}],
+    )
+    md = generate_dashboard(today="2026-06-10")
+    assert "# Price Tracker" in md
+
+
 def test_save_dashboard_writes_file(tmp_vault, tmp_db):
     _seed(tmp_db)
     from lib.price_dashboard import save_dashboard

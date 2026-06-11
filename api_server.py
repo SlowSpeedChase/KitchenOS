@@ -1379,6 +1379,10 @@ def api_inventory_add():
         name = (raw.get('name') or '').strip()
         if not name:
             continue
+        # Fee lines (sales tax, totes, tips) belong in the price ledger only —
+        # they must never become inventory rows.
+        if (raw.get('category') or '').lower().strip() == 'fee':
+            continue
         try:
             quantity = float(raw.get('quantity', 1) or 1)
         except (ValueError, TypeError):
@@ -1394,15 +1398,17 @@ def api_inventory_add():
             notes=(raw.get('notes') or '').strip(),
         ))
 
-    if not parsed:
+    trip_payload = data.get('trip')
+    # An all-fee items list is valid when a trip rides along (the ledger still
+    # wants the rows) — only 400 when there's nothing to do at all.
+    if not parsed and not trip_payload:
         return jsonify({"error": "No valid items provided"}), 400
 
-    result = add_items(parsed)
+    result = add_items(parsed) if parsed else {"added": 0, "merged": 0, "total": 0}
 
     # Optional price ledger: a "trip" object turns this add into a recorded
     # shopping trip (photo receipts from the Claude flow). Uses the RAW
     # request dicts so unit_price/line_total survive InventoryItem parsing.
-    trip_payload = data.get('trip')
     if trip_payload:
         from lib.inventory_db import record_trip
         from lib.receipt_parser import to_cents

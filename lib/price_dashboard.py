@@ -22,7 +22,10 @@ def _dollars(cents: Optional[int]) -> str:
 
 
 def _iso_week(d: str) -> str:
-    iso = date.fromisoformat(d).isocalendar()
+    try:
+        iso = date.fromisoformat(d).isocalendar()
+    except ValueError:
+        return "unknown"
     return f"{iso.year}-W{iso.week:02d}"
 
 
