@@ -9,6 +9,7 @@ Usage:
 """
 
 import argparse
+import json
 import sys
 import time
 import traceback
@@ -26,7 +27,9 @@ from EventKit import (
 )
 from Foundation import NSRunLoop, NSDate
 
-from extract_recipe import extract_single_recipe
+from extract_recipe import extract_single_recipe, extract_single_web_recipe
+
+RUNS_LOG_DIR = Path(__file__).parent / "logs" / "runs"
 
 # Configuration
 REMINDERS_LIST_NAME = "Recipies to Process"
@@ -119,6 +122,36 @@ def is_youtube_url(text):
     return any(domain in text for domain in ['youtube.com', 'youtu.be'])
 
 
+def _cleanup_run_logs(runs_dir: Path, max_age_days: int = 30) -> int:
+    if not runs_dir.exists():
+        return 0
+    cutoff = time.time() - (max_age_days * 24 * 60 * 60)
+    removed = 0
+    for f in runs_dir.glob("*.json"):
+        if f.stat().st_mtime < cutoff:
+            f.unlink()
+            removed += 1
+    return removed
+
+
+def _write_run_log(total, succeeded, skipped, failed, invalid, start_time):
+    RUNS_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    _cleanup_run_logs(RUNS_LOG_DIR)
+    filename = datetime.now().strftime("%Y-%m-%d-%H%M%S") + ".json"
+    data = {
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "duration_seconds": int((datetime.now() - start_time).total_seconds()),
+        "total": total,
+        "succeeded": len(succeeded),
+        "skipped_duplicate": len(skipped),
+        "failed": len(failed),
+        "invalid": len(invalid),
+        "invalid_urls": [url for url, _ in invalid],
+        "succeeded_urls": succeeded,
+    }
+    (RUNS_LOG_DIR / filename).write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
 def trigger_analysis_agent(failure_log_path: Path):
     """Spawn the failure analysis agent in the background.
 
@@ -156,6 +189,7 @@ def main():
         help='Preview without extracting or marking complete'
     )
     args = parser.parse_args()
+    run_start = datetime.now()
 
     # Clean up old failure logs
     failures_dir = Path(__file__).parent / FAILURES_DIR_NAME
@@ -208,19 +242,24 @@ def main():
         url = reminder.title()
         print(f"[{i}/{len(reminders)}] {url}")
 
-        # Validate URL
-        if not is_youtube_url(url):
-            print("       → Not a YouTube URL, skipping")
-            print("       ✗ Left unchecked")
-            invalid.append((url, "Not a YouTube URL"))
-            continue
-
-        # Extract recipe
+        # Validate URL and route to appropriate extractor
         def print_status(msg):
             print(f"       {msg}")
 
+        is_web_url = url.startswith('http://') or url.startswith('https://')
+
+        if not is_youtube_url(url) and not is_web_url:
+            print("       → Not a URL, skipping")
+            print("       ✗ Left unchecked")
+            invalid.append((url, "Not a URL"))
+            continue
+
         try:
-            result = extract_single_recipe(url, dry_run=args.dry_run, on_status=print_status)
+            if is_youtube_url(url):
+                result = extract_single_recipe(url, dry_run=args.dry_run, on_status=print_status)
+            else:
+                print("       → Web recipe URL, routing to scrape pipeline")
+                result = extract_single_web_recipe(url, dry_run=args.dry_run, on_status=print_status)
         except KeyboardInterrupt:
             print("\n\nInterrupted by user.")
             break
@@ -309,6 +348,17 @@ def main():
 
         # Trigger analysis agent
         trigger_analysis_agent(failure_log)
+
+    # Write run summary log (always, unless dry-run)
+    if not args.dry_run:
+        _write_run_log(
+            total=total,
+            succeeded=succeeded,
+            skipped=skipped,
+            failed=failed,
+            invalid=invalid,
+            start_time=run_start,
+        )
 
 
 if __name__ == "__main__":

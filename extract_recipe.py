@@ -15,7 +15,7 @@ import re
 import requests
 
 from lib.backup import create_backup
-from lib.recipe_parser import find_existing_recipe, parse_recipe_file, extract_my_notes
+from lib.recipe_parser import find_existing_recipe, find_existing_recipe_by_source_url, parse_recipe_file, extract_my_notes
 from lib.ingredient_validator import validate_ingredients
 from lib.ingredient_parser import parse_ingredient
 from lib.nutrition_lookup import calculate_recipe_nutrition
@@ -484,6 +484,145 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False, 
         # Save to Obsidian
         status("Saving to Obsidian...")
         filepath = save_recipe_to_obsidian(recipe_data, video_url, title, channel, video_id)
+        result["success"] = True
+        result["filepath"] = filepath
+        return result
+
+    except Exception as e:
+        result["error"] = str(e)
+        return result
+
+
+def extract_single_web_recipe(url: str, dry_run: bool = False, on_status=None) -> dict:
+    """Extract recipe from a non-YouTube web URL (e.g. natashaskitchen.com).
+
+    Scrapes JSON-LD recipe data, runs the same post-processing pipeline as
+    extract_single_recipe (normalize → validate → seasonal → nutrition → image → save),
+    and deduplicates by source_url rather than YouTube video ID.
+
+    Args:
+        url: Full recipe page URL
+        dry_run: If True, don't save to Obsidian
+        on_status: Optional callback(message: str) for progress updates
+
+    Returns:
+        Same result dict shape as extract_single_recipe
+    """
+    from urllib.parse import urlparse
+
+    status = on_status or (lambda msg: None)
+    result = {
+        "success": False,
+        "title": None,
+        "recipe_name": None,
+        "filepath": None,
+        "error": None,
+        "skipped": False,
+        "source": None,
+    }
+
+    try:
+        # Dedup by source URL
+        status("Checking for existing recipe...")
+        existing = find_existing_recipe_by_source_url(OBSIDIAN_RECIPES_PATH, url)
+        if existing and not dry_run:
+            result["success"] = True
+            result["skipped"] = True
+            result["filepath"] = existing
+            try:
+                content = existing.read_text(encoding='utf-8')
+                parsed = parse_recipe_file(content)
+                result["recipe_name"] = parsed['frontmatter'].get('recipe_name', existing.stem)
+                result["title"] = result["recipe_name"]
+            except Exception:
+                result["title"] = existing.stem
+                result["recipe_name"] = existing.stem
+            return result
+
+        # Scrape recipe from URL
+        status(f"Scraping recipe from {url}...")
+        recipe_data = scrape_recipe_from_url(url)
+        if not recipe_data:
+            result["error"] = "No structured recipe (JSON-LD) found on page"
+            return result
+
+        result["title"] = recipe_data.get('recipe_name', 'Unknown Recipe')
+        source = "webpage"
+
+        # Normalize formats
+        recipe_data['ingredients'] = normalize_ingredients(recipe_data.get('ingredients', []))
+        recipe_data['instructions'] = normalize_instructions(recipe_data.get('instructions', []))
+
+        for field in ('cuisine', 'protein', 'dish_type', 'difficulty'):
+            val = recipe_data.get(field)
+            if isinstance(val, list):
+                recipe_data[field] = val[0] if val else None
+
+        occasion = recipe_data.get('meal_occasion', [])
+        if isinstance(occasion, str):
+            occasion = [occasion]
+        recipe_data['meal_occasion'] = [
+            o.strip().lower().replace(' ', '-')
+            for o in occasion if o and isinstance(o, str)
+        ][:3]
+
+        normalize_recipe_data(recipe_data)
+
+        # Validate ingredients
+        status("Validating ingredients...")
+        recipe_data['ingredients'] = validate_ingredients(
+            recipe_data.get('ingredients', []), verbose=True
+        )
+
+        # Match seasonal ingredients
+        status("Matching seasonal ingredients...")
+        seasonal_matches = match_ingredients_to_seasonal(recipe_data.get('ingredients', []))
+        recipe_data['seasonal_ingredients'] = seasonal_matches
+        recipe_data['peak_months'] = get_peak_months(seasonal_matches)
+
+        # Calculate nutrition
+        status("Calculating nutrition...")
+        try:
+            servings = int(recipe_data.get("servings", 1) or 1)
+        except (ValueError, TypeError):
+            servings = 1
+        nutrition_result = calculate_recipe_nutrition(recipe_data.get("ingredients", []), servings)
+        if nutrition_result:
+            recipe_data["calories"] = nutrition_result.nutrition.calories
+            recipe_data["protein_g"] = nutrition_result.nutrition.protein
+            recipe_data["carbs_g"] = nutrition_result.nutrition.carbs
+            recipe_data["fat_g"] = nutrition_result.nutrition.fat
+            recipe_data["nutrition_source"] = nutrition_result.source
+
+        # Download image
+        image_filename = None
+        image_url = recipe_data.get('image_url')
+        if image_url and not dry_run:
+            status("Downloading recipe image...")
+            recipe_name_for_image = recipe_data.get('recipe_name', 'Untitled Recipe')
+            safe_name = re.sub(r'[<>:"/\|?*]', '', recipe_name_for_image)
+            safe_name = ' '.join(safe_name.split()).title()
+            image_target = OBSIDIAN_RECIPES_PATH / "Images" / f"{safe_name}.jpg"
+            downloaded = download_image(image_url, image_target)
+            if downloaded:
+                image_filename = f"{safe_name}.jpg"
+        recipe_data['image_filename'] = image_filename
+
+        recipe_data['source'] = source
+        recipe_data['source_url'] = url
+
+        recipe_name = recipe_data.get('recipe_name', 'Unknown Recipe')
+        result["recipe_name"] = recipe_name
+        result["source"] = source
+
+        if dry_run:
+            result["success"] = True
+            return result
+
+        # Save — pass video_id=None (no YouTube ID for web recipes)
+        domain = urlparse(url).netloc
+        status("Saving to Obsidian...")
+        filepath = save_recipe_to_obsidian(recipe_data, url, recipe_name, domain, video_id=None)
         result["success"] = True
         result["filepath"] = filepath
         return result

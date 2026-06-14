@@ -1430,6 +1430,20 @@ def api_inventory_update():
     return jsonify({"status": "updated"})
 
 
+@app.route('/api/system-health', methods=['GET'])
+def api_system_health():
+    """System health JSON: Ollama, vault, recent recipes, run/failure logs, Reminders queue."""
+    from lib import health
+    return jsonify(health.get_system_health())
+
+
+@app.route('/system-health', methods=['GET'])
+def system_health_dashboard():
+    """Interactive system health dashboard."""
+    html = open('templates/system_health.html').read()
+    return html
+
+
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
