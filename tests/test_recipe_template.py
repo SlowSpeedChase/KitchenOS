@@ -20,7 +20,7 @@ def test_generate_tools_callout():
 
 
 def test_api_base_url_uses_tailscale():
-    assert API_BASE_URL == "http://100.103.114.106:5001"
+    assert API_BASE_URL == "http://chases-mac-mini.taila69703.ts.net:5001"
 
 
 def test_tools_callout_contains_add_to_meal_plan():
@@ -30,9 +30,9 @@ def test_tools_callout_contains_add_to_meal_plan():
     assert "recipe=Test%20Recipe.md" in result
 
 
-def test_tools_callout_uses_tailscale_ip():
+def test_tools_callout_uses_tailscale_hostname():
     result = generate_tools_callout("Test.md")
-    assert "100.103.114.106:5001" in result
+    assert "chases-mac-mini.taila69703.ts.net:5001" in result
     assert "localhost" not in result
 
 

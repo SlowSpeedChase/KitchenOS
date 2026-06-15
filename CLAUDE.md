@@ -115,7 +115,7 @@ cd /Users/chaseeasterling/KitchenOS
 
 ```
 Open in browser: http://localhost:5001/meal-planner
-iPad via Tailscale: http://100.103.114.106:5001/meal-planner
+iPad via Tailscale: http://chases-mac-mini.taila69703.ts.net:5001/meal-planner
 ```
 
 Drag-and-drop board for planning weekly meals. Recipe sidebar with search and filter chips. Reads/writes the same Obsidian markdown files.
@@ -408,7 +408,7 @@ For the full route list, grep `@app.route` in `api_server.py`. Endpoints with no
 ### Configuration
 
 - **Port**: 5001 (configured in LaunchAgent)
-- **Tailscale IP**: `100.103.114.106`
+- **Tailscale hostname**: `chases-mac-mini.taila69703.ts.net`
 - **LaunchAgent**: `~/Library/LaunchAgents/com.kitchenos.api.plist`
 
 See `docs/setup/iOS_SHORTCUT_SETUP.md` for iOS Shortcut configuration.

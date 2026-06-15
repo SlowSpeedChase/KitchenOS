@@ -35,7 +35,7 @@ Four entry points, all converge on `extract_recipe.py` (or `import_crouton.py` f
 
 ### 1a. iOS Share Sheet → API
 - On iPhone, share a YouTube URL to the **KitchenOS Shortcut**.
-- Shortcut hits the API server at `http://100.103.114.106:5001/extract` (Tailscale).
+- Shortcut hits the API server at `http://chases-mac-mini.taila69703.ts.net:5001/extract` (Tailscale).
 - API spawns `extract_recipe.py` as a subprocess (5-min timeout) and returns `{status, recipe_name}`.
 - Shortcut shows a success card linking to the new recipe in Obsidian.
 
@@ -79,7 +79,7 @@ Three ways meals land on a meal plan. Output is always `Meal Plans/<week>.md` wi
 - **Servings multiplier:** type `[[Recipe Name]] x2` to scale (the `xN` lives outside the wikilink so Obsidian links still resolve).
 
 ### 2c. Recipe-page button (Obsidian)
-Each recipe markdown contains an **Add to Meal Plan** button (Obsidian Buttons plugin) that opens `http://100.103.114.106:5001/add-to-meal-plan?recipe=<file>` in the browser. The form has three branches:
+Each recipe markdown contains an **Add to Meal Plan** button (Obsidian Buttons plugin) that opens `http://chases-mac-mini.taila69703.ts.net:5001/add-to-meal-plan?recipe=<file>` in the browser. The form has three branches:
 
 1. **Schedule directly** → pick week / day / slot → API inserts the wikilink into the meal plan.
 2. **Add to existing meal** → pick a meal from `vault/Meals/` → API appends this recipe to that meal's `sub_recipes` and offers an optional "now schedule it" prompt.

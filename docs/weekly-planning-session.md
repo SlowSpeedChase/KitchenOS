@@ -20,7 +20,7 @@ If it doesn't respond, restart it:
 launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist
 ```
 
-The meal planner UI is at `http://localhost:5001/meal-planner` on your Mac, or `http://100.103.114.106:5001/meal-planner` from your iPad over Tailscale.
+The meal planner UI is at `http://localhost:5001/meal-planner` on your Mac, or `http://chases-mac-mini.taila69703.ts.net:5001/meal-planner` from your iPad over Tailscale.
 
 ---
 
@@ -50,7 +50,7 @@ Each extracted recipe gets a full markdown file in `Recipes/`, an image in `Reci
 This is the main session. Open the meal planner:
 
 - **Mac:** `http://localhost:5001/meal-planner`
-- **iPad:** `http://100.103.114.106:5001/meal-planner`
+- **iPad:** `http://chases-mac-mini.taila69703.ts.net:5001/meal-planner`
 
 The layout is a recipe sidebar on the left and a 7-day × 4-slot board on the right (Breakfast / Lunch / Snack / Dinner per day). The week selector at the top lets you jump between weeks; use `?week=2026-W19` in the URL to land directly on a specific week.
 
