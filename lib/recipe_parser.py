@@ -154,6 +154,27 @@ def find_existing_recipe(recipes_dir: Path, video_id: str) -> Optional[Path]:
     return None
 
 
+def find_existing_recipe_by_source_url(recipes_dir: Path, url: str) -> Optional[Path]:
+    """Find an existing recipe file by exact source_url match.
+
+    Used for web-scraped recipes (no YouTube video ID) to avoid duplicates.
+    """
+    recipes_dir = Path(recipes_dir)
+    if not recipes_dir.exists():
+        return None
+    for md_file in recipes_dir.glob("*.md"):
+        if md_file.name.startswith('.'):
+            continue
+        try:
+            content = md_file.read_text(encoding='utf-8')
+            parsed = parse_recipe_file(content)
+            if parsed['frontmatter'].get('source_url') == url:
+                return md_file
+        except Exception:
+            continue
+    return None
+
+
 def parse_recipe_body(body: str) -> dict:
     """Parse recipe body into structured data for re-rendering.
 

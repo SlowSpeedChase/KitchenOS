@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KitchenOS System Health</title>
+    <style>
+        :root {
+            --bg: #f5f5f7;
+            --card-bg: #ffffff;
+            --border: #e5e5e7;
+            --text: #1d1d1f;
+            --text-muted: #86868b;
+            --accent: #0071e3;
+            --success: #34c759;
+            --danger: #ff3b30;
+            --warning: #ff9f0a;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 24px;
+        }
+
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 24px;
+        }
+
+        header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        #refresh-time {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+            gap: 16px;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        .card h2 {
+            font-size: 0.9rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--text-muted);
+            margin-bottom: 14px;
+        }
+
+        /* Status strip */
+        .status-strip {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.82rem;
+            font-weight: 500;
+        }
+
+        .chip .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .chip.green { background: #d4f5de; color: #1a6b34; }
+        .chip.green .dot { background: var(--success); }
+        .chip.red { background: #fde8e8; color: #8b1a1a; }
+        .chip.red .dot { background: var(--danger); }
+        .chip.neutral { background: #ebebed; color: #444; }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.83rem;
+        }
+
+        th {
+            text-align: left;
+            font-weight: 600;
+            color: var(--text-muted);
+            padding: 4px 6px 8px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        td {
+            padding: 7px 6px;
+            border-bottom: 1px solid var(--border);
+            color: var(--text);
+        }
+
+        tr:last-child td { border-bottom: none; }
+
+        .empty { color: var(--text-muted); font-size: 0.83rem; font-style: italic; }
+
+        .badge {
+            display: inline-block;
+            padding: 1px 7px;
+            border-radius: 10px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            background: #ebebed;
+            color: #555;
+        }
+
+        .badge.red { background: #fde8e8; color: #c0392b; }
+        .badge.green { background: #d4f5de; color: #1a6b34; }
+        .badge.orange { background: #fff0d6; color: #8a5000; }
+
+        .vault-path {
+            font-family: 'SF Mono', 'Menlo', monospace;
+            font-size: 0.78rem;
+            color: var(--text-muted);
+            word-break: break-all;
+            margin-top: 8px;
+        }
+
+        .reminders-count {
+            font-size: 2.2rem;
+            font-weight: 700;
+            color: var(--accent);
+            margin-top: 4px;
+        }
+
+        .loading { color: var(--text-muted); font-size: 0.85rem; }
+
+        /* Wide cards */
+        .card.wide { grid-column: 1 / -1; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>KitchenOS System Health</h1>
+        <span id="refresh-time">Loading…</span>
+    </header>
+
+    <div class="grid">
+        <!-- Status strip -->
+        <div class="card wide" id="card-status">
+            <h2>Component Status</h2>
+            <div class="status-strip" id="status-strip">
+                <span class="loading">Checking…</span>
+            </div>
+            <div class="vault-path" id="vault-path"></div>
+        </div>
+
+        <!-- Reminders queue -->
+        <div class="card" id="card-reminders">
+            <h2>Reminders Queue</h2>
+            <div class="reminders-count" id="reminders-count">—</div>
+            <div style="font-size:0.82rem;color:var(--text-muted);margin-top:4px;">pending in "Recipies to Process"</div>
+        </div>
+
+        <!-- Recent extractions -->
+        <div class="card" id="card-recipes">
+            <h2>Recent Recipe Writes</h2>
+            <div id="recipes-body"><span class="loading">Loading…</span></div>
+        </div>
+
+        <!-- Batch run history -->
+        <div class="card" id="card-runs">
+            <h2>Batch Run History</h2>
+            <div id="runs-body"><span class="loading">Loading…</span></div>
+        </div>
+
+        <!-- Failure log -->
+        <div class="card" id="card-failures">
+            <h2>Recent Failure Logs</h2>
+            <div id="failures-body"><span class="loading">Loading…</span></div>
+        </div>
+    </div>
+
+    <script>
+    function fmtTs(iso) {
+        if (!iso) return '—';
+        const d = new Date(iso);
+        return d.toLocaleString('en-US', { month:'short', day:'numeric',
+            hour:'numeric', minute:'2-digit', hour12:true });
+    }
+
+    function badgeClass(cat) {
+        if (cat === 'network' || cat === 'ollama') return 'orange';
+        if (cat === 'parsing') return 'red';
+        return '';
+    }
+
+    function render(data) {
+        document.getElementById('refresh-time').textContent =
+            'Updated ' + fmtTs(data.generated_at);
+
+        // Status strip
+        const ollama = data.ollama;
+        const vault = data.vault;
+        const strip = document.getElementById('status-strip');
+        const ollamaClass = ollama.alive ? 'green' : 'red';
+        const vaultClass = vault.writable ? 'green' : 'red';
+        const ollamaModels = ollama.models.length
+            ? ollama.models.join(', ')
+            : (ollama.error || 'no models');
+        strip.innerHTML = `
+            <span class="chip ${ollamaClass}">
+                <span class="dot"></span>Ollama &mdash; ${ollamaModels}
+            </span>
+            <span class="chip ${vaultClass}">
+                <span class="dot"></span>Vault ${vault.writable ? 'writable' : 'not writable'}
+            </span>`;
+        document.getElementById('vault-path').textContent = vault.path;
+
+        // Reminders
+        const q = data.reminders_queue;
+        document.getElementById('reminders-count').textContent =
+            q === null ? 'N/A' : q;
+
+        // Recent recipes
+        const recipesEl = document.getElementById('recipes-body');
+        if (!data.recent_recipes.length) {
+            recipesEl.innerHTML = '<span class="empty">No recipes found</span>';
+        } else {
+            let rows = data.recent_recipes.map(r =>
+                `<tr><td>${r.name}</td><td style="color:var(--text-muted)">${fmtTs(r.modified_iso)}</td></tr>`
+            ).join('');
+            recipesEl.innerHTML = `<table><thead><tr><th>Recipe</th><th>Modified</th></tr></thead>
+                <tbody>${rows}</tbody></table>`;
+        }
+
+        // Run logs
+        const runsEl = document.getElementById('runs-body');
+        if (!data.run_logs.length) {
+            runsEl.innerHTML = '<span class="empty">No run logs yet</span>';
+        } else {
+            let rows = data.run_logs.map(r => {
+                const failBadge = r.failed ? `<span class="badge red">${r.failed} failed</span> ` : '';
+                const invBadge = r.invalid ? `<span class="badge orange">${r.invalid} invalid</span>` : '';
+                return `<tr>
+                    <td>${fmtTs(r.timestamp)}</td>
+                    <td>${r.total}</td>
+                    <td>${r.succeeded}</td>
+                    <td>${failBadge}${invBadge}</td>
+                </tr>`;
+            }).join('');
+            runsEl.innerHTML = `<table><thead>
+                <tr><th>Run</th><th>Total</th><th>OK</th><th>Issues</th></tr>
+                </thead><tbody>${rows}</tbody></table>`;
+        }
+
+        // Failure logs
+        const failEl = document.getElementById('failures-body');
+        if (!data.failure_logs.length) {
+            failEl.innerHTML = '<span class="empty">No failures logged</span>';
+        } else {
+            let rows = data.failure_logs.map(f => {
+                const cats = Object.entries(f.categories)
+                    .map(([k, v]) => `<span class="badge ${badgeClass(k)}">${k}:${v}</span>`)
+                    .join(' ');
+                return `<tr>
+                    <td>${fmtTs(f.timestamp)}</td>
+                    <td>${f.total_failed}/${f.total_processed}</td>
+                    <td>${cats || '—'}</td>
+                </tr>`;
+            }).join('');
+            failEl.innerHTML = `<table><thead>
+                <tr><th>Run</th><th>Failed</th><th>Categories</th></tr>
+                </thead><tbody>${rows}</tbody></table>`;
+        }
+    }
+
+    async function refresh() {
+        try {
+            const resp = await fetch('/api/system-health');
+            const data = await resp.json();
+            render(data);
+        } catch (e) {
+            document.getElementById('refresh-time').textContent = 'Error: ' + e.message;
+        }
+    }
+
+    refresh();
+    setInterval(refresh, 60000);
+    </script>
+</body>
+</html>
