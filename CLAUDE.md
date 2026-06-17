@@ -803,6 +803,7 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 |----------|---------|
 | `README.md` | User guide - installation, usage, configuration |
 | `docs/setup/iOS_SHORTCUT_SETUP.md` | iOS Shortcut configuration |
+| `docs/setup/DRAFTS_RECIPE_ACTION.md` | Drafts/Shortcut action to import AI-written recipes via Selene → `/api/recipes/import-text` |
 | `docs/setup/HOW_TO_RUN.md` | Quick start guide |
 | `docs/IMPLEMENTATION_SUMMARY.md` | What was built vs planned, lessons learned |
 | `docs/plans/` | Design documents and plans |
