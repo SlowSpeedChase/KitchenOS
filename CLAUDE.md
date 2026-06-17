@@ -343,6 +343,7 @@ For the full route list, grep `@app.route` in `api_server.py`. Endpoints with no
 | `/meal-planner` (GET) | Interactive drag-and-drop meal planner board (HTML). |
 | `/api/meal-plan/<week>` (GET/PUT) | Programmatic meal plan as JSON; PUT round-trips through `rebuild_meal_plan_markdown`. |
 | `/api/meals` (POST) | Create meal — frontmatter saved to `vault/Meals/<name>.meal.md`. |
+| `/api/recipes/import-text` (POST) | Parse a free-text recipe (`{text, title?, source?}`) with Ollama (un-gated) and save it like `/api/recipes/save` (incl. Cooking Mode). Original text preserved in a collapsible `## Import Source` block. Backs Selene's `/webhook/api/recipe` forward. |
 | `/api/shopping-list/preview` `/confirm` | See "Pantry-aware shopping list flow" above. |
 | `/api/tasks/<week>` (GET, `?force=1`) | Prep-task sidecar payload; cached in `<week>.tasks.json`. |
 | `/add-to-meal-plan` (GET/POST) | Recipe-button entry. POST branches on `mode={direct,existing,new,schedule_meal}`. `existing`/`new` mutate `vault/Meals/<name>.meal.md` and end on an optional schedule prompt. |
