@@ -31,6 +31,7 @@ from lib.ingredient_validator import validate_ingredients
 from lib.seasonality import match_ingredients_to_seasonal, get_peak_months
 from lib.nutrition_lookup import calculate_recipe_nutrition
 from lib import meal_loader, pantry as pantry_module, paths, task_extractor
+from recipe_sources import parse_recipe_from_text
 
 load_dotenv()
 warnings.filterwarnings('ignore', message='urllib3 v2 only supports OpenSSL 1.1.1+')
@@ -285,6 +286,120 @@ def api_recipe_save():
 
         # Generate RecipeMD cooking mode version
         recipemd_content = format_recipemd(data, '', '', '')
+        recipemd_dir = OBSIDIAN_RECIPES_PATH / "Cooking Mode"
+        recipemd_dir.mkdir(parents=True, exist_ok=True)
+        recipemd_filename = generate_recipemd_filename(recipe_name)
+        recipemd_path = (recipemd_dir / recipemd_filename).resolve()
+        if not recipemd_path.is_relative_to(recipemd_dir.resolve()):
+            return jsonify({"error": "Invalid recipe name"}), 400
+
+        recipemd_path.write_text(recipemd_content, encoding='utf-8')
+
+        # Invalidate recipe cache
+        _recipe_cache["data"] = None
+
+        return jsonify({
+            "status": "success",
+            "recipe_name": recipe_name,
+            "file": safe_name + ".md",
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/recipes/import-text', methods=['POST'])
+def api_recipe_import_text():
+    """Parse a free-text recipe (e.g. pasted from a chat assistant) and save it.
+
+    Body JSON: {"text": str (required), "title": str (optional), "source": str (optional)}.
+    The raw text is parsed by Ollama (un-gated) into the recipe schema, enriched,
+    and saved through the same conventions as /api/recipes/save (including the
+    RecipeMD "Cooking Mode" file). The original text is preserved in a collapsible
+    "Import Source" block so a bad parse can be corrected later. Backs Selene's
+    /webhook/api/recipe forward.
+    """
+    data = request.get_json(force=True, silent=True)
+    if not data:
+        return jsonify({"error": "Request body required"}), 400
+
+    text = (data.get('text') or '').strip()
+    if not text:
+        return jsonify({"error": "text is required"}), 400
+
+    title = (data.get('title') or '').strip()
+    source = (data.get('source') or 'selene').strip()
+
+    try:
+        recipe = parse_recipe_from_text(text, title=title)
+        if not recipe or not recipe.get('recipe_name'):
+            return jsonify({
+                "error": "Could not parse a recipe from the provided text"
+            }), 422
+
+        recipe['source'] = source
+        recipe.setdefault('needs_review', False)
+        recipe_name = recipe['recipe_name']
+
+        # Validate ingredients
+        if recipe.get('ingredients'):
+            recipe['ingredients'] = validate_ingredients(
+                recipe['ingredients'], verbose=False
+            )
+
+        # Match seasonal ingredients
+        seasonal_matches = match_ingredients_to_seasonal(recipe.get('ingredients', []))
+        recipe['seasonal_ingredients'] = seasonal_matches
+        recipe['peak_months'] = get_peak_months(seasonal_matches)
+
+        # Calculate nutrition
+        ingredients = recipe.get('ingredients', [])
+        try:
+            servings = int(recipe.get('servings', 1) or 1)
+        except (ValueError, TypeError):
+            servings = 1
+
+        nutrition_result = calculate_recipe_nutrition(ingredients, servings)
+        if nutrition_result:
+            recipe['calories'] = nutrition_result.nutrition.calories
+            recipe['protein_g'] = nutrition_result.nutrition.protein
+            recipe['carbs_g'] = nutrition_result.nutrition.carbs
+            recipe['fat_g'] = nutrition_result.nutrition.fat
+            recipe['nutrition_source'] = nutrition_result.source
+
+        # Generate markdown, then preserve the original pasted text for later correction.
+        markdown = format_recipe_markdown(
+            recipe,
+            video_url='',
+            video_title='',
+            channel=data.get('source_channel', ''),
+        )
+        import_section = (
+            "## Import Source\n\n"
+            "<details>\n"
+            "<summary>Original text imported via Selene</summary>\n\n"
+            "```\n"
+            f"{text}\n"
+            "```\n\n"
+            "</details>"
+        )
+        markdown = markdown.rstrip() + "\n\n" + import_section + "\n"
+
+        # Save to Obsidian
+        OBSIDIAN_RECIPES_PATH.mkdir(parents=True, exist_ok=True)
+        safe_name = re.sub(r'[<>:"/\\|?*/]', '', recipe_name)
+        safe_name = ' '.join(safe_name.split()).title()
+        filepath = (OBSIDIAN_RECIPES_PATH / f"{safe_name}.md").resolve()
+        if not filepath.is_relative_to(OBSIDIAN_RECIPES_PATH.resolve()):
+            return jsonify({"error": "Invalid recipe name"}), 400
+
+        if filepath.exists():
+            create_backup(filepath)
+
+        filepath.write_text(markdown, encoding='utf-8')
+
+        # Generate RecipeMD cooking mode version (matches /api/recipes/save)
+        recipemd_content = format_recipemd(recipe, '', '', '')
         recipemd_dir = OBSIDIAN_RECIPES_PATH / "Cooking Mode"
         recipemd_dir.mkdir(parents=True, exist_ok=True)
         recipemd_filename = generate_recipemd_filename(recipe_name)

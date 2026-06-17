@@ -398,25 +398,25 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "mistral:7b"
 
 
-def parse_recipe_from_description(
-    description: str,
+def parse_recipe_from_text(
+    text: str,
     title: str = "",
     channel: str = ""
 ) -> Optional[Dict[str, Any]]:
     """
-    Extract recipe from a video description using Ollama.
+    Extract a recipe from free-form recipe text using Ollama.
 
-    Only called if has_recipe_in_description() returns True.
+    Unlike parse_recipe_from_description(), this does NOT run the
+    has_recipe_in_description() gate. Use it when the input is already known to
+    be a recipe (e.g. text pasted from a chat assistant), where header
+    conventions like "STEPS" instead of "Instructions" would wrongly trip the gate.
 
     Returns:
         Recipe dict if extraction succeeds, None on error
     """
-    if not has_recipe_in_description(description):
-        return None
-
     prompt = "{}\n\n{}".format(
         DESCRIPTION_EXTRACTION_PROMPT,
-        build_description_prompt(title, channel, description)
+        build_description_prompt(title, channel, text)
     )
 
     try:
@@ -435,8 +435,27 @@ def parse_recipe_from_description(
         recipe_json = result.get("response", "")
         return json.loads(recipe_json)
     except Exception as e:
-        print(f"  -> Description parsing failed: {e}")
+        print(f"  -> Text parsing failed: {e}")
         return None
+
+
+def parse_recipe_from_description(
+    description: str,
+    title: str = "",
+    channel: str = ""
+) -> Optional[Dict[str, Any]]:
+    """
+    Extract recipe from a video description using Ollama.
+
+    Only called if has_recipe_in_description() returns True.
+
+    Returns:
+        Recipe dict if extraction succeeds, None on error
+    """
+    if not has_recipe_in_description(description):
+        return None
+
+    return parse_recipe_from_text(description, title, channel)
 
 
 def extract_cooking_tips(transcript: str, recipe: Dict[str, Any]) -> List[str]:
