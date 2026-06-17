@@ -38,3 +38,6 @@ mcp>=1.0.0
 
 # Linting (used by Claude Code PostToolUse hook)
 ruff>=0.15.0
+
+# Test-only
+pytest-mock>=3.12.0

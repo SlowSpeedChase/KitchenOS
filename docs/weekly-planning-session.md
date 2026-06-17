@@ -20,7 +20,7 @@ If it doesn't respond, restart it:
 launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist
 ```
 
-The meal planner UI is at `http://localhost:5001/meal-planner` on your Mac, or `http://100.103.114.106:5001/meal-planner` from your iPad over Tailscale.
+The meal planner UI is at `http://localhost:5001/meal-planner` on your Mac, or `http://chases-mac-mini.taila69703.ts.net:5001/meal-planner` from your iPad over Tailscale.
 
 ---
 
@@ -41,7 +41,7 @@ cd /Users/chaseeasterling/KitchenOS
 .venv/bin/python extract_recipe.py --dry-run "https://www.youtube.com/watch?v=VIDEO_ID"
 ```
 
-Each extracted recipe gets a full markdown file in `Recipes/`, a stripped-down cooking view in `Recipes/Cooking Mode/`, an image in `Recipes/Images/`, and three Obsidian buttons baked into the body (Reprocess, Refresh, Add to Meal Plan).
+Each extracted recipe gets a full markdown file in `Recipes/`, an image in `Recipes/Images/`, and three Obsidian buttons baked into the body (Reprocess, Refresh, Add to Meal Plan).
 
 ---
 
@@ -50,7 +50,7 @@ Each extracted recipe gets a full markdown file in `Recipes/`, a stripped-down c
 This is the main session. Open the meal planner:
 
 - **Mac:** `http://localhost:5001/meal-planner`
-- **iPad:** `http://100.103.114.106:5001/meal-planner`
+- **iPad:** `http://chases-mac-mini.taila69703.ts.net:5001/meal-planner`
 
 The layout is a recipe sidebar on the left and a 7-day × 4-slot board on the right (Breakfast / Lunch / Snack / Dinner per day). The week selector at the top lets you jump between weeks; use `?week=2026-W19` in the URL to land directly on a specific week.
 
@@ -95,9 +95,9 @@ From the meal planner, click **Shopping List** for the active week. (Or run it f
 
 ### Pantry confirmation modal
 
-If any ingredient overlaps with `config/pantry.json`, a confirmation modal appears per line:
+If any ingredient overlaps with the pantry inventory (`data/kitchenos.db`), a confirmation modal appears per line:
 
-- **Use pantry** — pulls from your pantry stock; the quantity is decremented in `config/pantry.json`.
+- **Use pantry** — pulls from your pantry stock; the quantity is decremented in the inventory DB.
 - **Buy fresh** — adds it to the shopping list regardless.
 
 Cross-unit-family conflicts (e.g., "need 2 cups, pantry has 8 oz") surface as a warning rather than a guess — you decide.
@@ -106,7 +106,7 @@ Cross-unit-family conflicts (e.g., "need 2 cups, pantry has 8 oz") surface as a 
 
 After confirming, click **Send to Reminders**. KitchenOS pushes all unchecked items into the macOS "Shopping" Reminders list, which syncs to your iPhone. You're done planning.
 
-> **Note on pantry vs. inventory:** `config/pantry.json` is what the shopping list splits against. `Inventory.md` is the richer receipt-driven table you update via Claude — those two don't talk to each other yet. If something is in `Inventory.md` but not in `config/pantry.json`, the shopping list won't know about it.
+> **Note on pantry vs. inventory:** they're the same thing now — one unified store in `data/kitchenos.db`. Receipts (email ingest or Claude photo parse) increment it; confirming a shopping list decrements it. `Inventory.md` is just a generated read-only view of the DB.
 
 ---
 
@@ -126,8 +126,6 @@ To force a fresh task classification (e.g., after swapping a recipe mid-week), a
 ---
 
 ## Stage 5 — Cook: at the stove
-
-**Cooking Mode files** (`Recipes/Cooking Mode/<Recipe>.recipe.md`) are stripped-down versions — ingredients + numbered steps only, no metadata. These are easier to follow on an iPad.
 
 **Calendar:** Every meal plan is compiled into `meal_calendar.ics` daily at 6:05 AM. Apple Calendar (or Obsidian Full Calendar plugin) can subscribe to `http://localhost:5001/calendar.ics`.
 
@@ -174,7 +172,7 @@ To rebuild manually:
 | Sunday evening | Open meal planner → drag recipes onto the week → click Shopping List → Send to Reminders |
 | After shopping | Photo the receipt → share with Claude Desktop → `Inventory.md` updates |
 | Each morning | Open meal planner → check Today's Prep panel → mark tasks done |
-| At the stove | Open the Cooking Mode file on iPad |
+| At the stove | Open the recipe on iPad |
 | End of week | Check the Nutrition Dashboard against macro targets |
 
 ---

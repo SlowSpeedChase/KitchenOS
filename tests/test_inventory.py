@@ -1,31 +1,18 @@
 """Tests for the inventory module."""
 
-import os
-import tempfile
-from pathlib import Path
-
-import pytest
-
-from lib import inventory
 from lib.inventory import (
     InventoryItem,
     add_items,
+    inventory_path,
     normalize_category,
     normalize_location,
     normalize_source,
+    parse_inventory_markdown,
     read_inventory,
     remove_item,
     update_quantity,
     write_inventory,
 )
-
-
-@pytest.fixture
-def tmp_vault(monkeypatch):
-    """Point the vault at a temp dir for the duration of a test."""
-    with tempfile.TemporaryDirectory() as tmp:
-        monkeypatch.setenv("KITCHENOS_VAULT", tmp)
-        yield Path(tmp)
 
 
 class TestNormalizers:
@@ -56,10 +43,10 @@ class TestNormalizers:
 
 
 class TestRoundtrip:
-    def test_read_empty_when_no_file(self, tmp_vault):
+    def test_read_empty_when_no_data(self, tmp_vault, tmp_db):
         assert read_inventory() == []
 
-    def test_write_then_read_preserves_items(self, tmp_vault):
+    def test_write_then_read_preserves_items(self, tmp_vault, tmp_db):
         items = [
             InventoryItem(
                 name="Whole milk", quantity=1, unit="gal",
@@ -87,25 +74,25 @@ class TestRoundtrip:
         assert by_name["Bananas"].quantity == 6.0
         assert by_name["Bananas"].location == "counter"
 
-    def test_fractional_quantity_preserved(self, tmp_vault):
+    def test_fractional_quantity_preserved(self, tmp_vault, tmp_db):
         write_inventory([InventoryItem(name="Olive oil", quantity=0.5, unit="L")])
         loaded = read_inventory()
         assert loaded[0].quantity == 0.5
 
-    def test_inventory_file_lives_at_vault_root(self, tmp_vault):
+    def test_inventory_file_lives_at_vault_root(self, tmp_vault, tmp_db):
         write_inventory([InventoryItem(name="Salt", quantity=1, unit="lb")])
         assert (tmp_vault / "Inventory.md").exists()
 
 
 class TestAddItems:
-    def test_add_into_empty_inventory(self, tmp_vault):
+    def test_add_into_empty_inventory(self, tmp_vault, tmp_db):
         result = add_items([
             InventoryItem(name="Eggs", quantity=12, unit="ct", category="dairy"),
         ])
         assert result == {"added": 1, "merged": 0, "total": 1}
         assert read_inventory()[0].name == "Eggs"
 
-    def test_merge_same_name_unit_location_sums_quantity(self, tmp_vault):
+    def test_merge_same_name_unit_location_sums_quantity(self, tmp_vault, tmp_db):
         add_items([InventoryItem(name="Milk", quantity=1, unit="gal", location="fridge")])
         result = add_items([
             InventoryItem(name="Milk", quantity=1, unit="gal", location="fridge"),
@@ -115,19 +102,19 @@ class TestAddItems:
         assert len(items) == 1
         assert items[0].quantity == 2.0
 
-    def test_different_unit_keeps_separate_rows(self, tmp_vault):
+    def test_different_unit_keeps_separate_rows(self, tmp_vault, tmp_db):
         add_items([InventoryItem(name="Milk", quantity=1, unit="gal")])
         add_items([InventoryItem(name="Milk", quantity=8, unit="oz")])
         items = read_inventory()
         assert len(items) == 2
 
-    def test_different_location_keeps_separate_rows(self, tmp_vault):
+    def test_different_location_keeps_separate_rows(self, tmp_vault, tmp_db):
         add_items([InventoryItem(name="Bread", quantity=1, unit="loaf", location="pantry")])
         add_items([InventoryItem(name="Bread", quantity=1, unit="loaf", location="freezer")])
         items = read_inventory()
         assert len(items) == 2
 
-    def test_merge_is_case_insensitive(self, tmp_vault):
+    def test_merge_is_case_insensitive(self, tmp_vault, tmp_db):
         add_items([InventoryItem(name="Eggs", quantity=12, unit="ct")])
         result = add_items([InventoryItem(name="EGGS", quantity=6, unit="CT")])
         assert result["merged"] == 1
@@ -135,7 +122,7 @@ class TestAddItems:
         assert len(items) == 1
         assert items[0].quantity == 18.0
 
-    def test_merge_updates_purchased_date(self, tmp_vault):
+    def test_merge_updates_purchased_date(self, tmp_vault, tmp_db):
         add_items([
             InventoryItem(name="Yogurt", quantity=1, unit="ct", purchased="2026-04-01"),
         ])
@@ -146,7 +133,7 @@ class TestAddItems:
 
 
 class TestRemove:
-    def test_remove_existing_item(self, tmp_vault):
+    def test_remove_existing_item(self, tmp_vault, tmp_db):
         add_items([
             InventoryItem(name="Cheese", quantity=1, unit="lb"),
             InventoryItem(name="Bread", quantity=1, unit="loaf"),
@@ -156,12 +143,12 @@ class TestRemove:
         assert "Cheese" not in names
         assert "Bread" in names
 
-    def test_remove_missing_item_returns_false(self, tmp_vault):
+    def test_remove_missing_item_returns_false(self, tmp_vault, tmp_db):
         add_items([InventoryItem(name="Bread", quantity=1, unit="loaf")])
         assert remove_item("Cheese") is False
         assert len(read_inventory()) == 1
 
-    def test_remove_filters_by_location(self, tmp_vault):
+    def test_remove_filters_by_location(self, tmp_vault, tmp_db):
         add_items([
             InventoryItem(name="Bread", quantity=1, unit="loaf", location="pantry"),
             InventoryItem(name="Bread", quantity=1, unit="loaf", location="freezer"),
@@ -173,17 +160,43 @@ class TestRemove:
 
 
 class TestUpdateQuantity:
-    def test_update_existing_item(self, tmp_vault):
+    def test_update_existing_item(self, tmp_vault, tmp_db):
         add_items([InventoryItem(name="Flour", quantity=5, unit="lb")])
         assert update_quantity("Flour", 2.5) is True
         assert read_inventory()[0].quantity == 2.5
 
-    def test_update_missing_item_returns_false(self, tmp_vault):
+    def test_update_missing_item_returns_false(self, tmp_vault, tmp_db):
         assert update_quantity("Flour", 1) is False
 
 
+class TestGeneratedView:
+    def test_inventory_md_is_generated_view(self, tmp_vault, tmp_db):
+        add_items([InventoryItem(name="Milk", quantity=1, unit="gal",
+                                 category="dairy", location="fridge")])
+        content = inventory_path().read_text(encoding="utf-8")
+        assert "| Milk | 1 | gal | dairy | fridge |" in content
+        assert "generated" in content.lower()  # view banner present
+
+    def test_hand_edits_to_md_are_invisible(self, tmp_vault, tmp_db):
+        add_items([InventoryItem(name="Milk", quantity=1, unit="gal")])
+        # simulate a user hand-editing the generated view
+        inventory_path().write_text("| Item |...| Beer | 99 | ct |", encoding="utf-8")
+        items = read_inventory()
+        assert [it.name for it in items] == ["Milk"]
+
+
 class TestParsing:
-    def test_skips_malformed_rows(self, tmp_vault):
+    def test_parse_inventory_markdown_still_works(self, tmp_vault, tmp_db):
+        md = (
+            "| Item | Quantity | Unit | Category | Location | Purchased | Source | Notes |\n"
+            "|------|----------|------|----------|----------|-----------|--------|-------|\n"
+            "| Eggs | 12 | ct | dairy | fridge | 2026-06-01 | receipt |  |\n"
+        )
+        items = parse_inventory_markdown(md)
+        assert items[0].name == "Eggs"
+        assert items[0].quantity == 12.0
+
+    def test_skips_malformed_rows(self, tmp_vault, tmp_db):
         content = (
             "---\n"
             "type: inventory\n"
@@ -195,8 +208,7 @@ class TestParsing:
             "|  |  |  |  |  |  |  |  |\n"
             "| Eggs | 12 | ct | dairy | fridge |  | manual |  |\n"
         )
-        (tmp_vault / "Inventory.md").write_text(content, encoding="utf-8")
-        items = read_inventory()
+        items = parse_inventory_markdown(content)
         assert len(items) == 2
         names = sorted(i.name for i in items)
         assert names == ["Eggs", "Milk"]

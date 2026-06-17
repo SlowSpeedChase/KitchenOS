@@ -28,8 +28,8 @@ if [ ! -f "$TARBALL" ]; then
     echo "FAIL check 1: safety-net tarball missing at $TARBALL"
     fail=1
 fi
-if [ ! -d "$HOME/KitchenOS/vault/Recipes" ] || [ "$(ls -1 "$HOME/KitchenOS/vault/Recipes" | wc -l)" -lt 1 ]; then
-    echo "FAIL check 2: ~/KitchenOS/vault/Recipes empty or missing"
+if [ ! -d "$HOME/KitchenOS/KitchenOSApp/Recipes" ] || [ "$(ls -1 "$HOME/KitchenOS/KitchenOSApp/Recipes" | wc -l)" -lt 1 ]; then
+    echo "FAIL check 2: ~/KitchenOS/KitchenOSApp/Recipes empty or missing"
     fail=1
 fi
 if ! curl -sf --max-time 5 http://localhost:5001/health >/dev/null; then

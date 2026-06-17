@@ -156,6 +156,42 @@ KitchenOS extracts recipes using a priority chain:
 
 When using webpage or description sources, KitchenOS also extracts practical cooking tips from the video that aren't in the written recipe.
 
+## Grocery Receipts & Price Tracking
+
+KitchenOS tracks pantry inventory and grocery price history in a local SQLite database (`data/kitchenos.db`). Items enter three ways:
+
+- **Email (automatic)** - A LaunchAgent checks Gmail hourly for HEB receipt emails, parses them with Ollama, validates the totals, and records the trip, line-item prices, and inventory updates. Re-ingesting the same email is always a no-op.
+- **Photo receipt** - Share a receipt photo with Claude (Desktop, web, or iOS Share Sheet); Claude normalizes the cryptic receipt strings and adds the items - with prices - via the MCP tools.
+- **Manual** - Add items via the MCP tools or the `/api/inventory/add` endpoint.
+
+Two markdown views are generated in the Obsidian vault:
+
+- `Inventory.md` - Current pantry stock. **Read-only**: regenerated from the database on every change, so don't hand-edit it.
+- `Price Tracker.md` - Spending for the last 4 weeks, by-category totals, average trip cost, and per-item price trends with history. Refreshed after every successful ingest, or manually with `generate_price_dashboard.py`.
+
+### Setup
+
+1. **Gmail credentials** (add to `.env`):
+   ```bash
+   GMAIL_ADDRESS="you@gmail.com"
+   GMAIL_APP_PASSWORD="xxxx xxxx xxxx xxxx"
+   ```
+   This is a [Google app password](https://myaccount.google.com/apppasswords), which requires 2-step verification on the account.
+
+2. **Verify sender domains** in `config/receipt_senders.json` match your store's receipt emails (defaults: `heb.com`, `hebtoyou.net`).
+
+3. **One-time migration** if you have an existing hand-maintained `Inventory.md`:
+   ```bash
+   .venv/bin/python migrate_inventory_db.py --dry-run   # preview
+   .venv/bin/python migrate_inventory_db.py
+   ```
+
+4. **Install the LaunchAgent** (hourly ingestion):
+   ```bash
+   cp ops/com.kitchenos.receipt-ingest.plist ~/Library/LaunchAgents/
+   launchctl load ~/Library/LaunchAgents/com.kitchenos.receipt-ingest.plist
+   ```
+
 ## Architecture
 
 ```

@@ -1,0 +1,20 @@
+{
+  "store": "HEB",
+  "date": "2026-06-09",
+  "order_type": "in_store",
+  "total": 17.00,
+  "items": [
+    {"raw_name": "HCF BNLS SKNLS BRST", "canonical_name": "chicken breast",
+     "quantity": 2.10, "unit": "lb", "unit_price": 5.49,
+     "line_total": 11.53, "category": "meat"},
+    {"raw_name": "GV WHL MLK 1G", "canonical_name": "whole milk",
+     "quantity": 1, "unit": "gal", "unit_price": 3.98,
+     "line_total": 3.98, "category": "dairy"},
+    {"raw_name": "BANANAS", "canonical_name": "bananas",
+     "quantity": 2.35, "unit": "lb", "unit_price": 0.49,
+     "line_total": 1.15, "category": "produce"},
+    {"raw_name": "TX SALES TAX", "canonical_name": "sales tax",
+     "quantity": 1, "unit": "ct", "unit_price": 0.34,
+     "line_total": 0.34, "category": "fee"}
+  ]
+}

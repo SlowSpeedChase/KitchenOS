@@ -7,7 +7,7 @@ from urllib.parse import quote
 
 from lib.ingredient_parser import parse_ingredient
 
-API_BASE_URL = "http://100.103.114.106:5001"
+API_BASE_URL = "http://chases-mac-mini.taila69703.ts.net:5001"
 
 # Schema definition for recipe frontmatter
 # Used by migration to add missing fields
@@ -24,10 +24,10 @@ RECIPE_SCHEMA = {
     "servings": int,
     "serving_size": str,
     "difficulty": str,
-    "calories": int,
+    "nutrition_calories": int,
     "nutrition_protein": int,
-    "carbs": int,
-    "fat": int,
+    "nutrition_carbs": int,
+    "nutrition_fat": int,
     "nutrition_source": str,
     "cuisine": str,
     "protein": str,
@@ -119,17 +119,27 @@ def generate_tools_callout(filename: str) -> str:
 > ```button
 > name Re-extract
 > type link
-> url {API_BASE_URL}/reprocess?file={encoded_filename}
+> action {API_BASE_URL}/reprocess?file={encoded_filename}
 > ```
 > ```button
 > name Refresh Template
 > type link
-> url {API_BASE_URL}/refresh?file={encoded_filename}
+> action {API_BASE_URL}/refresh?file={encoded_filename}
 > ```
 > ```button
 > name Add to Meal Plan
 > type link
-> url {API_BASE_URL}/add-to-meal-plan?recipe={encoded_filename}
+> action {API_BASE_URL}/add-to-meal-plan?recipe={encoded_filename}
+> ```
+> ```button
+> name View Meal Plan
+> type link
+> action {API_BASE_URL}/current/meal-plan
+> ```
+> ```button
+> name Shopping List
+> type link
+> action {API_BASE_URL}/current/shopping-list
 > ```
 
 '''
@@ -144,13 +154,13 @@ def generate_nutrition_section(recipe_data: dict) -> str:
     Returns:
         Markdown section with nutrition table, or empty string if no data
     """
-    calories = recipe_data.get("calories")
+    calories = recipe_data.get("nutrition_calories")
     if calories is None:
         return ""
 
     nutrition_protein = recipe_data.get("nutrition_protein", 0)
-    carbs = recipe_data.get("carbs", 0)
-    fat = recipe_data.get("fat", 0)
+    carbs = recipe_data.get("nutrition_carbs", 0)
+    fat = recipe_data.get("nutrition_fat", 0)
     serving_size = recipe_data.get("serving_size", "1 serving")
     source = recipe_data.get("nutrition_source", "unknown")
 
@@ -180,10 +190,10 @@ servings: {servings}
 serving_size: {serving_size}
 difficulty: {difficulty}
 
-calories: {calories}
+nutrition_calories: {nutrition_calories}
 nutrition_protein: {nutrition_protein}
-carbs: {carbs}
-fat: {fat}
+nutrition_carbs: {nutrition_carbs}
+nutrition_fat: {nutrition_fat}
 nutrition_source: {nutrition_source}
 
 cuisine: {cuisine}
@@ -385,10 +395,10 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel, date_ad
         servings=num_or_null(recipe_data.get('servings')),
         serving_size=quote_or_null(recipe_data.get('serving_size')),
         difficulty=quote_or_null(recipe_data.get('difficulty')),
-        calories=num_or_null(recipe_data.get('calories')),
+        nutrition_calories=num_or_null(recipe_data.get('nutrition_calories')),
         nutrition_protein=num_or_null(recipe_data.get('nutrition_protein')),
-        carbs=num_or_null(recipe_data.get('carbs')),
-        fat=num_or_null(recipe_data.get('fat')),
+        nutrition_carbs=num_or_null(recipe_data.get('nutrition_carbs')),
+        nutrition_fat=num_or_null(recipe_data.get('nutrition_fat')),
         nutrition_source=quote_or_null(recipe_data.get('nutrition_source')),
         cuisine=quote_or_null(recipe_data.get('cuisine')),
         protein=quote_or_null(recipe_data.get('protein')),

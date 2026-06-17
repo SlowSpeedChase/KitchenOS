@@ -117,7 +117,6 @@ def search_recipes(
     """
     if err := _require_api():
         return err
-    import json
     results = _search_recipes(query=query, cuisine=cuisine, protein=protein)
     if not results:
         return "No recipes found matching your criteria."
@@ -207,8 +206,9 @@ def send_to_reminders(week: str) -> str:
 
 
 @mcp.tool()
-def add_to_inventory(items: list[dict]) -> str:
-    """Add items to the kitchen inventory.
+def add_to_inventory(items: list[dict], trip: dict = None) -> str:
+    """Add items to the kitchen inventory. Optionally record the shopping trip
+    so prices land in the price-history ledger.
 
     Use this after parsing a receipt photo or grocery email. Each item dict
     should have:
@@ -221,15 +221,24 @@ def add_to_inventory(items: list[dict]) -> str:
         - purchased: Date in YYYY-MM-DD format (optional)
         - source: receipt, manual, or claude (default claude)
         - notes: Optional context (e.g., raw receipt line)
+        - unit_price: price per unit in dollars (optional, e.g. 5.49)
+        - line_total: total dollars for the line (optional)
 
     Items matching by (name, unit, location) merge — quantities sum.
 
     Args:
         items: List of item dicts.
+        trip: Optional dict — include when parsing a receipt with visible
+            prices so they land in the price-history ledger:
+            - date: YYYY-MM-DD
+            - store: e.g. "HEB"
+            - total: receipt grand total in dollars
+            - source_id: any stable id for dedup (e.g. "photo-<date>-<store>")
+            - source: "photo" (default)
     """
     if err := _require_api():
         return err
-    result = _add_to_inventory(items)
+    result = _add_to_inventory(items, trip=trip)
     if result.get("status") == "ok":
         return (
             f"Inventory updated: {result['added']} added, "

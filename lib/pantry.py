@@ -1,10 +1,13 @@
-"""Pantry inventory: structured 'what you have on hand'.
+"""Pantry view of the unified inventory: 'what you have on hand'.
 
-Storage: `config/pantry.json`, a list of `{item, amount, unit}` entries.
+Storage is the DB-backed inventory table (`lib.inventory` /
+`lib.inventory_db`) — the former `config/pantry.json` file is retired.
+`load_pantry()` / `save_pantry()` adapt the inventory rows to the
+`[{item, amount, unit}]` shape the shopping-list split logic expects.
 
-This module is the single source of truth for reading, writing, splitting
-recipe demand against pantry, and decrementing inventory after a shopping
-list is confirmed.
+This module remains the single source of truth for splitting recipe demand
+against pantry stock and decrementing inventory after a shopping list is
+confirmed.
 
 It is intentionally separate from `config/pantry_staples.json` (used by
 `lib.seasonality` for seasonal scoring) — the staples list is a flat,
@@ -13,8 +16,6 @@ pantry inventory tracks actual quantities in the user's kitchen.
 """
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from typing import Optional
 
 from lib.ingredient_aggregator import (
@@ -26,44 +27,77 @@ from lib.ingredient_aggregator import (
 )
 
 
-PANTRY_PATH = Path(__file__).resolve().parent.parent / "config" / "pantry.json"
-
-
 def _normalize(name: str) -> str:
     return (name or "").lower().strip()
 
 
-def load_pantry(path: Optional[Path] = None) -> list[dict]:
-    """Load pantry inventory; return [] if the file is missing."""
-    p = path or PANTRY_PATH
-    if not p.exists():
-        return []
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-        if isinstance(data, list):
-            return [dict(entry) for entry in data if isinstance(entry, dict)]
-    except (OSError, json.JSONDecodeError):
-        return []
-    return []
+def load_pantry() -> list[dict]:
+    """Pantry view of current stock: [{item, amount, unit}, ...].
+
+    Sourced from the DB inventory table. Rows sharing (name, unit) across
+    locations are summed — the shopping-list split doesn't care where an
+    item lives.
+    """
+    from lib.inventory import read_inventory
+
+    totals: dict[tuple[str, str], dict] = {}
+    for it in read_inventory():
+        key = (it.name.lower().strip(), it.unit.lower().strip())
+        if key in totals:
+            prev = parse_amount_to_float(totals[key]["amount"]) or 0.0
+            totals[key]["amount"] = format_amount(prev + it.quantity)
+        else:
+            totals[key] = {
+                "item": it.name,
+                "amount": format_amount(it.quantity),
+                "unit": it.unit,
+            }
+    return list(totals.values())
 
 
-def save_pantry(items: list[dict], path: Optional[Path] = None) -> None:
-    """Write pantry inventory atomically (via tmp + rename)."""
-    p = path or PANTRY_PATH
-    p.parent.mkdir(parents=True, exist_ok=True)
-    cleaned = []
+def save_pantry(items: list[dict]) -> None:
+    """Reconcile a pantry list (post apply_decisions) into the inventory table.
+
+    - (name, unit) present here and in DB → quantity updated. If the same
+      (name, unit) exists in several locations, the first row absorbs the
+      new total and the duplicates are dropped — acceptable loss of
+      location detail for the rare duplicate case.
+    - (name, unit) missing here but in DB → row deleted (used up).
+    - new (name, unit) → inserted with defaults (pantry/manual).
+    """
+    from lib.inventory import InventoryItem, read_inventory, write_inventory
+
+    new_by_key: dict[tuple[str, str], dict] = {}
     for entry in items:
-        item = (entry.get("item") or "").strip()
-        if not item:
+        name = (entry.get("item") or "").strip()
+        if not name:
             continue
-        cleaned.append({
-            "item": item,
-            "amount": entry.get("amount", ""),
-            "unit": entry.get("unit", ""),
-        })
-    tmp = p.with_suffix(p.suffix + ".tmp")
-    tmp.write_text(json.dumps(cleaned, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(p)
+        key = (name.lower(), (entry.get("unit") or "").lower().strip())
+        new_by_key[key] = entry
+
+    kept: list[InventoryItem] = []
+    seen: set[tuple[str, str]] = set()
+    for it in read_inventory():
+        key = (it.name.lower().strip(), it.unit.lower().strip())
+        if key not in new_by_key:
+            continue  # used up → drop row
+        if key in seen:
+            continue  # duplicate location row collapsed
+        seen.add(key)
+        amt = parse_amount_to_float(new_by_key[key].get("amount"))
+        it.quantity = amt if amt is not None else it.quantity
+        kept.append(it)
+
+    for key, entry in new_by_key.items():
+        if key not in seen:
+            amt = parse_amount_to_float(entry.get("amount"))
+            kept.append(InventoryItem(
+                name=entry["item"].strip(),
+                quantity=amt if amt is not None else 1.0,
+                unit=(entry.get("unit") or "ct").strip() or "ct",
+            ))
+
+    write_inventory(kept)
 
 
 def find_match(item_name: str, pantry: list[dict]) -> Optional[dict]:
