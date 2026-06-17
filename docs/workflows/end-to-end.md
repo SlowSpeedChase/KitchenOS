@@ -13,18 +13,17 @@ Everything is markdown in the Obsidian vault (`~/KitchenOS/vault/`, or wherever 
 | Folder / file | What lives here |
 |---|---|
 | `Recipes/` | One markdown file per recipe (frontmatter + body) |
-| `Recipes/Cooking Mode/` | Stripped-down `.recipe.md` mirror for cooking view |
 | `Recipes/Images/` | Recipe images (downloaded thumbnails or scraped hero shots) |
 | `Meals/` | Composite-meal definitions (`<Name>.meal.md` — frontmatter lists `sub_recipes`) |
 | `Meal Plans/` | One file per ISO week (`2026-W18.md`) |
 | `Meal Plans/<week>.tasks.json` | Sidecar cache for the prep-task panel |
 | `Shopping Lists/` | One markdown checklist per week |
 | `Nutrition Dashboard/` | One per week |
-| `Inventory.md` | Pantry inventory (table) |
+| `Inventory.md` | Generated read-only view of the inventory DB (`data/kitchenos.db`) |
 | `meal_calendar.ics` | All weeks merged into one calendar feed |
 
-Plus repo config:
-- `config/pantry.json` — *structured* pantry used for shopping splits (different from `Inventory.md`; see Stage 3)
+Plus repo data/config:
+- `data/kitchenos.db` — unified inventory + price ledger (single source of truth for pantry stock; see Stage 3)
 - `config/seasonal_ingredients.json` — Texas seasonal calendar
 - `config/creator_websites.json` — YouTube channel → recipe site mapping
 
@@ -36,7 +35,7 @@ Four entry points, all converge on `extract_recipe.py` (or `import_crouton.py` f
 
 ### 1a. iOS Share Sheet → API
 - On iPhone, share a YouTube URL to the **KitchenOS Shortcut**.
-- Shortcut hits the API server at `http://100.103.114.106:5001/extract` (Tailscale).
+- Shortcut hits the API server at `http://chases-mac-mini.taila69703.ts.net:5001/extract` (Tailscale).
 - API spawns `extract_recipe.py` as a subprocess (5-min timeout) and returns `{status, recipe_name}`.
 - Shortcut shows a success card linking to the new recipe in Obsidian.
 
@@ -80,7 +79,7 @@ Three ways meals land on a meal plan. Output is always `Meal Plans/<week>.md` wi
 - **Servings multiplier:** type `[[Recipe Name]] x2` to scale (the `xN` lives outside the wikilink so Obsidian links still resolve).
 
 ### 2c. Recipe-page button (Obsidian)
-Each recipe markdown contains an **Add to Meal Plan** button (Obsidian Buttons plugin) that opens `http://100.103.114.106:5001/add-to-meal-plan?recipe=<file>` in the browser. The form has three branches:
+Each recipe markdown contains an **Add to Meal Plan** button (Obsidian Buttons plugin) that opens `http://chases-mac-mini.taila69703.ts.net:5001/add-to-meal-plan?recipe=<file>` in the browser. The form has three branches:
 
 1. **Schedule directly** → pick week / day / slot → API inserts the wikilink into the meal plan.
 2. **Add to existing meal** → pick a meal from `vault/Meals/` → API appends this recipe to that meal's `sub_recipes` and offers an optional "now schedule it" prompt.
@@ -94,17 +93,15 @@ This is the primary way to go from "I'm reading a recipe" to "this is in next we
 
 Always starts from a meal plan; ends in a `Shopping Lists/<week>.md` checklist plus (optionally) Apple Reminders.
 
-### Pantry vs. Inventory — they're different things
-- **`config/pantry.json`** — small structured list (`item, amount, unit`) for **shopping splits**. This is what gets checked when generating a shopping list.
-- **`Inventory.md`** — rich receipt-driven table (category, location, purchased date, source). Tracks what's in the kitchen but is **not** currently used by the shopping list generator. Receipts populate it via Claude Desktop + MCP (Stage 6).
-
-> **Today's gap:** the two don't talk to each other. Listed in CLAUDE.md → Future Enhancements → "Inventory ↔ shopping list integration."
+### Pantry and Inventory — one unified store
+- **`data/kitchenos.db`** — the single source of truth for what's in the kitchen. Receipts (email ingest or Claude photo parse, Stage 6) **increment** it; confirming a shopping list **decrements** it.
+- **`Inventory.md`** — generated read-only view of the DB, rewritten on every inventory change. Hand edits are overwritten.
 
 ### The flow (UI)
 1. From the meal planner, click **Shopping List** for the active week.
-2. UI calls `POST /api/shopping-list/preview` → `lib/shopping_list_generator.py` collects all recipe ingredients across the week, aggregates likes, and splits each line against `config/pantry.json`.
+2. UI calls `POST /api/shopping-list/preview` → `lib/shopping_list_generator.py` collects all recipe ingredients across the week, aggregates likes, and splits each line against the inventory in `data/kitchenos.db`.
 3. If any line has overlap with pantry, a **confirmation modal** appears: per line, "Use pantry" or "Buy fresh." Cross-unit-family conflicts surface as a `warning` instead of guessing (e.g. "need 2 cups, pantry has 8 oz").
-4. Submit → `POST /api/shopping-list/confirm` → writes `Shopping Lists/<week>.md` and decrements `config/pantry.json` for the items the user chose to pull from pantry.
+4. Submit → `POST /api/shopping-list/confirm` → writes `Shopping Lists/<week>.md` and decrements the DB inventory for the items the user chose to pull from pantry.
 5. Optional: click **Send to Reminders** → `POST /send-to-reminders` → AppleScript pushes unchecked items into the macOS "Shopping" Reminders list, which syncs to phone.
 
 ### The flow (CLI)
@@ -137,7 +134,6 @@ Calendar reminders for prep ride along with the meal-plan calendar (Stage 5).
 
 ## 5. Cook — at the stove
 
-- **Cooking Mode files** (`Recipes/Cooking Mode/<Recipe>.recipe.md`) are stripped-down versions written at extraction time — just ingredients + numbered steps, easier to read on an iPad.
 - **Calendar** — `com.kitchenos.calendar-sync` runs daily at 6:05 AM, regenerating `meal_calendar.ics` from every meal plan. Apple Calendar (or Obsidian Full Calendar plugin) subscribes to `http://localhost:5001/calendar.ics`.
 - **Re-render or re-extract** — the per-recipe buttons:
   - **Refresh template** (`/refresh`) — re-renders from existing extracted data. Use after editing the template.
@@ -151,10 +147,10 @@ Not part of the linear cook flow, but feeds back into Stage 3 eventually.
 
 1. Take a photo of a grocery receipt (or forward an HEB/Whole Foods email) and share with Claude Desktop.
 2. Claude parses the receipt, normalizes cryptic line items (`GV WHL MLK 1G` → `Whole milk, 1 gal`), assigns category + location, and calls the `add_to_inventory` MCP tool.
-3. MCP → `POST /api/inventory/add` → `lib/inventory.py` merges into `Inventory.md` by `(name, unit, location)`. Quantities sum on duplicates.
-4. Inspect / edit in Obsidian directly, or via MCP tools (`list_inventory`, `update_inventory_item`, `remove_from_inventory`).
+3. MCP → `POST /api/inventory/add` → `lib/inventory.py` merges into the DB inventory by `(name, unit, location)`. Quantities sum on duplicates.
+4. Inspect in Obsidian (`Inventory.md`, the generated view), or edit via MCP tools (`list_inventory`, `update_inventory_item`, `remove_from_inventory`).
 
-`Inventory.md` is human-editable markdown; the parser round-trips it on every write.
+`Inventory.md` is regenerated from `data/kitchenos.db` on every write — don't hand-edit it.
 
 ---
 
@@ -189,7 +185,7 @@ Logs: `~/KitchenOS/logs/<service>.log`. Reload all: `scripts/reload_launch_agent
 2. Click **Shopping List** → confirm pantry pulls in the modal → click **Send to Reminders**. Phone now has the grocery list.
 3. **Mon morning** — receipt photo from Sunday's shop → share with Claude → `Inventory.md` updates.
 4. **Each morning** — meal planner shows **Today's Prep** (e.g., "marinate chicken — 5 min, can do ahead"). Check off as you go.
-5. **At the stove** — open the Cooking Mode file on iPad. Calendar subscription has already put dinner on the calendar.
+5. **At the stove** — open the recipe on iPad. Calendar subscription has already put dinner on the calendar.
 6. **End of week** — glance at the Nutrition Dashboard to see how the week landed against macro targets.
 
 ---

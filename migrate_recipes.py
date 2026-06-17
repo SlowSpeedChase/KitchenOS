@@ -30,6 +30,39 @@ OLLAMA_MODEL = "mistral:7b"
 
 OBSIDIAN_RECIPES_PATH = paths.recipes_dir()
 
+NUTRITION_KEY_RENAMES = {
+    'calories': 'nutrition_calories',
+    'carbs': 'nutrition_carbs',
+    'fat': 'nutrition_fat',
+}
+
+
+def rename_nutrition_keys(content: str) -> tuple[str, list[str]]:
+    """Rename old nutrition frontmatter keys to nutrition_* prefix.
+
+    Only operates on the frontmatter section; body text is untouched.
+    Idempotent — already-prefixed keys are left alone.
+    """
+    changes = []
+    parts = content.split('---', 2)
+    if len(parts) < 3:
+        return content, changes
+
+    frontmatter = parts[1]
+    new_frontmatter = frontmatter
+
+    for old_key, new_key in NUTRITION_KEY_RENAMES.items():
+        # Anchored to start-of-line so 'nutrition_calories:' is not matched by 'calories:'
+        pattern = rf'(?m)^(\s*){re.escape(old_key)}:'
+        if re.search(pattern, new_frontmatter):
+            new_frontmatter = re.sub(pattern, rf'\g<1>{new_key}:', new_frontmatter)
+            changes.append(f"Renamed '{old_key}' to '{new_key}'")
+
+    if not changes:
+        return content, changes
+
+    return f"---{new_frontmatter}---{parts[2]}", changes
+
 
 def has_tools_callout(content: str) -> bool:
     """Check if content already has a Tools callout."""
@@ -188,6 +221,10 @@ def migrate_recipe_content(content: str, filename: str = None) -> Tuple[str, Lis
     changes = []
     new_content = content
 
+    # Rename old nutrition keys to nutrition_* prefix
+    new_content, rename_changes = rename_nutrition_keys(new_content)
+    changes.extend(rename_changes)
+
     # Find and replace ingredient table
     # Pattern matches: ## Ingredients\n\n followed by table rows
     table_pattern = r'(## Ingredients\n\n)(\|[^\n]+\n\|[-|\s]+\n(?:\|[^\n]+\n)*)'
@@ -209,10 +246,14 @@ def migrate_recipe_content(content: str, filename: str = None) -> Tuple[str, Lis
         new_content = add_tools_callout(new_content, filename)
         changes.append("Added Tools callout with reprocess buttons")
 
-    # Migrate localhost URLs to Tailscale IP
+    # Migrate localhost URLs to MagicDNS hostname
     if "localhost:5001" in new_content:
-        new_content = new_content.replace("http://localhost:5001", "http://100.103.114.106:5001")
-        changes.append("Updated button URLs from localhost to Tailscale IP")
+        new_content = new_content.replace("http://localhost:5001", "http://chases-mac-mini.taila69703.ts.net:5001")
+        changes.append("Updated button URLs from localhost to MagicDNS hostname")
+    # Migrate old Tailscale IP to MagicDNS hostname
+    if "100.103.114.106:5001" in new_content:
+        new_content = new_content.replace("http://100.103.114.106:5001", "http://chases-mac-mini.taila69703.ts.net:5001")
+        changes.append("Updated button URLs from Tailscale IP to MagicDNS hostname")
 
     # Add "Add to Meal Plan" button if Tools callout exists but button is missing
     if has_tools_callout(new_content) and "Add to Meal Plan" not in new_content and filename:
@@ -222,7 +263,7 @@ def migrate_recipe_content(content: str, filename: str = None) -> Tuple[str, Lis
             f'> ```button\n'
             f'> name Add to Meal Plan\n'
             f'> type link\n'
-            f'> url http://100.103.114.106:5001/add-to-meal-plan?recipe={encoded_filename}\n'
+            f'> action http://chases-mac-mini.taila69703.ts.net:5001/add-to-meal-plan?recipe={encoded_filename}\n'
             f'> ```\n'
         )
         # Insert before the closing of the tools callout (before the blank line after last ```)
@@ -348,6 +389,9 @@ def needs_content_migration(content: str) -> bool:
         return True
     # Check for missing cssclasses
     if "cssclasses:" not in content:
+        return True
+    # Check for old nutrition keys that need renaming
+    if '\ncalories:' in content or '\ncarbs:' in content or '\nfat:' in content:
         return True
     return False
 

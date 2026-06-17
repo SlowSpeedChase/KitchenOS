@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Simple API server for iOS Shortcuts integration."""
 
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, redirect
+from urllib.parse import quote
 from youtube_transcript_api import YouTubeTranscriptApi
 from googleapiclient.discovery import build
 import os
@@ -9,7 +10,7 @@ import re
 import subprocess
 import time
 import warnings
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -25,7 +26,6 @@ from lib.meal_plan_parser import insert_recipe_into_meal_plan, parse_meal_plan, 
 from lib.recipe_parser import parse_recipe_file, extract_my_notes, parse_recipe_body
 from templates.shopping_list_template import generate_shopping_list_markdown, generate_filename as shopping_list_filename
 from templates.recipe_template import format_recipe_markdown
-from templates.recipemd_template import format_recipemd, generate_recipemd_filename
 from templates.meal_plan_template import generate_meal_plan_markdown
 from lib.ingredient_validator import validate_ingredients
 from lib.seasonality import match_ingredients_to_seasonal, get_peak_months
@@ -253,10 +253,10 @@ def api_recipe_save():
 
         nutrition_result = calculate_recipe_nutrition(ingredients, servings)
         if nutrition_result:
-            data['calories'] = nutrition_result.nutrition.calories
-            data['protein_g'] = nutrition_result.nutrition.protein
-            data['carbs_g'] = nutrition_result.nutrition.carbs
-            data['fat_g'] = nutrition_result.nutrition.fat
+            data['nutrition_calories'] = nutrition_result.nutrition.calories
+            data['nutrition_protein'] = nutrition_result.nutrition.protein
+            data['nutrition_carbs'] = nutrition_result.nutrition.carbs
+            data['nutrition_fat'] = nutrition_result.nutrition.fat
             data['nutrition_source'] = nutrition_result.source
 
         # Set source metadata
@@ -284,17 +284,6 @@ def api_recipe_save():
 
         filepath.write_text(markdown, encoding='utf-8')
 
-        # Generate RecipeMD cooking mode version
-        recipemd_content = format_recipemd(data, '', '', '')
-        recipemd_dir = OBSIDIAN_RECIPES_PATH / "Cooking Mode"
-        recipemd_dir.mkdir(parents=True, exist_ok=True)
-        recipemd_filename = generate_recipemd_filename(recipe_name)
-        recipemd_path = (recipemd_dir / recipemd_filename).resolve()
-        if not recipemd_path.is_relative_to(recipemd_dir.resolve()):
-            return jsonify({"error": "Invalid recipe name"}), 400
-
-        recipemd_path.write_text(recipemd_content, encoding='utf-8')
-
         # Invalidate recipe cache
         _recipe_cache["data"] = None
 
@@ -314,10 +303,9 @@ def api_recipe_import_text():
 
     Body JSON: {"text": str (required), "title": str (optional), "source": str (optional)}.
     The raw text is parsed by Ollama (un-gated) into the recipe schema, enriched,
-    and saved through the same conventions as /api/recipes/save (including the
-    RecipeMD "Cooking Mode" file). The original text is preserved in a collapsible
-    "Import Source" block so a bad parse can be corrected later. Backs Selene's
-    /webhook/api/recipe forward.
+    and saved through the same conventions as /api/recipes/save. The original text
+    is preserved in a collapsible "Import Source" block so a bad parse can be
+    corrected later. Backs Selene's /webhook/api/recipe forward.
     """
     data = request.get_json(force=True, silent=True)
     if not data:
@@ -361,10 +349,10 @@ def api_recipe_import_text():
 
         nutrition_result = calculate_recipe_nutrition(ingredients, servings)
         if nutrition_result:
-            recipe['calories'] = nutrition_result.nutrition.calories
-            recipe['protein_g'] = nutrition_result.nutrition.protein
-            recipe['carbs_g'] = nutrition_result.nutrition.carbs
-            recipe['fat_g'] = nutrition_result.nutrition.fat
+            recipe['nutrition_calories'] = nutrition_result.nutrition.calories
+            recipe['nutrition_protein'] = nutrition_result.nutrition.protein
+            recipe['nutrition_carbs'] = nutrition_result.nutrition.carbs
+            recipe['nutrition_fat'] = nutrition_result.nutrition.fat
             recipe['nutrition_source'] = nutrition_result.source
 
         # Generate markdown, then preserve the original pasted text for later correction.
@@ -397,17 +385,6 @@ def api_recipe_import_text():
             create_backup(filepath)
 
         filepath.write_text(markdown, encoding='utf-8')
-
-        # Generate RecipeMD cooking mode version (matches /api/recipes/save)
-        recipemd_content = format_recipemd(recipe, '', '', '')
-        recipemd_dir = OBSIDIAN_RECIPES_PATH / "Cooking Mode"
-        recipemd_dir.mkdir(parents=True, exist_ok=True)
-        recipemd_filename = generate_recipemd_filename(recipe_name)
-        recipemd_path = (recipemd_dir / recipemd_filename).resolve()
-        if not recipemd_path.is_relative_to(recipemd_dir.resolve()):
-            return jsonify({"error": "Invalid recipe name"}), 400
-
-        recipemd_path.write_text(recipemd_content, encoding='utf-8')
 
         # Invalidate recipe cache
         _recipe_cache["data"] = None
@@ -451,10 +428,10 @@ def api_recipe_detail(name):
             "dietary": fm.get('dietary', []),
             "equipment": fm.get('equipment', []),
             "meal_occasion": fm.get('meal_occasion', []),
-            "calories": fm.get('calories'),
-            "protein_g": fm.get('protein_g'),
-            "carbs_g": fm.get('carbs_g'),
-            "fat_g": fm.get('fat_g'),
+            "nutrition_calories": fm.get('nutrition_calories'),
+            "nutrition_protein": fm.get('nutrition_protein'),
+            "nutrition_carbs": fm.get('nutrition_carbs'),
+            "nutrition_fat": fm.get('nutrition_fat'),
             "seasonal_ingredients": fm.get('seasonal_ingredients', []),
             "peak_months": fm.get('peak_months', []),
             "source_url": fm.get('source_url'),
@@ -946,7 +923,6 @@ def _list_meal_names() -> list[str]:
 
 
 def _generate_week_options(weeks_ahead: int = 4) -> list[str]:
-    from datetime import date
     today = date.today()
     weeks: list[str] = []
     for i in range(weeks_ahead):
@@ -1274,6 +1250,26 @@ def meal_planner():
     return html, 200, {'Content-Type': 'text/html'}
 
 
+@app.route('/current/meal-plan', methods=['GET'])
+def current_meal_plan_redirect():
+    """Redirect to the current week's meal plan in Obsidian."""
+    today = date.today()
+    iso = today.isocalendar()
+    week = f"{iso[0]}-W{iso[1]:02d}"
+    encoded = quote(f"Meal Plans/{week}", safe='')
+    return redirect(f"obsidian://open?vault={paths.vault_root().name}&file={encoded}")
+
+
+@app.route('/current/shopping-list', methods=['GET'])
+def current_shopping_list_redirect():
+    """Redirect to the current week's shopping list in Obsidian."""
+    today = date.today()
+    iso = today.isocalendar()
+    week = f"{iso[0]}-W{iso[1]:02d}"
+    encoded = quote(f"Shopping Lists/{week}", safe='')
+    return redirect(f"obsidian://open?vault={paths.vault_root().name}&file={encoded}")
+
+
 # ----- Meals (composite recipe bundles) -----
 
 def _meal_to_json(meal):
@@ -1449,7 +1445,7 @@ def api_task_mark_done(week, task_id):
     return jsonify(result), status
 
 
-# ----- Inventory (receipt-to-pantry, separate from config/pantry.json) -----
+# ----- Inventory (receipt-to-pantry; same DB table the pantry API adapts) -----
 
 @app.route('/api/inventory', methods=['GET'])
 def api_inventory_list():
@@ -1489,6 +1485,10 @@ def api_inventory_add():
         name = (raw.get('name') or '').strip()
         if not name:
             continue
+        # Fee lines (sales tax, totes, tips) belong in the price ledger only —
+        # they must never become inventory rows.
+        if (raw.get('category') or '').lower().strip() == 'fee':
+            continue
         try:
             quantity = float(raw.get('quantity', 1) or 1)
         except (ValueError, TypeError):
@@ -1504,10 +1504,47 @@ def api_inventory_add():
             notes=(raw.get('notes') or '').strip(),
         ))
 
-    if not parsed:
+    trip_payload = data.get('trip')
+    # An all-fee items list is valid when a trip rides along (the ledger still
+    # wants the rows) — only 400 when there's nothing to do at all.
+    if not parsed and not trip_payload:
         return jsonify({"error": "No valid items provided"}), 400
 
-    result = add_items(parsed)
+    result = add_items(parsed) if parsed else {"added": 0, "merged": 0, "total": 0}
+
+    # Optional price ledger: a "trip" object turns this add into a recorded
+    # shopping trip (photo receipts from the Claude flow). Uses the RAW
+    # request dicts so unit_price/line_total survive InventoryItem parsing.
+    if trip_payload:
+        from lib.inventory_db import record_trip
+        from lib.receipt_parser import to_cents
+
+        purchases = [
+            {
+                "raw_name": it.get('notes') or it.get('name', ''),
+                "canonical_name": (it.get('name') or '').lower().strip(),
+                "quantity": it.get('quantity', 1),
+                "unit": it.get('unit', 'ct'),
+                "unit_price_cents": to_cents(it.get('unit_price')),
+                "total_cents": to_cents(it.get('line_total')),
+                "category": it.get('category', 'other'),
+            }
+            for it in raw_items
+            if isinstance(it, dict)
+        ]
+        # record_trip returns None on a duplicate source_id (same receipt
+        # shared twice) — that's fine, the inventory add still succeeded.
+        record_trip(
+            {
+                "date": trip_payload.get('date', ''),
+                "store": trip_payload.get('store', 'HEB'),
+                "source": trip_payload.get('source', 'photo'),
+                "source_id": trip_payload.get('source_id'),
+                "total_cents": to_cents(trip_payload.get('total')),
+            },
+            purchases,
+        )
+
     return jsonify({"status": "ok", **result})
 
 

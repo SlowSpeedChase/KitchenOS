@@ -1,13 +1,15 @@
 """Pantry inventory storage.
 
-Stores items in a single ``Inventory.md`` file at the vault root. The body is a
-markdown table so it stays human-readable in Obsidian and machine-parseable
-without a YAML library. Items with the same ``(name, unit, location)`` are
-merged on add — quantities sum.
+The SQLite database (``lib/inventory_db.py``) is the source of truth. The
+``Inventory.md`` file at the vault root is a regenerated read-only view —
+rewritten on every ``write_inventory()`` so the stock stays browsable in
+Obsidian, but edits there are overwritten. Items with the same
+``(name, unit, location)`` are merged on add — quantities sum.
 """
 
 from __future__ import annotations
 
+import sys
 from dataclasses import asdict, dataclass
 from datetime import date
 from pathlib import Path
@@ -62,8 +64,8 @@ def normalize_category(cat: Optional[str]) -> str:
 def normalize_location(loc: Optional[str]) -> str:
     if not loc:
         return "pantry"
-    l = loc.lower().strip()
-    return l if l in LOCATIONS else "other"
+    norm = loc.lower().strip()
+    return norm if norm in LOCATIONS else "other"
 
 
 def normalize_source(src: Optional[str]) -> str:
@@ -89,14 +91,11 @@ def _parse_quantity(s: str) -> float:
         return 1.0
 
 
-def read_inventory() -> list[InventoryItem]:
-    path = inventory_path()
-    if not path.exists():
-        return []
-
+def parse_inventory_markdown(text: str) -> list[InventoryItem]:
+    """Parse a legacy Inventory.md table. Used by the one-time migration."""
     items: list[InventoryItem] = []
     in_table = False
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         if line.startswith("| Item |"):
             in_table = True
             continue
@@ -107,7 +106,6 @@ def read_inventory() -> list[InventoryItem]:
         if not line.startswith("|"):
             in_table = False
             continue
-
         cells = [c.strip() for c in line.split("|")[1:-1]]
         if len(cells) < 3 or not cells[0]:
             continue
@@ -127,12 +125,28 @@ def read_inventory() -> list[InventoryItem]:
     return items
 
 
-def write_inventory(items: list[InventoryItem]) -> None:
-    path = inventory_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
+def read_inventory() -> list[InventoryItem]:
+    """Current stock from the DB (source of truth)."""
+    from lib import inventory_db
 
+    return [
+        InventoryItem(
+            name=r["name"],
+            quantity=float(r["quantity"]),
+            unit=r["unit"] or "ct",
+            category=normalize_category(r["category"]),
+            location=normalize_location(r["location"]),
+            purchased=r["purchased"] or None,
+            source=normalize_source(r["source"]),
+            notes=r["notes"] or "",
+        )
+        for r in inventory_db.fetch_inventory_rows()
+    ]
+
+
+def render_inventory_md(items: list[InventoryItem]) -> str:
+    """Render the read-only Obsidian view of current stock."""
     sorted_items = sorted(items, key=lambda i: (i.category, i.name.lower()))
-
     rows = [HEADER, SEPARATOR]
     for it in sorted_items:
         cells = [
@@ -146,20 +160,40 @@ def write_inventory(items: list[InventoryItem]) -> None:
             it.notes.replace("|", "\\|"),
         ]
         rows.append("| " + " | ".join(cells) + " |")
-
-    content = (
+    return (
         "---\n"
         "type: inventory\n"
         f"last_updated: {date.today().isoformat()}\n"
         "---\n\n"
         "# Pantry Inventory\n\n"
-        "> Tracking what's on hand. Updated from grocery receipts and manual entries.\n\n"
+        "> ⚠️ This file is **generated** from the KitchenOS database. "
+        "Do not edit here — changes will be overwritten. "
+        "Update inventory via Claude (MCP tools) or the API.\n\n"
         + "\n".join(rows)
         + "\n"
     )
-    path.write_text(content, encoding="utf-8")
 
 
+def write_inventory(items: list[InventoryItem]) -> None:
+    """Persist to the DB and regenerate the Inventory.md view."""
+    from lib import inventory_db
+
+    inventory_db.replace_inventory_rows([it.to_dict() for it in items])
+    # The DB (source of truth) has already committed at this point. A failed
+    # view write must not propagate: raising would make the API return 500,
+    # and a client retry would double-add quantities.
+    try:
+        path = inventory_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(render_inventory_md(items), encoding="utf-8")
+    except OSError as e:
+        print(f"⚠️  Inventory view write failed: {e}", file=sys.stderr)
+
+
+# TODO(receipt-ingestion plan, task 9): read→merge→replace can lose updates
+# with concurrent writers (Flask threads + ingest LaunchAgent). Switch to
+# INSERT ... ON CONFLICT(name, unit, location) DO UPDATE SET
+# quantity = quantity + excluded.quantity inside one transaction.
 def add_items(new_items: list[InventoryItem]) -> dict:
     """Add items, merging by (name, unit, location). Quantities sum on merge."""
     existing = read_inventory()

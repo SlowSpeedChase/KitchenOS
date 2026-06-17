@@ -102,7 +102,6 @@ source_url: "https://youtube.com/watch?v=abc123"
 # Tests for 3-column ingredient table format
 # ============================================================================
 
-import pytest
 from templates.recipe_template import format_recipe_markdown
 
 
@@ -485,7 +484,7 @@ title: "Test"
 # Test
 '''
     result, changes = migrate_recipe_content(content, "Test.md")
-    assert "100.103.114.106:5001" in result
+    assert "chases-mac-mini.taila69703.ts.net:5001" in result
     assert "localhost:5001" not in result
 
 
@@ -617,3 +616,56 @@ peak_months: [4, 5, 6, 10, 11]
             changes = migrate_recipe_file(recipe)
             # Should not have called Ollama since fields already exist
             mock_match.assert_not_called()
+
+
+# ============================================================================
+# Tests for nutrition key renaming
+# ============================================================================
+
+from migrate_recipes import rename_nutrition_keys
+
+
+class TestRenameNutritionKeys:
+    def test_renames_calories_carbs_fat(self):
+        content = "---\ntitle: Test\ncalories: 450\ncarbs: 45\nfat: 18\n---\n# Test\n"
+        new_content, changes = rename_nutrition_keys(content)
+        assert "nutrition_calories: 450" in new_content
+        assert "nutrition_carbs: 45" in new_content
+        assert "nutrition_fat: 18" in new_content
+        assert "\ncalories:" not in new_content
+        assert "\ncarbs:" not in new_content
+        assert "\nfat:" not in new_content
+        assert len(changes) == 3
+
+    def test_preserves_nutrition_protein(self):
+        content = "---\nnutrition_protein: 25\n---\n# Test\n"
+        new_content, changes = rename_nutrition_keys(content)
+        assert "nutrition_protein: 25" in new_content
+        assert changes == []
+
+    def test_does_not_rename_already_prefixed_keys(self):
+        content = "---\nnutrition_calories: 450\nnutrition_carbs: 45\nnutrition_fat: 18\n---\n# Test\n"
+        new_content, changes = rename_nutrition_keys(content)
+        assert changes == []
+        assert new_content == content
+
+    def test_does_not_touch_body_text(self):
+        content = "---\ncalories: 450\n---\n\n| Calories | Carbs | Fat |\nHigh in fat content.\n"
+        new_content, changes = rename_nutrition_keys(content)
+        assert "nutrition_calories: 450" in new_content
+        assert "| Calories | Carbs | Fat |" in new_content
+        assert "High in fat content." in new_content
+
+    def test_handles_null_values(self):
+        content = "---\ncalories: null\ncarbs: null\nfat: null\n---\n# Test\n"
+        new_content, changes = rename_nutrition_keys(content)
+        assert "nutrition_calories: null" in new_content
+        assert "nutrition_carbs: null" in new_content
+        assert "nutrition_fat: null" in new_content
+        assert len(changes) == 3
+
+    def test_returns_unchanged_content_when_no_frontmatter(self):
+        content = "# Just a heading\nNo frontmatter here."
+        new_content, changes = rename_nutrition_keys(content)
+        assert new_content == content
+        assert changes == []

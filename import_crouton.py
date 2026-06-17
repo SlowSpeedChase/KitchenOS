@@ -21,7 +21,6 @@ from lib.normalizer import normalize_recipe_data
 from lib import paths
 from prompts.crouton_enrichment import CROUTON_ENRICHMENT_PROMPT, build_enrichment_prompt
 from templates.recipe_template import format_recipe_markdown, generate_filename
-from templates.recipemd_template import format_recipemd, generate_recipemd_filename
 
 # Configuration (matches extract_recipe.py)
 OLLAMA_URL = "http://localhost:11434/api/generate"
@@ -91,7 +90,7 @@ def check_duplicate(recipe_name: str) -> bool:
 def save_imported_recipe(recipe_data: dict) -> tuple[Path, bool]:
     """Save a Crouton-imported recipe to the Obsidian vault.
 
-    Handles duplicate naming and generates both main + Cooking Mode files.
+    Handles duplicate naming.
 
     Returns:
         Tuple of (filepath, is_duplicate).
@@ -147,19 +146,6 @@ def save_imported_recipe(recipe_data: dict) -> tuple[Path, bool]:
     filename = generate_filename(recipe_name_for_file)
     filepath = OBSIDIAN_RECIPES_PATH / filename
     filepath.write_text(markdown, encoding="utf-8")
-
-    # Write Cooking Mode file
-    recipemd_content = format_recipemd(
-        file_recipe_data,
-        video_url=source_url,
-        video_title=video_title,
-        channel=source_channel,
-    )
-    recipemd_dir = OBSIDIAN_RECIPES_PATH / "Cooking Mode"
-    recipemd_dir.mkdir(parents=True, exist_ok=True)
-    recipemd_filename = generate_recipemd_filename(recipe_name_for_file)
-    recipemd_path = recipemd_dir / recipemd_filename
-    recipemd_path.write_text(recipemd_content, encoding="utf-8")
 
     return filepath, is_duplicate
 

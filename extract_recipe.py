@@ -30,7 +30,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from main import youtube_parser, get_video_metadata, get_transcript, get_first_comment, get_thumbnail_url
 from prompts.recipe_extraction import SYSTEM_PROMPT, build_user_prompt
 from templates.recipe_template import format_recipe_markdown, generate_filename
-from templates.recipemd_template import format_recipemd, generate_recipemd_filename
 from recipe_sources import (
     find_recipe_link,
     scrape_recipe_from_url,
@@ -216,14 +215,6 @@ def save_recipe_to_obsidian(recipe_data, video_url, video_title, channel, video_
 
     # Write file
     filepath.write_text(markdown, encoding='utf-8')
-
-    # Generate and save RecipeMD version to Cooking Mode subdirectory
-    recipemd_content = format_recipemd(recipe_data, video_url, video_title, channel)
-    recipemd_dir = OBSIDIAN_RECIPES_PATH / "Cooking Mode"
-    recipemd_dir.mkdir(parents=True, exist_ok=True)
-    recipemd_filename = generate_recipemd_filename(recipe_data.get('recipe_name', 'Untitled Recipe'))
-    recipemd_path = recipemd_dir / recipemd_filename
-    recipemd_path.write_text(recipemd_content, encoding='utf-8')
 
     return filepath
 
@@ -445,10 +436,10 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False, 
         nutrition_result = calculate_recipe_nutrition(ingredients, servings)
 
         if nutrition_result:
-            recipe_data["calories"] = nutrition_result.nutrition.calories
-            recipe_data["protein_g"] = nutrition_result.nutrition.protein
-            recipe_data["carbs_g"] = nutrition_result.nutrition.carbs
-            recipe_data["fat_g"] = nutrition_result.nutrition.fat
+            recipe_data["nutrition_calories"] = nutrition_result.nutrition.calories
+            recipe_data["nutrition_protein"] = nutrition_result.nutrition.protein
+            recipe_data["nutrition_carbs"] = nutrition_result.nutrition.carbs
+            recipe_data["nutrition_fat"] = nutrition_result.nutrition.fat
             recipe_data["nutrition_source"] = nutrition_result.source
             recipe_data["serving_size"] = recipe_data.get("serving_size", "1 serving")
 

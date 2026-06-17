@@ -57,13 +57,13 @@ class TestGetRecipeIndex:
             assert len(result) == 1
 
     def test_skips_subdirectories(self):
-        """Should not recurse into subdirectories like Cooking Mode/."""
+        """Should not recurse into subdirectories (e.g. Archive/)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             recipes_dir = Path(tmpdir)
             (recipes_dir / "Recipe.md").write_text('---\ntitle: "Recipe"\n---\n\n# Recipe')
-            subdir = recipes_dir / "Cooking Mode"
+            subdir = recipes_dir / "Archive"
             subdir.mkdir()
-            (subdir / "Recipe.recipe.md").write_text('---\ntitle: "Recipe"\n---\n\n# Recipe')
+            (subdir / "Nested.md").write_text('---\ntitle: "Nested"\n---\n\n# Nested')
             result = get_recipe_index(recipes_dir)
             assert len(result) == 1
 

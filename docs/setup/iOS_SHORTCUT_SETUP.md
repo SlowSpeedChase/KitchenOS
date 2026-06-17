@@ -47,7 +47,7 @@ curl http://localhost:5001/health
 
 **Action 2: Get Contents of URL**
 - Add: **Get Contents of URL**
-- URL: `http://100.103.114.106:5001/extract`
+- URL: `http://chases-mac-mini.taila69703.ts.net:5001/extract`
 - Method: **POST**
 - Request Body: **JSON**
 - Add key: `url` with value: select **Shortcut Input**
