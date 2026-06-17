@@ -74,7 +74,7 @@ A successful send returns:
 
 1. Create or paste a recipe into a new draft. The **first line becomes the recipe name**; everything else is the recipe body (ingredients, steps, notes — any layout the model can read).
 2. Run the **Send Recipe to KitchenOS** action.
-3. Within ~1–3 minutes the recipe appears in your vault (`Recipes/`), with nutrition, an ingredients table, a Cooking Mode file, and a collapsible **Import Source** block holding your original text.
+3. Within ~1–3 minutes the recipe appears in your vault (`Recipes/`), with nutrition, an ingredients table, and a collapsible **Import Source** block holding your original text.
 
 ### Example draft
 

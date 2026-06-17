@@ -400,7 +400,7 @@ For the full route list, grep `@app.route` in `api_server.py`. Endpoints with no
 | `/meal-planner` (GET) | Interactive drag-and-drop meal planner board (HTML). |
 | `/api/meal-plan/<week>` (GET/PUT) | Programmatic meal plan as JSON; PUT round-trips through `rebuild_meal_plan_markdown`. |
 | `/api/meals` (POST) | Create meal — frontmatter saved to `vault/Meals/<name>.meal.md`. |
-| `/api/recipes/import-text` (POST) | Parse a free-text recipe (`{text, title?, source?}`) with Ollama (un-gated) and save it like `/api/recipes/save` (incl. Cooking Mode). Original text preserved in a collapsible `## Import Source` block. Backs Selene's `/webhook/api/recipe` forward. |
+| `/api/recipes/import-text` (POST) | Parse a free-text recipe (`{text, title?, source?}`) with Ollama (un-gated) and save it like `/api/recipes/save`. Original text preserved in a collapsible `## Import Source` block. Backs Selene's `/webhook/api/recipe` forward. |
 | `/api/shopping-list/preview` `/confirm` | See "Pantry-aware shopping list flow" above. |
 | `/api/tasks/<week>` (GET, `?force=1`) | Prep-task sidecar payload; cached in `<week>.tasks.json`. |
 | `/api/inventory/add` (POST) | Accepts optional `trip` `{date, store, total, source_id, source}` + per-item `unit_price`/`line_total` → records into the price ledger. See "Receipt → Inventory Workflow". |

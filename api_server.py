@@ -303,10 +303,9 @@ def api_recipe_import_text():
 
     Body JSON: {"text": str (required), "title": str (optional), "source": str (optional)}.
     The raw text is parsed by Ollama (un-gated) into the recipe schema, enriched,
-    and saved through the same conventions as /api/recipes/save (including the
-    RecipeMD "Cooking Mode" file). The original text is preserved in a collapsible
-    "Import Source" block so a bad parse can be corrected later. Backs Selene's
-    /webhook/api/recipe forward.
+    and saved through the same conventions as /api/recipes/save. The original text
+    is preserved in a collapsible "Import Source" block so a bad parse can be
+    corrected later. Backs Selene's /webhook/api/recipe forward.
     """
     data = request.get_json(force=True, silent=True)
     if not data:
@@ -350,10 +349,10 @@ def api_recipe_import_text():
 
         nutrition_result = calculate_recipe_nutrition(ingredients, servings)
         if nutrition_result:
-            recipe['calories'] = nutrition_result.nutrition.calories
-            recipe['protein_g'] = nutrition_result.nutrition.protein
-            recipe['carbs_g'] = nutrition_result.nutrition.carbs
-            recipe['fat_g'] = nutrition_result.nutrition.fat
+            recipe['nutrition_calories'] = nutrition_result.nutrition.calories
+            recipe['nutrition_protein'] = nutrition_result.nutrition.protein
+            recipe['nutrition_carbs'] = nutrition_result.nutrition.carbs
+            recipe['nutrition_fat'] = nutrition_result.nutrition.fat
             recipe['nutrition_source'] = nutrition_result.source
 
         # Generate markdown, then preserve the original pasted text for later correction.
@@ -386,17 +385,6 @@ def api_recipe_import_text():
             create_backup(filepath)
 
         filepath.write_text(markdown, encoding='utf-8')
-
-        # Generate RecipeMD cooking mode version (matches /api/recipes/save)
-        recipemd_content = format_recipemd(recipe, '', '', '')
-        recipemd_dir = OBSIDIAN_RECIPES_PATH / "Cooking Mode"
-        recipemd_dir.mkdir(parents=True, exist_ok=True)
-        recipemd_filename = generate_recipemd_filename(recipe_name)
-        recipemd_path = (recipemd_dir / recipemd_filename).resolve()
-        if not recipemd_path.is_relative_to(recipemd_dir.resolve()):
-            return jsonify({"error": "Invalid recipe name"}), 400
-
-        recipemd_path.write_text(recipemd_content, encoding='utf-8')
 
         # Invalidate recipe cache
         _recipe_cache["data"] = None
