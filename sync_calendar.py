@@ -95,4 +95,9 @@ def main():
 
 
 if __name__ == "__main__":
+    try:
+        import setproctitle
+        setproctitle.setproctitle("kitchenos-calendar-sync")
+    except ImportError:
+        pass
     main()

@@ -6,8 +6,8 @@
     <string>com.kitchenos.receipt-ingest</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/chaseeasterling/GitHub/KitchenOS/.venv/bin/python</string>
-        <string>/Users/chaseeasterling/GitHub/KitchenOS/ingest_receipts.py</string>
+        <string>/Users/chaseeasterling/Dev/KitchenOS/.venv/bin/python</string>
+        <string>/Users/chaseeasterling/Dev/KitchenOS/ingest_receipts.py</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -17,10 +17,10 @@
         <integer>25</integer>
     </dict>
     <key>StandardOutPath</key>
-    <string>/Users/chaseeasterling/GitHub/KitchenOS/logs/receipt_ingest.log</string>
+    <string>/Users/chaseeasterling/Dev/KitchenOS/logs/receipt_ingest.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/chaseeasterling/GitHub/KitchenOS/logs/receipt_ingest.log</string>
+    <string>/Users/chaseeasterling/Dev/KitchenOS/logs/receipt_ingest.log</string>
     <key>WorkingDirectory</key>
-    <string>/Users/chaseeasterling/GitHub/KitchenOS</string>
+    <string>/Users/chaseeasterling/Dev/KitchenOS</string>
 </dict>
 </plist>
