@@ -1,0 +1,39 @@
+import AppIntents
+
+public struct KitchenOSShortcuts: AppShortcutsProvider {
+    public static var appShortcuts: [AppShortcut] {
+        AppShortcut(
+            intent: FindRecipesByIngredientIntent(),
+            phrases: [
+                "Find \(.applicationName) recipes with \(\.$ingredient)",
+                "Which \(.applicationName) recipes use \(\.$ingredient)",
+            ],
+            shortTitle: "Find by Ingredient",
+            systemImageName: "magnifyingglass"
+        )
+        AppShortcut(
+            intent: GetMealPlanIntent(),
+            phrases: ["What's on my \(.applicationName) meal plan"],
+            shortTitle: "Meal Plan",
+            systemImageName: "calendar"
+        )
+        AppShortcut(
+            intent: SuggestForMealPlanIntent(),
+            phrases: ["Suggest a \(.applicationName) meal to add"],
+            shortTitle: "Suggest a Meal",
+            systemImageName: "wand.and.stars"
+        )
+        AppShortcut(
+            intent: AddRecipeToMealPlanIntent(),
+            phrases: ["Add a recipe to my \(.applicationName) meal plan"],
+            shortTitle: "Add to Plan",
+            systemImageName: "plus.circle"
+        )
+        AppShortcut(
+            intent: GetRecipeNutritionIntent(),
+            phrases: ["How many calories in a \(.applicationName) recipe"],
+            shortTitle: "Recipe Nutrition",
+            systemImageName: "flame"
+        )
+    }
+}
