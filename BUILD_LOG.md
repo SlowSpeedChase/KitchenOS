@@ -57,3 +57,22 @@ caused by Plan A or by the uncommitted changeset:**
   and unwrapped unknowns`. **Full suite now: 665 passed, 1 skipped, 0 failed.**
 
 **Plan A: COMPLETE.** All three tasks committed; tree clean; full suite green.
+
+### 2026-06-21 — Plan B Phase 1 (KitchenOSKit Swift package), executed on the Mac
+
+Toolchain: Swift 6.4, Xcode 27, macOS 27. All 7 tasks built + committed; `swift test`
+green (9 tests).
+
+- Task 1 — package skeleton + CredentialStore (Keychain/in-memory) + KitchenOSConfig.
+- Task 2 — Codable models (RecipeSummary/Detail, MealPlan/Day/SlotValue, Suggestion).
+- Task 3 — WeekDate ISO week-id helper.
+- Task 4 — async KitchenOSClient + MockURLProtocol tests (ingredient query, bearer, HTTP error).
+- Task 5 — DayOfWeek/MealSlot AppEnums + RecipeEntity (EntityStringQuery).
+- Task 6 — five App Intents. **Platform floor raised to macOS 15 / iOS 18** (tools 6.0,
+  Swift 5 language mode) to use the non-deprecated
+  `requestConfirmation(actionName:dialog:)` for the add-to-plan confirmation gate.
+- Task 7 — AppShortcutsProvider with Siri phrases.
+
+**Plan B Phase 1: COMPLETE** (builds clean, tests green). Remaining: **Phase 2**
+(Xcode project + macOS/iPad app targets + signing + on-device Siri) — interactive,
+must be done in Xcode.
