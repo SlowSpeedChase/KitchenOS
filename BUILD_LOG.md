@@ -47,5 +47,13 @@ caused by Plan A or by the uncommitted changeset:**
 - Recommendation: these stale tests should be fixed in a separate cleanup, independent
   of the Siri work.
 
-**Decision needed before continuing:** how to handle the pre-existing path-migration
-changeset (commit it separately first, or leave it), then I commit Task 3 cleanly.
+**Resolution (same session):**
+- Pre-existing changeset committed on its own — `6082fb3` "chore: migrate paths to
+  ~/Dev and set LaunchAgent proctitles" (peeled my doc edits out of CLAUDE.md first so
+  they wouldn't bundle).
+- Task 3 docs committed clean — `835b08c` "docs: document ingredient filter and
+  KITCHENOS_API_TOKEN".
+- Stale snack-slot tests fixed — `test: update stale tests for snack slot, MealEntry,
+  and unwrapped unknowns`. **Full suite now: 665 passed, 1 skipped, 0 failed.**
+
+**Plan A: COMPLETE.** All three tasks committed; tree clean; full suite green.
