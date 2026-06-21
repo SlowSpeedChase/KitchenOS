@@ -44,6 +44,7 @@ VAULT_NAME = paths.vault_root().name
 app = Flask(__name__)
 
 _recipe_cache = {"data": None, "timestamp": 0}
+_recipe_ingredient_cache = {"data": None, "timestamp": 0}
 RECIPE_CACHE_TTL = 300  # 5 minutes
 
 
@@ -211,8 +212,27 @@ def health():
 
 @app.route('/api/recipes', methods=['GET'])
 def api_recipes():
-    """Return recipe metadata for meal planner sidebar."""
+    """Return recipe metadata for meal planner sidebar.
+
+    Optional query param:
+        ingredient: case-insensitive substring. When provided, only recipes
+            whose ingredient list contains a match are returned.
+    """
+    ingredient = request.args.get("ingredient", "").strip()
     now = time.time()
+
+    if ingredient:
+        cache = _recipe_ingredient_cache
+        if cache["data"] is None or (now - cache["timestamp"]) > RECIPE_CACHE_TTL:
+            cache["data"] = get_recipe_index(OBSIDIAN_RECIPES_PATH, include_ingredients=True)
+            cache["timestamp"] = now
+        term = ingredient.lower()
+        matches = [
+            r for r in cache["data"]
+            if any(term in item.lower() for item in r.get("ingredient_items", []))
+        ]
+        return jsonify(matches)
+
     if _recipe_cache["data"] is None or (now - _recipe_cache["timestamp"]) > RECIPE_CACHE_TTL:
         _recipe_cache["data"] = get_recipe_index(OBSIDIAN_RECIPES_PATH)
         _recipe_cache["timestamp"] = now
@@ -1597,5 +1617,10 @@ def system_health_dashboard():
 
 
 if __name__ == '__main__':
+    try:
+        import setproctitle
+        setproctitle.setproctitle('kitchenos-api')
+    except ImportError:
+        pass
     port = int(os.getenv('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
