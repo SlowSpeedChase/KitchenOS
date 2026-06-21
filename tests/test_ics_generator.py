@@ -11,8 +11,12 @@ class TestFormatDaySummary:
     """Test day summary formatting."""
 
     def test_formats_all_meals(self):
-        result = format_day_summary('Pancakes', 'Salad', 'Steak')
+        result = format_day_summary('Pancakes', 'Salad', dinner='Steak')
         assert result == 'B: Pancakes | L: Salad | D: Steak'
+
+    def test_formats_snack_slot(self):
+        result = format_day_summary('Pancakes', 'Salad', 'Almonds', 'Steak')
+        assert result == 'B: Pancakes | L: Salad | S: Almonds | D: Steak'
 
     def test_uses_dash_for_empty(self):
         result = format_day_summary(None, 'Salad', None)
@@ -26,7 +30,7 @@ class TestFormatDaySummary:
         result = format_day_summary(
             MealEntry('Pancakes', 1),
             MealEntry('Salad', 1),
-            MealEntry('Steak', 1),
+            dinner=MealEntry('Steak', 1),
         )
         assert result == 'B: Pancakes | L: Salad | D: Steak'
 
@@ -34,7 +38,7 @@ class TestFormatDaySummary:
         result = format_day_summary(
             MealEntry('Pancakes', 2),
             None,
-            MealEntry('Steak', 1),
+            dinner=MealEntry('Steak', 1),
         )
         assert result == 'B: Pancakes x2 | L: — | D: Steak'
 

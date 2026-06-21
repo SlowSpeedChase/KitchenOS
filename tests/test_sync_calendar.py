@@ -107,4 +107,4 @@ class TestCollectAllDays:
         days = collect_all_days()
 
         assert len(days) == 7
-        assert days[0]['breakfast'] == 'Pancakes'
+        assert days[0]['breakfast'].name == 'Pancakes'
