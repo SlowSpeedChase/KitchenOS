@@ -32,11 +32,20 @@ Each entry: what ran, what passed/failed, what committed, and anything that bloc
   currently **intermingled** with that pre-existing `CLAUDE.md` path edit — so I did
   NOT `git add` it, to avoid bundling unrelated work under a Siri commit.
 
-**Full-suite failures (5) — NOT caused by Plan A:**
-- `test_ics_generator` (3), `test_normalizer` (1), `test_sync_calendar` (1).
-- These modules don't import anything Plan A changed; they coincide with the dirty
-  working tree (`sync_calendar.py` is among the uncommitted files). Needs confirming
-  whether they're pre-existing or introduced by the path-migration changeset.
+**Full-suite failures (5) — INVESTIGATED: all pre-existing in committed code, NOT
+caused by Plan A or by the uncommitted changeset:**
+- Root cause: a **"snack" meal-slot** added to the data model without updating older
+  tests.
+  - `test_ics_generator` (3): `format_day_summary` now emits `B / L / S / D`; tests
+    assert the old `B / L / D`. `lib/ics_generator.py` is unmodified → change is committed.
+  - `test_sync_calendar` (1): same snack staleness in `collect_all_days`. The only
+    working-tree edit to `sync_calendar.py` is a `setproctitle(...)` line in `__main__`,
+    which cannot affect the tested function.
+  - `test_normalizer` (1): module and test both unmodified → committed behavior.
+- The uncommitted changeset is **path-migration + `setproctitle` (`__main__` blocks
+  only)** — it does not touch any tested function.
+- Recommendation: these stale tests should be fixed in a separate cleanup, independent
+  of the Siri work.
 
 **Decision needed before continuing:** how to handle the pre-existing path-migration
 changeset (commit it separately first, or leave it), then I commit Task 3 cleanly.
