@@ -5,6 +5,7 @@ from flask import Flask, request, jsonify, send_file, redirect
 from urllib.parse import quote
 from youtube_transcript_api import YouTubeTranscriptApi
 from googleapiclient.discovery import build
+import functools
 import os
 import re
 import subprocess
@@ -42,6 +43,26 @@ MEAL_PLANS_PATH = paths.meal_plans_dir()
 VAULT_NAME = paths.vault_root().name
 
 app = Flask(__name__)
+
+
+def require_token(view):
+    """Require a bearer token for non-localhost callers when KITCHENOS_API_TOKEN is set.
+
+    No-op when the env var is unset. Localhost (Mac app, local browser UI) is always
+    exempt; remote callers (iPad over Tailscale) must send Authorization: Bearer <token>.
+    """
+    @functools.wraps(view)
+    def wrapper(*args, **kwargs):
+        token = os.environ.get("KITCHENOS_API_TOKEN")
+        if not token:
+            return view(*args, **kwargs)
+        if request.remote_addr in ("127.0.0.1", "::1"):
+            return view(*args, **kwargs)
+        if request.headers.get("Authorization", "") == f"Bearer {token}":
+            return view(*args, **kwargs)
+        return jsonify({"error": "Unauthorized"}), 401
+    return wrapper
+
 
 _recipe_cache = {"data": None, "timestamp": 0}
 _recipe_ingredient_cache = {"data": None, "timestamp": 0}
@@ -211,6 +232,7 @@ def health():
 
 
 @app.route('/api/recipes', methods=['GET'])
+@require_token
 def api_recipes():
     """Return recipe metadata for meal planner sidebar.
 
@@ -420,6 +442,7 @@ def api_recipe_import_text():
 
 
 @app.route('/api/recipes/<name>', methods=['GET'])
+@require_token
 def api_recipe_detail(name):
     """Return full recipe details as JSON."""
     filepath = (OBSIDIAN_RECIPES_PATH / f"{name}.md").resolve()
@@ -800,6 +823,7 @@ def reprocess_recipe():
 
 
 @app.route('/api/meal-plan/<week>', methods=['GET'])
+@require_token
 def api_meal_plan_get(week):
     """Return meal plan as structured JSON."""
     match = re.match(r'^(\d{4})-W(\d{2})$', week)
@@ -845,6 +869,7 @@ def api_meal_plan_get(week):
 
 
 @app.route('/api/meal-plan/<week>', methods=['PUT'])
+@require_token
 def api_meal_plan_put(week):
     """Save meal plan from structured JSON."""
     match = re.match(r'^(\d{4})-W(\d{2})$', week)
@@ -867,6 +892,7 @@ def api_meal_plan_put(week):
 
 
 @app.route('/api/suggest-meal', methods=['POST'])
+@require_token
 def api_suggest_meal():
     """Suggest a recipe for an empty meal slot based on ingredient overlap."""
     data = request.get_json(force=True, silent=True)
