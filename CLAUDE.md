@@ -399,6 +399,7 @@ For the full route list, grep `@app.route` in `api_server.py`. Endpoints with no
 | `/refresh?file=<name>` (GET) | Template refresh only — keeps existing extracted data, just re-renders. |
 | `/meal-planner` (GET) | Interactive drag-and-drop meal planner board (HTML). |
 | `/api/meal-plan/<week>` (GET/PUT) | Programmatic meal plan as JSON; PUT round-trips through `rebuild_meal_plan_markdown`. |
+| `/api/recipes?ingredient=<term>` (GET) | Filters the recipe index to recipes whose ingredient list contains the case-insensitive substring. Backs the Siri "recipes with X" intent. |
 | `/api/meals` (POST) | Create meal — frontmatter saved to `vault/Meals/<name>.meal.md`. |
 | `/api/recipes/import-text` (POST) | Parse a free-text recipe (`{text, title?, source?}`) with Ollama (un-gated) and save it like `/api/recipes/save`. Original text preserved in a collapsible `## Import Source` block. Backs Selene's `/webhook/api/recipe` forward. |
 | `/api/shopping-list/preview` `/confirm` | See "Pantry-aware shopping list flow" above. |
@@ -689,6 +690,7 @@ Maps YouTube channel names to their recipe website domains. Used to search creat
   - `NUTRITIONIX_APP_ID` - Nutritionix API app ID
   - `NUTRITIONIX_API_KEY` - Nutritionix API key
   - `ANTHROPIC_API_KEY` - Claude API for meal suggestions
+  - `KITCHENOS_API_TOKEN` - Optional. When set, remote (non-localhost) callers of the Siri-facing endpoints (`/api/recipes`, `/api/recipes/<name>`, `/api/meal-plan/<week>`, `/api/suggest-meal`) must send `Authorization: Bearer <token>`. Localhost is always exempt. Used by the iPad App-Intents app over Tailscale.
   - `GMAIL_ADDRESS` - Gmail account for receipt-email ingestion
   - `GMAIL_APP_PASSWORD` - Google app password for IMAP (requires 2-step verification)
 
