@@ -108,6 +108,30 @@ Mac / iPad (iOS 27, Apple Intelligence)
 **Chaining:** #1 returns `RecipeEntity` values and #4 accepts a `RecipeEntity`, so the
 new Siri can run "find me a chicken recipe… add that to Thursday" as one conversation.
 
+## AI placement (where the models live, and why)
+
+There are two distinct "Apple LLM" surfaces; this design uses one and deliberately
+defers the other.
+
+- **Apple's model via the new Siri (in use, no code).** The iOS 26+/macOS 26 Apple
+  Intelligence model is what parses speech, selects the right App Intent, and resolves
+  parameters against `RecipeEntity`. The whole design rides on it by exposing
+  well-formed App Intents — we write no model code to get this.
+- **Server-side Claude/Ollama stays the brain (unchanged).** All data-grounded
+  intelligence — meal suggestions (`lib/meal_suggester.py`: ingredient-overlap scoring
+  over the full recipe corpus + pantry DB, then Claude/Ollama) — stays in Python. It
+  has the data and a stronger model than the on-device LLM, and the always-on Mac mini
+  is always reachable over Tailscale, so there is no offline gap to fill.
+- **Apple Foundation Models framework (`import FoundationModels`) — deferred, optional
+  Phase 3.** Calling the ~3B on-device model directly (`LanguageModelSession`,
+  `@Generable` guided generation, tool calling; free, offline, private; requires an
+  Apple Intelligence device, which the target Mac + iPad both are). **Not in v1:** it
+  has none of the KitchenOS data and is weaker than Claude, so on-device suggestions
+  would be redundant and worse. Spoken result phrasing uses simple string templating in
+  the intents, not an LLM. Revisit later only for narrow on-device wins: instant recipe
+  summarization ("give me the gist"), fuzzy voice→param normalization ("something spicy
+  and quick"), or a true offline suggestion fallback.
+
 ## Data flow (chained find → add, with confirm gate)
 
 1. *"Which recipes use chicken?"* → `FindRecipesByIngredient(ingredient: "chicken")`
