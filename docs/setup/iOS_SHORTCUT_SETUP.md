@@ -19,7 +19,7 @@ This returns something like `100.x.y.z`. Save this - it stays stable.
 ## Step 2: Start the Server on Your Mac
 
 ```bash
-cd /Users/chaseeasterling/KitchenOS
+cd /Users/chaseeasterling/Dev/KitchenOS
 PORT=5001 .venv/bin/python api_server.py
 ```
 
@@ -93,11 +93,11 @@ cat > ~/Library/LaunchAgents/com.kitchenos.api.plist << 'EOF'
     <string>com.kitchenos.api</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/chaseeasterling/KitchenOS/.venv/bin/python</string>
-        <string>/Users/chaseeasterling/KitchenOS/api_server.py</string>
+        <string>/Users/chaseeasterling/Dev/KitchenOS/.venv/bin/python</string>
+        <string>/Users/chaseeasterling/Dev/KitchenOS/api_server.py</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/chaseeasterling/KitchenOS</string>
+    <string>/Users/chaseeasterling/Dev/KitchenOS</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PORT</key>
@@ -108,9 +108,9 @@ cat > ~/Library/LaunchAgents/com.kitchenos.api.plist << 'EOF'
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/Users/chaseeasterling/KitchenOS/server.log</string>
+    <string>/Users/chaseeasterling/Dev/KitchenOS/logs/server.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/chaseeasterling/KitchenOS/server.log</string>
+    <string>/Users/chaseeasterling/Dev/KitchenOS/logs/server.log</string>
 </dict>
 </plist>
 EOF
@@ -133,7 +133,7 @@ launchctl unload ~/Library/LaunchAgents/com.kitchenos.api.plist
 
 **"Extraction failed"**
 - Ensure Ollama is running: `ollama serve`
-- Check server logs: `tail -f /Users/chaseeasterling/KitchenOS/server.log`
+- Check server logs: `tail -f /Users/chaseeasterling/Dev/KitchenOS/logs/server.log`
 
 **"Extraction timed out"**
 - Video may be very long
