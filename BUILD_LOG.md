@@ -73,6 +73,24 @@ green (9 tests).
   `requestConfirmation(actionName:dialog:)` for the add-to-plan confirmation gate.
 - Task 7 — AppShortcutsProvider with Siri phrases.
 
-**Plan B Phase 1: COMPLETE** (builds clean, tests green). Remaining: **Phase 2**
-(Xcode project + macOS/iPad app targets + signing + on-device Siri) — interactive,
-must be done in Xcode.
+**Plan B Phase 1: COMPLETE** (builds clean, tests green).
+
+### 2026-06-21 — Plan B Phase 2 scaffold (XcodeGen)
+
+- Installed `xcodegen` (brew). Authored `project.yml` → multiplatform app
+  `KitchenOSSiri` (macOS + iOS destinations) linking the local `KitchenOSKit`
+  package; custom `Info.plist` with ATS exceptions for the http Tailscale host;
+  `SettingsView` (base URL + Keychain token) + `@main` app entry.
+- `xcodegen generate` → `KitchenOSSiri.xcodeproj` (gitignored per `*.xcodeproj/`;
+  regenerate with `xcodegen generate`). project.yml is the committed source of truth.
+- **macOS build verified:** `xcodebuild … -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO`
+  → BUILD SUCCEEDED, App Intents metadata extracted.
+- Metadata-processor fixes (stricter than the compiler): exhaustive
+  `caseDisplayRepresentations` dict literals; removed the `String`-param placeholder
+  from the Find shortcut phrase (only AppEntity/AppEnum params allowed in phrases).
+
+**Remaining (human, in Xcode — cannot be automated here):**
+1. Open `KitchenOSSiri.xcodeproj`, set the **signing Team** on the target.
+2. Run on Mac (⌘R) → verify the 5 actions in the Shortcuts app, then by voice.
+3. Build to the **iPad** (signed, on the tailnet); set the token in Settings if
+   `KITCHENOS_API_TOKEN` is set on the server; verify by voice incl. the find→add chain.
