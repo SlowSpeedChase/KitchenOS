@@ -2,7 +2,7 @@ import SwiftUI
 import KitchenOSKit
 
 struct SettingsView: View {
-    @AppStorage("kitchenos.baseURL") private var baseURL = SettingsView.defaultBaseURL
+    @AppStorage("kitchenos.baseURL") private var baseURL = KitchenOSConfig.defaultBaseURLString
     @State private var token = ""
     @State private var savedNote = ""
     private let creds = KeychainCredentialStore()
@@ -31,14 +31,6 @@ struct SettingsView: View {
         .padding()
         .frame(minWidth: 360, minHeight: 220)
         .onAppear { token = creds.token() ?? "" }
-    }
-
-    static var defaultBaseURL: String {
-        #if os(iOS)
-        "http://chases-mac-mini.taila69703.ts.net:5001"
-        #else
-        "http://localhost:5001"
-        #endif
     }
 }
 
