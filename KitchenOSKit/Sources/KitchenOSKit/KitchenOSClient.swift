@@ -17,6 +17,13 @@ public final class KitchenOSClient: @unchecked Sendable {
         self.session = session
     }
 
+    /// Connectivity probe against /health (open, no auth). Returns the resolved URL on success.
+    public func health() async throws -> String {
+        let url = config.baseURL.appendingPathComponent("/health")
+        _ = try await send(request(url))
+        return config.baseURL.absoluteString
+    }
+
     public func findRecipes(ingredient: String) async throws -> [RecipeSummary] {
         var comps = URLComponents(url: config.baseURL.appendingPathComponent("/api/recipes"),
                                   resolvingAgainstBaseURL: false)!
