@@ -35,9 +35,10 @@
     </dict>
     <key>NSAppTransportSecurity</key>
     <dict>
+        <!-- NSAllowsLocalNetworking is intentionally omitted: including it makes
+             iOS 10+ ignore NSAllowsArbitraryLoads, which blocked the cleartext
+             http call to the Tailscale IP. ArbitraryLoads alone allows it. -->
         <key>NSAllowsArbitraryLoads</key>
-        <true/>
-        <key>NSAllowsLocalNetworking</key>
         <true/>
     </dict>
 </dict>
