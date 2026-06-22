@@ -22,6 +22,8 @@
     <string>$(CURRENT_PROJECT_VERSION)</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.food-and-drink</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>KitchenOS connects to your Mac mini over Tailscale to read recipes and your meal plan.</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
     <key>UILaunchScreen</key>
