@@ -1,7 +1,11 @@
 import AppIntents
+import KitchenOSKit
 
-public struct KitchenOSShortcuts: AppShortcutsProvider {
-    public static var appShortcuts: [AppShortcut] {
+// AppShortcutsProvider MUST live in the app target — Apple's App Intents metadata
+// processor only harvests App Shortcuts from the main app, not from linked packages.
+// The intents themselves live in KitchenOSKit.
+struct KitchenOSShortcuts: AppShortcutsProvider {
+    static var appShortcuts: [AppShortcut] {
         AppShortcut(
             intent: FindRecipesByIngredientIntent(),
             phrases: [
