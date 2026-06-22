@@ -48,16 +48,15 @@ struct SettingsView: View {
     private func runTest() {
         testResult = "Testing…"
         Task {
-            let client = KitchenOSClient(config: .resolved())
+            // Raw probe so we surface the true NSError instead of a generic "unreachable".
+            let url = KitchenOSConfig.resolved().baseURL.appendingPathComponent("/health")
             do {
-                let url = try await client.health()
-                testResult = "✅ Reached \(url)"
-            } catch KitchenOSError.unreachable {
-                testResult = "❌ Unreachable: \(KitchenOSConfig.resolved().baseURL.absoluteString)"
-            } catch let KitchenOSError.http(code) {
-                testResult = "❌ HTTP \(code) from \(KitchenOSConfig.resolved().baseURL.absoluteString)"
+                let (_, resp) = try await URLSession.shared.data(from: url)
+                let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
+                testResult = "✅ Reached \(url.absoluteString) (HTTP \(code))"
             } catch {
-                testResult = "❌ \(error)"
+                let ns = error as NSError
+                testResult = "❌ \(url.absoluteString)\n\(ns.domain) \(ns.code): \(ns.localizedDescription)"
             }
         }
     }
