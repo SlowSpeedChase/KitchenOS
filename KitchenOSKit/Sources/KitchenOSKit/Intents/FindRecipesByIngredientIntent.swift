@@ -4,7 +4,7 @@ public struct FindRecipesByIngredientIntent: AppIntent {
     public static var title: LocalizedStringResource = "Find Recipes by Ingredient"
     public static var description = IntentDescription("Find KitchenOS recipes that contain an ingredient.")
 
-    @Parameter(title: "Ingredient")
+    @Parameter(title: "Ingredient", requestValueDialog: "Which ingredient?")
     public var ingredient: String
 
     public init() {}
