@@ -7,7 +7,15 @@ public enum DayOfWeek: String, AppEnum, CaseIterable {
 
     public static var typeDisplayRepresentation: TypeDisplayRepresentation { "Day" }
     public static var caseDisplayRepresentations: [DayOfWeek: DisplayRepresentation] {
-        Dictionary(uniqueKeysWithValues: allCases.map { ($0, DisplayRepresentation(stringLiteral: $0.title)) })
+        [
+            .monday: "Monday",
+            .tuesday: "Tuesday",
+            .wednesday: "Wednesday",
+            .thursday: "Thursday",
+            .friday: "Friday",
+            .saturday: "Saturday",
+            .sunday: "Sunday",
+        ]
     }
 }
 
@@ -18,6 +26,11 @@ public enum MealSlot: String, AppEnum, CaseIterable {
 
     public static var typeDisplayRepresentation: TypeDisplayRepresentation { "Meal" }
     public static var caseDisplayRepresentations: [MealSlot: DisplayRepresentation] {
-        Dictionary(uniqueKeysWithValues: allCases.map { ($0, DisplayRepresentation(stringLiteral: $0.title)) })
+        [
+            .breakfast: "Breakfast",
+            .lunch: "Lunch",
+            .snack: "Snack",
+            .dinner: "Dinner",
+        ]
     }
 }

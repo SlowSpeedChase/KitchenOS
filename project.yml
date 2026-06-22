@@ -1,0 +1,30 @@
+name: KitchenOSSiri
+options:
+  bundleIdPrefix: com.kitchenos
+  createIntermediateGroups: true
+packages:
+  KitchenOSKit:
+    path: KitchenOSKit
+targets:
+  KitchenOSSiri:
+    type: application
+    supportedDestinations: [macOS, iOS]
+    deploymentTarget:
+      macOS: "15.0"
+      iOS: "18.0"
+    sources:
+      - KitchenOSSiri/Sources
+    dependencies:
+      - package: KitchenOSKit
+        product: KitchenOSKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kitchenos.siri
+        PRODUCT_NAME: KitchenOS
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: KitchenOSSiri/Info.plist
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_PREVIEWS: YES

@@ -5,8 +5,8 @@ public struct KitchenOSShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: FindRecipesByIngredientIntent(),
             phrases: [
-                "Find \(.applicationName) recipes with \(\.$ingredient)",
-                "Which \(.applicationName) recipes use \(\.$ingredient)",
+                "Find \(.applicationName) recipes by ingredient",
+                "Search \(.applicationName) recipes",
             ],
             shortTitle: "Find by Ingredient",
             systemImageName: "magnifyingglass"
