@@ -89,8 +89,31 @@ green (9 tests).
   `caseDisplayRepresentations` dict literals; removed the `String`-param placeholder
   from the Find shortcut phrase (only AppEntity/AppEnum params allowed in phrases).
 
-**Remaining (human, in Xcode — cannot be automated here):**
-1. Open `KitchenOSSiri.xcodeproj`, set the **signing Team** on the target.
-2. Run on Mac (⌘R) → verify the 5 actions in the Shortcuts app, then by voice.
-3. Build to the **iPad** (signed, on the tailnet); set the token in Settings if
-   `KITCHENOS_API_TOKEN` is set on the server; verify by voice incl. the find→add chain.
+### 2026-06-22 — On-device bring-up (iPad) — WORKING
+
+Signed + installed on the iPad (iPad16,10, iOS 27). Sequence of real-device fixes:
+
+1. **Install failed — MissingBundleExecutable:** custom Info.plist lacked
+   `CFBundleExecutable` (+ other keys Xcode injects). Added them.
+2. **No shortcuts appeared:** `AppShortcutsProvider` was in the KitchenOSKit
+   package; Apple only harvests App Shortcuts from the **app target**. Moved it →
+   `autoShortcuts` extracted (5).
+3. **Spotlight text-entry focus:** added `requestValueDialog` to the ingredient param.
+4. **"Can't reach" (1):** `@AppStorage` never persists its UI default, so
+   `KitchenOSConfig.resolved()` fell back to **localhost** on the iPad. Made the
+   default **platform-aware** → Tailscale IP `100.111.6.10:5001` on iOS.
+5. **"Can't reach" (2) — the real one:** ATS. Including `NSAllowsLocalNetworking`
+   makes iOS 10+ **ignore** `NSAllowsArbitraryLoads`, blocking the cleartext http
+   call to the Tailscale IP ("ATS requires a secure connection"). Removed it;
+   `NSAllowsArbitraryLoads` alone now permits it. Also added
+   `NSLocalNetworkUsageDescription`.
+   - Added an in-app **Test connection** button (raw NSError) — this is what
+     surfaced the precise ATS error.
+
+**RESULT: Siri on the iPad found chicken recipes.** Full path verified:
+iPad → Tailscale (`100.111.6.10:5001`) → Flask ingredient search → spoken result.
+
+**Still to verify (manual):** the other four intents by voice — GetMealPlan,
+SuggestForMealPlan, AddRecipeToMealPlan (confirm-before-write), GetRecipeNutrition;
+and the find→add chain. Set `KITCHENOS_API_TOKEN` + app token only if you want remote
+auth (localhost is exempt; the iPad sends the token if set).
