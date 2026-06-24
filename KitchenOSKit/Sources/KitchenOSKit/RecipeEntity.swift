@@ -1,7 +1,9 @@
 import AppIntents
+import CoreSpotlight
 import Foundation
+import UniformTypeIdentifiers
 
-public struct RecipeEntity: AppEntity, Identifiable {
+public struct RecipeEntity: AppEntity, IndexedEntity, Identifiable {
     public var id: String          // recipe name
     public var cuisine: String?
     public var proteinName: String?
@@ -20,9 +22,26 @@ public struct RecipeEntity: AppEntity, Identifiable {
         DisplayRepresentation(title: "\(id)", subtitle: cuisine.map { "\($0)" })
     }
 
+    /// Feeds the system semantic index so Siri/Spotlight match recipes by meaning.
+    public var attributeSet: CSSearchableItemAttributeSet {
+        let set = CSSearchableItemAttributeSet(contentType: .text)
+        set.title = id
+        set.displayName = id
+        let facets = [cuisine, proteinName].compactMap { $0 }
+        if !facets.isEmpty {
+            set.contentDescription = facets.joined(separator: " · ")
+            set.keywords = facets
+        }
+        return set
+    }
+
     public static var defaultQuery = RecipeEntityQuery()
 }
 
+// Note: RecipeEntity conforms to IndexedEntity (semantic index) above; indexing is driven
+// manually via RecipeIndexer (app launch + Settings button). The system-driven
+// IndexedEntityQuery reindex hooks require iOS/macOS 27 (CSSearchableIndexDescription) —
+// a future enhancement if we raise the floor.
 public struct RecipeEntityQuery: EntityStringQuery {
     public init() {}
 

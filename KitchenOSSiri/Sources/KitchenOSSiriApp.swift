@@ -1,4 +1,5 @@
 import SwiftUI
+import KitchenOSKit
 
 @main
 struct KitchenOSSiriApp: App {
@@ -12,6 +13,8 @@ struct KitchenOSSiriApp: App {
                 SettingsView()
                     .tabItem { Label("Settings", systemImage: "gearshape") }
             }
+            // Refresh the semantic index once per launch (best-effort).
+            .task { try? await RecipeIndexer.reindexAll() }
         }
     }
 }
