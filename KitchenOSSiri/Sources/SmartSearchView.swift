@@ -59,7 +59,10 @@ struct SmartSearchView: View {
     }
 
     private func subtitle(_ r: RecipeSummary) -> String {
-        [r.cuisine, r.protein].compactMap { $0 }.joined(separator: " · ")
+        var parts = [r.cuisine, r.protein].compactMap { $0 }
+        if let p = r.nutritionProtein { parts.append("\(Int(p))g protein") }
+        if let f = r.nutritionFat { parts.append("\(Int(f))g fat") }
+        return parts.joined(separator: " · ")
     }
 
     private func runSearch() {

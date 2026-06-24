@@ -6,10 +6,28 @@ public struct RecipeSummary: Codable, Sendable, Hashable {
     public let protein: String?
     public let image: String?
     public let ingredientItems: [String]?
+    public let nutritionCalories: Double?
+    public let nutritionProtein: Double?
+    public let nutritionCarbs: Double?
+    public let nutritionFat: Double?
 
     enum CodingKeys: String, CodingKey {
         case name, cuisine, protein, image
         case ingredientItems = "ingredient_items"
+        case nutritionCalories = "nutrition_calories"
+        case nutritionProtein = "nutrition_protein"
+        case nutritionCarbs = "nutrition_carbs"
+        case nutritionFat = "nutrition_fat"
+    }
+
+    public init(name: String, cuisine: String? = nil, protein: String? = nil,
+                image: String? = nil, ingredientItems: [String]? = nil,
+                nutritionCalories: Double? = nil, nutritionProtein: Double? = nil,
+                nutritionCarbs: Double? = nil, nutritionFat: Double? = nil) {
+        self.name = name; self.cuisine = cuisine; self.protein = protein
+        self.image = image; self.ingredientItems = ingredientItems
+        self.nutritionCalories = nutritionCalories; self.nutritionProtein = nutritionProtein
+        self.nutritionCarbs = nutritionCarbs; self.nutritionFat = nutritionFat
     }
 }
 

@@ -5,6 +5,7 @@ from pathlib import Path
 from lib.recipe_parser import parse_recipe_file, parse_recipe_body
 
 FILTER_FIELDS = ("cuisine", "protein", "difficulty", "meal_occasion", "dish_type", "peak_months")
+NUTRITION_FIELDS = ("nutrition_calories", "nutrition_protein", "nutrition_carbs", "nutrition_fat")
 
 
 def get_recipe_index(recipes_dir: Path, include_ingredients: bool = False) -> list[dict]:
@@ -34,11 +35,15 @@ def get_recipe_index(recipes_dir: Path, include_ingredients: bool = False) -> li
             fm = parsed["frontmatter"]
             for field in FILTER_FIELDS:
                 entry[field] = fm.get(field)
+            for field in NUTRITION_FIELDS:
+                entry[field] = fm.get(field)
             if include_ingredients:
                 body_data = parse_recipe_body(parsed["body"])
                 entry["ingredient_items"] = [ing["item"] for ing in body_data.get("ingredients", [])]
         except Exception:
             for field in FILTER_FIELDS:
+                entry.setdefault(field, None)
+            for field in NUTRITION_FIELDS:
                 entry.setdefault(field, None)
             if include_ingredients:
                 entry["ingredient_items"] = []
