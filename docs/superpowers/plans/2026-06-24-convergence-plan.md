@@ -29,10 +29,13 @@ git switch -c converge-to-main
 ## Step 1 — Run the merge (surfaces conflicts)
 ```bash
 git merge siri-app-intents --no-edit
-git diff --name-only --diff-filter=U     # expected conflicts: KitchenOSSiriApp.swift, SmartSearchView.swift
+git diff --name-only --diff-filter=U     # list the ACTUAL conflicts; resolve each per the rules below
 ```
-Auto-merged but **must be verified** (auto-merge ≠ correct): `api_server.py`, `KitchenOSKit/.../Models.swift`,
-`KitchenOSKit/.../KitchenOSClient+Search.swift`, `KitchenOSSiri/.../SettingsView.swift`.
+The conflict set **grows as the other agent keeps working** (as of now: `KitchenOSSiriApp.swift`,
+`SmartSearchView.swift`, and `KitchenOSClient.swift` — they just refactored the client to add shared
+helper methods). Whatever git lists, the resolution principle is the same: **keep both sides' features.**
+Files often auto-merged but **must be verified** (auto-merge ≠ correct): `api_server.py`,
+`KitchenOSKit/.../Models.swift`, `KitchenOSKit/.../KitchenOSClient+Search.swift`, `SettingsView.swift`.
 
 ## Step 2 — Resolve & verify the BACKEND (low risk, do first)
 ```bash
@@ -50,12 +53,15 @@ python3 -c "import api_server; print('api_server imports OK')"   # use .venv: .v
 If `api_server.py` looks garbled at a merge seam, hand-fix so **both** my endpoints (`by-ingredients`,
 ingredient filter, auth) and their endpoints (nutrition/import-text changes) are intact.
 
-## App decision (make before Step 3)
-**Recommended:** one **multiplatform** app = *their* scaffolding (the `AppShell` sidebar for macOS,
-`Info-iOS/Info-macOS` split, macOS target, `Extraction/` module) **+ my iOS feature views** (the
-Assistant/Plan/Cook/Search/Settings tabs and `RecipeDetailView`), gated with `#if os(iOS)` / `#if os(macOS)`.
-If that's too much for one sitting, pick **one canonical app** (iOS Siri/AI = mine) and set their Mac
-extraction app aside on its branch — you can fold it in later.
+## App decision — DECIDED: one multiplatform app
+Target = **a single app** that keeps **both** feature sets, gated by platform:
+- **macOS** → their `AppShell` sidebar + `Extraction/` module + macOS entitlements/Info.
+- **iOS/iPadOS** → my `TabView` (Assistant / Plan / Cook / Search / Settings) + App Intents +
+  Foundation Models + Spotlight `IndexedEntity` + Spotlight-tap routing.
+- **Shared** (both platforms): all of `KitchenOSKit`, `RecipeDetailView`, the AI features, the API client.
+
+Guiding rule for every conflict: **keep both sides' features; never delete one effort's work to
+resolve a textual clash.** Use `#if os(macOS)` / `#if os(iOS)` at the seams (app entry, navigation).
 
 ## Step 3 — Resolve the APP conflicts + duplicate types
 1. **`KitchenOSSiriApp.swift`** (conflict): pick the entry. For the combined app:
@@ -80,6 +86,11 @@ extraction app aside on its branch — you can fold it in later.
    SmartSearchView, the App, plus KitchenOSKit). After editing: `xcodegen generate`.
 5. **`Info-iOS.plist`**: confirm it has my iOS networking keys — `NSAppTransportSecurity →
    NSAllowsArbitraryLoads = true` (NO `NSAllowsLocalNetworking`) and `NSLocalNetworkUsageDescription`.
+6. **`KitchenOSClient.swift`** (now also diverged): they added shared helper methods (`baseURL`,
+   `getJSON`, `postJSON`, `postRawJSON`, `postDecoding`, `jsonRequest`) for feature extensions. Keep
+   those **and** my methods (`recipesByIngredients`, `inventoryItems`, `recipes(matching:)`). Optionally
+   refactor mine onto their `postDecoding`/`getJSON` helpers to dedupe — but functional-first: just make
+   sure both sets compile and the private `request`/`send`/`decode` plumbing isn't duplicated.
 
 ## Step 4 — Build & verify everything
 ```bash
