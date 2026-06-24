@@ -12,6 +12,7 @@ struct AssistantView: View {
     @State private var input = ""
     @State private var isThinking = false
     @State private var assistant: MealPlanAssistant?
+    @State private var pending: PendingMealAddition?
 
     var body: some View {
         NavigationStack {
@@ -42,6 +43,25 @@ struct AssistantView: View {
                     }
                 }
 
+                if let p = pending {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Add **\(p.recipe)** to \(p.day) \(p.meal)?")
+                            .font(.callout)
+                        HStack {
+                            Button("Confirm") { confirmAdd(p) }
+                                .buttonStyle(.borderedProminent)
+                            Button("Dismiss") {
+                                pending = nil
+                                assistant?.clearProposal()
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+                    .background(Color.yellow.opacity(0.15))
+                }
+
                 HStack {
                     TextField("Ask about recipes or your plan…", text: $input)
                         .textFieldStyle(.roundedBorder)
@@ -66,8 +86,24 @@ struct AssistantView: View {
                 if assistant == nil { assistant = MealPlanAssistant() }
                 let reply = try await assistant!.reply(to: text)
                 messages.append(Message(role: "assistant", text: reply))
+                pending = assistant!.pendingProposal()
             } catch {
                 messages.append(Message(role: "assistant", text: "Sorry — \(error.localizedDescription)"))
+            }
+            isThinking = false
+        }
+    }
+
+    private func confirmAdd(_ p: PendingMealAddition) {
+        pending = nil
+        isThinking = true
+        Task { @MainActor in
+            do {
+                if assistant == nil { assistant = MealPlanAssistant() }
+                let result = try await assistant!.confirm(p)
+                messages.append(Message(role: "assistant", text: result))
+            } catch {
+                messages.append(Message(role: "assistant", text: "Couldn't add it — \(error.localizedDescription)"))
             }
             isThinking = false
         }
