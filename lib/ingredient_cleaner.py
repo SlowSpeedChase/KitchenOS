@@ -67,6 +67,17 @@ _GARNISH = re.compile(
     re.IGNORECASE,
 )
 
+# Size descriptors that leak into the unit field ("1 medium onion", "1 inch
+# ginger", "1 small piece onion"). Not units — strip them; the count fallback
+# ("whole") plus piece-weight lookup handles the conversion.
+_SIZE_WORDS = {"small", "medium", "large", "extra", "x-large", "xl",
+               "jumbo", "big", "inch", "inches"}
+
+
+def _strip_size_words(unit: str) -> str:
+    kept = [t for t in unit.lower().split() if t not in _SIZE_WORDS]
+    return " ".join(kept) if kept else "whole"
+
 
 @dataclass
 class CleanIngredient:
@@ -181,7 +192,9 @@ def clean_ingredient(ing: dict) -> CleanIngredient:
         amount_str = _format_decimal(amt_f)
 
     # --- A3: unit normalization + family validation ---------------------------
-    unit = normalize_unit(unit) if unit else "whole"
+    unit = normalize_unit(_strip_size_words(unit)) if unit else "whole"
+    if not unit:
+        unit = "whole"
     family = get_unit_family(unit)
     if family == "other":
         needs_review = True

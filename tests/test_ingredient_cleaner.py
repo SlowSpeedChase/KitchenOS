@@ -82,6 +82,16 @@ class TestA3UnitValidation:
         assert r.needs_review
         assert "unrecognized unit" in r.note
 
+    def test_size_word_unit_becomes_count(self):
+        r = _clean("1", "medium", "sweet potato")
+        assert r.unit == "whole"
+        assert not r.needs_review
+
+    def test_size_phrase_keeps_real_unit(self):
+        r = _clean("1", "small piece", "yellow onion")
+        assert r.unit == "piece"
+        assert not r.needs_review
+
     def test_junk_amount_flagged(self):
         r = _clean("Tomato Sauce", "whole", "tomato sauce")
         assert r.amount == "1"

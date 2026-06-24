@@ -1,5 +1,8 @@
 import SwiftUI
 import KitchenOSKit
+#if os(macOS)
+import ServiceManagement
+#endif
 
 struct SettingsView: View {
     @AppStorage("kitchenos.baseURL") private var baseURL = KitchenOSConfig.defaultBaseURLString
@@ -7,6 +10,10 @@ struct SettingsView: View {
     @State private var savedNote = ""
     @State private var testResult = ""
     private let creds = KeychainCredentialStore()
+    #if os(macOS)
+    @AppStorage("kitchenos.projectRoot") private var projectRoot = ExtractionConfig.defaultProjectRoot
+    @AppStorage("launchAtLogin") private var launchAtLogin = false
+    #endif
 
     var body: some View {
         Form {
@@ -39,11 +46,39 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            #if os(macOS)
+            Section("Extraction (Mac)") {
+                TextField("Project root", text: $projectRoot)
+                    .textFieldStyle(.roundedBorder)
+                    .autocorrectionDisabled()
+                Text("Folder containing extract_recipe.py and .venv. Used by the local Extraction screen.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle("Launch at login", isOn: $launchAtLogin)
+                    .onChange(of: launchAtLogin) { _, newValue in
+                        updateLaunchAtLogin(enabled: newValue)
+                    }
+            }
+            #endif
         }
         .padding()
         .frame(minWidth: 360, minHeight: 300)
         .onAppear { token = creds.token() ?? "" }
     }
+
+    #if os(macOS)
+    private func updateLaunchAtLogin(enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            print("Failed to update launch at login: \(error)")
+        }
+    }
+    #endif
 
     private func runTest() {
         testResult = "Testing…"
