@@ -39,5 +39,20 @@ struct KitchenOSShortcuts: AppShortcutsProvider {
             shortTitle: "Recipe Nutrition",
             systemImageName: "flame"
         )
+        AppShortcut(
+            intent: SmartFindRecipesIntent(),
+            phrases: [
+                "Find a \(.applicationName) recipe",
+                "Find me something in \(.applicationName)",
+            ],
+            shortTitle: "Smart Find",
+            systemImageName: "sparkles"
+        )
+        AppShortcut(
+            intent: SummarizeRecipeIntent(),
+            phrases: ["Summarize a \(.applicationName) recipe"],
+            shortTitle: "Summarize",
+            systemImageName: "text.quote"
+        )
     }
 }
