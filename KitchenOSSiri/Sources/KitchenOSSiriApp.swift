@@ -13,6 +13,8 @@ struct KitchenOSSiriApp: App {
                     .tabItem { Label("Assistant", systemImage: "bubble.left.and.bubble.right") }
                 MealPlanView()
                     .tabItem { Label("Plan", systemImage: "calendar") }
+                CookView()
+                    .tabItem { Label("Cook", systemImage: "frying.pan") }
                 SmartSearchView()
                     .tabItem { Label("Search", systemImage: "sparkles") }
                 SettingsView()

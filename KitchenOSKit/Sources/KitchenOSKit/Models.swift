@@ -87,3 +87,11 @@ public struct SuggestResponse: Codable, Sendable {
     public let suggestion: Suggestion?
     public let message: String?
 }
+
+public struct ByIngredientsResponse: Codable, Sendable {
+    public let matches: [Suggestion]
+}
+
+public struct InventoryItem: Codable, Sendable {
+    public let name: String
+}

@@ -25,6 +25,7 @@ public final class MealPlanAssistant {
             FindRecipesTool(client: client),
             MealPlanTool(client: client),
             SuggestMealTool(client: client),
+            CookWithIngredientsTool(client: client),
             AddToMealPlanTool(onPropose: { store.set($0) }),
         ]
         session = LanguageModelSession(tools: tools, instructions: """
