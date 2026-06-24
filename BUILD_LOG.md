@@ -186,3 +186,11 @@ Spotlight/Siri fuzzy queries ("spicy Indian chicken") surface matching recipes b
 **Subsystem C COMPLETE** (C1 Foundation Models + C2 assistant/+writes + C3 semantic search).
 Possible polish: ingredient keywords (needs an all-recipes-with-ingredients endpoint);
 27-gated IndexedEntityQuery; C2 confirmed-write voice flow.
+
+### 2026-06-23 — App usability: Plan tab + recipe detail + tap-to-open
+
+- **Plan tab** (4th tab): current week's meal plan; "Open plan in Obsidian"; tap a meal → recipe detail. Lets the user verify assistant/Siri writes in-app.
+- **RecipeDetailView**: nutrition + on-device summary + Open in Obsidian.
+- **OpenRecipeIntent + RecipeRouter**: tapping a recipe (Spotlight result) routes into the detail sheet (was: opened app, did nothing). `onContinueUserActivity(CSSearchableItemActionType)` fallback.
+- **C2.1 reliability**: `AddRequestParser` makes "add X to <day> <meal>" in the chat show the Confirm card deterministically (no dependence on 3B tool-calling).
+- 33 tests green; iOS build SUCCEEDED. 8 App Intents.
