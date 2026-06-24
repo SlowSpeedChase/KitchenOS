@@ -513,7 +513,7 @@ def extract_recipe():
             ['.venv/bin/python', 'extract_recipe.py', url],
             capture_output=True,
             text=True,
-            cwd='/Users/chaseeasterling/GitHub/KitchenOS',
+            cwd=str(Path(__file__).resolve().parent),
             timeout=300  # 5 min timeout
         )
 
@@ -1623,6 +1623,23 @@ def api_inventory_update():
     if not updated:
         return jsonify({"status": "not_found"}), 404
     return jsonify({"status": "updated"})
+
+
+@app.route('/api/nutrition/<week>', methods=['GET'])
+@require_token
+def api_nutrition(week):
+    """Structured nutrition dashboard for a week (JSON projection of the
+    same data that backs Nutrition Dashboard.md)."""
+    if not re.match(r'^\d{4}-W\d{2}$', week):
+        return jsonify({"error": "Invalid week format. Expected YYYY-WNN"}), 400
+
+    from lib.nutrition_dashboard import compute_dashboard
+    try:
+        return jsonify(compute_dashboard(week, paths.vault_root()))
+    except FileNotFoundError as e:
+        return jsonify({"error": str(e)}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/system-health', methods=['GET'])

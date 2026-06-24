@@ -145,3 +145,159 @@ public struct SuggestResponse: Codable, Sendable {
     public let suggestion: Suggestion?
     public let message: String?
 }
+
+// MARK: - Stock (inventory, pantry, shopping)
+
+/// One inventory row. Field names match `lib/inventory.py`'s dataclass, so the
+/// same struct decodes `GET /api/inventory` and encodes `POST /api/inventory/add`.
+public struct InventoryItem: Codable, Sendable, Hashable, Identifiable {
+    public var name: String
+    public var quantity: Double
+    public var unit: String
+    public var category: String
+    public var location: String
+    public var purchased: String?
+    public var source: String
+    public var notes: String
+
+    public var id: String { "\(name)|\(unit)|\(location)" }
+
+    public init(name: String, quantity: Double, unit: String = "ct",
+                category: String = "other", location: String = "pantry",
+                purchased: String? = nil, source: String = "manual", notes: String = "") {
+        self.name = name; self.quantity = quantity; self.unit = unit
+        self.category = category; self.location = location
+        self.purchased = purchased; self.source = source; self.notes = notes
+    }
+}
+
+/// Pantry line as returned by `GET /api/pantry` (`{item, amount, unit}`).
+public struct PantryItem: Codable, Sendable, Hashable {
+    public let item: String
+    public let amount: String?
+    public let unit: String?
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        item = (try? c.decode(String.self, forKey: .item)) ?? ""
+        amount = try c.decodeFlexibleString(forKey: .amount)
+        unit = try c.decodeIfPresent(String.self, forKey: .unit)
+    }
+}
+
+/// `{amount, unit}` sub-record used in shopping-list lines.
+public struct ShoppingAmount: Codable, Sendable, Hashable {
+    public let amount: String?
+    public let unit: String?
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        amount = try c.decodeFlexibleString(forKey: .amount)
+        unit = try c.decodeIfPresent(String.self, forKey: .unit)
+    }
+
+    public var display: String {
+        [amount, unit].compactMap { $0 }.joined(separator: " ")
+    }
+}
+
+public struct ShoppingLine: Codable, Sendable, Hashable {
+    public let item: String
+    public let needed: ShoppingAmount?
+    public let fromPantry: ShoppingAmount?
+    public let toBuy: ShoppingAmount?
+    public let display: String?
+    public let warning: String?
+
+    enum CodingKeys: String, CodingKey {
+        case item, needed, display, warning
+        case fromPantry = "from_pantry"
+        case toBuy = "to_buy"
+    }
+}
+
+public struct ShoppingPreview: Codable, Sendable {
+    public let success: Bool
+    public let items: [String]?
+    public let lines: [ShoppingLine]?
+    public let recipes: [String]?
+    public let error: String?
+}
+
+// MARK: - Composite meals
+
+public struct SubRecipe: Codable, Sendable, Hashable, Identifiable {
+    public var recipe: String
+    public var servings: Int
+    public var id: String { recipe }
+
+    public init(recipe: String, servings: Int = 1) {
+        self.recipe = recipe; self.servings = servings
+    }
+}
+
+/// A composite meal (`vault/Meals/<name>.meal.md`). `body` is write-only — the
+/// list/detail endpoints don't return it, so it decodes as nil.
+public struct Meal: Codable, Sendable, Hashable, Identifiable {
+    public var name: String
+    public var description: String
+    public var tags: [String]
+    public var subRecipes: [SubRecipe]
+    public var body: String?
+
+    public var id: String { name }
+
+    enum CodingKeys: String, CodingKey {
+        case name, description, tags, body
+        case subRecipes = "sub_recipes"
+    }
+
+    public init(name: String, description: String = "", tags: [String] = [],
+                subRecipes: [SubRecipe] = [], body: String? = nil) {
+        self.name = name; self.description = description; self.tags = tags
+        self.subRecipes = subRecipes; self.body = body
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        description = (try? c.decode(String.self, forKey: .description)) ?? ""
+        tags = (try? c.decode([String].self, forKey: .tags)) ?? []
+        subRecipes = (try? c.decode([SubRecipe].self, forKey: .subRecipes)) ?? []
+        body = try c.decodeIfPresent(String.self, forKey: .body)
+    }
+}
+
+// MARK: - Prep tasks
+
+public struct PrepTask: Codable, Sendable, Hashable, Identifiable {
+    public let id: String
+    public let recipe: String
+    public let day: String
+    public let slot: String
+    public let step: Int?
+    public let text: String
+    public let type: String?
+    public let timeMinutes: Int?
+    public let canDoAhead: Bool
+    public let dependsOn: [String]?
+    public var done: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id, recipe, day, slot, step, text, type, done
+        case timeMinutes = "time_minutes"
+        case canDoAhead = "can_do_ahead"
+        case dependsOn = "depends_on"
+    }
+}
+
+public struct TasksPayload: Codable, Sendable {
+    public let week: String?
+    public let generatedAt: String?
+    public let tasks: [PrepTask]
+
+    enum CodingKeys: String, CodingKey {
+        case week, tasks
+        case generatedAt = "generated_at"
+    }
+}
