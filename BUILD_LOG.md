@@ -134,6 +134,23 @@ Verified API first by introspecting the Xcode 27 `FoundationModels.swiftinterfac
 **On-device verification pending** (needs Apple Intelligence enabled): Smart Search tab,
 Siri "Summarize a KitchenOS recipe" / "Find a KitchenOS recipe", and the AI-off fallback.
 
-**Next:** C2 (on-device conversational meal-plan assistant via tools-enabled session) and
-C3 (App Schemas + IndexedEntity semantic search) — research the iOS 27 App Schemas API
-first (the `@AssistantIntent` macro changed in the 27 release).
+### 2026-06-23 — Subsystem C, Phase C2 (on-device assistant) — implemented
+
+Worktree: `~/Dev/KitchenOS-siri` (split from the nutrition agent's `~/Dev/KitchenOS`).
+Plan: `docs/superpowers/plans/2026-06-23-siri-foundation-models-phase-c2.md`.
+
+- Verified `Tool` protocol from the SDK: `Arguments: Generable` → free `parameters`;
+  `respond(to:)` handles tool-calling internally.
+- `FindRecipesTool` (Arguments == `RecipeQuery`, reuses `recipes(matching:)`),
+  `MealPlanTool`, `SuggestMealTool` — each a `Tool` calling the existing client.
+- `MealPlanAssistant` — `@MainActor` class holding a tools-enabled `LanguageModelSession`
+  (multi-turn). **Read + suggest only**; writes deferred to C2.1 (confirm surface needed).
+- `AssistantView` chat UI + 3rd app tab (Assistant / Search / Settings).
+- **20 tests green**; iOS build SUCCEEDED.
+
+**On-device verification pending:** Assistant tab — "what chicken recipes do I have?",
+"what's on my plan this week?", "suggest a dinner for Friday" should drive tool calls.
+
+**Next:** C3 (App Schemas + IndexedEntity semantic search). Research the iOS 27 App
+Schemas API first (the `@AssistantIntent` macro changed in the 27 release). Optional
+C2.1: a confirm-gated add-to-plan tool.
