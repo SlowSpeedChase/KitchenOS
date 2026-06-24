@@ -16,6 +16,31 @@ final class KitchenOSClientTests: XCTestCase {
         XCTAssertEqual(recipes.map(\.name), ["Butter Chicken"])
     }
 
+    func testAllRecipesSendsEmptyIngredientQuery() async throws {
+        MockURLProtocol.handler = { req in
+            XCTAssertEqual(req.url?.path, "/api/recipes")
+            XCTAssertEqual(req.url?.query, "ingredient=")
+            let body = #"[{"name":"Toast"},{"name":"Eggs"}]"#.data(using: .utf8)!
+            return (HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
+        }
+        let client = KitchenOSClient.mock()
+        let recipes = try await client.allRecipes()
+        XCTAssertEqual(recipes.map(\.name), ["Toast", "Eggs"])
+    }
+
+    func testRecipeDetailFetchesByNameAndDecodesFlexibleAmount() async throws {
+        MockURLProtocol.handler = { req in
+            XCTAssertEqual(req.url?.path, "/api/recipes/Butter Chicken")
+            let body = #"{"title":"Butter Chicken","servings":4,"ingredients":[{"item":"cream","amount":1}]}"#
+                .data(using: .utf8)!
+            return (HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
+        }
+        let client = KitchenOSClient.mock()
+        let d = try await client.recipeDetail(name: "Butter Chicken")
+        XCTAssertEqual(d.title, "Butter Chicken")
+        XCTAssertEqual(d.ingredients?.first?.amount, "1")
+    }
+
     func testSendsBearerTokenWhenSet() async throws {
         MockURLProtocol.handler = { req in
             XCTAssertEqual(req.value(forHTTPHeaderField: "Authorization"), "Bearer secret")

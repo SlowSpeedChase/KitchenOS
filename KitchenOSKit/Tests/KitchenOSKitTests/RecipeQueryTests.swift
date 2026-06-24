@@ -38,4 +38,31 @@ final class RecipeQueryTests: XCTestCase {
         let back = try RecipeQuery(q.generatedContent)
         XCTAssertEqual(back, q)
     }
+
+    private func nutri(_ name: String, protein: Double?, fat: Double?, cal: Double?) -> RecipeSummary {
+        RecipeSummary(name: name, nutritionCalories: cal, nutritionProtein: protein, nutritionFat: fat)
+    }
+
+    func testRankedHighProteinLowFatSortsAndCaps() {
+        let q = RecipeQuery(highProtein: true, lowFat: true)
+        let input = [
+            nutri("LowP", protein: 10, fat: 2, cal: 300),
+            nutri("HighP_HighFat", protein: 40, fat: 30, cal: 600),
+            nutri("HighP_LowFat", protein: 40, fat: 5, cal: 500),
+        ]
+        let r = q.ranked(input)
+        XCTAssertEqual(r.map(\.name), ["HighP_LowFat", "HighP_HighFat", "LowP"])
+    }
+
+    func testRankedNoPreferenceReturnsUnchanged() {
+        let q = RecipeQuery(ingredient: "chicken")
+        let input = [nutri("A", protein: 5, fat: 5, cal: 100), nutri("B", protein: 50, fat: 1, cal: 200)]
+        XCTAssertEqual(q.ranked(input).map(\.name), ["A", "B"])
+    }
+
+    func testRankedGracefulWhenNoNutritionData() {
+        let q = RecipeQuery(highProtein: true)
+        let input = [summary("A"), summary("B")]   // no nutrition fields
+        XCTAssertEqual(q.ranked(input).map(\.name), ["A", "B"])
+    }
 }

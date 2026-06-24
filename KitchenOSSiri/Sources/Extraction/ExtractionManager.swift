@@ -1,9 +1,14 @@
+#if os(macOS)
 import Foundation
 import UserNotifications
 
-/// Manages the Python script execution for recipe extraction
+/// Manages the local Python script execution for recipe extraction (macOS only).
+///
+/// Folded in from the retired KitchenOSApp menu-bar app. Paths now come from
+/// `ExtractionConfig` instead of being hardcoded. This is the macOS "power user"
+/// path; the cross-platform path is the API server's `POST /extract` endpoint.
 @MainActor
-class ExtractionManager: ObservableObject {
+final class ExtractionManager: ObservableObject {
     @Published var isExtracting = false
     @Published var isBatchExtracting = false
     @Published var status: String = "Ready"
@@ -22,13 +27,7 @@ class ExtractionManager: ObservableObject {
     private let timeoutSeconds: TimeInterval = 300 // 5 minutes
     private let batchTimeoutSeconds: TimeInterval = 1800 // 30 minutes for batch
 
-    private let pythonPath = "/Users/chaseeasterling/KitchenOS/.venv/bin/python"
-    private let scriptPath = "/Users/chaseeasterling/KitchenOS/extract_recipe.py"
-    private let batchScriptPath = "/Users/chaseeasterling/KitchenOS/batch_extract.py"
-    private let workingDirectory = "/Users/chaseeasterling/KitchenOS"
-
     init() {
-        // Request notification permission (may fail if not in app bundle)
         if Bundle.main.bundleIdentifier != nil {
             UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         }
@@ -53,9 +52,9 @@ class ExtractionManager: ObservableObject {
 
     private func runExtraction(url: String) async {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: pythonPath)
-        process.arguments = [scriptPath, url]
-        process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
+        process.executableURL = URL(fileURLWithPath: ExtractionConfig.pythonPath)
+        process.arguments = [ExtractionConfig.extractScriptPath, url]
+        process.currentDirectoryURL = URL(fileURLWithPath: ExtractionConfig.projectRoot)
 
         let stdout = Pipe()
         let stderr = Pipe()
@@ -64,7 +63,6 @@ class ExtractionManager: ObservableObject {
 
         currentProcess = process
 
-        // Set up timeout
         let timeoutTask = Task {
             try await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
             if process.isRunning {
@@ -114,13 +112,11 @@ class ExtractionManager: ObservableObject {
 
             sendNotification(title: "Recipe Extracted", body: recipeName)
         } else {
-            // Check for specific error messages
             if error.contains("Ollama") || output.contains("Ollama") {
                 status = "Error: Ollama not running"
             } else if error.isEmpty {
                 status = "Error: Extraction failed"
             } else {
-                // Extract first line of error
                 let firstLine = error.components(separatedBy: .newlines).first ?? "Unknown error"
                 status = "Error: \(firstLine)"
             }
@@ -130,29 +126,22 @@ class ExtractionManager: ObservableObject {
 
     private func parseSavedPath(from output: String) -> String? {
         let lines = output.components(separatedBy: .newlines)
-        for line in lines {
-            if line.hasPrefix("SAVED: ") {
-                return String(line.dropFirst(7))
-            }
+        for line in lines where line.hasPrefix("SAVED: ") {
+            return String(line.dropFirst(7))
         }
         return nil
     }
 
     private func extractRecipeName(from output: String, path: String) -> String {
-        // Try to get recipe name from "Extracted: Name" line
         let lines = output.components(separatedBy: .newlines)
-        for line in lines {
-            if line.hasPrefix("Extracted: ") {
-                let rest = String(line.dropFirst(11))
-                // Remove "(source: xxx)" suffix if present
-                if let parenIndex = rest.firstIndex(of: "(") {
-                    return String(rest[..<parenIndex]).trimmingCharacters(in: .whitespaces)
-                }
-                return rest
+        for line in lines where line.hasPrefix("Extracted: ") {
+            let rest = String(line.dropFirst(11))
+            if let parenIndex = rest.firstIndex(of: "(") {
+                return String(rest[..<parenIndex]).trimmingCharacters(in: .whitespaces)
             }
+            return rest
         }
 
-        // Fallback: use filename
         return URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
             .replacingOccurrences(of: "-", with: " ")
             .capitalized
@@ -168,7 +157,6 @@ class ExtractionManager: ObservableObject {
     }
 
     private func sendNotification(title: String, body: String) {
-        // Skip if not in app bundle
         guard Bundle.main.bundleIdentifier != nil else { return }
 
         let content = UNMutableNotificationContent()
@@ -219,9 +207,9 @@ class ExtractionManager: ObservableObject {
 
     private func runBatchExtraction() async {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: pythonPath)
-        process.arguments = [batchScriptPath]
-        process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
+        process.executableURL = URL(fileURLWithPath: ExtractionConfig.pythonPath)
+        process.arguments = [ExtractionConfig.batchScriptPath]
+        process.currentDirectoryURL = URL(fileURLWithPath: ExtractionConfig.projectRoot)
 
         let stdout = Pipe()
         let stderr = Pipe()
@@ -230,7 +218,6 @@ class ExtractionManager: ObservableObject {
 
         currentProcess = process
 
-        // Set up timeout
         let timeoutTask = Task {
             try await Task.sleep(nanoseconds: UInt64(batchTimeoutSeconds * 1_000_000_000))
             if process.isRunning {
@@ -241,7 +228,6 @@ class ExtractionManager: ObservableObject {
         do {
             try process.run()
 
-            // Read stdout line by line for progress
             let handle = stdout.fileHandleForReading
             handle.readabilityHandler = { [weak self] fileHandle in
                 let data = fileHandle.availableData
@@ -256,10 +242,8 @@ class ExtractionManager: ObservableObject {
             process.waitUntilExit()
             timeoutTask.cancel()
 
-            // Clean up handler
             handle.readabilityHandler = nil
 
-            // Final status
             handleBatchResult()
         } catch {
             status = "Error: \(error.localizedDescription)"
@@ -271,7 +255,6 @@ class ExtractionManager: ObservableObject {
     }
 
     private func parseBatchLine(_ line: String) {
-        // Parse progress: [3/10]
         if let openBracket = line.firstIndex(of: "["),
            let slash = line.firstIndex(of: "/"),
            let closeBracket = line.firstIndex(of: "]"),
@@ -285,7 +268,6 @@ class ExtractionManager: ObservableObject {
             }
         }
 
-        // Track results
         if line.contains("→ Saved:") && !line.contains("Already exists") {
             batchSucceeded += 1
         }
@@ -320,3 +302,4 @@ class ExtractionManager: ObservableObject {
         batchTotal = 0
     }
 }
+#endif

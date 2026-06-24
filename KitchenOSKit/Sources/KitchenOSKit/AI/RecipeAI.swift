@@ -50,7 +50,9 @@ public enum RecipeAI {
         let session = LanguageModelSession(instructions: """
             Extract recipe search filters from the user's request. Only fill a field when it \
             is clearly implied; otherwise leave it nil. The ingredient is a single key \
-            ingredient in lowercase.
+            ingredient in lowercase. Set highProtein, lowFat, or lowCalorie to true when the \
+            user asks for those nutrition qualities (e.g. "high protein low fat" -> \
+            highProtein: true, lowFat: true). Do not put nutrition words into ingredient.
             """)
         let response = try await session.respond(to: text, generating: RecipeQuery.self)
         return response.content

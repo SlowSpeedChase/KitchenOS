@@ -229,3 +229,29 @@ class TestParseIngredient:
         """Handles 'salt and pepper to taste'"""
         result = parse_ingredient("Salt and pepper to taste")
         assert result == {"amount": "1", "unit": "to taste", "item": "salt and pepper"}
+
+
+class TestUnicodeFractions:
+    """A1: Unicode vulgar fractions must parse to decimals, not fall back to 1."""
+
+    def test_standalone_unicode_fractions(self):
+        assert parse_amount("½") == "0.5"
+        assert parse_amount("⅓") == "0.33"
+        assert parse_amount("¾") == "0.75"
+        assert parse_amount("⅔") == "0.67"
+        assert parse_amount("⅛") == "0.12"
+
+    def test_mixed_unicode_numbers(self):
+        assert parse_amount("1½") == "1.5"
+        assert parse_amount("1 ½") == "1.5"
+        assert parse_amount("2⅔") == "2.67"
+
+    def test_unicode_fraction_in_full_ingredient(self):
+        result = parse_ingredient("½ cup olive oil")
+        assert result["amount"] == "0.5"
+        assert result["unit"] == "cup"
+        assert "olive oil" in result["item"]
+
+    def test_ascii_fractions_still_decimal(self):
+        assert parse_amount("1/2") == "0.5"
+        assert parse_amount("1 1/2") == "1.5"

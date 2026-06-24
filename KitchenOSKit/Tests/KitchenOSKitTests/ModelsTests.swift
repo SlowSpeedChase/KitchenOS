@@ -28,4 +28,44 @@ final class ModelsTests: XCTestCase {
         let resp = try JSONDecoder().decode(SuggestResponse.self, from: json)
         XCTAssertNil(resp.suggestion)
     }
+
+    func testDecodeFullRecipeDetail() throws {
+        // Mirrors the /api/recipes/<name> payload shape.
+        let json = """
+        {"title":"Butter Chicken","cuisine":"Indian","protein":"chicken",
+         "dish_type":"main","difficulty":"medium","servings":4,
+         "prep_time":"20 min","cook_time":"30 min","total_time":"50 min",
+         "dietary":["gluten-free"],"equipment":["blender"],"meal_occasion":["weeknight-dinner"],
+         "nutrition_calories":620.0,"nutrition_protein":35.0,"nutrition_carbs":18.0,"nutrition_fat":40.0,
+         "seasonal_ingredients":[],"source_url":"https://x.example","needs_review":false,
+         "description":"Creamy and rich.",
+         "ingredients":[{"amount":"1 1/2","unit":"cups","item":"cream","inferred":false},
+                        {"amount":2,"unit":null,"item":"onions"}],
+         "instructions":[{"step":1,"text":"Blend.","time":null},
+                         {"step":2,"text":"Simmer.","time":"15 min"}],
+         "video_tips":["Toast the spices first."]}
+        """.data(using: .utf8)!
+        let d = try JSONDecoder().decode(RecipeDetail.self, from: json)
+        XCTAssertEqual(d.title, "Butter Chicken")
+        XCTAssertEqual(d.servings, 4)
+        XCTAssertEqual(d.totalTime, "50 min")
+        XCTAssertEqual(d.mealOccasion, ["weeknight-dinner"])
+        XCTAssertEqual(d.ingredients?.count, 2)
+        // amount decoded from a string and from a bare number:
+        XCTAssertEqual(d.ingredients?[0].amount, "1 1/2")
+        XCTAssertEqual(d.ingredients?[0].unit, "cups")
+        XCTAssertEqual(d.ingredients?[1].amount, "2")
+        XCTAssertNil(d.ingredients?[1].unit)
+        XCTAssertEqual(d.instructions?[1].time, "15 min")
+        XCTAssertEqual(d.videoTips?.first, "Toast the spices first.")
+    }
+
+    func testDecodeMinimalRecipeDetail() throws {
+        // Only the required title present; everything else absent.
+        let json = #"{"title":"Toast"}"#.data(using: .utf8)!
+        let d = try JSONDecoder().decode(RecipeDetail.self, from: json)
+        XCTAssertEqual(d.title, "Toast")
+        XCTAssertNil(d.ingredients)
+        XCTAssertNil(d.nutritionCalories)
+    }
 }

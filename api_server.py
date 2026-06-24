@@ -29,6 +29,7 @@ from templates.shopping_list_template import generate_shopping_list_markdown, ge
 from templates.recipe_template import format_recipe_markdown
 from templates.meal_plan_template import generate_meal_plan_markdown
 from lib.ingredient_validator import validate_ingredients
+from lib.ingredient_cleaner import clean_ingredient_list
 from lib.seasonality import match_ingredients_to_seasonal, get_peak_months
 from lib.nutrition_engine import calculate_recipe_nutrition
 from lib import meal_loader, pantry as pantry_module, paths, task_extractor
@@ -261,6 +262,33 @@ def api_recipes():
     return jsonify(_recipe_cache["data"])
 
 
+@app.route('/api/recipes/by-ingredients', methods=['POST'])
+@require_token
+def api_recipes_by_ingredients():
+    """Rank recipes by how many of the given ingredients they share.
+
+    Body JSON: {"ingredients": [str, ...], "limit": int (optional, default 15)}.
+    Reuses the meal-suggester overlap scoring. Returns matches sorted by score desc,
+    excluding zero-overlap recipes.
+    """
+    from lib.meal_suggester import normalize_ingredient, rank_candidates, load_pantry_staples
+
+    data = request.get_json(force=True, silent=True) or {}
+    ingredients = data.get("ingredients") or []
+    if not ingredients:
+        return jsonify({"error": "ingredients (a non-empty list) is required"}), 400
+
+    target = {normalize_ingredient(i) for i in ingredients if str(i).strip()}
+    pantry = load_pantry_staples()
+    candidates = get_recipe_index(OBSIDIAN_RECIPES_PATH, include_ingredients=True)
+    ranked = rank_candidates(candidates, target, pantry, limit=int(data.get("limit", 15)))
+    matches = [
+        {"name": r["name"], "score": r["score"], "shared_ingredients": r["shared_ingredients"]}
+        for r in ranked if r["score"] > 0
+    ]
+    return jsonify({"matches": matches})
+
+
 @app.route('/api/recipes/save', methods=['POST'])
 def api_recipe_save():
     """Save a recipe from structured JSON data (e.g., from Claude conversation)."""
@@ -275,9 +303,9 @@ def api_recipe_save():
     try:
         # Validate ingredients
         if data.get('ingredients'):
-            data['ingredients'] = validate_ingredients(
+            data['ingredients'] = clean_ingredient_list(validate_ingredients(
                 data['ingredients'], verbose=False
-            )
+            ))
 
         # Match seasonal ingredients
         seasonal_matches = match_ingredients_to_seasonal(
@@ -371,9 +399,9 @@ def api_recipe_import_text():
 
         # Validate ingredients
         if recipe.get('ingredients'):
-            recipe['ingredients'] = validate_ingredients(
+            recipe['ingredients'] = clean_ingredient_list(validate_ingredients(
                 recipe['ingredients'], verbose=False
-            )
+            ))
 
         # Match seasonal ingredients
         seasonal_matches = match_ingredients_to_seasonal(recipe.get('ingredients', []))
@@ -512,7 +540,7 @@ def extract_recipe():
             ['.venv/bin/python', 'extract_recipe.py', url],
             capture_output=True,
             text=True,
-            cwd='/Users/chaseeasterling/GitHub/KitchenOS',
+            cwd=str(Path(__file__).resolve().parent),
             timeout=300  # 5 min timeout
         )
 
@@ -1622,6 +1650,50 @@ def api_inventory_update():
     if not updated:
         return jsonify({"status": "not_found"}), 404
     return jsonify({"status": "updated"})
+
+
+@app.route('/api/receipts/trips', methods=['GET'])
+@require_token
+def api_receipt_trips():
+    """Recent shopping trips (newest first)."""
+    from lib.inventory_db import fetch_trips
+    return jsonify(fetch_trips())
+
+
+@app.route('/api/receipts/trips/<int:trip_id>', methods=['GET'])
+@require_token
+def api_receipt_trip(trip_id):
+    """One trip plus its purchase lines."""
+    from lib.inventory_db import fetch_trip
+    result = fetch_trip(trip_id)
+    if result is None:
+        return jsonify({"error": f"Trip not found: {trip_id}"}), 404
+    return jsonify(result)
+
+
+@app.route('/api/price/trends', methods=['GET'])
+@require_token
+def api_price_trends():
+    """Structured price-tracker data (spending, by-category, trends)."""
+    from lib.price_dashboard import compute_price_data
+    return jsonify(compute_price_data())
+
+
+@app.route('/api/nutrition/<week>', methods=['GET'])
+@require_token
+def api_nutrition(week):
+    """Structured nutrition dashboard for a week (JSON projection of the
+    same data that backs Nutrition Dashboard.md)."""
+    if not re.match(r'^\d{4}-W\d{2}$', week):
+        return jsonify({"error": "Invalid week format. Expected YYYY-WNN"}), 400
+
+    from lib.nutrition_dashboard import compute_dashboard
+    try:
+        return jsonify(compute_dashboard(week, paths.vault_root()))
+    except FileNotFoundError as e:
+        return jsonify({"error": str(e)}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/system-health', methods=['GET'])

@@ -134,6 +134,63 @@ Verified API first by introspecting the Xcode 27 `FoundationModels.swiftinterfac
 **On-device verification pending** (needs Apple Intelligence enabled): Smart Search tab,
 Siri "Summarize a KitchenOS recipe" / "Find a KitchenOS recipe", and the AI-off fallback.
 
-**Next:** C2 (on-device conversational meal-plan assistant via tools-enabled session) and
-C3 (App Schemas + IndexedEntity semantic search) — research the iOS 27 App Schemas API
-first (the `@AssistantIntent` macro changed in the 27 release).
+### 2026-06-23 — Subsystem C, Phase C2 (on-device assistant) — implemented
+
+Worktree: `~/Dev/KitchenOS-siri` (split from the nutrition agent's `~/Dev/KitchenOS`).
+Plan: `docs/superpowers/plans/2026-06-23-siri-foundation-models-phase-c2.md`.
+
+- Verified `Tool` protocol from the SDK: `Arguments: Generable` → free `parameters`;
+  `respond(to:)` handles tool-calling internally.
+- `FindRecipesTool` (Arguments == `RecipeQuery`, reuses `recipes(matching:)`),
+  `MealPlanTool`, `SuggestMealTool` — each a `Tool` calling the existing client.
+- `MealPlanAssistant` — `@MainActor` class holding a tools-enabled `LanguageModelSession`
+  (multi-turn). **Read + suggest only**; writes deferred to C2.1 (confirm surface needed).
+- `AssistantView` chat UI + 3rd app tab (Assistant / Search / Settings).
+- **20 tests green**; iOS build SUCCEEDED.
+
+**On-device verification pending:** Assistant tab — "what chicken recipes do I have?",
+"what's on my plan this week?", "suggest a dinner for Friday" should drive tool calls.
+
+### 2026-06-23 — C2 completion (Obsidian links + C2.1 confirmed writes)
+
+- **Open in Obsidian:** `RecipeLink.obsidianURL` builds `obsidian://open?vault=…&file=Recipes/<name>.md`;
+  Smart Search rows get an "Open in Obsidian" link; Settings has a configurable vault name
+  (default `KitchenOS`). Addresses "I had no way to verify the right recipe."
+- **C2.1 confirmed writes:** `proposeAddToMealPlan` tool *proposes* only (never writes);
+  the chat surfaces a Confirm button that applies it via a new shared
+  `KitchenOSClient.addRecipe(_:day:meal:week:)` helper. `AddRecipeToMealPlanIntent`
+  refactored to reuse the same helper (DRY).
+- **26 tests green**; iOS build SUCCEEDED.
+
+**C2 COMPLETE** (read + suggest + confirmed write + Obsidian verify).
+
+### 2026-06-23 — Subsystem C, Phase C3 (semantic search) — implemented
+
+Plan: `docs/superpowers/plans/2026-06-23-siri-foundation-models-phase-c3.md`.
+SDK research finding: **Assistant Schemas N/A** — grepping AppIntents schemas for
+food/recipe/meal/cook/grocery returned zero; no domain to conform to. So C3 = IndexedEntity.
+
+- `RecipeEntity: IndexedEntity` with a CoreSpotlight `attributeSet`
+  (title=name, keywords/contentDescription from cuisine+protein).
+- `RecipeIndexer.reindexAll` → `CSSearchableIndex.default().indexAppEntities(...)`
+  (reuses `findRecipes` + `RecipeEntity`). Runs on app launch (`.task`) + a Settings
+  "Reindex recipes" button.
+- Dropped `IndexedEntityQuery` conformance — its `CSSearchableIndexDescription` is
+  **iOS/macOS 27-only**, above our 26 floor; manual reindex covers it. A target bump to 27
+  would re-enable system-driven reindex (future).
+- **28 tests green**; iOS build SUCCEEDED.
+
+**On-device verification pending:** launch (auto-index) or Settings → Reindex; then
+Spotlight/Siri fuzzy queries ("spicy Indian chicken") surface matching recipes by meaning.
+
+**Subsystem C COMPLETE** (C1 Foundation Models + C2 assistant/+writes + C3 semantic search).
+Possible polish: ingredient keywords (needs an all-recipes-with-ingredients endpoint);
+27-gated IndexedEntityQuery; C2 confirmed-write voice flow.
+
+### 2026-06-23 — App usability: Plan tab + recipe detail + tap-to-open
+
+- **Plan tab** (4th tab): current week's meal plan; "Open plan in Obsidian"; tap a meal → recipe detail. Lets the user verify assistant/Siri writes in-app.
+- **RecipeDetailView**: nutrition + on-device summary + Open in Obsidian.
+- **OpenRecipeIntent + RecipeRouter**: tapping a recipe (Spotlight result) routes into the detail sheet (was: opened app, did nothing). `onContinueUserActivity(CSSearchableItemActionType)` fallback.
+- **C2.1 reliability**: `AddRequestParser` makes "add X to <day> <meal>" in the chat show the Confirm card deterministically (no dependence on 3B tool-calling).
+- 33 tests green; iOS build SUCCEEDED. 8 App Intents.

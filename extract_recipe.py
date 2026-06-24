@@ -17,6 +17,7 @@ import requests
 from lib.backup import create_backup
 from lib.recipe_parser import find_existing_recipe, find_existing_recipe_by_source_url, parse_recipe_file, extract_my_notes
 from lib.ingredient_validator import validate_ingredients
+from lib.ingredient_cleaner import clean_ingredient_list
 from lib.ingredient_parser import parse_ingredient
 from lib.nutrition_engine import calculate_recipe_nutrition
 from lib.image_downloader import download_image
@@ -409,10 +410,10 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False, 
 
         # Validate and repair ingredients (fixes AI extraction errors)
         status("Validating ingredients...")
-        recipe_data['ingredients'] = validate_ingredients(
+        recipe_data['ingredients'] = clean_ingredient_list(validate_ingredients(
             recipe_data.get('ingredients', []),
             verbose=True
-        )
+        ))
 
         # Match seasonal ingredients
         status("Matching seasonal ingredients...")
@@ -561,9 +562,9 @@ def extract_single_web_recipe(url: str, dry_run: bool = False, on_status=None) -
 
         # Validate ingredients
         status("Validating ingredients...")
-        recipe_data['ingredients'] = validate_ingredients(
+        recipe_data['ingredients'] = clean_ingredient_list(validate_ingredients(
             recipe_data.get('ingredients', []), verbose=True
-        )
+        ))
 
         # Match seasonal ingredients
         status("Matching seasonal ingredients...")

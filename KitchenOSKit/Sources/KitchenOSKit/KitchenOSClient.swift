@@ -61,6 +61,72 @@ public final class KitchenOSClient: @unchecked Sendable {
         return try decode(data)
     }
 
+    /// Rank recipes by overlap with a set of ingredients you have/want to use.
+    public func recipesByIngredients(_ ingredients: [String], limit: Int = 15) async throws -> [Suggestion] {
+        let url = config.baseURL.appendingPathComponent("/api/recipes/by-ingredients")
+        var req = request(url, method: "POST")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["ingredients": ingredients, "limit": limit])
+        let data = try await send(req)
+        let resp: ByIngredientsResponse = try decode(data)
+        return resp.matches
+    }
+
+    /// Names of the items currently in the kitchen inventory.
+    public func inventoryItems() async throws -> [String] {
+        let url = config.baseURL.appendingPathComponent("/api/inventory")
+        let items: [InventoryItem] = try await get(url)
+        return items.map(\.name)
+    }
+
+    // MARK: - Internal helpers for feature extensions
+
+    var baseURL: URL { config.baseURL }
+
+    func getJSON<T: Decodable>(_ url: URL) async throws -> T {
+        try await get(url)
+    }
+
+    /// POST an Encodable body, ignoring the response.
+    func postJSON<B: Encodable>(path: String, body: B) async throws {
+        var req = jsonRequest(path: path)
+        req.httpBody = try encoder.encode(body)
+        _ = try await send(req)
+    }
+
+    /// POST an arbitrary JSON object (for heterogeneous bodies), ignoring the response.
+    func postRawJSON(path: String, object: [String: Any]) async throws {
+        var req = jsonRequest(path: path)
+        req.httpBody = try JSONSerialization.data(withJSONObject: object)
+        _ = try await send(req)
+    }
+
+    /// POST an arbitrary JSON object and decode the response.
+    func postDecoding<T: Decodable>(path: String, object: [String: Any]) async throws -> T {
+        var req = jsonRequest(path: path)
+        req.httpBody = try JSONSerialization.data(withJSONObject: object)
+        return try decode(try await send(req))
+    }
+
+    /// Send an Encodable body with an explicit method and decode the response.
+    func postEncoding<B: Encodable, T: Decodable>(path: String, method: String, body: B) async throws -> T {
+        var req = request(config.baseURL.appendingPathComponent(path), method: method)
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try encoder.encode(body)
+        return try decode(try await send(req))
+    }
+
+    /// Issue a request with no body and ignore the response (e.g. DELETE).
+    func sendIgnoringBody(path: String, method: String) async throws {
+        _ = try await send(request(config.baseURL.appendingPathComponent(path), method: method))
+    }
+
+    private func jsonRequest(path: String) -> URLRequest {
+        var req = request(config.baseURL.appendingPathComponent(path), method: "POST")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        return req
+    }
+
     // MARK: - Plumbing
 
     private func request(_ url: URL, method: String = "GET") -> URLRequest {

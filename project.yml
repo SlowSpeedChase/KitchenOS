@@ -22,7 +22,13 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.kitchenos.siri
         PRODUCT_NAME: KitchenOS
         GENERATE_INFOPLIST_FILE: NO
-        INFOPLIST_FILE: KitchenOSSiri/Info.plist
+        # Per-SDK Info.plist: the iOS variant carries the UI*/LSRequiresIPhoneOS
+        # keys that are meaningless (and sloppy) in the macOS bundle.
+        "INFOPLIST_FILE[sdk=iphoneos*]": KitchenOSSiri/Info-iOS.plist
+        "INFOPLIST_FILE[sdk=iphonesimulator*]": KitchenOSSiri/Info-iOS.plist
+        "INFOPLIST_FILE[sdk=macosx*]": KitchenOSSiri/Info-macOS.plist
+        # macOS-only entitlements (sandbox off for the local extraction path).
+        "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": KitchenOSSiri/KitchenOSSiri-macOS.entitlements
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "5.0"

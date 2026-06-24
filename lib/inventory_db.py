@@ -185,6 +185,38 @@ def fetch_inventory_rows() -> list[dict]:
         conn.close()
 
 
+def fetch_trips(limit: int = 100) -> list[dict]:
+    """Recent shopping trips, newest first."""
+    conn = connect()
+    try:
+        rows = conn.execute(
+            "SELECT id, date, store, source, total_cents, needs_review"
+            " FROM trips ORDER BY date DESC, id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def fetch_trip(trip_id: int) -> Optional[dict]:
+    """One trip plus its purchase lines, or None if the trip doesn't exist."""
+    conn = connect()
+    try:
+        trip = conn.execute("SELECT * FROM trips WHERE id = ?", (trip_id,)).fetchone()
+        if trip is None:
+            return None
+        purchases = conn.execute(
+            "SELECT raw_name, canonical_name, quantity, unit,"
+            " unit_price_cents, total_cents, category"
+            " FROM purchases WHERE trip_id = ? ORDER BY id",
+            (trip_id,),
+        ).fetchall()
+        return {"trip": dict(trip), "purchases": [dict(p) for p in purchases]}
+    finally:
+        conn.close()
+
+
 def replace_inventory_rows(rows: list[dict]) -> None:
     """Overwrite the inventory table with ``rows`` atomically."""
     conn = connect()
