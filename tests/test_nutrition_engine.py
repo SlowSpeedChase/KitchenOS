@@ -120,7 +120,7 @@ class TestLlmPortionFallback:
              patch("lib.food_resolver.estimate_portion_grams_llm", return_value=(200.0, 0.6)):
             res = calculate_recipe_nutrition(
                 [{"amount": "1", "unit": "whole", "item": "dragonfruit"}], 1,
-                use_cache=False, use_llm=True,
+                use_cache=False, portion_provider="ollama",
             )
         # 200 g * 60 kcal/100g = 120 kcal
         assert res.total.calories == 120

@@ -49,7 +49,7 @@ def _pct_err(actual: float, expected: float) -> float:
     return abs(actual - expected) / expected
 
 
-def _compute(entry: dict, legacy: bool, use_llm: bool):
+def _compute(entry: dict, legacy: bool, resolution_provider: str, portion_provider: str):
     """Return per-serving macro dict for one golden recipe, or None."""
     recipe_path = paths.recipes_dir() / entry["file"]
     if not recipe_path.exists():
@@ -67,17 +67,21 @@ def _compute(entry: dict, legacy: bool, use_llm: bool):
         return res.nutrition.to_dict(), res.source
 
     from lib.nutrition_engine import calculate_recipe_nutrition
-    res = calculate_recipe_nutrition(ingredients, entry["servings"], use_llm=use_llm)
+    res = calculate_recipe_nutrition(
+        ingredients, entry["servings"],
+        resolution_provider=resolution_provider, portion_provider=portion_provider,
+    )
     if not res:
         return None, "unresolved"
     return res.per_serving.to_dict(), res.source
 
 
-def run_golden(legacy: bool, use_llm: bool, limit):
+def run_golden(legacy: bool, resolution_provider: str, portion_provider: str, limit):
     data = json.loads((GOLDEN_DIR / "nutrition_golden.json").read_text())
     recipes = data["recipes"][:limit] if limit else data["recipes"]
 
-    label = "LEGACY lookup" if legacy else ("engine (deterministic)" if not use_llm else "engine (+LLM)")
+    label = ("LEGACY lookup" if legacy else
+             f"engine (resolve={resolution_provider}, portion={portion_provider})")
     print(f"\nNutrition validation — {label}")
     print(f"Tolerance: cal ±{int(TOLERANCE['calories']*100)}%, macros ±20%\n")
     header = f"{'recipe':32} {'cal':>13} {'protein':>11} {'carbs':>11} {'fat':>11}   verdict"
@@ -89,7 +93,7 @@ def run_golden(legacy: bool, use_llm: bool, limit):
     err_accum = {m: [] for m in MACROS}
 
     for entry in recipes:
-        computed, src = _compute(entry, legacy, use_llm)
+        computed, src = _compute(entry, legacy, resolution_provider, portion_provider)
         name = entry["file"].replace(".md", "")[:32]
         if computed is None:
             print(f"{name:32} {'— ' + str(src):>61}")
@@ -122,11 +126,11 @@ def run_golden(legacy: bool, use_llm: bool, limit):
     print()
 
 
-def run_ollama_viability(limit):
+def run_viability(provider: str, limit):
     from lib import food_db, food_resolver
     data = json.loads((GOLDEN_DIR / "resolution_golden.json").read_text())
 
-    print("\nOllama viability — constrained LLM jobs (mistral:7b)\n")
+    print(f"\nViability — constrained LLM jobs (provider={provider})\n")
 
     # Job 1: food resolution.
     res_cases = data["food_resolution"][:limit] if limit else data["food_resolution"]
@@ -137,9 +141,9 @@ def run_ollama_viability(limit):
         if not candidates:
             print(f"  {case['ingredient']:32} — no USDA candidates (key/network?)")
             continue
-        picked = food_resolver.resolve_food_llm(case["ingredient"], candidates)
+        picked = food_resolver.resolve_food(case["ingredient"], candidates, provider)
         if picked is None:
-            print(f"  {case['ingredient']:32} — LLM no answer (ollama down?)")
+            print(f"  {case['ingredient']:32} — no answer (model down?)")
             continue
         scored += 1
         desc = candidates[picked[0]].description.lower()
@@ -153,9 +157,9 @@ def run_ollama_viability(limit):
     errs = []
     print("\nPortion grams:")
     for case in port_cases:
-        est = food_resolver.estimate_portion_grams_llm(case["unit"], case["item"])
+        est = food_resolver.estimate_portion_grams(case["unit"], case["item"], None, provider)
         if est is None:
-            print(f"  {case['item']:32} — LLM no answer")
+            print(f"  {case['item']:32} — no answer")
             continue
         err = _pct_err(est[0], case["expected_grams"])
         errs.append(err)
@@ -164,27 +168,38 @@ def run_ollama_viability(limit):
 
     print("\n" + "=" * 50)
     res_ok = res_rate >= RESOLUTION_BAR and scored > 0
-    port_ok = port_median <= PORTION_MEDIAN_BAR and errs
+    port_ok = port_median <= PORTION_MEDIAN_BAR and bool(errs)
     print(f"Resolution accuracy: {res_rate*100:.0f}% (bar ≥{int(RESOLUTION_BAR*100)}%)  "
           f"{'PASS' if res_ok else 'FAIL'}")
     print(f"Portion median error: {port_median*100:.0f}% (bar ≤{int(PORTION_MEDIAN_BAR*100)}%)  "
           f"{'PASS' if port_ok else 'FAIL'}")
-    verdict = "VIABLE" if (res_ok and port_ok) else "NOT VIABLE — consider Claude for these jobs"
-    print(f"\nOllama for constrained jobs: {verdict}\n")
+    print(f"\n{provider} resolution: {'VIABLE' if res_ok else 'NOT VIABLE'}  |  "
+          f"{provider} portion: {'VIABLE' if port_ok else 'NOT VIABLE'}\n")
 
 
 def main():
     ap = argparse.ArgumentParser(description="Validate nutrition accuracy vs golden set")
-    ap.add_argument("--no-llm", action="store_true", help="Engine, deterministic only (no LLM fallback)")
+    ap.add_argument("--no-llm", action="store_true",
+                    help="Engine, deterministic only (shorthand for --resolver none --portion none)")
+    ap.add_argument("--resolver", choices=["ollama", "claude", "none"], default="ollama",
+                    help="Provider for the food-resolution job (default: ollama)")
+    ap.add_argument("--portion", choices=["none", "ollama", "claude"], default="none",
+                    help="Provider for the portion-grams job (default: none — Ollama proven unreliable)")
     ap.add_argument("--legacy", action="store_true", help="Use the old nutrition_lookup (before/after)")
     ap.add_argument("--ollama-viability", action="store_true", help="Score mistral:7b on the two LLM jobs")
+    ap.add_argument("--viability", choices=["ollama", "claude"],
+                    help="Score a provider on the two constrained LLM jobs")
     ap.add_argument("--limit", type=int, help="Limit number of cases")
     args = ap.parse_args()
 
-    if args.ollama_viability:
-        run_ollama_viability(args.limit)
-    else:
-        run_golden(legacy=args.legacy, use_llm=not args.no_llm, limit=args.limit)
+    if args.ollama_viability or args.viability:
+        run_viability(args.viability or "ollama", args.limit)
+        return
+
+    resolver = "none" if args.no_llm else args.resolver
+    portion = "none" if args.no_llm else args.portion
+    run_golden(legacy=args.legacy, resolution_provider=resolver,
+               portion_provider=portion, limit=args.limit)
 
 
 if __name__ == "__main__":

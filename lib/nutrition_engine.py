@@ -95,7 +95,7 @@ def _deterministic_pick(item_norm: str, candidates: list) -> Optional[int]:
     return None
 
 
-def _resolve_food(item: str, *, use_cache: bool, use_llm: bool):
+def _resolve_food(item: str, *, use_cache: bool, resolution_provider: str):
     """Resolve an ingredient to a FoodRecord-like object + (confidence, resolver).
 
     Returns (record_dict, confidence, resolver) or (None, 0.0, "unresolved").
@@ -123,10 +123,10 @@ def _resolve_food(item: str, *, use_cache: bool, use_llm: bool):
         idx = _deterministic_pick(norm, candidates)
         if idx is not None:
             chosen_idx, confidence, resolver = idx, 0.8, "match"
-        elif use_llm:
-            picked = food_resolver.resolve_food_llm(norm, candidates)
+        elif resolution_provider != "none":
+            picked = food_resolver.resolve_food(norm, candidates, resolution_provider)
             if picked is not None:
-                chosen_idx, confidence, resolver = picked[0], picked[1], "llm"
+                chosen_idx, confidence, resolver = picked[0], picked[1], f"llm-{resolution_provider}"
         if chosen_idx is None:
             chosen_idx, confidence, resolver = 0, 0.4, "fallback"
 
@@ -167,7 +167,7 @@ def _resolve_food(item: str, *, use_cache: bool, use_llm: bool):
     return record, confidence, resolver
 
 
-def _resolve_grams(amount, unit, item, record, *, use_cache: bool, use_llm: bool):
+def _resolve_grams(amount, unit, item, record, *, use_cache: bool, portion_provider: str):
     """Convert to grams, falling back to a cached/LLM portion estimate."""
     density = (record or {}).get("density_g_per_ml")
     portions = (record or {}).get("portions") or []
@@ -180,34 +180,39 @@ def _resolve_grams(amount, unit, item, record, *, use_cache: bool, use_llm: bool
     if gr.method != "unresolved":
         return gr
 
-    # Deterministic conversion failed → try a cached, then LLM, portion estimate.
+    # Deterministic conversion failed. If a portion provider is configured, try a
+    # cached (provider-keyed) estimate, then a live one. With provider "none" we
+    # leave it unresolved rather than returning a stale estimate — keeping the
+    # cache read gated avoids one provider's bad estimate polluting another run.
+    if portion_provider == "none":
+        return gr
+
     qty = units.parse_amount_to_float(amount) or 1.0
-    norm_key = f"{units._normalize_item(item)}|{(unit or '').lower()}"
+    norm_key = f"{units._normalize_item(item)}|{(unit or '').lower()}|{portion_provider}"
     if use_cache:
         cached = inventory_db.get_food_resolution(norm_key)
         if cached and cached.get("resolver") == "llm-portion":
             try:
                 grams_per_unit = float(cached["source_id"])
                 return units.GramResult(
-                    qty * grams_per_unit, "llm", cached["confidence"], False,
-                    note="cached portion estimate",
+                    qty * grams_per_unit, "llm", cached["confidence"], True,
+                    note=f"cached {portion_provider} portion estimate",
                 )
             except (ValueError, KeyError):
                 pass
 
-    if use_llm:
-        labels = [p.get("label") for p in portions if p.get("label")]
-        est = food_resolver.estimate_portion_grams_llm(unit, item, labels or None)
-        if est is not None:
-            grams_per_unit, conf = est
-            if use_cache:
-                inventory_db.put_food_resolution(
-                    norm_key, "llm", str(grams_per_unit), conf, "llm-portion"
-                )
-            return units.GramResult(
-                qty * grams_per_unit, "llm", units.CONFIDENCE["llm"], True,
-                note="llm portion estimate",
+    labels = [p.get("label") for p in portions if p.get("label")]
+    est = food_resolver.estimate_portion_grams(unit, item, labels or None, portion_provider)
+    if est is not None:
+        grams_per_unit, conf = est
+        if use_cache:
+            inventory_db.put_food_resolution(
+                norm_key, "llm", str(grams_per_unit), conf, "llm-portion"
             )
+        return units.GramResult(
+            qty * grams_per_unit, "llm", units.CONFIDENCE["llm"], True,
+            note=f"{portion_provider} portion estimate",
+        )
     return gr  # still unresolved
 
 
@@ -217,13 +222,31 @@ def calculate_recipe_nutrition(
     *,
     use_cache: bool = True,
     use_llm: bool = True,
+    resolution_provider: Optional[str] = None,
+    portion_provider: Optional[str] = None,
 ) -> Optional[RecipeNutritionResult]:
     """Compute per-serving nutrition for a recipe, gram-based and auditable.
+
+    The two LLM jobs are selected independently via ``resolution_provider`` and
+    ``portion_provider`` ("ollama" | "claude" | "none"). Both default from
+    ``use_llm`` to "ollama"/"none" for backward compatibility. Validation showed
+    Ollama food-resolution is reliable (~100%) but Ollama portion estimation is
+    not (~52% error), so callers should prefer portion_provider="claude" or
+    "none".
 
     Returns None when no ingredient could be resolved at all (matching the old
     contract so backfill skips). Otherwise returns a RecipeNutritionResult; a
     partially-resolved recipe is returned with ``needs_review=True``.
     """
+    if resolution_provider is None:
+        resolution_provider = "ollama" if use_llm else "none"
+    if portion_provider is None:
+        # Ollama portion estimation is unreliable (~52% error), so prefer Claude
+        # when a key is configured, else skip portion estimation entirely.
+        if use_llm:
+            portion_provider = "claude" if food_resolver.claude_available() else "none"
+        else:
+            portion_provider = "none"
     total = dict(_EMPTY_CONTRIB)
     line_items: list[IngredientNutrition] = []
     sources: set = set()
@@ -237,7 +260,8 @@ def calculate_recipe_nutrition(
         if not item:
             continue
 
-        record, food_conf, resolver = _resolve_food(item, use_cache=use_cache, use_llm=use_llm)
+        record, food_conf, resolver = _resolve_food(
+            item, use_cache=use_cache, resolution_provider=resolution_provider)
         if record is None:
             line_items.append(IngredientNutrition(
                 item, amount, unit, 0.0, "unresolved", "", "",
@@ -246,7 +270,8 @@ def calculate_recipe_nutrition(
             confidences.append(0.0)
             continue
 
-        gr = _resolve_grams(amount, unit, item, record, use_cache=use_cache, use_llm=use_llm)
+        gr = _resolve_grams(amount, unit, item, record, use_cache=use_cache,
+                            portion_provider=portion_provider)
         per_100g = record["per_100g"]
         if gr.method == "unresolved" or gr.grams <= 0:
             contribution = dict(_EMPTY_CONTRIB)

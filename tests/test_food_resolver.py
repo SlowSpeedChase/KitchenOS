@@ -59,3 +59,29 @@ class TestEstimatePortionGramsLlm:
         with patch("lib.food_resolver.requests.post") as p:
             p.return_value = _ollama('{"grams_per_unit": "lots", "confidence": 0.7}')
             assert estimate_portion_grams_llm("whole", "shallot") is None
+
+
+class TestProviderDispatch:
+    def test_none_provider_returns_none(self):
+        from lib.food_resolver import resolve_food, estimate_portion_grams
+        assert resolve_food("x", [_Cand("y")], "none") is None
+        assert estimate_portion_grams("whole", "x", None, "none") is None
+
+    def test_ollama_dispatch(self):
+        from lib.food_resolver import estimate_portion_grams
+        with patch("lib.food_resolver.requests.post") as p:
+            p.return_value = _ollama('{"grams_per_unit": 40, "confidence": 0.7}')
+            assert estimate_portion_grams("whole", "shallot", None, "ollama") == (40.0, 0.7)
+
+    def test_claude_dispatch_uses_validation(self):
+        from lib.food_resolver import estimate_portion_grams
+        # Mock the Claude JSON layer; validation (bounds/clamp) is shared.
+        with patch("lib.food_resolver._claude_json",
+                   return_value={"grams_per_unit": 40, "confidence": 1.5}):
+            assert estimate_portion_grams("whole", "shallot", None, "claude") == (40.0, 1.0)
+
+    def test_claude_resolution_out_of_range_rejected(self):
+        from lib.food_resolver import resolve_food
+        with patch("lib.food_resolver._claude_json",
+                   return_value={"choice_index": 9, "confidence": 0.9}):
+            assert resolve_food("flour", [_Cand("Flour")], "claude") is None
