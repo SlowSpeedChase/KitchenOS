@@ -30,7 +30,7 @@ from templates.recipe_template import format_recipe_markdown
 from templates.meal_plan_template import generate_meal_plan_markdown
 from lib.ingredient_validator import validate_ingredients
 from lib.seasonality import match_ingredients_to_seasonal, get_peak_months
-from lib.nutrition_lookup import calculate_recipe_nutrition
+from lib.nutrition_engine import calculate_recipe_nutrition
 from lib import meal_loader, pantry as pantry_module, paths, task_extractor
 from recipe_sources import parse_recipe_from_text
 
@@ -286,20 +286,18 @@ def api_recipe_save():
         data['seasonal_ingredients'] = seasonal_matches
         data['peak_months'] = get_peak_months(seasonal_matches)
 
-        # Calculate nutrition
+        # Calculate nutrition (servings raw → engine flags null instead of hiding it)
         ingredients = data.get('ingredients', [])
-        try:
-            servings = int(data.get('servings', 1) or 1)
-        except (ValueError, TypeError):
-            servings = 1
-
-        nutrition_result = calculate_recipe_nutrition(ingredients, servings)
+        nutrition_result = calculate_recipe_nutrition(ingredients, data.get('servings'))
         if nutrition_result:
             data['nutrition_calories'] = nutrition_result.nutrition.calories
             data['nutrition_protein'] = nutrition_result.nutrition.protein
             data['nutrition_carbs'] = nutrition_result.nutrition.carbs
             data['nutrition_fat'] = nutrition_result.nutrition.fat
             data['nutrition_source'] = nutrition_result.source
+            data['nutrition_confidence'] = nutrition_result.confidence
+            if nutrition_result.needs_review:
+                data['needs_review'] = True
 
         # Set source metadata
         data.setdefault('source', 'claude')
@@ -382,20 +380,18 @@ def api_recipe_import_text():
         recipe['seasonal_ingredients'] = seasonal_matches
         recipe['peak_months'] = get_peak_months(seasonal_matches)
 
-        # Calculate nutrition
+        # Calculate nutrition (servings raw → engine flags null instead of hiding it)
         ingredients = recipe.get('ingredients', [])
-        try:
-            servings = int(recipe.get('servings', 1) or 1)
-        except (ValueError, TypeError):
-            servings = 1
-
-        nutrition_result = calculate_recipe_nutrition(ingredients, servings)
+        nutrition_result = calculate_recipe_nutrition(ingredients, recipe.get('servings'))
         if nutrition_result:
             recipe['nutrition_calories'] = nutrition_result.nutrition.calories
             recipe['nutrition_protein'] = nutrition_result.nutrition.protein
             recipe['nutrition_carbs'] = nutrition_result.nutrition.carbs
             recipe['nutrition_fat'] = nutrition_result.nutrition.fat
             recipe['nutrition_source'] = nutrition_result.source
+            recipe['nutrition_confidence'] = nutrition_result.confidence
+            if nutrition_result.needs_review:
+                recipe['needs_review'] = True
 
         # Generate markdown, then preserve the original pasted text for later correction.
         markdown = format_recipe_markdown(

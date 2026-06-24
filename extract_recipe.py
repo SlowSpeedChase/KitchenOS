@@ -18,7 +18,7 @@ from lib.backup import create_backup
 from lib.recipe_parser import find_existing_recipe, find_existing_recipe_by_source_url, parse_recipe_file, extract_my_notes
 from lib.ingredient_validator import validate_ingredients
 from lib.ingredient_parser import parse_ingredient
-from lib.nutrition_lookup import calculate_recipe_nutrition
+from lib.nutrition_engine import calculate_recipe_nutrition
 from lib.image_downloader import download_image
 from lib.seasonality import match_ingredients_to_seasonal, calculate_season_score, get_peak_months
 from lib.normalizer import normalize_recipe_data
@@ -425,15 +425,12 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False, 
             score = calculate_season_score(seasonal_matches)
             status(f"Found {len(seasonal_matches)} seasonal ingredients (score: {score})")
 
-        # Calculate nutrition from ingredients
+        # Calculate nutrition from ingredients. Pass servings raw (may be null)
+        # so the engine can flag servings_inferred rather than silently treating
+        # the whole recipe as one serving.
         status("Calculating nutrition...")
         ingredients = recipe_data.get("ingredients", [])
-        try:
-            servings = int(recipe_data.get("servings", 1) or 1)
-        except (ValueError, TypeError):
-            servings = 1
-
-        nutrition_result = calculate_recipe_nutrition(ingredients, servings)
+        nutrition_result = calculate_recipe_nutrition(ingredients, recipe_data.get("servings"))
 
         if nutrition_result:
             recipe_data["nutrition_calories"] = nutrition_result.nutrition.calories
@@ -441,7 +438,10 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False, 
             recipe_data["nutrition_carbs"] = nutrition_result.nutrition.carbs
             recipe_data["nutrition_fat"] = nutrition_result.nutrition.fat
             recipe_data["nutrition_source"] = nutrition_result.source
+            recipe_data["nutrition_confidence"] = nutrition_result.confidence
             recipe_data["serving_size"] = recipe_data.get("serving_size", "1 serving")
+            if nutrition_result.needs_review:
+                recipe_data["needs_review"] = True
 
         # Download recipe image
         image_filename = None
@@ -571,19 +571,20 @@ def extract_single_web_recipe(url: str, dry_run: bool = False, on_status=None) -
         recipe_data['seasonal_ingredients'] = seasonal_matches
         recipe_data['peak_months'] = get_peak_months(seasonal_matches)
 
-        # Calculate nutrition
+        # Calculate nutrition (pass servings raw so null is flagged, not hidden).
         status("Calculating nutrition...")
-        try:
-            servings = int(recipe_data.get("servings", 1) or 1)
-        except (ValueError, TypeError):
-            servings = 1
-        nutrition_result = calculate_recipe_nutrition(recipe_data.get("ingredients", []), servings)
+        nutrition_result = calculate_recipe_nutrition(
+            recipe_data.get("ingredients", []), recipe_data.get("servings")
+        )
         if nutrition_result:
             recipe_data["calories"] = nutrition_result.nutrition.calories
             recipe_data["protein_g"] = nutrition_result.nutrition.protein
             recipe_data["carbs_g"] = nutrition_result.nutrition.carbs
             recipe_data["fat_g"] = nutrition_result.nutrition.fat
             recipe_data["nutrition_source"] = nutrition_result.source
+            recipe_data["nutrition_confidence"] = nutrition_result.confidence
+            if nutrition_result.needs_review:
+                recipe_data["needs_review"] = True
 
         # Download image
         image_filename = None

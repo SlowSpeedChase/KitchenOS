@@ -163,6 +163,8 @@ def generate_nutrition_section(recipe_data: dict) -> str:
     fat = recipe_data.get("nutrition_fat", 0)
     serving_size = recipe_data.get("serving_size", "1 serving")
     source = recipe_data.get("nutrition_source", "unknown")
+    confidence = recipe_data.get("nutrition_confidence")
+    conf_str = f" • Confidence: {confidence}" if confidence is not None else ""
 
     return f"""## Nutrition (per serving)
 
@@ -170,7 +172,7 @@ def generate_nutrition_section(recipe_data: dict) -> str:
 |----------|---------|-------|-----|
 | {calories}      | {nutrition_protein}g     | {carbs}g   | {fat}g |
 
-*Serving size: {serving_size} • Source: {source.title()}*
+*Serving size: {serving_size} • Source: {source.title()}{conf_str}*
 
 """
 
@@ -195,6 +197,7 @@ nutrition_protein: {nutrition_protein}
 nutrition_carbs: {nutrition_carbs}
 nutrition_fat: {nutrition_fat}
 nutrition_source: {nutrition_source}
+nutrition_confidence: {nutrition_confidence}
 
 cuisine: {cuisine}
 protein: {protein}
@@ -400,6 +403,7 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel, date_ad
         nutrition_carbs=num_or_null(recipe_data.get('nutrition_carbs')),
         nutrition_fat=num_or_null(recipe_data.get('nutrition_fat')),
         nutrition_source=quote_or_null(recipe_data.get('nutrition_source')),
+        nutrition_confidence=num_or_null(recipe_data.get('nutrition_confidence')),
         cuisine=quote_or_null(recipe_data.get('cuisine')),
         protein=quote_or_null(recipe_data.get('protein')),
         dish_type=quote_or_null(recipe_data.get('dish_type')),

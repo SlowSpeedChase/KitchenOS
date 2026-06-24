@@ -1,0 +1,319 @@
+"""Deterministic, gram-based recipe nutrition engine.
+
+Replaces the old "search an API and trust whatever number comes back" cascade.
+Every macro is computed as ``per_100g * grams / 100``:
+
+    for each ingredient:
+        food   = resolve to a USDA/OFF record (cache → search → LLM pick → OFF)
+        grams  = units.to_grams(...)            (density / piece weight / portion / LLM)
+        line   = food.per_100g * grams / 100    (kept as floats)
+    total      = sum(lines)                      (no per-ingredient rounding)
+    per_serving= round(total / servings)          (rounded once, at the end)
+
+The LLM is confined to two narrow, validated jobs (food pick + portion grams) via
+``lib/food_resolver``. Results are cached in ``inventory_db`` so an ingredient is
+resolved once across all recipes. Every line carries an audit trail (grams,
+source, per-100g, contribution) so any stored macro can be re-derived.
+
+The public :func:`calculate_recipe_nutrition` returns a
+:class:`RecipeNutritionResult` whose ``.nutrition`` / ``.source`` properties keep
+the previous call sites (``extract_recipe``, ``backfill_nutrition``) working.
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from typing import Optional
+
+from lib import food_db, food_resolver, inventory_db, units
+from lib.nutrition import NutritionData
+
+# Below this line confidence, a recipe is flagged needs_review.
+REVIEW_CONFIDENCE = 0.5
+
+
+@dataclass
+class IngredientNutrition:
+    """Per-ingredient audit line."""
+    item: str
+    amount: object
+    unit: str
+    grams: float
+    grams_method: str
+    food_source: str          # usda | off | "" (unresolved)
+    food_id: str
+    per_100g: dict
+    contribution: dict        # {calories, protein, carbs, fat} as floats
+    confidence: float
+    needs_review: bool
+    note: str = ""
+
+
+@dataclass
+class RecipeNutritionResult:
+    """Recipe-level result with a backward-compatible adapter."""
+    per_serving: NutritionData
+    total: NutritionData
+    source: str
+    servings_used: int
+    servings_inferred: bool
+    needs_review: bool
+    confidence: float
+    line_items: list = field(default_factory=list)
+
+    # --- backward-compat: old call sites use .nutrition and .source ---
+    @property
+    def nutrition(self) -> NutritionData:
+        return self.per_serving
+
+
+_EMPTY_CONTRIB = {"calories": 0.0, "protein": 0.0, "carbs": 0.0, "fat": 0.0}
+
+
+def _words(text: str) -> set:
+    return set(re.findall(r"[a-z]+", (text or "").lower()))
+
+
+def _deterministic_pick(item_norm: str, candidates: list) -> Optional[int]:
+    """Pick the candidate with the most word overlap with the item.
+
+    Returns an index when there is a clear best match, else None (→ let the LLM
+    decide). Keeps common, unambiguous ingredients fully offline.
+    """
+    item_words = _words(item_norm)
+    if not item_words:
+        return None
+    scored = [(len(item_words & _words(c.description)), i) for i, c in enumerate(candidates)]
+    scored.sort(reverse=True)
+    best_score, best_idx = scored[0]
+    if best_score == 0:
+        return None
+    # Unique winner that covers at least half the item's words → confident.
+    runner_up = scored[1][0] if len(scored) > 1 else -1
+    if best_score > runner_up and best_score >= max(1, len(item_words) // 2):
+        return best_idx
+    return None
+
+
+def _resolve_food(item: str, *, use_cache: bool, use_llm: bool):
+    """Resolve an ingredient to a FoodRecord-like object + (confidence, resolver).
+
+    Returns (record_dict, confidence, resolver) or (None, 0.0, "unresolved").
+    record_dict has keys: source, source_id, description, per_100g(dict),
+    portions(list), density_g_per_ml.
+    """
+    norm = units._normalize_item(item)
+    if not norm:
+        return None, 0.0, "unresolved"
+
+    # 1. Resolution cache → cached food record.
+    if use_cache:
+        res = inventory_db.get_food_resolution(norm)
+        if res and res.get("resolver") != "llm-portion":
+            cached = inventory_db.get_food_cache(norm, res["source"])
+            if cached:
+                return cached, res["confidence"], "cache"
+
+    # 2. USDA candidates.
+    candidates = food_db.usda_search(norm)
+    chosen_idx = None
+    confidence = 0.4
+    resolver = "fallback"
+    if candidates:
+        idx = _deterministic_pick(norm, candidates)
+        if idx is not None:
+            chosen_idx, confidence, resolver = idx, 0.8, "match"
+        elif use_llm:
+            picked = food_resolver.resolve_food_llm(norm, candidates)
+            if picked is not None:
+                chosen_idx, confidence, resolver = picked[0], picked[1], "llm"
+        if chosen_idx is None:
+            chosen_idx, confidence, resolver = 0, 0.4, "fallback"
+
+        fdc_id = candidates[chosen_idx].source_id
+        detail = food_db.usda_food_detail(fdc_id)
+        rec_obj = detail or candidates[chosen_idx]
+        record = {
+            "query_norm": norm,
+            "source": "usda",
+            "source_id": rec_obj.source_id,
+            "description": rec_obj.description,
+            "per_100g": rec_obj.per_100g.to_dict(),
+            "portions": rec_obj.portions,
+            "density_g_per_ml": rec_obj.density_g_per_ml,
+        }
+    else:
+        # 3. Open Food Facts fallback (branded/packaged).
+        off = food_db.off_search(norm)
+        if not off:
+            return None, 0.0, "unresolved"
+        rec_obj = off[0]
+        confidence, resolver = 0.6, "off"
+        record = {
+            "query_norm": norm,
+            "source": "off",
+            "source_id": rec_obj.source_id,
+            "description": rec_obj.description,
+            "per_100g": rec_obj.per_100g.to_dict(),
+            "portions": rec_obj.portions,
+            "density_g_per_ml": rec_obj.density_g_per_ml,
+        }
+
+    if use_cache:
+        inventory_db.put_food_cache(record)
+        inventory_db.put_food_resolution(
+            norm, record["source"], record["source_id"], confidence, resolver
+        )
+    return record, confidence, resolver
+
+
+def _resolve_grams(amount, unit, item, record, *, use_cache: bool, use_llm: bool):
+    """Convert to grams, falling back to a cached/LLM portion estimate."""
+    density = (record or {}).get("density_g_per_ml")
+    portions = (record or {}).get("portions") or []
+    gr = units.to_grams(
+        amount, unit, item,
+        density_g_per_ml=density,
+        piece_weight_g=None,
+        usda_portions=portions,
+    )
+    if gr.method != "unresolved":
+        return gr
+
+    # Deterministic conversion failed → try a cached, then LLM, portion estimate.
+    qty = units.parse_amount_to_float(amount) or 1.0
+    norm_key = f"{units._normalize_item(item)}|{(unit or '').lower()}"
+    if use_cache:
+        cached = inventory_db.get_food_resolution(norm_key)
+        if cached and cached.get("resolver") == "llm-portion":
+            try:
+                grams_per_unit = float(cached["source_id"])
+                return units.GramResult(
+                    qty * grams_per_unit, "llm", cached["confidence"], False,
+                    note="cached portion estimate",
+                )
+            except (ValueError, KeyError):
+                pass
+
+    if use_llm:
+        labels = [p.get("label") for p in portions if p.get("label")]
+        est = food_resolver.estimate_portion_grams_llm(unit, item, labels or None)
+        if est is not None:
+            grams_per_unit, conf = est
+            if use_cache:
+                inventory_db.put_food_resolution(
+                    norm_key, "llm", str(grams_per_unit), conf, "llm-portion"
+                )
+            return units.GramResult(
+                qty * grams_per_unit, "llm", units.CONFIDENCE["llm"], True,
+                note="llm portion estimate",
+            )
+    return gr  # still unresolved
+
+
+def calculate_recipe_nutrition(
+    ingredients: list[dict],
+    servings,
+    *,
+    use_cache: bool = True,
+    use_llm: bool = True,
+) -> Optional[RecipeNutritionResult]:
+    """Compute per-serving nutrition for a recipe, gram-based and auditable.
+
+    Returns None when no ingredient could be resolved at all (matching the old
+    contract so backfill skips). Otherwise returns a RecipeNutritionResult; a
+    partially-resolved recipe is returned with ``needs_review=True``.
+    """
+    total = dict(_EMPTY_CONTRIB)
+    line_items: list[IngredientNutrition] = []
+    sources: set = set()
+    confidences: list[float] = []
+    any_resolved = False
+
+    for ing in ingredients:
+        item = (ing.get("item") or "").strip()
+        amount = ing.get("amount", "1")
+        unit = ing.get("unit", "") or ""
+        if not item:
+            continue
+
+        record, food_conf, resolver = _resolve_food(item, use_cache=use_cache, use_llm=use_llm)
+        if record is None:
+            line_items.append(IngredientNutrition(
+                item, amount, unit, 0.0, "unresolved", "", "",
+                {}, dict(_EMPTY_CONTRIB), 0.0, True, note="food not found",
+            ))
+            confidences.append(0.0)
+            continue
+
+        gr = _resolve_grams(amount, unit, item, record, use_cache=use_cache, use_llm=use_llm)
+        per_100g = record["per_100g"]
+        if gr.method == "unresolved" or gr.grams <= 0:
+            contribution = dict(_EMPTY_CONTRIB)
+            line_review = True
+            line_conf = 0.0
+            note = gr.note
+        else:
+            factor = gr.grams / 100.0
+            contribution = {k: float(per_100g.get(k, 0) or 0) * factor for k in _EMPTY_CONTRIB}
+            for k in total:
+                total[k] += contribution[k]
+            line_review = gr.needs_review or food_conf < REVIEW_CONFIDENCE
+            line_conf = min(food_conf, gr.confidence)
+            note = gr.note
+            any_resolved = True
+            sources.add(record["source"])
+
+        confidences.append(line_conf)
+        line_items.append(IngredientNutrition(
+            item=item, amount=amount, unit=unit,
+            grams=round(gr.grams, 1), grams_method=gr.method,
+            food_source=record["source"], food_id=str(record["source_id"]),
+            per_100g=per_100g, contribution=contribution,
+            confidence=round(line_conf, 2), needs_review=line_review, note=note,
+        ))
+
+    if not any_resolved:
+        return None
+
+    # Servings: None/0 → default 1 but flag (stops the 1639-cal "serving" bug).
+    servings_inferred = False
+    try:
+        servings_used = int(servings)
+    except (TypeError, ValueError):
+        servings_used = 0
+    if servings_used < 1:
+        servings_used = 1
+        servings_inferred = True
+
+    total_nd = NutritionData(
+        calories=round(total["calories"]),
+        protein=round(total["protein"]),
+        carbs=round(total["carbs"]),
+        fat=round(total["fat"]),
+    )
+    per_serving = NutritionData(
+        calories=round(total["calories"] / servings_used),
+        protein=round(total["protein"] / servings_used),
+        carbs=round(total["carbs"] / servings_used),
+        fat=round(total["fat"] / servings_used),
+    )
+
+    source = next(iter(sources)) if len(sources) == 1 else "mixed"
+    recipe_conf = round(min(confidences), 2) if confidences else 0.0
+    needs_review = (
+        servings_inferred
+        or any(li.needs_review for li in line_items)
+        or recipe_conf < REVIEW_CONFIDENCE
+    )
+
+    return RecipeNutritionResult(
+        per_serving=per_serving,
+        total=total_nd,
+        source=source,
+        servings_used=servings_used,
+        servings_inferred=servings_inferred,
+        needs_review=needs_review,
+        confidence=recipe_conf,
+        line_items=line_items,
+    )

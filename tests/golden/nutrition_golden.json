@@ -1,0 +1,47 @@
+{
+  "_comment": "Hand-labeled per-serving nutrition from each recipe's published source, used by scripts/validate_nutrition.py to measure engine accuracy. 'file' must exist in the vault Recipes/ dir. Add entries as you verify more sources.",
+  "recipes": [
+    {
+      "file": "Chopped Green Goddess Salad.md",
+      "servings": 8,
+      "source": "feelgoodfoodie.net",
+      "published": {"calories": 134, "protein": 4, "carbs": 8, "fat": 10}
+    },
+    {
+      "file": "Blueberry Muffins.md",
+      "servings": 12,
+      "source": "culinaryhill.com",
+      "published": {"calories": 290, "protein": 4, "carbs": 45, "fat": 11}
+    },
+    {
+      "file": "Cast Iron Cornbread.md",
+      "servings": 8,
+      "source": "theseasonedmom.com",
+      "published": {"calories": 208, "protein": 6, "carbs": 36, "fat": 5}
+    },
+    {
+      "file": "Baked Protein Oats.md",
+      "servings": 6,
+      "source": "cookingforpeanuts.com",
+      "published": {"calories": 264, "protein": 15, "carbs": 35, "fat": 9}
+    },
+    {
+      "file": "Blended Chia Pudding With Apple.md",
+      "servings": 3,
+      "source": "cookingforpeanuts.com",
+      "published": {"calories": 279, "protein": 9, "carbs": 39, "fat": 12}
+    },
+    {
+      "file": "Blueberry Rhubarb Muffins.md",
+      "servings": 12,
+      "source": "budgetbytes.com",
+      "published": {"calories": 299, "protein": 4, "carbs": 42, "fat": 13}
+    },
+    {
+      "file": "Best Ever Scotcheroos.md",
+      "servings": 24,
+      "source": "dancearoundthekitchen.com",
+      "published": {"calories": 301, "protein": 4.8, "carbs": 45.5, "fat": 12.5}
+    }
+  ]
+}

@@ -7,21 +7,14 @@ within unit families (volume, weight, count).
 from typing import List, Optional
 import re
 
-# Unit conversion factors (to base unit within family)
-VOLUME_UNITS = {
-    'tsp': 1,
-    'tbsp': 3,       # 3 tsp
-    'cup': 48,       # 48 tsp
-    'ml': 0.2029,    # tsp
-    'l': 202.9,      # tsp
-}
+from lib.units import VOLUME_ML, MASS_G, parse_amount_to_float
 
-WEIGHT_UNITS = {
-    'oz': 1,
-    'lb': 16,        # 16 oz
-    'g': 0.035274,   # oz
-    'kg': 35.274,    # oz
-}
+# Conversion factors derived from the canonical gram tables in ``lib/units.py``
+# so there is a single source of truth. Aggregation only needs *relative* ratios
+# within a family, so volume is expressed relative to tsp and weight relative to
+# oz (preserving this module's historical base units and behavior).
+VOLUME_UNITS = {u: ml / VOLUME_ML['tsp'] for u, ml in VOLUME_ML.items()}
+WEIGHT_UNITS = {u: g / MASS_G['oz'] for u, g in MASS_G.items()}
 
 COUNT_UNITS = {
     'clove', 'cloves',
@@ -62,31 +55,9 @@ def get_unit_family(unit: str) -> str:
     return 'other'
 
 
-def parse_amount_to_float(amount) -> Optional[float]:
-    """Convert amount string/number to float."""
-    if amount is None or amount == '':
-        return None
-
-    if isinstance(amount, (int, float)):
-        return float(amount)
-
-    if isinstance(amount, str):
-        amount = amount.strip()
-        if not amount:
-            return None
-
-        # Handle ranges: "3-4" -> 3.5
-        range_match = re.match(r'^(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)$', amount)
-        if range_match:
-            low, high = float(range_match.group(1)), float(range_match.group(2))
-            return (low + high) / 2
-
-        try:
-            return float(amount)
-        except ValueError:
-            return None
-
-    return None
+# parse_amount_to_float is imported from lib.units (one canonical numeric parse,
+# shared with the nutrition engine) and re-exported here for backward compat —
+# shopping_list_generator and pantry import it from this module.
 
 
 def convert_to_base_unit(amount: float, unit: str, family: str) -> float:
