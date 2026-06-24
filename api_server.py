@@ -27,7 +27,8 @@ from lib.meal_plan_parser import insert_recipe_into_meal_plan, parse_meal_plan, 
 from lib.recipe_parser import parse_recipe_file, extract_my_notes, parse_recipe_body
 from templates.shopping_list_template import generate_shopping_list_markdown, generate_filename as shopping_list_filename
 from templates.recipe_template import format_recipe_markdown
-from templates.meal_plan_template import generate_meal_plan_markdown
+from templates.meal_plan_template import generate_meal_plan_markdown, format_week_range
+from lib.meal_plan_index import regenerate_index
 from lib.ingredient_validator import validate_ingredients
 from lib.ingredient_cleaner import clean_ingredient_list
 from lib.seasonality import match_ingredients_to_seasonal, get_peak_months
@@ -863,6 +864,11 @@ def api_meal_plan_get(week):
     if not plan_file.exists():
         content = generate_meal_plan_markdown(year, week_num)
         plan_file.write_text(content, encoding="utf-8")
+        # New week file → refresh the human-readable Meal Plans Index
+        try:
+            regenerate_index()
+        except Exception as e:
+            print(f"Warning: could not refresh meal plan index: {e}", file=sys.stderr)
     else:
         content = plan_file.read_text(encoding="utf-8")
 
@@ -1002,6 +1008,14 @@ def _generate_week_options(weeks_ahead: int = 4) -> list[str]:
     return weeks
 
 
+def _week_option_label(week_id: str) -> str:
+    """Dropdown label leading with the date range, e.g. 'Jun 22 - Jun 28 (2026-W26)'."""
+    try:
+        return f"{format_week_range(week_id, with_year=False)} ({week_id})"
+    except ValueError:
+        return week_id
+
+
 _INVALID_MEAL_NAME_CHARS = ('/', ':', '\\')
 
 
@@ -1025,7 +1039,7 @@ def _render_add_form(recipe_display: str, error: str | None = None) -> str:
     meals = ['Breakfast', 'Lunch', 'Snack', 'Dinner']
     meal_names = _list_meal_names()
 
-    week_options = ''.join(f'<option value="{w}">{w}</option>' for w in weeks)
+    week_options = ''.join(f'<option value="{w}">{_week_option_label(w)}</option>' for w in weeks)
     day_options = ''.join(f'<option value="{d}">{d}</option>' for d in days)
     meal_options = ''.join(f'<option value="{m}">{m}</option>' for m in meals)
     meal_name_options = ''.join(f'<option value="{n}">{n}</option>' for n in meal_names)
@@ -1138,7 +1152,7 @@ def _render_schedule_prompt(recipe: str, meal_name: str, action: str, info: str 
     weeks = _generate_week_options()
     days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     meals = ['Breakfast', 'Lunch', 'Snack', 'Dinner']
-    week_options = ''.join(f'<option value="{w}">{w}</option>' for w in weeks)
+    week_options = ''.join(f'<option value="{w}">{_week_option_label(w)}</option>' for w in weeks)
     day_options = ''.join(f'<option value="{d}">{d}</option>' for d in days)
     meal_options = ''.join(f'<option value="{m}">{m}</option>' for m in meals)
     encoded_meal = quote(f"Meals/{meal_name}", safe='')

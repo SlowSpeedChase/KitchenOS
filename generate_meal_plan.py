@@ -19,6 +19,7 @@ from pathlib import Path
 
 from templates.meal_plan_template import generate_meal_plan_markdown, generate_filename, get_week_start
 from lib.backup import cleanup_old_backups
+from lib.meal_plan_index import regenerate_index
 from lib.seasonality import calculate_season_score, load_seasonal_config
 from lib.recipe_parser import parse_recipe_file
 from lib import paths
@@ -182,6 +183,11 @@ def main():
     # Write file
     filepath.write_text(content, encoding='utf-8')
     print(f"Created: {filepath}")
+
+    # Refresh the human-readable Meal Plans Index (week → date range)
+    index_path = regenerate_index()
+    if index_path:
+        print(f"Updated index: {index_path.name}")
 
     # Cleanup old recipe backups (runs daily with meal plan generation)
     if RECIPES_HISTORY_PATH.exists():

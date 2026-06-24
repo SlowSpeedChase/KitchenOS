@@ -3,10 +3,24 @@
 Creates weekly meal plan markdown files with blank slots for recipes.
 """
 
+import re
 from datetime import date, timedelta
 
 
 DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+
+WEEK_ID_RE = re.compile(r'^\s*(\d{4})-W(\d{2})\s*$')
+
+
+def parse_week_id(week_id: str) -> tuple[int, int]:
+    """Parse a 'YYYY-Www' identifier into (year, week).
+
+    Raises ValueError on anything that isn't a well-formed week id.
+    """
+    match = WEEK_ID_RE.match(week_id or '')
+    if not match:
+        raise ValueError(f"Invalid week id: {week_id!r} (expected 'YYYY-Www')")
+    return int(match.group(1)), int(match.group(2))
 
 
 def get_week_start(year: int, week: int) -> date:
@@ -26,6 +40,17 @@ def get_week_date_range(year: int, week: int) -> tuple[date, date]:
     start = get_week_start(year, week)
     end = start + timedelta(days=6)
     return start, end
+
+
+def format_week_range(week_id: str, *, with_year: bool = True) -> str:
+    """Human date range for a 'YYYY-Www' id, e.g. 'Jun 22 - Jun 28, 2026'.
+
+    Pass with_year=False for the bare 'Jun 22 - Jun 28' form (e.g. dropdowns).
+    """
+    year, week = parse_week_id(week_id)
+    start, end = get_week_date_range(year, week)
+    rng = f"{format_date_short(start)} - {format_date_short(end)}"
+    return f"{rng}, {year}" if with_year else rng
 
 
 def generate_meal_plan_markdown(year: int, week: int) -> str:

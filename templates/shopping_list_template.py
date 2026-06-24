@@ -5,6 +5,8 @@ Creates markdown shopping list files with checkboxes and send button.
 
 import re
 
+from templates.meal_plan_template import format_week_range
+
 
 def generate_shopping_list_markdown(week: str, items: list[str]) -> str:
     """Generate shopping list markdown.
@@ -20,8 +22,14 @@ def generate_shopping_list_markdown(week: str, items: list[str]) -> str:
     match = re.match(r'\d{4}-W(\d{2})', week)
     week_num = int(match.group(1)) if match else 0
 
+    # Lead the title with the human date range so the week is identifiable at a glance
+    try:
+        title = f"# Shopping List - Week {week_num:02d} ({format_week_range(week)})"
+    except ValueError:
+        title = f"# Shopping List - Week {week_num:02d}"
+
     lines = [
-        f"# Shopping List - Week {week_num:02d}",
+        title,
         "",
         f"Generated from [[{week}|Meal Plan]]",
         "",

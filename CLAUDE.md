@@ -259,6 +259,8 @@ Files are created in: `{Obsidian Vault}/Meal Plans/2026-W03.md`
 
 Template includes Monday-Sunday with Breakfast/Lunch/Dinner/Notes sections.
 
+**Meal Plans Index** — because Obsidian lists plans by bare ISO id (`2026-W03.md`), `lib/meal_plan_index.py` regenerates a `Meal Plans/Meal Plans Index.md` note mapping each week to its date range (`Week 03 | Jan 12 - Jan 18, 2026 | [[2026-W03]]`, newest first, current week marked). It refreshes automatically after `generate_meal_plan.py` runs and whenever the API creates a new week file. The index filename is intentionally not `YYYY-Www.md`, so the strict `parse_week_from_filename` scanners (calendar sync, etc.) skip it. Week→date-range formatting lives in `templates/meal_plan_template.py` (`parse_week_id`, `format_week_range`), reused by the week dropdowns in `api_server.py` and the shopping-list title.
+
 **Servings multiplier:** Use `[[Recipe Name]] x2` to indicate multiple servings. The `xN` goes outside the wiki link so Obsidian links still resolve. Affects nutrition dashboard calculations and shopping list ingredient scaling.
 
 **Composite meals:** Reference a meal bundle with `[[Meal: Salmon Dinner]]` (the `Meal:` prefix is the parser discriminator). Meal definitions live in `vault/Meals/<Name>.meal.md` with frontmatter listing `sub_recipes`. The parser keeps the meal name in the markdown; `flatten_to_recipes()` expands meals downstream for shopping lists, nutrition, and tasks. Outer `xN` multipliers stack with each sub-recipe's `servings` override.
@@ -571,7 +573,8 @@ template → Obsidian
 | `shopping_list.py` | Generates shopping list from meal plans |
 | `prompts/recipe_extraction.py` | AI prompt templates for structured extraction |
 | `templates/recipe_template.py` | Markdown formatter with YAML frontmatter |
-| `templates/meal_plan_template.py` | Weekly meal plan template generator |
+| `templates/meal_plan_template.py` | Weekly meal plan template generator; `parse_week_id`/`format_week_range` week→date-range helpers |
+| `lib/meal_plan_index.py` | Regenerates `Meal Plans/Meal Plans Index.md` (week → date range → link) so plans are findable by date, not bare ISO id |
 | `lib/ingredient_parser.py` | Parses ingredient strings into amount/unit/item |
 | `lib/ingredient_validator.py` | Validates/repairs AI extraction errors in ingredients |
 | `lib/ingredient_aggregator.py` | Combines like ingredients for shopping lists |

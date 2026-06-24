@@ -13,6 +13,12 @@ def test_generates_markdown_with_header():
     assert "[[2026-W04|Meal Plan]]" in result
 
 
+def test_header_includes_date_range():
+    """Title leads with the human date range so the week is identifiable."""
+    result = generate_shopping_list_markdown(week="2026-W04", items=["item"])
+    assert "# Shopping List - Week 04 (Jan 19 - Jan 25, 2026)" in result
+
+
 def test_generates_checklist_items():
     """Template creates checkbox items."""
     result = generate_shopping_list_markdown(
