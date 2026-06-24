@@ -162,7 +162,27 @@ Plan: `docs/superpowers/plans/2026-06-23-siri-foundation-models-phase-c2.md`.
   refactored to reuse the same helper (DRY).
 - **26 tests green**; iOS build SUCCEEDED.
 
-**C2 COMPLETE** (read + suggest + confirmed write + Obsidian verify). Held here per user.
+**C2 COMPLETE** (read + suggest + confirmed write + Obsidian verify).
 
-**Next (when ready):** C3 — App Schemas + IndexedEntity semantic search. Research the
-iOS 27 App Schemas API first (the `@AssistantIntent` macro changed in the 27 release).
+### 2026-06-23 — Subsystem C, Phase C3 (semantic search) — implemented
+
+Plan: `docs/superpowers/plans/2026-06-23-siri-foundation-models-phase-c3.md`.
+SDK research finding: **Assistant Schemas N/A** — grepping AppIntents schemas for
+food/recipe/meal/cook/grocery returned zero; no domain to conform to. So C3 = IndexedEntity.
+
+- `RecipeEntity: IndexedEntity` with a CoreSpotlight `attributeSet`
+  (title=name, keywords/contentDescription from cuisine+protein).
+- `RecipeIndexer.reindexAll` → `CSSearchableIndex.default().indexAppEntities(...)`
+  (reuses `findRecipes` + `RecipeEntity`). Runs on app launch (`.task`) + a Settings
+  "Reindex recipes" button.
+- Dropped `IndexedEntityQuery` conformance — its `CSSearchableIndexDescription` is
+  **iOS/macOS 27-only**, above our 26 floor; manual reindex covers it. A target bump to 27
+  would re-enable system-driven reindex (future).
+- **28 tests green**; iOS build SUCCEEDED.
+
+**On-device verification pending:** launch (auto-index) or Settings → Reindex; then
+Spotlight/Siri fuzzy queries ("spicy Indian chicken") surface matching recipes by meaning.
+
+**Subsystem C COMPLETE** (C1 Foundation Models + C2 assistant/+writes + C3 semantic search).
+Possible polish: ingredient keywords (needs an all-recipes-with-ingredients endpoint);
+27-gated IndexedEntityQuery; C2 confirmed-write voice flow.
