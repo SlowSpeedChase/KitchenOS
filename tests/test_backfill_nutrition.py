@@ -77,6 +77,28 @@ class TestBackfillNutrition:
         assert 'nutrition_source: "usda"' in content
         assert "nutrition_confidence: 0.8" in content
 
+    def test_appending_new_key_keeps_frontmatter_parseable(self, tmp_path):
+        # Regression: appending a brand-new key (nutrition_confidence) must not
+        # glue the closing '---' onto it and corrupt the frontmatter.
+        from backfill_nutrition import backfill_recipe
+        from lib.recipe_parser import parse_recipe_file
+
+        make_recipe_file(tmp_path, "Append Key", ingredients=[
+            {"amount": "1", "unit": "cup", "item": "flour"},
+        ])
+        recipe_path = tmp_path / "Append Key.md"
+        result = make_result(200, 5, 40, 2, "usda", confidence=0.4)
+        with patch("backfill_nutrition.calculate_recipe_nutrition", return_value=result):
+            backfill_recipe(recipe_path, dry_run=False)
+
+        content = recipe_path.read_text()
+        assert "0.4---" not in content            # delimiter not glued
+        assert "\nnutrition_confidence: 0.4\n" in content
+        # Body still recoverable after the write.
+        body = parse_recipe_file(content)["body"]
+        assert "## Ingredients" in body
+        assert "## Instructions" in body
+
     def test_propagates_needs_review(self, tmp_path):
         from backfill_nutrition import backfill_recipe
 

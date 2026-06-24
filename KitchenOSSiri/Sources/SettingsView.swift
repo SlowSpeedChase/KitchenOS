@@ -21,7 +21,9 @@ struct SettingsView: View {
                 TextField("Base URL", text: $baseURL)
                     .textFieldStyle(.roundedBorder)
                     .autocorrectionDisabled()
+                    #if os(iOS)
                     .textInputAutocapitalization(.never)
+                    #endif
                 SecureField("API token (optional)", text: $token)
                 Button("Save token") {
                     creds.setToken(token.isEmpty ? nil : token)

@@ -68,17 +68,26 @@ def rewrite_frontmatter(fm: str, updates: dict) -> str:
             last_idx[key] = len(out)
         out.append(line)
 
-    # Find a good insertion point for new keys: right after the last managed key
-    # if any exist, else just before the trailing blank line.
+    # Append new keys BEFORE any trailing blank lines, so the frontmatter text
+    # keeps its trailing newline and the closing "---" stays on its own line.
+    # (Appending at the very end glued "---" onto the last key — corrupting the file.)
     for key, value in updates.items():
         new_line = f"{key}: {value}"
         if key in last_idx:
             out[last_idx[key]] = new_line
         else:
-            out.append(new_line)
-            last_idx[key] = len(out) - 1
+            pos = len(out)
+            while pos > 0 and (out[pos - 1] is None or out[pos - 1] == ""):
+                pos -= 1
+            out.insert(pos, new_line)
+            last_idx[key] = pos
 
-    return "\n".join(l for l in out if l is not None)
+    result = "\n".join(l for l in out if l is not None)
+    # Safety: the frontmatter text must end with a newline so reconstruction as
+    # f"---{result}---..." never glues the delimiter onto a key.
+    if not result.endswith("\n"):
+        result += "\n"
+    return result
 
 
 def _split_frontmatter(content: str):

@@ -11,46 +11,44 @@ struct SmartSearchView: View {
     private var client: KitchenOSClient { KitchenOSClient(config: .resolved()) }
 
     var body: some View {
-        NavigationStack {
-            List {
-                if case let .unavailable(reason) = RecipeAI.availability {
-                    Section {
-                        Label(reason, systemImage: "exclamationmark.triangle")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-
+        List {
+            if case let .unavailable(reason) = RecipeAI.availability {
                 Section {
-                    TextField("e.g. something with eggplant", text: $queryText)
-                        .textFieldStyle(.roundedBorder)
-                        .autocorrectionDisabled()
-                        .onSubmit(runSearch)
-                    Button(isSearching ? "Searching…" : "Search", action: runSearch)
-                        .disabled(isSearching || queryText.isEmpty)
-                    if !status.isEmpty {
-                        Text(status).font(.caption).foregroundStyle(.secondary)
-                    }
+                    Label(reason, systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
+            }
 
-                if !results.isEmpty {
-                    Section("Results") {
-                        ForEach(results, id: \.name) { r in
+            Section {
+                TextField("e.g. something with eggplant", text: $queryText)
+                    .textFieldStyle(.roundedBorder)
+                    .autocorrectionDisabled()
+                    .onSubmit(runSearch)
+                Button(isSearching ? "Searching…" : "Search", action: runSearch)
+                    .disabled(isSearching || queryText.isEmpty)
+                if !status.isEmpty {
+                    Text(status).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            if !results.isEmpty {
+                Section("Results") {
+                    ForEach(results, id: \.name) { r in
+                        NavigationLink(value: r.name) {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(r.name)
                                 if !subtitle(r).isEmpty {
                                     Text(subtitle(r)).font(.caption).foregroundStyle(.secondary)
-                                }
-                                if let gist = summaries[r.name] {
-                                    Text(gist).font(.caption).italic()
-                                } else if RecipeAI.isReady {
-                                    Button("Summarize") { summarize(r) }.font(.caption)
                                 }
                             }
                         }
                     }
                 }
             }
-            .navigationTitle("Smart Search")
+        }
+        .navigationTitle("Smart Search")
+        .navigationDestination(for: String.self) { name in
+            RecipeDetailView(recipeName: name)
         }
     }
 

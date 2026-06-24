@@ -34,6 +34,7 @@ struct AppShell: View {
     private func detail(for section: SidebarSection) -> some View {
         switch section {
         case .search: SmartSearchView()
+        case .recipes: RecipeListView()
         case .settings: SettingsView()
         #if os(macOS)
         case .extraction: ExtractionView()
