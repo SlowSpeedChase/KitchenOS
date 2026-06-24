@@ -29,6 +29,7 @@ from templates.shopping_list_template import generate_shopping_list_markdown, ge
 from templates.recipe_template import format_recipe_markdown
 from templates.meal_plan_template import generate_meal_plan_markdown
 from lib.ingredient_validator import validate_ingredients
+from lib.ingredient_cleaner import clean_ingredient_list
 from lib.seasonality import match_ingredients_to_seasonal, get_peak_months
 from lib.nutrition_engine import calculate_recipe_nutrition
 from lib import meal_loader, pantry as pantry_module, paths, task_extractor
@@ -275,9 +276,9 @@ def api_recipe_save():
     try:
         # Validate ingredients
         if data.get('ingredients'):
-            data['ingredients'] = validate_ingredients(
+            data['ingredients'] = clean_ingredient_list(validate_ingredients(
                 data['ingredients'], verbose=False
-            )
+            ))
 
         # Match seasonal ingredients
         seasonal_matches = match_ingredients_to_seasonal(
@@ -371,9 +372,9 @@ def api_recipe_import_text():
 
         # Validate ingredients
         if recipe.get('ingredients'):
-            recipe['ingredients'] = validate_ingredients(
+            recipe['ingredients'] = clean_ingredient_list(validate_ingredients(
                 recipe['ingredients'], verbose=False
-            )
+            ))
 
         # Match seasonal ingredients
         seasonal_matches = match_ingredients_to_seasonal(recipe.get('ingredients', []))

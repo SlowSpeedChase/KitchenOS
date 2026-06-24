@@ -204,3 +204,14 @@ def clean_ingredient(ing: dict) -> CleanIngredient:
 def clean_ingredients(ingredients: list[dict]) -> list[CleanIngredient]:
     """Clean a list of ingredient dicts (non-dict entries skipped)."""
     return [clean_ingredient(ing) for ing in ingredients if isinstance(ing, dict)]
+
+
+def clean_ingredient_list(ingredients: list[dict]) -> list[dict]:
+    """Clean a list and return ingredient dicts, excluding dropped non-food rows.
+
+    The extraction-pipeline entry point: feed the output of
+    ``validate_ingredients`` through this so saved recipes carry decimal amounts
+    and recovered units. (Imported here rather than into ``ingredient_validator``
+    to avoid a circular import.)
+    """
+    return [c.to_ingredient() for c in clean_ingredients(ingredients) if not c.dropped]
