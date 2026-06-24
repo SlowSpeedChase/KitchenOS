@@ -57,6 +57,16 @@ _META_PREFIX = re.compile(
 # water" really means "1 to 1 1/4 cup water". Recover it to the midpoint.
 _TO_RANGE = re.compile(r"^to\s+([\d/.\s]+?)\s+([a-zA-Z]+)\s+(.+)$", re.IGNORECASE)
 
+# Markers for ingredients with no real quantity in the source — garnishes,
+# seasonings, frying oil. Treated as negligible (informal, 0 g) rather than
+# flagged, since there is no amount to recover.
+_GARNISH = re.compile(
+    r"\b(to taste|as needed|for (garnish|serving|topping|frying|brushing|"
+    r"drizzling|dusting|greasing|the pan|the grill)|pinch of|a pinch|"
+    r"handful of|a handful|dollop|to serve|to garnish)\b",
+    re.IGNORECASE,
+)
+
 
 @dataclass
 class CleanIngredient:
@@ -147,6 +157,15 @@ def clean_ingredient(ing: dict) -> CleanIngredient:
         notes.append("repaired malformed fields")
 
     needs_review = False
+
+    # --- Unquantified garnish/seasoning → negligible (no amount in source) -----
+    # Only when there's no real measure already present (a measured
+    # "2 tbsp olive oil for drizzling" keeps its 2 tbsp).
+    if _GARNISH.search(item):
+        current_family = get_unit_family(normalize_unit(unit) if unit else "whole")
+        if current_family in ("count", "other", "informal"):
+            unit = "to taste"   # informal → engine treats as 0 g, not an error
+            notes.append("unquantified garnish/seasoning → negligible")
 
     # --- A1/decimal: enforce a decimal amount (ranges → midpoint) -------------
     # parse_amount silently falls back to 1 for junk, so detect non-numeric

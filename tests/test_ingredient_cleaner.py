@@ -88,6 +88,29 @@ class TestA3UnitValidation:
         assert r.needs_review
 
 
+class TestGarnishNegligible:
+    def test_to_taste_negligible_not_flagged(self):
+        r = _clean("1", "whole", "salt to taste")
+        assert r.unit == "to taste"
+        assert not r.needs_review
+        assert not r.dropped
+
+    def test_for_frying_oil_negligible(self):
+        # Liquid + count unit would normally flag; garnish marker → negligible.
+        r = _clean("1", "whole", "olive oil for frying")
+        assert r.unit == "to taste"
+        assert not r.needs_review
+
+    def test_pinch_negligible(self):
+        assert _clean("1", "whole", "pinch of kosher salt").unit == "to taste"
+
+    def test_measured_garnish_keeps_amount(self):
+        # A real measure must survive even with a garnish phrase.
+        r = _clean("2", "tbsp", "olive oil for drizzling")
+        assert r.amount == "2"
+        assert r.unit == "tbsp"
+
+
 class TestA4Drop:
     def test_temperature_leak_dropped(self):
         assert _clean("°f oil", "", "").dropped
