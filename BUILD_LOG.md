@@ -117,3 +117,23 @@ iPad → Tailscale (`100.111.6.10:5001`) → Flask ingredient search → spoken 
 SuggestForMealPlan, AddRecipeToMealPlan (confirm-before-write), GetRecipeNutrition;
 and the find→add chain. Set `KITCHENOS_API_TOKEN` + app token only if you want remote
 auth (localhost is exempt; the iPad sends the token if set).
+
+### 2026-06-23 — Subsystem C, Phase C1 (Foundation Models) — implemented
+
+Plan: `docs/superpowers/plans/2026-06-23-siri-foundation-models-phase-c1.md`.
+Verified API first by introspecting the Xcode 27 `FoundationModels.swiftinterface`.
+
+- Raised deployment target to **iOS 26 / macOS 26** (FM floor). Note: PackageDescription
+  has no `.v26` enum case in this toolchain — used string platforms `.macOS("26.0")`.
+- `RecipeAI` (FM gateway: availability + `summarize` + `parseQuery`), `@Generable`
+  `RecipeQuery`, and `KitchenOSClient.recipes(matching:)` (reuses `findRecipes`).
+- `SummarizeRecipeIntent` + `SmartFindRecipesIntent` (smart find degrades to plain
+  ingredient search when AI is off). App root → `TabView`; new `SmartSearchView`.
+- **16 tests green**; iOS build SUCCEEDED; metadata = 7 intents + 7 autoShortcuts.
+
+**On-device verification pending** (needs Apple Intelligence enabled): Smart Search tab,
+Siri "Summarize a KitchenOS recipe" / "Find a KitchenOS recipe", and the AI-off fallback.
+
+**Next:** C2 (on-device conversational meal-plan assistant via tools-enabled session) and
+C3 (App Schemas + IndexedEntity semantic search) — research the iOS 27 App Schemas API
+first (the `@AssistantIntent` macro changed in the 27 release).
