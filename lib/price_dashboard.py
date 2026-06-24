@@ -43,6 +43,79 @@ def _load_rows() -> tuple[list[dict], list[dict]]:
         conn.close()
 
 
+def compute_price_data(today: Optional[str] = None) -> dict:
+    """Structured price-tracker data (JSON projection of the same computations
+    that back Price Tracker.md). ``today`` is injectable for tests.
+
+    Returns:
+        {
+          "weeks": [{week, spend_cents}],            # last 4 ISO weeks
+          "by_category": [{category, spend_cents}],  # last 12 months, desc
+          "average_trip_cents": int, "trip_count": int,
+          "trends": [{item, current_cents, avg90_cents, unit, direction}],
+        }
+    """
+    ref = date.fromisoformat(today) if today else date.today()
+    trips, purchases = _load_rows()
+    ok_trips = [t for t in trips if not t["needs_review"]]
+
+    # per-week, last 4 ISO weeks
+    week_totals: dict[str, int] = defaultdict(int)
+    for t in ok_trips:
+        if t["total_cents"] and t["date"]:
+            week_totals[_iso_week(t["date"])] += t["total_cents"]
+    recent_weeks = [
+        f"{(ref - timedelta(weeks=i)).isocalendar().year}-W"
+        f"{(ref - timedelta(weeks=i)).isocalendar().week:02d}"
+        for i in range(3, -1, -1)
+    ]
+    weeks = [{"week": w, "spend_cents": week_totals.get(w, 0)} for w in recent_weeks]
+
+    # by category, last 12 months
+    cutoff = (ref - timedelta(days=365)).isoformat()
+    cat_totals: dict[str, int] = defaultdict(int)
+    for p in purchases:
+        if p["trip_date"] >= cutoff and p["total_cents"]:
+            cat_totals[p["category"]] += p["total_cents"]
+    by_category = [
+        {"category": cat, "spend_cents": cents}
+        for cat, cents in sorted(cat_totals.items(), key=lambda kv: -kv[1])
+    ]
+
+    # average trip
+    totals = [t["total_cents"] for t in ok_trips if t["total_cents"]]
+    average_trip_cents = (sum(totals) // len(totals)) if totals else 0
+
+    # price trends: top items by purchase count, last vs 90-day avg
+    by_item: dict[str, list[dict]] = defaultdict(list)
+    for p in purchases:
+        if p["category"] != "fee" and p["unit_price_cents"]:
+            by_item[p["canonical_name"]].append(p)
+    top = sorted(by_item.items(), key=lambda kv: -len(kv[1]))[:TOP_ITEMS]
+    cutoff_90 = (ref - timedelta(days=90)).isoformat()
+    trends = []
+    for name, rows in top:
+        last = rows[-1]["unit_price_cents"]
+        recent = [r["unit_price_cents"] for r in rows if r["trip_date"] >= cutoff_90]
+        avg = sum(recent) // len(recent) if recent else last
+        direction = "up" if last > avg else ("down" if last < avg else "flat")
+        trends.append({
+            "item": name,
+            "current_cents": last,
+            "avg90_cents": avg,
+            "unit": rows[-1]["unit"],
+            "direction": direction,
+        })
+
+    return {
+        "weeks": weeks,
+        "by_category": by_category,
+        "average_trip_cents": average_trip_cents,
+        "trip_count": len(totals),
+        "trends": trends,
+    }
+
+
 def generate_dashboard(today: Optional[str] = None) -> str:
     """Render the full dashboard markdown. ``today`` is injectable for tests."""
     ref = date.fromisoformat(today) if today else date.today()

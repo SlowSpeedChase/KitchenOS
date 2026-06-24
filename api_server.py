@@ -1625,6 +1625,33 @@ def api_inventory_update():
     return jsonify({"status": "updated"})
 
 
+@app.route('/api/receipts/trips', methods=['GET'])
+@require_token
+def api_receipt_trips():
+    """Recent shopping trips (newest first)."""
+    from lib.inventory_db import fetch_trips
+    return jsonify(fetch_trips())
+
+
+@app.route('/api/receipts/trips/<int:trip_id>', methods=['GET'])
+@require_token
+def api_receipt_trip(trip_id):
+    """One trip plus its purchase lines."""
+    from lib.inventory_db import fetch_trip
+    result = fetch_trip(trip_id)
+    if result is None:
+        return jsonify({"error": f"Trip not found: {trip_id}"}), 404
+    return jsonify(result)
+
+
+@app.route('/api/price/trends', methods=['GET'])
+@require_token
+def api_price_trends():
+    """Structured price-tracker data (spending, by-category, trends)."""
+    from lib.price_dashboard import compute_price_data
+    return jsonify(compute_price_data())
+
+
 @app.route('/api/nutrition/<week>', methods=['GET'])
 @require_token
 def api_nutrition(week):

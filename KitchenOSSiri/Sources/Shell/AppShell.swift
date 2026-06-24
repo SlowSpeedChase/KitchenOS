@@ -42,6 +42,7 @@ struct AppShell: View {
         case .nutrition: NutritionDashboardView()
         case .inventory: InventoryView()
         case .pantry: PantryView()
+        case .receipts: ReceiptsView()
         case .shoppingList: ShoppingListView()
         case .systemHealth: SystemHealthView()
         case .settings: SettingsView()
