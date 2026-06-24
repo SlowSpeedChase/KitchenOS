@@ -80,6 +80,15 @@ struct AssistantView: View {
         guard !text.isEmpty else { return }
         messages.append(Message(role: "user", text: text))
         input = ""
+
+        // Deterministic add-intent: surface the Confirm card without relying on the model.
+        if let proposal = AddRequestParser.parse(text) {
+            pending = proposal
+            messages.append(Message(role: "assistant",
+                                    text: "Add \(proposal.recipe) to \(proposal.day) \(proposal.meal)? Tap Confirm below."))
+            return
+        }
+
         isThinking = true
         Task { @MainActor in
             do {
