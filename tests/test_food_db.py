@@ -1,0 +1,98 @@
+"""Tests for lib/food_db.py — data-source clients (mocked HTTP)."""
+
+from unittest.mock import patch, Mock
+
+from lib.food_db import usda_search, usda_food_detail, off_search
+
+
+class TestUsdaSearch:
+    def test_returns_candidate_list_per_100g(self):
+        mock = {
+            "foods": [
+                {"fdcId": 1, "description": "Flour, all-purpose",
+                 "foodNutrients": [
+                     {"nutrientId": 1008, "value": 364},
+                     {"nutrientId": 1003, "value": 10.3},
+                     {"nutrientId": 1005, "value": 76.3},
+                     {"nutrientId": 1004, "value": 1.0},
+                 ]},
+                {"fdcId": 2, "description": "Flour, bread",
+                 "foodNutrients": [{"nutrientId": 1008, "value": 361}]},
+            ]
+        }
+        with patch("lib.food_db.requests.get") as g:
+            g.return_value = Mock(status_code=200, json=lambda: mock)
+            records = usda_search("flour")
+
+        assert len(records) == 2                      # candidate LIST, not [0]
+        assert records[0].source == "usda"
+        assert records[0].source_id == "1"
+        assert records[0].per_100g.calories == 364    # per-100g, not scaled
+        assert records[0].per_100g.protein == 10.3
+
+    def test_empty_on_error(self):
+        with patch("lib.food_db.requests.get") as g:
+            g.return_value = Mock(status_code=429)
+            assert usda_search("flour") == []
+
+
+class TestUsdaDetail:
+    def test_parses_nutrients_and_portions(self):
+        mock = {
+            "fdcId": 123,
+            "description": "Onions, raw",
+            "foodNutrients": [
+                {"nutrient": {"id": 1008}, "amount": 40},
+                {"nutrient": {"id": 1003}, "amount": 1.1},
+                {"nutrient": {"id": 1005}, "amount": 9.3},
+                {"nutrient": {"id": 1004}, "amount": 0.1},
+            ],
+            "foodPortions": [
+                {"gramWeight": 110, "portionDescription": "1 medium",
+                 "measureUnit": {"name": "medium"}, "amount": 1},
+                {"gramWeight": 0, "portionDescription": "bad"},
+            ],
+        }
+        with patch("lib.food_db.requests.get") as g:
+            g.return_value = Mock(status_code=200, json=lambda: mock)
+            rec = usda_food_detail("123")
+
+        assert rec is not None
+        assert rec.per_100g.calories == 40
+        assert rec.per_100g.carbs == 9.3
+        assert len(rec.portions) == 1                 # zero-weight portion dropped
+        assert rec.portions[0]["gram_weight"] == 110
+        assert rec.portions[0]["label"] == "1 medium"
+
+    def test_none_on_error(self):
+        with patch("lib.food_db.requests.get") as g:
+            g.return_value = Mock(status_code=404)
+            assert usda_food_detail("123") is None
+
+
+class TestOffSearch:
+    def test_parses_per_100g(self):
+        mock = {
+            "products": [
+                {"code": "abc", "product_name": "Protein Bar",
+                 "nutriments": {
+                     "energy-kcal_100g": 350, "proteins_100g": 30,
+                     "carbohydrates_100g": 40, "fat_100g": 10,
+                 }},
+            ]
+        }
+        with patch("lib.food_db.requests.get") as g:
+            g.return_value = Mock(status_code=200, json=lambda: mock)
+            records = off_search("protein bar")
+
+        assert len(records) == 1
+        assert records[0].source == "off"
+        assert records[0].per_100g.calories == 350
+        assert records[0].per_100g.protein == 30
+
+    def test_skips_products_without_data(self):
+        mock = {"products": [{"code": "x", "product_name": "Mystery",
+                              "nutriments": {}}]}
+        with patch("lib.food_db.requests.get") as g:
+            g.return_value = Mock(status_code=200, json=lambda: mock)
+            assert off_search("mystery") == []

@@ -6,8 +6,8 @@
     <string>com.kitchenos.batch-extract</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/chaseeasterling/GitHub/KitchenOS/.venv/bin/python</string>
-        <string>/Users/chaseeasterling/GitHub/KitchenOS/batch_extract.py</string>
+        <string>/Users/chaseeasterling/Dev/KitchenOS/.venv/bin/python</string>
+        <string>/Users/chaseeasterling/Dev/KitchenOS/batch_extract.py</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -17,10 +17,10 @@
         <integer>10</integer>
     </dict>
     <key>StandardOutPath</key>
-    <string>/Users/chaseeasterling/GitHub/KitchenOS/logs/batch_extract.log</string>
+    <string>/Users/chaseeasterling/Dev/KitchenOS/logs/batch_extract.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/chaseeasterling/GitHub/KitchenOS/logs/batch_extract.log</string>
+    <string>/Users/chaseeasterling/Dev/KitchenOS/logs/batch_extract.log</string>
     <key>WorkingDirectory</key>
-    <string>/Users/chaseeasterling/GitHub/KitchenOS</string>
+    <string>/Users/chaseeasterling/Dev/KitchenOS</string>
 </dict>
 </plist>

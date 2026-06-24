@@ -34,19 +34,19 @@ Development guide for Claude Code when working with this repository.
 
 | Path | Purpose |
 |------|---------|
-| `/Users/chaseeasterling/KitchenOS/` | Project root |
+| `/Users/chaseeasterling/Dev/KitchenOS/` | Project root |
 | `.venv/` | Python virtual environment |
 | `Recipes/` in Obsidian vault | Main recipe files (title case, e.g., `Butter Biscuits.md`) |
 | `Recipes/Images/` in Obsidian vault | Recipe images (downloaded from source or YouTube thumbnail) |
 
-**Obsidian Vault**: `~/KitchenOS/KitchenOS_Vault/` (configurable via `KITCHENOS_VAULT` env var; resolved by `lib/paths.py`)
+**Obsidian Vault**: `/Users/chaseeasterling/Dev/KitchenOS/vault/KitchenOS/` — set via `KITCHENOS_VAULT` in `.env` and resolved by `lib/paths.py`. (The `lib/paths.py` fallback default is `~/KitchenOS/KitchenOS_Vault/`, but `.env` overrides it, so that default is never used here.)
 
 ## Running Commands
 
 ### Extract a Recipe (Primary Use)
 
 ```bash
-cd /Users/chaseeasterling/KitchenOS
+cd /Users/chaseeasterling/Dev/KitchenOS
 .venv/bin/python extract_recipe.py "https://www.youtube.com/watch?v=VIDEO_ID"
 
 # Dry run (preview without saving)
@@ -238,7 +238,7 @@ cp ops/com.kitchenos.mealplan.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.kitchenos.mealplan.plist
 
 # View logs
-tail -f ~/GitHub/KitchenOS/logs/meal_plan_generator.log
+tail -f ~/Dev/KitchenOS/logs/meal_plan_generator.log
 
 # Restart service
 launchctl unload ~/Library/LaunchAgents/com.kitchenos.mealplan.plist
@@ -278,7 +278,7 @@ cp ops/com.kitchenos.calendar-sync.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.kitchenos.calendar-sync.plist
 
 # View logs
-tail -f ~/GitHub/KitchenOS/logs/calendar_sync.log
+tail -f ~/Dev/KitchenOS/logs/calendar_sync.log
 
 # Test run manually
 .venv/bin/python sync_calendar.py
@@ -302,7 +302,7 @@ cp ops/com.kitchenos.batch-extract.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.kitchenos.batch-extract.plist
 
 # View logs
-tail -f ~/GitHub/KitchenOS/logs/batch_extract.log
+tail -f ~/Dev/KitchenOS/logs/batch_extract.log
 
 # Restart service
 launchctl unload ~/Library/LaunchAgents/com.kitchenos.batch-extract.plist
@@ -324,7 +324,7 @@ cp ops/com.kitchenos.receipt-ingest.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.kitchenos.receipt-ingest.plist
 
 # View logs
-tail -f ~/GitHub/KitchenOS/logs/receipt_ingest.log
+tail -f ~/Dev/KitchenOS/logs/receipt_ingest.log
 
 # Restart service
 launchctl unload ~/Library/LaunchAgents/com.kitchenos.receipt-ingest.plist
@@ -376,7 +376,7 @@ The API server enables recipe extraction from iOS via Share Sheet. It runs as a 
 curl http://localhost:5001/health
 
 # View logs
-tail -f ~/GitHub/KitchenOS/logs/server.log
+tail -f ~/Dev/KitchenOS/logs/server.log
 
 # Restart service
 launchctl unload ~/Library/LaunchAgents/com.kitchenos.api.plist
@@ -399,6 +399,7 @@ For the full route list, grep `@app.route` in `api_server.py`. Endpoints with no
 | `/refresh?file=<name>` (GET) | Template refresh only — keeps existing extracted data, just re-renders. |
 | `/meal-planner` (GET) | Interactive drag-and-drop meal planner board (HTML). |
 | `/api/meal-plan/<week>` (GET/PUT) | Programmatic meal plan as JSON; PUT round-trips through `rebuild_meal_plan_markdown`. |
+| `/api/recipes?ingredient=<term>` (GET) | Filters the recipe index to recipes whose ingredient list contains the case-insensitive substring. Backs the Siri "recipes with X" intent. |
 | `/api/meals` (POST) | Create meal — frontmatter saved to `vault/Meals/<name>.meal.md`. |
 | `/api/recipes/import-text` (POST) | Parse a free-text recipe (`{text, title?, source?}`) with Ollama (un-gated) and save it like `/api/recipes/save`. Original text preserved in a collapsible `## Import Source` block. Backs Selene's `/webhook/api/recipe` forward. |
 | `/api/shopping-list/preview` `/confirm` | See "Pantry-aware shopping list flow" above. |
@@ -537,7 +538,7 @@ validate_ingredients() (repair AI extraction errors)
     ↓
 match_ingredients_to_seasonal() (Ollama fuzzy match → seasonal_ingredients, peak_months)
     ↓
-calculate_recipe_nutrition() (Nutritionix → USDA → AI fallback)
+calculate_recipe_nutrition() (gram-based engine: resolve food → grams → per_100g×grams/100)
     ↓
 download_image() (website image or YouTube thumbnail → Recipes/Images/)
     ↓
@@ -574,7 +575,13 @@ template → Obsidian
 | `lib/ics_generator.py` | Creates ICS calendar format |
 | `generate_nutrition_dashboard.py` | Creates nutrition dashboard from meal plans |
 | `lib/nutrition.py` | NutritionData dataclass |
-| `lib/nutrition_lookup.py` | API clients for Nutritionix, USDA, AI fallback |
+| `lib/nutrition_engine.py` | **Gram-based nutrition engine** — resolve food → grams → `per_100g×grams/100`; LLM only for unresolved food/portion; caches to DB. Replaces `nutrition_lookup` |
+| `lib/units.py` | Measurement→grams (density + piece-weight tables); single source of truth for volume/mass/count conversion, shared with `ingredient_aggregator` |
+| `lib/food_db.py` | USDA FoodData Central + Open Food Facts clients, normalized to per-100g (+ USDA foodPortions) |
+| `lib/food_resolver.py` | Constrained Ollama jobs: pick a USDA candidate / estimate portion grams (validated, cached) |
+| `config/food_density.json` | Ingredient g/ml densities for volume→grams (hand-correctable) |
+| `config/piece_weights.json` | Grams-per-piece for count units (hand-correctable) |
+| `lib/nutrition_lookup.py` | DEPRECATED (unscaled USDA bug) — superseded by `nutrition_engine`; kept for its tests |
 | `lib/macro_targets.py` | Parses My Macros.md targets |
 | `lib/nutrition_dashboard.py` | Dashboard generation logic |
 | `lib/recipe_index.py` | Scans recipe files, returns frontmatter metadata for filtering |
@@ -627,6 +634,25 @@ A few non-obvious invariants worth knowing:
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "mistral:7b"
 ```
+
+### Nutrition Engine
+
+`lib/nutrition_engine.py` computes per-serving macros deterministically as
+`per_100g × grams / 100` per ingredient (summed as floats, rounded once).
+
+- **Grams**: `lib/units.py` converts mass directly, volume via `config/food_density.json`,
+  count via `config/piece_weights.json`, then USDA `foodPortions`, then an LLM portion estimate.
+- **Food data**: USDA FoodData Central (primary) → Open Food Facts (branded fallback),
+  normalized to per-100g in `lib/food_db.py`. Set `USDA_FDC_API_KEY` (free:
+  https://fdc.nal.usda.gov/api-key-signup.html) — without it the shared `DEMO_KEY`
+  rate-limits to ~30 req/hr.
+- **LLM**: confined to two validated jobs (food pick, portion grams) in `lib/food_resolver.py`.
+- **Cache**: per-100g records + resolutions persist in `data/kitchenos.db`
+  (`food_cache`/`food_resolution`) so each ingredient resolves once across all recipes.
+- `nutrition_confidence` + `needs_review` are written to recipe frontmatter; `servings: null`
+  is flagged (no longer silently emits a whole-recipe "serving").
+- Measure accuracy: `scripts/validate_nutrition.py` (golden set in `tests/golden/`);
+  Ollama-job viability: `--ollama-viability`.
 
 ### Recipe JSON Schema
 
@@ -686,9 +712,11 @@ Maps YouTube channel names to their recipe website domains. Used to search creat
 - **API Keys**: In `.env` file
   - `YOUTUBE_API_KEY` - YouTube Data API
   - `OPENAI_API_KEY` - Whisper fallback
-  - `NUTRITIONIX_APP_ID` - Nutritionix API app ID
+  - `USDA_FDC_API_KEY` - USDA FoodData Central (primary nutrition source). Free signup at https://fdc.nal.usda.gov/api-key-signup.html; falls back to rate-limited `DEMO_KEY`
+  - `NUTRITIONIX_APP_ID` - Nutritionix API app ID (deprecated; engine uses USDA + Open Food Facts)
   - `NUTRITIONIX_API_KEY` - Nutritionix API key
   - `ANTHROPIC_API_KEY` - Claude API for meal suggestions
+  - `KITCHENOS_API_TOKEN` - Optional. When set, remote (non-localhost) callers of the Siri-facing endpoints (`/api/recipes`, `/api/recipes/<name>`, `/api/meal-plan/<week>`, `/api/suggest-meal`) must send `Authorization: Bearer <token>`. Localhost is always exempt. Used by the iPad App-Intents app over Tailscale.
   - `GMAIL_ADDRESS` - Gmail account for receipt-email ingestion
   - `GMAIL_APP_PASSWORD` - Google app password for IMAP (requires 2-step verification)
 
@@ -796,7 +824,7 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 | Claude API fallback | Low | Use Claude when Ollama fails |
 | Non-YouTube recipe URLs in `batch_extract` | Medium | Route non-YouTube URLs in "Recipies to Process" through `scrape_recipe_from_url()` (Serious Eats, NYT Cooking, etc.). Currently `batch_extract.py:212` rejects anything without youtube.com/youtu.be. Decide handling for plain-text notes (skip vs flag). |
 | Auto-restock for low staples | Medium | Pantry subtraction from shopping lists now works via the unified inventory DB; remaining idea is a "Restock" pass that auto-adds low-stock staples. |
-| Serving size correction | Medium | Workflow to correct `servings: null` on existing recipes; affects per-serving accuracy of backfilled nutrition. |
+| Serving size correction | Done | `servings: null` is now flagged (`needs_review` + `servings_inferred`) by the nutrition engine instead of silently emitting a whole-recipe "serving". |
 
 ## Documentation
 

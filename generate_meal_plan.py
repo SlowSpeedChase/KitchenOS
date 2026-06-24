@@ -191,4 +191,9 @@ def main():
 
 
 if __name__ == "__main__":
+    try:
+        import setproctitle
+        setproctitle.setproctitle("kitchenos-mealplan")
+    except ImportError:
+        pass
     main()

@@ -8,7 +8,7 @@ Stages: **Capture → Plan → Shop → Prep → Cook → Review.**
 
 ## 0. The vault
 
-Everything is markdown in the Obsidian vault (`~/KitchenOS/vault/`, or wherever `KITCHENOS_VAULT` points). Folders that matter:
+Everything is markdown in the Obsidian vault (`~/Dev/KitchenOS/vault/KitchenOS/`, set via `KITCHENOS_VAULT` in `.env`). Folders that matter:
 
 | Folder / file | What lives here |
 |---|---|
@@ -175,7 +175,7 @@ All in `~/Library/LaunchAgents/` (copied from `ops/*.plist`).
 | `com.kitchenos.dashboard-update` | 06:15 daily | Regenerates current week's nutrition dashboard |
 | `com.kitchenos.cleanup-icloud-old` | Monthly | iCloud housekeeping (low-importance) |
 
-Logs: `~/KitchenOS/logs/<service>.log`. Reload all: `scripts/reload_launch_agents.sh`.
+Logs: `~/Dev/KitchenOS/logs/<service>.log`. Reload all: `scripts/reload_launch_agents.sh`.
 
 ---
 

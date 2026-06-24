@@ -74,4 +74,9 @@ def update_canvas() -> bool:
 
 
 if __name__ == "__main__":
+    try:
+        import setproctitle
+        setproctitle.setproctitle("kitchenos-dashboard-update")
+    except ImportError:
+        pass
     update_canvas()

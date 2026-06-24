@@ -5,6 +5,7 @@ from flask import Flask, request, jsonify, send_file, redirect
 from urllib.parse import quote
 from youtube_transcript_api import YouTubeTranscriptApi
 from googleapiclient.discovery import build
+import functools
 import os
 import re
 import subprocess
@@ -29,7 +30,7 @@ from templates.recipe_template import format_recipe_markdown
 from templates.meal_plan_template import generate_meal_plan_markdown
 from lib.ingredient_validator import validate_ingredients
 from lib.seasonality import match_ingredients_to_seasonal, get_peak_months
-from lib.nutrition_lookup import calculate_recipe_nutrition
+from lib.nutrition_engine import calculate_recipe_nutrition
 from lib import meal_loader, pantry as pantry_module, paths, task_extractor
 from recipe_sources import parse_recipe_from_text
 
@@ -43,7 +44,28 @@ VAULT_NAME = paths.vault_root().name
 
 app = Flask(__name__)
 
+
+def require_token(view):
+    """Require a bearer token for non-localhost callers when KITCHENOS_API_TOKEN is set.
+
+    No-op when the env var is unset. Localhost (Mac app, local browser UI) is always
+    exempt; remote callers (iPad over Tailscale) must send Authorization: Bearer <token>.
+    """
+    @functools.wraps(view)
+    def wrapper(*args, **kwargs):
+        token = os.environ.get("KITCHENOS_API_TOKEN")
+        if not token:
+            return view(*args, **kwargs)
+        if request.remote_addr in ("127.0.0.1", "::1"):
+            return view(*args, **kwargs)
+        if request.headers.get("Authorization", "") == f"Bearer {token}":
+            return view(*args, **kwargs)
+        return jsonify({"error": "Unauthorized"}), 401
+    return wrapper
+
+
 _recipe_cache = {"data": None, "timestamp": 0}
+_recipe_ingredient_cache = {"data": None, "timestamp": 0}
 RECIPE_CACHE_TTL = 300  # 5 minutes
 
 
@@ -210,9 +232,29 @@ def health():
 
 
 @app.route('/api/recipes', methods=['GET'])
+@require_token
 def api_recipes():
-    """Return recipe metadata for meal planner sidebar."""
+    """Return recipe metadata for meal planner sidebar.
+
+    Optional query param:
+        ingredient: case-insensitive substring. When provided, only recipes
+            whose ingredient list contains a match are returned.
+    """
+    ingredient = request.args.get("ingredient", "").strip()
     now = time.time()
+
+    if ingredient:
+        cache = _recipe_ingredient_cache
+        if cache["data"] is None or (now - cache["timestamp"]) > RECIPE_CACHE_TTL:
+            cache["data"] = get_recipe_index(OBSIDIAN_RECIPES_PATH, include_ingredients=True)
+            cache["timestamp"] = now
+        term = ingredient.lower()
+        matches = [
+            r for r in cache["data"]
+            if any(term in item.lower() for item in r.get("ingredient_items", []))
+        ]
+        return jsonify(matches)
+
     if _recipe_cache["data"] is None or (now - _recipe_cache["timestamp"]) > RECIPE_CACHE_TTL:
         _recipe_cache["data"] = get_recipe_index(OBSIDIAN_RECIPES_PATH)
         _recipe_cache["timestamp"] = now
@@ -244,20 +286,18 @@ def api_recipe_save():
         data['seasonal_ingredients'] = seasonal_matches
         data['peak_months'] = get_peak_months(seasonal_matches)
 
-        # Calculate nutrition
+        # Calculate nutrition (servings raw → engine flags null instead of hiding it)
         ingredients = data.get('ingredients', [])
-        try:
-            servings = int(data.get('servings', 1) or 1)
-        except (ValueError, TypeError):
-            servings = 1
-
-        nutrition_result = calculate_recipe_nutrition(ingredients, servings)
+        nutrition_result = calculate_recipe_nutrition(ingredients, data.get('servings'))
         if nutrition_result:
             data['nutrition_calories'] = nutrition_result.nutrition.calories
             data['nutrition_protein'] = nutrition_result.nutrition.protein
             data['nutrition_carbs'] = nutrition_result.nutrition.carbs
             data['nutrition_fat'] = nutrition_result.nutrition.fat
             data['nutrition_source'] = nutrition_result.source
+            data['nutrition_confidence'] = nutrition_result.confidence
+            if nutrition_result.needs_review:
+                data['needs_review'] = True
 
         # Set source metadata
         data.setdefault('source', 'claude')
@@ -340,20 +380,18 @@ def api_recipe_import_text():
         recipe['seasonal_ingredients'] = seasonal_matches
         recipe['peak_months'] = get_peak_months(seasonal_matches)
 
-        # Calculate nutrition
+        # Calculate nutrition (servings raw → engine flags null instead of hiding it)
         ingredients = recipe.get('ingredients', [])
-        try:
-            servings = int(recipe.get('servings', 1) or 1)
-        except (ValueError, TypeError):
-            servings = 1
-
-        nutrition_result = calculate_recipe_nutrition(ingredients, servings)
+        nutrition_result = calculate_recipe_nutrition(ingredients, recipe.get('servings'))
         if nutrition_result:
             recipe['nutrition_calories'] = nutrition_result.nutrition.calories
             recipe['nutrition_protein'] = nutrition_result.nutrition.protein
             recipe['nutrition_carbs'] = nutrition_result.nutrition.carbs
             recipe['nutrition_fat'] = nutrition_result.nutrition.fat
             recipe['nutrition_source'] = nutrition_result.source
+            recipe['nutrition_confidence'] = nutrition_result.confidence
+            if nutrition_result.needs_review:
+                recipe['needs_review'] = True
 
         # Generate markdown, then preserve the original pasted text for later correction.
         markdown = format_recipe_markdown(
@@ -400,6 +438,7 @@ def api_recipe_import_text():
 
 
 @app.route('/api/recipes/<name>', methods=['GET'])
+@require_token
 def api_recipe_detail(name):
     """Return full recipe details as JSON."""
     filepath = (OBSIDIAN_RECIPES_PATH / f"{name}.md").resolve()
@@ -780,6 +819,7 @@ def reprocess_recipe():
 
 
 @app.route('/api/meal-plan/<week>', methods=['GET'])
+@require_token
 def api_meal_plan_get(week):
     """Return meal plan as structured JSON."""
     match = re.match(r'^(\d{4})-W(\d{2})$', week)
@@ -825,6 +865,7 @@ def api_meal_plan_get(week):
 
 
 @app.route('/api/meal-plan/<week>', methods=['PUT'])
+@require_token
 def api_meal_plan_put(week):
     """Save meal plan from structured JSON."""
     match = re.match(r'^(\d{4})-W(\d{2})$', week)
@@ -847,6 +888,7 @@ def api_meal_plan_put(week):
 
 
 @app.route('/api/suggest-meal', methods=['POST'])
+@require_token
 def api_suggest_meal():
     """Suggest a recipe for an empty meal slot based on ingredient overlap."""
     data = request.get_json(force=True, silent=True)
@@ -1597,5 +1639,10 @@ def system_health_dashboard():
 
 
 if __name__ == '__main__':
+    try:
+        import setproctitle
+        setproctitle.setproctitle('kitchenos-api')
+    except ImportError:
+        pass
     port = int(os.getenv('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)

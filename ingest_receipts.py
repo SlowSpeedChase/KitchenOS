@@ -155,6 +155,11 @@ def ingest(since_days: int = 14, dry_run: bool = False,
 
 
 if __name__ == "__main__":
+    try:
+        import setproctitle
+        setproctitle.setproctitle("kitchenos-receipt-ingest")
+    except ImportError:
+        pass
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--since-days", type=int, default=14)

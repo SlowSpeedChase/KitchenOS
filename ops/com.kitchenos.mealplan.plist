@@ -6,8 +6,8 @@
     <string>com.kitchenos.mealplan</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/chaseeasterling/GitHub/KitchenOS/.venv/bin/python</string>
-        <string>/Users/chaseeasterling/GitHub/KitchenOS/generate_meal_plan.py</string>
+        <string>/Users/chaseeasterling/Dev/KitchenOS/.venv/bin/python</string>
+        <string>/Users/chaseeasterling/Dev/KitchenOS/generate_meal_plan.py</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
@@ -17,10 +17,10 @@
         <integer>0</integer>
     </dict>
     <key>StandardOutPath</key>
-    <string>/Users/chaseeasterling/GitHub/KitchenOS/logs/meal_plan_generator.log</string>
+    <string>/Users/chaseeasterling/Dev/KitchenOS/logs/meal_plan_generator.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/chaseeasterling/GitHub/KitchenOS/logs/meal_plan_generator.log</string>
+    <string>/Users/chaseeasterling/Dev/KitchenOS/logs/meal_plan_generator.log</string>
     <key>WorkingDirectory</key>
-    <string>/Users/chaseeasterling/GitHub/KitchenOS</string>
+    <string>/Users/chaseeasterling/Dev/KitchenOS</string>
 </dict>
 </plist>

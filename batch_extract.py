@@ -362,4 +362,9 @@ def main():
 
 
 if __name__ == "__main__":
+    try:
+        import setproctitle
+        setproctitle.setproctitle("kitchenos-batch-extract")
+    except ImportError:
+        pass
     main()

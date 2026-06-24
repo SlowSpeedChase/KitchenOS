@@ -1,0 +1,25 @@
+{
+  "_comment": "Labeled set for the Ollama viability test (scripts/validate_nutrition.py --ollama-viability). 'food_resolution' checks the LLM picks a USDA candidate whose description contains an expected keyword. 'portions' checks the LLM's grams estimate against a known weight.",
+  "food_resolution": [
+    {"ingredient": "all-purpose flour", "expect_keywords": ["flour"]},
+    {"ingredient": "boneless skinless chicken breast", "expect_keywords": ["chicken", "breast"]},
+    {"ingredient": "extra virgin olive oil", "expect_keywords": ["oil", "olive"]},
+    {"ingredient": "baby spinach", "expect_keywords": ["spinach"]},
+    {"ingredient": "granulated sugar", "expect_keywords": ["sugar"]},
+    {"ingredient": "rolled oats", "expect_keywords": ["oat"]},
+    {"ingredient": "greek yogurt", "expect_keywords": ["yogurt"]},
+    {"ingredient": "cheddar cheese", "expect_keywords": ["cheddar", "cheese"]},
+    {"ingredient": "black beans", "expect_keywords": ["bean"]},
+    {"ingredient": "ground beef", "expect_keywords": ["beef"]}
+  ],
+  "portions": [
+    {"item": "shallot", "unit": "whole", "expected_grams": 40},
+    {"item": "garlic clove", "unit": "clove", "expected_grams": 5},
+    {"item": "large egg", "unit": "whole", "expected_grams": 50},
+    {"item": "green onion", "unit": "whole", "expected_grams": 15},
+    {"item": "medium carrot", "unit": "whole", "expected_grams": 60},
+    {"item": "banana", "unit": "whole", "expected_grams": 118},
+    {"item": "lemon", "unit": "whole", "expected_grams": 60},
+    {"item": "slice of bacon", "unit": "slice", "expected_grams": 12}
+  ]
+}

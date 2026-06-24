@@ -17,6 +17,7 @@ All money columns are integer cents.
 """
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from pathlib import Path
@@ -56,6 +57,26 @@ CREATE TABLE IF NOT EXISTS inventory (
     source TEXT NOT NULL DEFAULT 'manual',
     notes TEXT NOT NULL DEFAULT '',
     UNIQUE(name, unit, location)
+);
+CREATE TABLE IF NOT EXISTS food_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    query_norm TEXT NOT NULL,
+    source TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    description TEXT,
+    per_100g_json TEXT NOT NULL,
+    portions_json TEXT,
+    density_g_per_ml REAL,
+    fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(query_norm, source)
+);
+CREATE TABLE IF NOT EXISTS food_resolution (
+    query_norm TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    resolver TEXT NOT NULL,
+    resolved_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 """
 
@@ -178,6 +199,97 @@ def replace_inventory_rows(rows: list[dict]) -> None:
                           for c in _INVENTORY_COLS)
                     for r in rows
                 ],
+            )
+    finally:
+        conn.close()
+
+
+# --- Nutrition food-data cache -------------------------------------------------
+# Shared across all recipes so an ingredient is looked up / resolved once.
+# ``food_cache`` stores normalized per-100g records from USDA/OFF; ``food_resolution``
+# remembers which food a given ingredient text resolved to (and the portion grams
+# the LLM estimated, keyed ``"<item>|<unit>"`` with resolver ``llm-portion``).
+
+
+def get_food_cache(query_norm: str, source: str) -> Optional[dict]:
+    """Return a cached food record (per_100g + portions parsed), or None."""
+    conn = connect()
+    try:
+        row = conn.execute(
+            "SELECT * FROM food_cache WHERE query_norm = ? AND source = ?",
+            (query_norm, source),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    d = dict(row)
+    d["per_100g"] = json.loads(d.pop("per_100g_json"))
+    portions = d.pop("portions_json")
+    d["portions"] = json.loads(portions) if portions else []
+    return d
+
+
+def put_food_cache(record: dict) -> None:
+    """Upsert a food record. ``record`` keys: query_norm, source, source_id,
+    description, per_100g (dict), portions (list), density_g_per_ml."""
+    conn = connect()
+    try:
+        with conn:
+            conn.execute(
+                "INSERT INTO food_cache"
+                " (query_norm, source, source_id, description, per_100g_json,"
+                "  portions_json, density_g_per_ml)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT(query_norm, source) DO UPDATE SET"
+                "  source_id=excluded.source_id, description=excluded.description,"
+                "  per_100g_json=excluded.per_100g_json,"
+                "  portions_json=excluded.portions_json,"
+                "  density_g_per_ml=excluded.density_g_per_ml,"
+                "  fetched_at=datetime('now')",
+                (
+                    record["query_norm"],
+                    record["source"],
+                    str(record.get("source_id", "")),
+                    record.get("description", ""),
+                    json.dumps(record["per_100g"]),
+                    json.dumps(record.get("portions", [])),
+                    record.get("density_g_per_ml"),
+                ),
+            )
+    finally:
+        conn.close()
+
+
+def get_food_resolution(query_norm: str) -> Optional[dict]:
+    """Return a remembered ingredient→food resolution, or None."""
+    conn = connect()
+    try:
+        row = conn.execute(
+            "SELECT * FROM food_resolution WHERE query_norm = ?", (query_norm,)
+        ).fetchone()
+    finally:
+        conn.close()
+    return dict(row) if row else None
+
+
+def put_food_resolution(
+    query_norm: str, source: str, source_id: str,
+    confidence: float, resolver: str,
+) -> None:
+    """Upsert an ingredient→food resolution (or an llm-portion estimate)."""
+    conn = connect()
+    try:
+        with conn:
+            conn.execute(
+                "INSERT INTO food_resolution"
+                " (query_norm, source, source_id, confidence, resolver)"
+                " VALUES (?, ?, ?, ?, ?)"
+                " ON CONFLICT(query_norm) DO UPDATE SET"
+                "  source=excluded.source, source_id=excluded.source_id,"
+                "  confidence=excluded.confidence, resolver=excluded.resolver,"
+                "  resolved_at=datetime('now')",
+                (query_norm, source, str(source_id), confidence, resolver),
             )
     finally:
         conn.close()

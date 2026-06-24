@@ -248,8 +248,8 @@ class TestNormalizeRecipeData:
         }
         result = normalize_recipe_data(data)
         assert result["needs_review"] is True
-        # protein should be the unknown tuple
-        assert result["protein"] == ("unknown", "unicorn meat")
+        # unknown values are kept as the original string (tuple unwrapped) and flagged
+        assert result["protein"] == "unicorn meat"
 
     def test_known_values_dont_force_needs_review(self):
         """When all values are known, needs_review is not forced True"""

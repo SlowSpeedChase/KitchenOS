@@ -13,7 +13,7 @@ Cooking videos often lack written recipes. This system:
 ## Quick Start
 
 ```bash
-cd /Users/chaseeasterling/KitchenOS
+cd /Users/chaseeasterling/Dev/KitchenOS
 .venv/bin/python extract_recipe.py "https://www.youtube.com/watch?v=VIDEO_ID"
 ```
 
@@ -32,7 +32,7 @@ The recipe will be saved to your Obsidian vault.
 
 1. **Clone and enter directory:**
    ```bash
-   cd /Users/chaseeasterling/KitchenOS
+   cd /Users/chaseeasterling/Dev/KitchenOS
    ```
 
 2. **Create virtual environment:**
@@ -56,9 +56,9 @@ The recipe will be saved to your Obsidian vault.
 
 5. **Create Obsidian vault folder:**
    ```bash
-   mkdir -p ~/KitchenOS/vault/Recipes
+   mkdir -p ~/Dev/KitchenOS/vault/KitchenOS/Recipes
    ```
-   The vault location is `~/KitchenOS/vault/` by default and is overridable via the `KITCHENOS_VAULT` env var.
+   Set the vault location with `KITCHENOS_VAULT` in `.env`. On this machine it is `/Users/chaseeasterling/Dev/KitchenOS/vault/KitchenOS`. (If `KITCHENOS_VAULT` is unset, `lib/paths.py` falls back to `~/KitchenOS/KitchenOS_Vault/`.)
 
 ## Usage
 
@@ -276,7 +276,7 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "mistral:7b"
 ```
 
-Vault path is centralized in `lib/paths.py`. Set the `KITCHENOS_VAULT` env var to override the default `~/KitchenOS/vault/`.
+Vault path is centralized in `lib/paths.py` and set via `KITCHENOS_VAULT` in `.env` (currently `/Users/chaseeasterling/Dev/KitchenOS/vault/KitchenOS`). If the env var is unset, `lib/paths.py` falls back to `~/KitchenOS/KitchenOS_Vault/`.
 
 ### AI Model
 

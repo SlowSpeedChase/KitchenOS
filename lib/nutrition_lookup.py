@@ -1,4 +1,10 @@
-"""Nutrition lookup from external APIs."""
+"""Nutrition lookup from external APIs.
+
+DEPRECATED: superseded by ``lib/nutrition_engine.py`` (gram-based, auditable).
+This module's ``lookup_usda`` does NOT scale per-100g values by the ingredient
+amount, so its macros are unreliable. Nothing in the pipeline imports it anymore;
+kept only so its tests document the old behavior. Use ``nutrition_engine``.
+"""
 
 import json
 import os
