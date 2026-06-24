@@ -13,6 +13,6 @@ public extension KitchenOSClient {
     /// narrowed by protein/cuisine — so it works for queries that specify only those.
     func recipes(matching query: RecipeQuery) async throws -> [RecipeSummary] {
         let base = try await findRecipes(ingredient: query.ingredient ?? "")
-        return base.filter(query.matches)
+        return query.ranked(base.filter(query.matches))
     }
 }

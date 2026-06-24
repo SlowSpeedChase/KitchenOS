@@ -6,10 +6,28 @@ public struct RecipeSummary: Codable, Sendable, Hashable {
     public let protein: String?
     public let image: String?
     public let ingredientItems: [String]?
+    public let nutritionCalories: Double?
+    public let nutritionProtein: Double?
+    public let nutritionCarbs: Double?
+    public let nutritionFat: Double?
 
     enum CodingKeys: String, CodingKey {
         case name, cuisine, protein, image
         case ingredientItems = "ingredient_items"
+        case nutritionCalories = "nutrition_calories"
+        case nutritionProtein = "nutrition_protein"
+        case nutritionCarbs = "nutrition_carbs"
+        case nutritionFat = "nutrition_fat"
+    }
+
+    public init(name: String, cuisine: String? = nil, protein: String? = nil,
+                image: String? = nil, ingredientItems: [String]? = nil,
+                nutritionCalories: Double? = nil, nutritionProtein: Double? = nil,
+                nutritionCarbs: Double? = nil, nutritionFat: Double? = nil) {
+        self.name = name; self.cuisine = cuisine; self.protein = protein
+        self.image = image; self.ingredientItems = ingredientItems
+        self.nutritionCalories = nutritionCalories; self.nutritionProtein = nutritionProtein
+        self.nutritionCarbs = nutritionCarbs; self.nutritionFat = nutritionFat
     }
 }
 
@@ -169,6 +187,21 @@ public struct InventoryItem: Codable, Sendable, Hashable, Identifiable {
         self.category = category; self.location = location
         self.purchased = purchased; self.source = source; self.notes = notes
     }
+
+    /// Tolerant decode: only `name` is required; everything else falls back to
+    /// the same defaults as the Python dataclass. Lets us decode both the full
+    /// `/api/inventory` payload and name-only lists.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        quantity = (try? c.decode(Double.self, forKey: .quantity)) ?? 0
+        unit = (try? c.decode(String.self, forKey: .unit)) ?? "ct"
+        category = (try? c.decode(String.self, forKey: .category)) ?? "other"
+        location = (try? c.decode(String.self, forKey: .location)) ?? "pantry"
+        purchased = try c.decodeIfPresent(String.self, forKey: .purchased)
+        source = (try? c.decode(String.self, forKey: .source)) ?? "manual"
+        notes = (try? c.decode(String.self, forKey: .notes)) ?? ""
+    }
 }
 
 /// Pantry line as returned by `GET /api/pantry` (`{item, amount, unit}`).
@@ -300,4 +333,8 @@ public struct TasksPayload: Codable, Sendable {
         case week, tasks
         case generatedAt = "generated_at"
     }
+}
+
+public struct ByIngredientsResponse: Codable, Sendable {
+    public let matches: [Suggestion]
 }

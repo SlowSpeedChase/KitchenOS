@@ -4,12 +4,13 @@ import KitchenOSKit
 /// Full recipe: metadata, nutrition, ingredients, instructions, tips,
 /// plus an on-device AI summary when Apple Intelligence is available.
 struct RecipeDetailView: View {
-    let recipeName: String
+    let name: String
 
     @State private var detail: RecipeDetail?
     @State private var summary: String?
     @State private var status = ""
     @State private var isLoading = false
+    @AppStorage("kitchenos.obsidianVault") private var obsidianVault = "KitchenOS"
 
     private var client: KitchenOSClient { KitchenOSClient(config: .resolved()) }
 
@@ -27,15 +28,18 @@ struct RecipeDetailView: View {
                     ingredientsSection(d)
                     instructionsSection(d)
                     tipsSection(d)
+                    if let url = RecipeLink.obsidianURL(recipe: name, vault: obsidianVault) {
+                        Section { Link("Open in Obsidian", destination: url) }
+                    }
                 }
             } else if isLoading {
                 ProgressView()
             } else {
-                ContentUnavailableView(status.isEmpty ? recipeName : status,
+                ContentUnavailableView(status.isEmpty ? name : status,
                                        systemImage: "book.closed")
             }
         }
-        .navigationTitle(detail?.title ?? recipeName)
+        .navigationTitle(detail?.title ?? name)
         .task { await load() }
     }
 
@@ -131,7 +135,7 @@ struct RecipeDetailView: View {
         isLoading = true
         defer { isLoading = false }
         do {
-            detail = try await client.recipeDetail(name: recipeName)
+            detail = try await client.recipeDetail(name: name)
         } catch {
             status = "Error: \(error)"
         }

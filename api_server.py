@@ -262,6 +262,33 @@ def api_recipes():
     return jsonify(_recipe_cache["data"])
 
 
+@app.route('/api/recipes/by-ingredients', methods=['POST'])
+@require_token
+def api_recipes_by_ingredients():
+    """Rank recipes by how many of the given ingredients they share.
+
+    Body JSON: {"ingredients": [str, ...], "limit": int (optional, default 15)}.
+    Reuses the meal-suggester overlap scoring. Returns matches sorted by score desc,
+    excluding zero-overlap recipes.
+    """
+    from lib.meal_suggester import normalize_ingredient, rank_candidates, load_pantry_staples
+
+    data = request.get_json(force=True, silent=True) or {}
+    ingredients = data.get("ingredients") or []
+    if not ingredients:
+        return jsonify({"error": "ingredients (a non-empty list) is required"}), 400
+
+    target = {normalize_ingredient(i) for i in ingredients if str(i).strip()}
+    pantry = load_pantry_staples()
+    candidates = get_recipe_index(OBSIDIAN_RECIPES_PATH, include_ingredients=True)
+    ranked = rank_candidates(candidates, target, pantry, limit=int(data.get("limit", 15)))
+    matches = [
+        {"name": r["name"], "score": r["score"], "shared_ingredients": r["shared_ingredients"]}
+        for r in ranked if r["score"] > 0
+    ]
+    return jsonify({"matches": matches})
+
+
 @app.route('/api/recipes/save', methods=['POST'])
 def api_recipe_save():
     """Save a recipe from structured JSON data (e.g., from Claude conversation)."""

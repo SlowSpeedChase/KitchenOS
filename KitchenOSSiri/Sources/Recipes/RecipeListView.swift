@@ -56,7 +56,7 @@ struct RecipeListView: View {
         }
         .navigationTitle("Recipes")
         .navigationDestination(for: String.self) { name in
-            RecipeDetailView(recipeName: name)
+            RecipeDetailView(name: name)
         }
         .searchable(text: $searchText, prompt: "Search recipes")
         .overlay { if isLoading { ProgressView() } }

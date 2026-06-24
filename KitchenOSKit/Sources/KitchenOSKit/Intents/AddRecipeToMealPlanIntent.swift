@@ -22,23 +22,15 @@ public struct AddRecipeToMealPlanIntent: AppIntent {
         )
 
         let client = KitchenOSClient(config: .resolved())
-        let week = WeekDate.currentWeekID()
-        var plan: MealPlan
-        do { plan = try await client.mealPlan(week: week) }
-        catch KitchenOSError.unreachable { return .result(dialog: "I can't reach KitchenOS right now.") }
-
-        guard let idx = plan.days.firstIndex(where: { $0.day.lowercased() == day.title.lowercased() }) else {
+        do {
+            try await client.addRecipe(recipe.id, day: day.title, meal: meal, week: WeekDate.currentWeekID())
+        } catch KitchenOSError.unreachable {
+            return .result(dialog: "I can't reach KitchenOS right now.")
+        } catch KitchenOSError.http(404) {
             return .result(dialog: "I couldn't find \(day.title) on this week's plan.")
+        } catch {
+            return .result(dialog: "I couldn't update the meal plan.")
         }
-        let slot = MealSlotValue(name: recipe.id)
-        switch meal {
-        case .breakfast: plan.days[idx].breakfast = slot
-        case .lunch:     plan.days[idx].lunch = slot
-        case .snack:     plan.days[idx].snack = slot
-        case .dinner:    plan.days[idx].dinner = slot
-        }
-        do { try await client.putMealPlan(plan) }
-        catch { return .result(dialog: "I couldn't update the meal plan.") }
         return .result(dialog: "Added \(recipe.id) to \(day.title) \(meal.title).")
     }
 }

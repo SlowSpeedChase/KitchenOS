@@ -61,6 +61,24 @@ public final class KitchenOSClient: @unchecked Sendable {
         return try decode(data)
     }
 
+    /// Rank recipes by overlap with a set of ingredients you have/want to use.
+    public func recipesByIngredients(_ ingredients: [String], limit: Int = 15) async throws -> [Suggestion] {
+        let url = config.baseURL.appendingPathComponent("/api/recipes/by-ingredients")
+        var req = request(url, method: "POST")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["ingredients": ingredients, "limit": limit])
+        let data = try await send(req)
+        let resp: ByIngredientsResponse = try decode(data)
+        return resp.matches
+    }
+
+    /// Names of the items currently in the kitchen inventory.
+    public func inventoryItems() async throws -> [String] {
+        let url = config.baseURL.appendingPathComponent("/api/inventory")
+        let items: [InventoryItem] = try await get(url)
+        return items.map(\.name)
+    }
+
     // MARK: - Internal helpers for feature extensions
 
     var baseURL: URL { config.baseURL }

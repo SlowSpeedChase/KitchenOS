@@ -7,6 +7,7 @@ struct SmartSearchView: View {
     @State private var status = ""
     @State private var summaries: [String: String] = [:]   // recipe name -> on-device gist
     @State private var isSearching = false
+    @AppStorage("kitchenos.obsidianVault") private var obsidianVault = "KitchenOS"
 
     private var client: KitchenOSClient { KitchenOSClient(config: .resolved()) }
 
@@ -34,12 +35,18 @@ struct SmartSearchView: View {
             if !results.isEmpty {
                 Section("Results") {
                     ForEach(results, id: \.name) { r in
-                        NavigationLink(value: r.name) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(r.name)
-                                if !subtitle(r).isEmpty {
-                                    Text(subtitle(r)).font(.caption).foregroundStyle(.secondary)
-                                }
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(r.name)
+                            if !subtitle(r).isEmpty {
+                                Text(subtitle(r)).font(.caption).foregroundStyle(.secondary)
+                            }
+                            if let gist = summaries[r.name] {
+                                Text(gist).font(.caption).italic()
+                            } else if RecipeAI.isReady {
+                                Button("Summarize") { summarize(r) }.font(.caption)
+                            }
+                            if let url = RecipeLink.obsidianURL(recipe: r.name, vault: obsidianVault) {
+                                Link("Open in Obsidian", destination: url).font(.caption)
                             }
                         }
                     }
@@ -47,13 +54,13 @@ struct SmartSearchView: View {
             }
         }
         .navigationTitle("Smart Search")
-        .navigationDestination(for: String.self) { name in
-            RecipeDetailView(recipeName: name)
-        }
     }
 
     private func subtitle(_ r: RecipeSummary) -> String {
-        [r.cuisine, r.protein].compactMap { $0 }.joined(separator: " · ")
+        var parts = [r.cuisine, r.protein].compactMap { $0 }
+        if let p = r.nutritionProtein { parts.append("\(Int(p))g protein") }
+        if let f = r.nutritionFat { parts.append("\(Int(f))g fat") }
+        return parts.joined(separator: " · ")
     }
 
     private func runSearch() {

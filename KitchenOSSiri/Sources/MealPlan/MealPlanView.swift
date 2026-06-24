@@ -21,6 +21,7 @@ struct MealPlanView: View {
     @State private var status = ""
     @State private var isLoading = false
     @State private var editing: SlotRef?
+    @AppStorage("kitchenos.obsidianVault") private var obsidianVault = "KitchenOS"
 
     private var client: KitchenOSClient { KitchenOSClient(config: .resolved()) }
     private var weekID: String { WeekDate.weekID(for: weekAnchor) }
@@ -44,6 +45,9 @@ struct MealPlanView: View {
                 }
             } else if !isLoading {
                 Text(status.isEmpty ? "No plan." : status).foregroundStyle(.secondary)
+            }
+            if let url = RecipeLink.mealPlanURL(week: weekID, vault: obsidianVault) {
+                Section { Link("Open plan in Obsidian", destination: url) }
             }
         }
         .navigationTitle("Meal Plan")
