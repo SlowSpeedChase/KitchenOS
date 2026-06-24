@@ -151,6 +151,18 @@ Plan: `docs/superpowers/plans/2026-06-23-siri-foundation-models-phase-c2.md`.
 **On-device verification pending:** Assistant tab — "what chicken recipes do I have?",
 "what's on my plan this week?", "suggest a dinner for Friday" should drive tool calls.
 
-**Next:** C3 (App Schemas + IndexedEntity semantic search). Research the iOS 27 App
-Schemas API first (the `@AssistantIntent` macro changed in the 27 release). Optional
-C2.1: a confirm-gated add-to-plan tool.
+### 2026-06-23 — C2 completion (Obsidian links + C2.1 confirmed writes)
+
+- **Open in Obsidian:** `RecipeLink.obsidianURL` builds `obsidian://open?vault=…&file=Recipes/<name>.md`;
+  Smart Search rows get an "Open in Obsidian" link; Settings has a configurable vault name
+  (default `KitchenOS`). Addresses "I had no way to verify the right recipe."
+- **C2.1 confirmed writes:** `proposeAddToMealPlan` tool *proposes* only (never writes);
+  the chat surfaces a Confirm button that applies it via a new shared
+  `KitchenOSClient.addRecipe(_:day:meal:week:)` helper. `AddRecipeToMealPlanIntent`
+  refactored to reuse the same helper (DRY).
+- **26 tests green**; iOS build SUCCEEDED.
+
+**C2 COMPLETE** (read + suggest + confirmed write + Obsidian verify). Held here per user.
+
+**Next (when ready):** C3 — App Schemas + IndexedEntity semantic search. Research the
+iOS 27 App Schemas API first (the `@AssistantIntent` macro changed in the 27 release).
