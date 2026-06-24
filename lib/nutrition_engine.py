@@ -246,12 +246,14 @@ def calculate_recipe_nutrition(
     if resolution_provider is None:
         resolution_provider = "ollama" if use_llm else "none"
     if portion_provider is None:
-        # Ollama portion estimation is unreliable (~52% error), so prefer Claude
-        # when a key is configured, else skip portion estimation entirely.
-        if use_llm:
-            portion_provider = "claude" if food_resolver.claude_available() else "none"
-        else:
-            portion_provider = "none"
+        # Portion estimation defaults OFF. On real recipes the rows that need it
+        # are usually unquantified in the source ("1 whole maple syrup" = a
+        # drizzle), where an LLM estimates a full serving and overshoots
+        # catastrophically (700–1700 kcal blowups). Curated piece-weight tables +
+        # USDA portions cover legitimate count items; the rest stay unresolved and
+        # flagged (a modest undercount beats a wild overcount). Opt in explicitly
+        # with portion_provider="claude" for well-posed count items.
+        portion_provider = "none"
     total = dict(_EMPTY_CONTRIB)
     line_items: list[IngredientNutrition] = []
     sources: set = set()
