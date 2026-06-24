@@ -7,6 +7,7 @@ struct SmartSearchView: View {
     @State private var status = ""
     @State private var summaries: [String: String] = [:]   // recipe name -> on-device gist
     @State private var isSearching = false
+    @AppStorage("kitchenos.obsidianVault") private var obsidianVault = "KitchenOS"
 
     private var client: KitchenOSClient { KitchenOSClient(config: .resolved()) }
 
@@ -44,6 +45,9 @@ struct SmartSearchView: View {
                                     Text(gist).font(.caption).italic()
                                 } else if RecipeAI.isReady {
                                     Button("Summarize") { summarize(r) }.font(.caption)
+                                }
+                                if let url = RecipeLink.obsidianURL(recipe: r.name, vault: obsidianVault) {
+                                    Link("Open in Obsidian", destination: url).font(.caption)
                                 }
                             }
                         }

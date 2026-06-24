@@ -3,6 +3,7 @@ import KitchenOSKit
 
 struct SettingsView: View {
     @AppStorage("kitchenos.baseURL") private var baseURL = KitchenOSConfig.defaultBaseURLString
+    @AppStorage("kitchenos.obsidianVault") private var obsidianVault = "KitchenOS"
     @State private var token = ""
     @State private var savedNote = ""
     @State private var testResult = ""
@@ -23,6 +24,15 @@ struct SettingsView: View {
                 if !savedNote.isEmpty {
                     Text(savedNote).font(.caption).foregroundStyle(.secondary)
                 }
+            }
+
+            Section("Obsidian") {
+                TextField("Vault name", text: $obsidianVault)
+                    .textFieldStyle(.roundedBorder)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                Text("Used for \"Open in Obsidian\" links. Must match your vault's name on this device.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
 
             Section("Diagnostics") {
