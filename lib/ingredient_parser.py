@@ -86,6 +86,34 @@ WORD_NUMBERS = {
     "eleven": "11", "twelve": "12",
 }
 
+# Unicode vulgar fractions → ASCII fraction strings. Recipe sources frequently
+# use these (½ ⅓ ¼ …) and the old parser silently fell back to "1", corrupting
+# the amount. We expand them to ASCII so the fraction logic converts to decimals.
+UNICODE_FRACTIONS = {
+    "¼": "1/4", "½": "1/2", "¾": "3/4",
+    "⅓": "1/3", "⅔": "2/3",
+    "⅕": "1/5", "⅖": "2/5", "⅗": "3/5", "⅘": "4/5",
+    "⅙": "1/6", "⅚": "5/6",
+    "⅛": "1/8", "⅜": "3/8", "⅝": "5/8", "⅞": "7/8",
+    "⅐": "1/7", "⅑": "1/9", "⅒": "1/10",
+}
+
+
+def replace_unicode_fractions(text: str) -> str:
+    """Expand Unicode vulgar fractions to ASCII, inserting a space after a
+    leading digit so mixed numbers parse correctly ("1½" -> "1 1/2")."""
+    if not text:
+        return text
+    out = []
+    for ch in text:
+        if ch in UNICODE_FRACTIONS:
+            if out and out[-1].isdigit():
+                out.append(" ")
+            out.append(UNICODE_FRACTIONS[ch])
+        else:
+            out.append(ch)
+    return "".join(out)
+
 
 def parse_amount(amount_str: str) -> str:
     """
@@ -106,7 +134,7 @@ def parse_amount(amount_str: str) -> str:
     if not amount_str:
         return "1"
 
-    amount_str = amount_str.strip()
+    amount_str = replace_unicode_fractions(amount_str.strip()).strip()
 
     # Check for word numbers
     if amount_str.lower() in WORD_NUMBERS:
@@ -168,7 +196,9 @@ def parse_ingredient(text: str) -> Dict[str, str]:
     if not text:
         return {"amount": "1", "unit": "whole", "item": ""}
 
-    text = text.strip()
+    # Expand Unicode fractions up front so the numeric regexes below (which only
+    # match ASCII) catch a leading "½".
+    text = replace_unicode_fractions(text.strip()).strip()
 
     # Handle comma format: "Chicken Breasts, 500 g"
     if ", " in text:
