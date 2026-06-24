@@ -1539,6 +1539,7 @@ def api_inventory_add():
         InventoryItem, add_items,
         normalize_category, normalize_location, normalize_source,
     )
+    from lib.storage_locations import resolve_location
 
     data = request.get_json(force=True, silent=True)
     if not data or 'items' not in data:
@@ -1547,6 +1548,10 @@ def api_inventory_add():
     raw_items = data['items']
     if not isinstance(raw_items, list) or not raw_items:
         return jsonify({"error": "'items' must be a non-empty array"}), 400
+
+    # Default on: tag items with the meal-plan recipe they were bought for.
+    # Set {"match_plan": false} to skip (e.g. a pure restock).
+    match_plan = data.get('match_plan', True)
 
     parsed: list[InventoryItem] = []
     for raw in raw_items:
@@ -1563,16 +1568,31 @@ def api_inventory_add():
             quantity = float(raw.get('quantity', 1) or 1)
         except (ValueError, TypeError):
             quantity = 1.0
+        category = normalize_category(raw.get('category'))
+        # Explicit location wins; otherwise resolve from the storage table.
+        location = (normalize_location(raw['location'])
+                    if raw.get('location')
+                    else resolve_location(name, category))
         parsed.append(InventoryItem(
             name=name,
             quantity=quantity,
             unit=(raw.get('unit') or 'ct').strip(),
-            category=normalize_category(raw.get('category')),
-            location=normalize_location(raw.get('location')),
+            category=category,
+            location=location,
             purchased=(raw.get('purchased') or None),
             source=normalize_source(raw.get('source') or 'claude'),
             notes=(raw.get('notes') or '').strip(),
+            for_recipe=(raw.get('for_recipe') or None),
         ))
+
+    # Fill for_recipe for any item that didn't carry an explicit assignment.
+    if match_plan and any(it.for_recipe is None for it in parsed):
+        from lib.recipe_matcher import build_plan_index
+        index = build_plan_index()
+        for it in parsed:
+            if it.for_recipe is None:
+                matches = index.match(it.name)
+                it.for_recipe = ", ".join(matches) if matches else None
 
     trip_payload = data.get('trip')
     # An all-fee items list is valid when a trip rides along (the ledger still
@@ -1589,6 +1609,11 @@ def api_inventory_add():
         from lib.inventory_db import record_trip
         from lib.receipt_parser import to_cents
 
+        # for_recipe assignments were computed on InventoryItem (by name);
+        # map them back onto the ledger rows so the trip records them too.
+        recipe_by_name = {
+            it.name.lower().strip(): it.for_recipe for it in parsed
+        }
         purchases = [
             {
                 "raw_name": it.get('notes') or it.get('name', ''),
@@ -1598,6 +1623,10 @@ def api_inventory_add():
                 "unit_price_cents": to_cents(it.get('unit_price')),
                 "total_cents": to_cents(it.get('line_total')),
                 "category": it.get('category', 'other'),
+                "for_recipe": (
+                    it.get('for_recipe')
+                    or recipe_by_name.get((it.get('name') or '').lower().strip())
+                ),
             }
             for it in raw_items
             if isinstance(it, dict)

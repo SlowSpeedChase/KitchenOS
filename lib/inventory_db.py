@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS purchases (
     unit TEXT,
     unit_price_cents INTEGER,
     total_cents INTEGER,
-    category TEXT NOT NULL DEFAULT 'other'
+    category TEXT NOT NULL DEFAULT 'other',
+    for_recipe TEXT
 );
 CREATE TABLE IF NOT EXISTS inventory (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,6 +57,7 @@ CREATE TABLE IF NOT EXISTS inventory (
     purchased TEXT,
     source TEXT NOT NULL DEFAULT 'manual',
     notes TEXT NOT NULL DEFAULT '',
+    for_recipe TEXT,
     UNIQUE(name, unit, location)
 );
 CREATE TABLE IF NOT EXISTS food_cache (
@@ -82,8 +84,15 @@ CREATE TABLE IF NOT EXISTS food_resolution (
 
 _INVENTORY_COLS = (
     "name", "quantity", "unit", "category",
-    "location", "purchased", "source", "notes",
+    "location", "purchased", "source", "notes", "for_recipe",
 )
+
+# Columns added after the original schema shipped. ``connect()`` adds any that
+# an existing DB is missing — SQLite ``ADD COLUMN`` is cheap and append-only.
+_MIGRATIONS = {
+    "inventory": (("for_recipe", "TEXT"),),
+    "purchases": (("for_recipe", "TEXT"),),
+}
 
 
 def db_path() -> Path:
@@ -103,7 +112,21 @@ def connect(path: Optional[Path] = None) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA busy_timeout = 5000")
     conn.executescript(_SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Add columns missing from a pre-existing DB (idempotent)."""
+    for table, columns in _MIGRATIONS.items():
+        existing = {
+            row["name"]
+            for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        for col, decl in columns:
+            if col not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+    conn.commit()
 
 
 def trip_exists(source_id: str) -> bool:
@@ -152,8 +175,8 @@ def record_trip(trip: dict, purchases: list[dict]) -> Optional[int]:
             conn.executemany(
                 "INSERT INTO purchases"
                 " (trip_id, raw_name, canonical_name, quantity, unit,"
-                "  unit_price_cents, total_cents, category)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "  unit_price_cents, total_cents, category, for_recipe)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     (
                         trip_id,
@@ -164,6 +187,7 @@ def record_trip(trip: dict, purchases: list[dict]) -> Optional[int]:
                         p.get("unit_price_cents"),
                         p.get("total_cents"),
                         p.get("category", "other"),
+                        p.get("for_recipe"),
                     )
                     for p in purchases
                 ],
@@ -208,7 +232,7 @@ def fetch_trip(trip_id: int) -> Optional[dict]:
             return None
         purchases = conn.execute(
             "SELECT raw_name, canonical_name, quantity, unit,"
-            " unit_price_cents, total_cents, category"
+            " unit_price_cents, total_cents, category, for_recipe"
             " FROM purchases WHERE trip_id = ? ORDER BY id",
             (trip_id,),
         ).fetchall()

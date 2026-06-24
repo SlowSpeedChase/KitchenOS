@@ -24,8 +24,8 @@ CATEGORIES = (
 LOCATIONS = ("fridge", "freezer", "pantry", "counter", "other")
 SOURCES = ("receipt", "manual", "claude")
 
-HEADER = "| Item | Quantity | Unit | Category | Location | Purchased | Source | Notes |"
-SEPARATOR = "|------|----------|------|----------|----------|-----------|--------|-------|"
+HEADER = "| Item | Quantity | Unit | Category | Location | For Recipe | Purchased | Source | Notes |"
+SEPARATOR = "|------|----------|------|----------|----------|------------|-----------|--------|-------|"
 
 
 @dataclass
@@ -38,6 +38,7 @@ class InventoryItem:
     purchased: Optional[str] = None
     source: str = "manual"
     notes: str = ""
+    for_recipe: Optional[str] = None
 
     def merge_key(self) -> tuple[str, str, str]:
         return (
@@ -139,9 +140,21 @@ def read_inventory() -> list[InventoryItem]:
             purchased=r["purchased"] or None,
             source=normalize_source(r["source"]),
             notes=r["notes"] or "",
+            for_recipe=r["for_recipe"] or None,
         )
         for r in inventory_db.fetch_inventory_rows()
     ]
+
+
+def _merge_recipes(a: Optional[str], b: Optional[str]) -> Optional[str]:
+    """Union two comma-separated recipe-name strings, order preserved."""
+    names: list[str] = []
+    for src in (a, b):
+        for part in (src or "").split(","):
+            name = part.strip()
+            if name and name not in names:
+                names.append(name)
+    return ", ".join(names) or None
 
 
 def render_inventory_md(items: list[InventoryItem]) -> str:
@@ -155,6 +168,7 @@ def render_inventory_md(items: list[InventoryItem]) -> str:
             it.unit,
             it.category,
             it.location,
+            (it.for_recipe or "").replace("|", "\\|"),
             it.purchased or "",
             it.source,
             it.notes.replace("|", "\\|"),
@@ -214,6 +228,7 @@ def add_items(new_items: list[InventoryItem]) -> dict:
                 cur.notes = new.notes
             if new.category != "other":
                 cur.category = new.category
+            cur.for_recipe = _merge_recipes(cur.for_recipe, new.for_recipe)
             merged += 1
         else:
             by_key[key] = new

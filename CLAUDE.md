@@ -457,6 +457,13 @@ Items enter via three paths:
 2. **Photo receipt (Claude)** — share a receipt photo with Claude (Desktop, web, or iOS Share Sheet). Claude parses the items, normalizes the cryptic receipt strings (e.g. `GV WHL MLK 1G` → `Whole milk, 1 gal`), assigns category/location, and calls `add_to_inventory` — optionally with per-item `unit_price`/`line_total` and a `trip` block so photo receipts feed the same price ledger.
 3. **Manual** — `add_to_inventory` via MCP, or POST `/api/inventory/add` directly.
 
+### Storage Location & Recipe Assignment
+
+Every incoming item gets two derived fields before it lands in inventory:
+
+- **Storage location** — `lib/storage_locations.py` `resolve_location(name, category)` is the single router for *where* stock is stored. It reads `config/storage_locations.json` (hand-correctable, atomic writes): a `by_item` override (bananas/bread → counter, onions/potatoes → pantry) wins over a `by_category` default (produce/dairy/meat/seafood → fridge, frozen → freezer, bakery → counter, …), falling back to `pantry`. Item match is exact-then-word-subset so "roma tomatoes" still hits "tomatoes". `receipt_parser.default_location(category)` delegates here. New corrections: `save_item_override(name, location)`.
+- **Recipe assignment** — `lib/recipe_matcher.py` builds an ingredient→recipe index from the meal plans in the current ISO week **plus the next**, then tags each purchase with the recipe(s) it was bought for (`for_recipe`). Matching is deterministic: normalized, singularized token-containment, so "chicken"/"chicken breast" both match "boneless skinless chicken breasts". A staple bought for several planned recipes lists all of them; anything matching nothing in the plan is left unassigned and falls through to **general inventory**. On merge, an item's recipe names are unioned (the merge key stays `(name, unit, location)`). The email path always matches; `/api/inventory/add` matches by default unless `{"match_plan": false}` is sent.
+
 ### Item Schema
 
 | Field | Required | Vocab |
@@ -465,10 +472,11 @@ Items enter via three paths:
 | `quantity` | yes | Numeric (default 1) |
 | `unit` | yes | Free text (`gal`, `lb`, `oz`, `ct`, …) |
 | `category` | no | `produce`, `dairy`, `meat`, `seafood`, `pantry`, `frozen`, `bakery`, `beverages`, `household`, `other` |
-| `location` | no | `fridge`, `freezer`, `pantry`, `counter`, `other` (default `pantry`) |
+| `location` | no | `fridge`, `freezer`, `pantry`, `counter`, `other`. Auto-resolved from `config/storage_locations.json` when omitted (see below); an explicit value always wins |
 | `purchased` | no | `YYYY-MM-DD` |
 | `source` | no | `receipt`, `manual`, `claude` |
 | `notes` | no | Free text (often the raw receipt line) |
+| `for_recipe` | no | Comma-joined meal-plan recipe name(s) the item was bought for. Auto-assigned by the matcher when omitted; `null` = general inventory |
 
 ### MCP Tools
 
@@ -606,6 +614,9 @@ template → Obsidian
 | `lib/receipt_parser.py` | Receipt email HTML → text → Ollama extraction → line-total validation |
 | `lib/email_fetcher.py` | Gmail IMAP fetcher for receipt emails (read-only mailbox) |
 | `lib/item_aliases.py` | Raw receipt string → canonical item name cache |
+| `lib/storage_locations.py` | Storage-location router — `resolve_location(name, category)` from `config/storage_locations.json` (item override → category → pantry) |
+| `lib/recipe_matcher.py` | Tag purchases with the meal-plan recipe they were bought for (current + next ISO week; deterministic token match) |
+| `config/storage_locations.json` | `by_item` + `by_category` storage-location table (hand-correctable) |
 | `lib/price_dashboard.py` | Price Tracker dashboard generation from the purchases ledger |
 | `generate_price_dashboard.py` | CLI — writes `Price Tracker.md` to the vault root |
 | `prompts/receipt_extraction.py` | Ollama prompt for structured receipt extraction |

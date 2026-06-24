@@ -26,13 +26,6 @@ PURCHASE_CATEGORIES = (
     "bakery", "beverages", "household", "fee", "other",
 )
 
-# fridge/freezer guesses for incoming stock, by category
-_LOCATION_BY_CATEGORY = {
-    "produce": "fridge", "dairy": "fridge", "meat": "fridge",
-    "seafood": "fridge", "frozen": "freezer",
-}
-
-
 def email_to_text(html: str) -> str:
     """Flatten email HTML to readable plain text."""
     soup = BeautifulSoup(html, "html.parser")
@@ -129,4 +122,12 @@ def build_purchases(parsed: dict) -> list[dict]:
 
 
 def default_location(category: str) -> str:
-    return _LOCATION_BY_CATEGORY.get(category, "pantry")
+    """Category-only storage-location fallback.
+
+    Kept for callers without an item name; the item-aware path uses
+    ``lib.storage_locations.resolve_location(name, category)`` directly.
+    Delegates to the JSON table so there's one source of truth.
+    """
+    from lib.storage_locations import resolve_location
+
+    return resolve_location("", category)

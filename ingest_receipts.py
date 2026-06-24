@@ -29,9 +29,10 @@ from lib.email_fetcher import extract_email_payload, fetch_receipt_emails  # noq
 from lib.failure_logger import classify_error, log_failures  # noqa: E402
 from lib.inventory import InventoryItem, add_items  # noqa: E402
 from lib.inventory_db import record_trip, trip_exists  # noqa: E402
+from lib.recipe_matcher import assign_recipes  # noqa: E402
+from lib.storage_locations import resolve_location  # noqa: E402
 from lib.receipt_parser import (  # noqa: E402
     build_purchases,
-    default_location,
     email_to_text,
     parse_receipt_text,
     to_cents,
@@ -61,6 +62,9 @@ def process_email(payload: dict, dry_run: bool = False) -> str:
     parsed = parse_receipt_text(text)
     ok, problems = validate_receipt(parsed)
     purchases = build_purchases(parsed)
+    # Tag each line with the meal-plan recipe it was bought for (this/next
+    # week); unmatched lines stay None and fall through to general inventory.
+    assign_recipes(purchases)
 
     trip = {
         "date": parsed.get("date") or "",
@@ -77,8 +81,10 @@ def process_email(payload: dict, dry_run: bool = False) -> str:
         print(f"[dry-run] {trip['date']} {trip['source']} "
               f"total={trip['total_cents']} items={len(purchases)} — {status}")
         for p in purchases:
+            loc = resolve_location(p["canonical_name"], p["category"])
+            recipe = p.get("for_recipe") or "-"
             print(f"    {p['canonical_name']:30s} {p['quantity']} {p['unit']}"
-                  f"  {p['total_cents']}c  [{p['category']}]")
+                  f"  {p['total_cents']}c  [{p['category']}/{loc}]  → {recipe}")
         return "ingested" if ok else "needs_review"
 
     if record_trip(trip, purchases) is None:
@@ -94,9 +100,10 @@ def process_email(payload: dict, dry_run: bool = False) -> str:
             quantity=float(p["quantity"] or 1),
             unit=p["unit"],
             category=p["category"],
-            location=default_location(p["category"]),
+            location=resolve_location(p["canonical_name"], p["category"]),
             purchased=trip["date"],
             source="receipt",
+            for_recipe=p.get("for_recipe"),
         )
         for p in purchases
         if p["category"] != "fee"
