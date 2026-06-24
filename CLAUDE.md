@@ -49,9 +49,14 @@ Development guide for Claude Code when working with this repository.
 cd /Users/chaseeasterling/Dev/KitchenOS
 .venv/bin/python extract_recipe.py "https://www.youtube.com/watch?v=VIDEO_ID"
 
+# Instagram Reel (same command — URL is auto-detected and routed)
+.venv/bin/python extract_recipe.py "https://www.instagram.com/reel/REEL_ID/"
+
 # Dry run (preview without saving)
 .venv/bin/python extract_recipe.py --dry-run "VIDEO_URL"
 ```
+
+**Instagram Reels** (`extract_recipe.py` CLI only — not batch/API/MCP): `instagram_parser` detects `/reel/`, `/reels/`, `/p/` URLs and routes to `extract_single_instagram_recipe`. Reel metadata + audio come from yt-dlp (`get_instagram_metadata`, `download_instagram_audio` in `main.py`); the caption and a Whisper transcript are both fed to the LLM (a real recipe-blog link in the caption still wins). Dedup is by reel shortcode via `source_url`; frontmatter `recipe_source: instagram`. `instagram.com` stays in `recipe_sources.py` `EXCLUDED_DOMAINS` (that list governs description link-following, a separate concern). Anonymous yt-dlp works for many public reels; set `INSTAGRAM_COOKIES_FROM_BROWSER`/`INSTAGRAM_COOKIES_FILE` when throttled.
 
 ### Import from Crouton
 
@@ -730,6 +735,10 @@ Maps YouTube channel names to their recipe website domains. Used to search creat
   - `KITCHENOS_API_TOKEN` - Optional. When set, remote (non-localhost) callers of the Siri-facing endpoints (`/api/recipes`, `/api/recipes/<name>`, `/api/meal-plan/<week>`, `/api/suggest-meal`) must send `Authorization: Bearer <token>`. Localhost is always exempt. Used by the iPad App-Intents app over Tailscale.
   - `GMAIL_ADDRESS` - Gmail account for receipt-email ingestion
   - `GMAIL_APP_PASSWORD` - Google app password for IMAP (requires 2-step verification)
+  - `INSTAGRAM_COOKIES_FROM_BROWSER` - Optional. Browser to pull Instagram cookies from (`chrome`, `safari`, …) when anonymous Reel fetches get throttled
+  - `INSTAGRAM_COOKIES_FILE` - Optional. Path to a cookies.txt for Instagram auth (alternative to the browser option)
+
+**Note:** Whisper audio transcription (YouTube fallback *and* Instagram Reels) requires `ffmpeg`/`ffprobe` on PATH for yt-dlp's audio extraction. Without it, extraction degrades gracefully to caption/description-only. Install via `brew install ffmpeg`.
 
 ## Dependencies
 

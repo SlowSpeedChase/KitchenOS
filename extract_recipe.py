@@ -28,7 +28,10 @@ from lib import paths
 # Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from main import youtube_parser, get_video_metadata, get_transcript, get_first_comment, get_thumbnail_url
+from main import (
+    youtube_parser, get_video_metadata, get_transcript, get_first_comment, get_thumbnail_url,
+    instagram_parser, get_instagram_metadata, download_instagram_audio, transcribe_with_whisper_text,
+)
 from prompts.recipe_extraction import SYSTEM_PROMPT, build_user_prompt
 from templates.recipe_template import format_recipe_markdown, generate_filename
 from recipe_sources import (
@@ -485,6 +488,212 @@ def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False, 
         return result
 
 
+def extract_single_instagram_recipe(url: str, dry_run: bool = False, force: bool = False, on_status=None) -> dict:
+    """Extract a recipe from an Instagram Reel.
+
+    Sibling of extract_single_recipe(): fetches reel metadata + audio via
+    yt-dlp, always Whisper-transcribes the audio, and feeds BOTH the caption
+    and the transcript to the LLM (a clean external recipe-blog link in the
+    caption still wins). Reuses the same post-processing/save pipeline and
+    deduplicates by the reel shortcode (stored in source_url).
+
+    Returns the same result dict shape as extract_single_recipe.
+    """
+    status = on_status or (lambda msg: None)
+    result = {
+        "success": False,
+        "title": None,
+        "recipe_name": None,
+        "filepath": None,
+        "error": None,
+        "skipped": False,
+        "source": None,
+    }
+
+    try:
+        parsed = instagram_parser(url)
+        if not parsed:
+            result["error"] = "Not a recognized Instagram Reel/post URL"
+            return result
+        reel_id = parsed['reel_id']
+        reel_url = f"https://www.instagram.com/reel/{reel_id}/"
+
+        # Dedup by reel shortcode (find_existing_recipe matches reel_id in source_url)
+        status("Checking for existing recipe...")
+        existing = find_existing_recipe(OBSIDIAN_RECIPES_PATH, reel_id)
+        if existing and not dry_run and not force:
+            result["success"] = True
+            result["skipped"] = True
+            result["filepath"] = existing
+            try:
+                content = existing.read_text(encoding='utf-8')
+                ex_parsed = parse_recipe_file(content)
+                result["title"] = ex_parsed['frontmatter'].get('video_title', existing.stem)
+                result["recipe_name"] = ex_parsed['frontmatter'].get('recipe_name', existing.stem)
+            except Exception as e:
+                print(f"Warning: Could not parse existing recipe metadata: {e}", file=sys.stderr)
+                result["title"] = existing.stem
+                result["recipe_name"] = existing.stem
+            return result
+
+        # Fetch reel metadata (title, creator, caption, cover image)
+        status("Fetching Reel metadata...")
+        metadata = get_instagram_metadata(reel_url)
+        if not metadata:
+            result["error"] = "Could not fetch Instagram Reel metadata"
+            return result
+
+        title = metadata['title']
+        channel = metadata['channel']
+        caption = metadata['description']
+        thumbnail_url = metadata['thumbnail_url']
+        result["title"] = title
+
+        # Always transcribe the audio (caption + transcript together feed the LLM)
+        status("Downloading audio and transcribing...")
+        transcript = None
+        audio_file = download_instagram_audio(reel_url, reel_id)
+        if audio_file:
+            transcript = transcribe_with_whisper_text(audio_file)
+        if not transcript:
+            status("No transcript available; using caption only")
+
+        # === EXTRACTION ===
+        recipe_data = None
+        source = None
+        recipe_link = None
+
+        # 1. A real recipe-blog link in the caption wins (clean JSON-LD).
+        #    find_recipe_link already skips instagram/social domains.
+        status("Checking caption for recipe link...")
+        recipe_link = find_recipe_link(caption)
+        if recipe_link:
+            status(f"Scraping recipe from {recipe_link}...")
+            recipe_data = scrape_recipe_from_url(recipe_link)
+            if recipe_data:
+                source = "webpage"
+                status("Found recipe on linked webpage")
+
+        # 2. Otherwise extract from caption + transcript via Ollama.
+        if not recipe_data:
+            status("Extracting recipe with Ollama (this may take a moment)...")
+            recipe_data, error = extract_recipe_with_ollama(
+                title, channel, caption, transcript
+            )
+            if error:
+                result["error"] = error
+                return result
+            source = "instagram"
+            status("AI extraction complete")
+
+        # Cooking tips from transcript when recipe came from a structured source
+        if source == "webpage" and transcript:
+            status("Extracting cooking tips from transcript...")
+            recipe_data['video_tips'] = extract_cooking_tips(transcript, recipe_data)
+
+        # Add source metadata
+        recipe_data['source'] = source
+        recipe_data['source_url'] = reel_url
+        # Use the reel cover as the image unless a scrape supplied one
+        if not recipe_data.get('image_url') and thumbnail_url:
+            recipe_data['image_url'] = thumbnail_url
+
+        # Normalize AI output to standard formats (handles schema variations)
+        recipe_data['ingredients'] = normalize_ingredients(
+            recipe_data.get('ingredients', [])
+        )
+        recipe_data['instructions'] = normalize_instructions(
+            recipe_data.get('instructions', [])
+        )
+
+        # Normalize string fields that AI sometimes returns as lists
+        for field in ('cuisine', 'protein', 'dish_type', 'difficulty'):
+            val = recipe_data.get(field)
+            if isinstance(val, list):
+                recipe_data[field] = val[0] if val else None
+
+        # Normalize meal_occasion to list of slugified strings (max 3)
+        occasion = recipe_data.get('meal_occasion', [])
+        if isinstance(occasion, str):
+            occasion = [occasion]
+        recipe_data['meal_occasion'] = [
+            o.strip().lower().replace(' ', '-')
+            for o in occasion if o and isinstance(o, str)
+        ][:3]
+
+        # Normalize all tag fields against controlled vocabularies
+        normalize_recipe_data(recipe_data)
+
+        # Validate and repair ingredients (fixes AI extraction errors)
+        status("Validating ingredients...")
+        recipe_data['ingredients'] = clean_ingredient_list(validate_ingredients(
+            recipe_data.get('ingredients', []),
+            verbose=True
+        ))
+
+        # Match seasonal ingredients
+        status("Matching seasonal ingredients...")
+        seasonal_matches = match_ingredients_to_seasonal(
+            recipe_data.get('ingredients', [])
+        )
+        recipe_data['seasonal_ingredients'] = seasonal_matches
+        recipe_data['peak_months'] = get_peak_months(seasonal_matches)
+        if seasonal_matches:
+            score = calculate_season_score(seasonal_matches)
+            status(f"Found {len(seasonal_matches)} seasonal ingredients (score: {score})")
+
+        # Calculate nutrition from ingredients (servings raw so null is flagged)
+        status("Calculating nutrition...")
+        ingredients = recipe_data.get("ingredients", [])
+        nutrition_result = calculate_recipe_nutrition(ingredients, recipe_data.get("servings"))
+
+        if nutrition_result:
+            recipe_data["nutrition_calories"] = nutrition_result.nutrition.calories
+            recipe_data["nutrition_protein"] = nutrition_result.nutrition.protein
+            recipe_data["nutrition_carbs"] = nutrition_result.nutrition.carbs
+            recipe_data["nutrition_fat"] = nutrition_result.nutrition.fat
+            recipe_data["nutrition_source"] = nutrition_result.source
+            recipe_data["nutrition_confidence"] = nutrition_result.confidence
+            recipe_data["serving_size"] = recipe_data.get("serving_size", "1 serving")
+            if nutrition_result.needs_review:
+                recipe_data["needs_review"] = True
+
+        # Download recipe image (reel cover, or scraped image)
+        image_filename = None
+        image_url = recipe_data.get('image_url')
+        if image_url and not dry_run:
+            status("Downloading recipe image...")
+            recipe_name_for_image = recipe_data.get('recipe_name', 'Untitled Recipe')
+            safe_name = re.sub(r'[<>:"/\|?*]', '', recipe_name_for_image)
+            safe_name = ' '.join(safe_name.split()).title()
+            image_target = OBSIDIAN_RECIPES_PATH / "Images" / f"{safe_name}.jpg"
+            downloaded = download_image(image_url, image_target)
+            if downloaded:
+                image_filename = f"{safe_name}.jpg"
+                status(f"Image saved: {image_filename}")
+
+        recipe_data['image_filename'] = image_filename
+
+        recipe_name = recipe_data.get('recipe_name', 'Unknown Recipe')
+        result["recipe_name"] = recipe_name
+        result["source"] = source
+
+        if dry_run:
+            result["success"] = True
+            return result
+
+        # Save to Obsidian (dedup/backup by reel_id via source_url)
+        status("Saving to Obsidian...")
+        filepath = save_recipe_to_obsidian(recipe_data, reel_url, title, channel, reel_id)
+        result["success"] = True
+        result["filepath"] = filepath
+        return result
+
+    except Exception as e:
+        result["error"] = str(e)
+        return result
+
+
 def extract_single_web_recipe(url: str, dry_run: bool = False, on_status=None) -> dict:
     """Extract recipe from a non-YouTube web URL (e.g. natashaskitchen.com).
 
@@ -627,12 +836,12 @@ def extract_single_web_recipe(url: str, dry_run: bool = False, on_status=None) -
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Extract recipes from YouTube cooking videos"
+        description="Extract recipes from YouTube cooking videos or Instagram Reels"
     )
     parser.add_argument(
         'url',
         type=str,
-        help='YouTube video URL or ID'
+        help='YouTube video URL/ID or Instagram Reel URL'
     )
     parser.add_argument(
         '--dry-run',
@@ -646,13 +855,19 @@ def main():
     )
     args = parser.parse_args()
 
-    parsed = youtube_parser(args.url)
-    video_id = parsed['video_id']
-    is_short = parsed['is_short']
-    video_type = "Short" if is_short else "video"
-    print(f"Fetching {video_type} data for: {video_id}")
-
-    result = extract_single_recipe(args.url, dry_run=args.dry_run, force=args.force, on_status=print)
+    instagram = instagram_parser(args.url)
+    if instagram:
+        print(f"Fetching Instagram Reel data for: {instagram['reel_id']}")
+        result = extract_single_instagram_recipe(
+            args.url, dry_run=args.dry_run, force=args.force, on_status=print
+        )
+    else:
+        parsed = youtube_parser(args.url)
+        video_id = parsed['video_id']
+        is_short = parsed['is_short']
+        video_type = "Short" if is_short else "video"
+        print(f"Fetching {video_type} data for: {video_id}")
+        result = extract_single_recipe(args.url, dry_run=args.dry_run, force=args.force, on_status=print)
 
     if not result["success"]:
         print(f"Error: {result['error']}", file=sys.stderr)

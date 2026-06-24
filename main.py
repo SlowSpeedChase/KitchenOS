@@ -289,6 +289,115 @@ def download_audio(video_id):
         print(f"Error downloading audio: {e}")
         return None
 
+
+# === Instagram Reels ===
+
+INSTAGRAM_COOKIES_FROM_BROWSER = os.getenv('INSTAGRAM_COOKIES_FROM_BROWSER')
+INSTAGRAM_COOKIES_FILE = os.getenv('INSTAGRAM_COOKIES_FILE')
+
+
+def instagram_parser(input_str):
+    """Parse an Instagram Reel/post URL and return its shortcode.
+
+    Matches /reel/, /reels/, and /p/ URLs (with or without trailing
+    query strings like ?igsh=...).
+
+    Returns:
+        dict {'reel_id': str} if the input is an Instagram URL, else None.
+    """
+    if not input_str:
+        return None
+    match = re.search(r'instagram\.com/(?:reel|reels|p)/([^/?#&]+)', input_str)
+    if match:
+        return {'reel_id': match.group(1)}
+    return None
+
+
+def _instagram_ydl_opts(base):
+    """Augment yt-dlp opts with Instagram cookie auth when configured.
+
+    Anonymous access works for many public reels but Instagram throttles
+    repeated/bulk fetches; set INSTAGRAM_COOKIES_FROM_BROWSER (e.g. "chrome",
+    "safari") or INSTAGRAM_COOKIES_FILE (path to a cookies.txt) to authenticate.
+    """
+    opts = dict(base)
+    if INSTAGRAM_COOKIES_FROM_BROWSER:
+        opts['cookiesfrombrowser'] = (INSTAGRAM_COOKIES_FROM_BROWSER,)
+    elif INSTAGRAM_COOKIES_FILE:
+        opts['cookiefile'] = INSTAGRAM_COOKIES_FILE
+    return opts
+
+
+def get_instagram_metadata(reel_url):
+    """Fetch Instagram Reel metadata via yt-dlp.
+
+    Returns the same dict shape as get_video_metadata():
+        {'title': str, 'channel': str, 'description': str, 'thumbnail_url': str}
+        or None on failure.
+
+    'description' carries the reel caption (which often contains the full
+    written recipe); 'channel' is the creator handle/name.
+    """
+    ydl_opts = _instagram_ydl_opts({
+        'quiet': True,
+        'no_warnings': True,
+        'skip_download': True,
+        'extract_flat': False,
+    })
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(reel_url, download=False)
+            return {
+                'title': info.get('title', '') or '',
+                'channel': info.get('channel', '') or info.get('uploader', '') or '',
+                'description': info.get('description', '') or '',
+                'thumbnail_url': info.get('thumbnail', '') or '',
+            }
+    except yt_dlp.utils.DownloadError as e:
+        print(f"yt-dlp error (Instagram): {e}", file=sys.stderr)
+        return None
+    except Exception as e:
+        print(f"Unexpected error fetching Instagram metadata: {e}", file=sys.stderr)
+        return None
+
+
+def download_instagram_audio(reel_url, reel_id):
+    """Download a Reel's audio as mp3 and return the file path (or None).
+
+    Mirrors download_audio() but takes the reel URL directly and honors
+    Instagram cookie auth. Feed the result into transcribe_with_whisper_text().
+    """
+    try:
+        temp_dir = tempfile.mkdtemp()
+        output_path = os.path.join(temp_dir, f"{reel_id}.%(ext)s")
+
+        ydl_opts = _instagram_ydl_opts({
+            'quiet': True,
+            'no_warnings': True,
+            'format': 'bestaudio/best',
+            'outtmpl': output_path,
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+        })
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([reel_url])
+
+        audio_file = os.path.join(temp_dir, f"{reel_id}.mp3")
+        if os.path.exists(audio_file):
+            return audio_file
+        print(f"Instagram audio file not found at expected path: {audio_file}")
+        return None
+
+    except Exception as e:
+        print(f"Error downloading Instagram audio: {e}", file=sys.stderr)
+        return None
+
+
 def transcribe_with_whisper(audio_file_path):
     """Transcribe audio file using OpenAI Whisper API"""
     if not OPENAI_API_KEY:
