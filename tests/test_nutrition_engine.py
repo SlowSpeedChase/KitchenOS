@@ -112,6 +112,31 @@ class TestSourcesAndResolution:
         assert res.needs_review
 
 
+class TestSanityCap:
+    def test_implausible_grams_skipped(self):
+        # A malformed ingredient yields an absurd LLM portion → must not pollute.
+        # A second, valid ingredient keeps the recipe resolvable.
+        def fake_usda(q):
+            if "oil" in q:
+                return [_rec("Oil", 884, 0, 0, 100)]
+            return [_rec("Rice", 100, 0, 0, 0)]
+        with patch("lib.food_db.usda_search", side_effect=fake_usda), \
+             patch("lib.food_db.usda_food_detail", return_value=None), \
+             patch("lib.food_resolver.estimate_portion_grams_llm", return_value=(5000.0, 0.6)):
+            res = calculate_recipe_nutrition(
+                [{"amount": "100", "unit": "whole", "item": "weird oil"},
+                 {"amount": "100", "unit": "g", "item": "rice"}], 1,
+                use_cache=False, portion_provider="ollama",
+            )
+        # oil: 100 * 5000g = 500000g > cap → skipped, contributes 0, flagged.
+        # rice: 100 g → 100 kcal. Recipe total reflects only the rice.
+        assert res.total.calories == 100
+        oil_line = next(li for li in res.line_items if "oil" in li.item)
+        assert oil_line.needs_review
+        assert "implausible" in oil_line.note
+        assert res.needs_review
+
+
 class TestLlmPortionFallback:
     def test_llm_estimates_grams_for_count_unit(self):
         # 'whole' count unit, item has no piece weight in config → LLM portion.

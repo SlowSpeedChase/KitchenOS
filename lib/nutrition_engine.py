@@ -31,6 +31,11 @@ from lib.nutrition import NutritionData
 # Below this line confidence, a recipe is flagged needs_review.
 REVIEW_CONFIDENCE = 0.5
 
+# A single ingredient line over this many grams (~24 lb) is almost certainly a
+# parse error (e.g. a stray oven temperature parsed as an ingredient). Treat it
+# as unresolved rather than letting an absurd weight pollute the recipe.
+MAX_INGREDIENT_GRAMS = 11000.0
+
 
 @dataclass
 class IngredientNutrition:
@@ -273,11 +278,14 @@ def calculate_recipe_nutrition(
         gr = _resolve_grams(amount, unit, item, record, use_cache=use_cache,
                             portion_provider=portion_provider)
         per_100g = record["per_100g"]
-        if gr.method == "unresolved" or gr.grams <= 0:
+        if gr.method == "unresolved" or gr.grams <= 0 or gr.grams > MAX_INGREDIENT_GRAMS:
             contribution = dict(_EMPTY_CONTRIB)
             line_review = True
             line_conf = 0.0
-            note = gr.note
+            if gr.grams > MAX_INGREDIENT_GRAMS:
+                note = f"implausible weight {gr.grams:.0f}g — skipped"
+            else:
+                note = gr.note
         else:
             factor = gr.grams / 100.0
             contribution = {k: float(per_100g.get(k, 0) or 0) * factor for k in _EMPTY_CONTRIB}
