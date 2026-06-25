@@ -189,3 +189,13 @@ def use_it_up(limit: int = 10) -> dict:
         return r.json()
     except requests.exceptions.RequestException as e:
         return {"error": str(e), "at_risk": [], "suggestions": []}
+
+
+def cook_recipe(recipe: str, servings: float = 1.0) -> dict:
+    """Mark a recipe cooked — decrement its ingredients from inventory."""
+    try:
+        r = requests.post(f"{API_BASE}/api/cook",
+                          json={"recipe": recipe, "servings": servings}, timeout=20)
+        return r.json()
+    except requests.exceptions.RequestException as e:
+        return {"error": str(e), "consumed": []}

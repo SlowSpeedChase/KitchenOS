@@ -19,6 +19,7 @@ from lib.mcp_tools import (
     remove_from_inventory as _remove_from_inventory,
     update_inventory_item as _update_inventory_item,
     use_it_up as _use_it_up,
+    cook_recipe as _cook_recipe,
 )
 
 mcp = FastMCP("KitchenOS")
@@ -353,6 +354,37 @@ def use_it_up(limit: int = 10) -> str:
         for s in suggestions
     )
     return f"At risk ({len(at_risk)}):\n{risk_lines}\n\nCook these to use them up:\n{cook_lines}"
+
+
+@mcp.tool()
+def cook_recipe(recipe: str, servings: float = 1.0) -> str:
+    """Mark a recipe as cooked — subtract its ingredients from the inventory.
+
+    Use when the user says they made/cooked a recipe, so partial-package
+    leftovers stay accurate. Staples (milk, butter, flour…) are not decremented.
+
+    Args:
+        recipe: Recipe name (matches the recipe file, e.g. "Ham Cheddar Biscuits")
+        servings: Batch multiplier if more than the base recipe was made (default 1)
+    """
+    if err := _require_api():
+        return err
+    r = _cook_recipe(recipe, servings=servings)
+    if r.get("error"):
+        return f"Error: {r['error']}"
+    consumed = r.get("consumed", [])
+    if not consumed:
+        skipped = r.get("not_tracked", []) + r.get("skipped_staples", [])
+        extra = f" (ingredients not tracked / are staples: {', '.join(skipped[:6])})" if skipped else ""
+        return f"Nothing to decrement for {recipe}.{extra}"
+    lines = []
+    for c in consumed:
+        unit = c.get("unit") or ""
+        if c.get("depleted"):
+            lines.append(f"  - {c['item']}: used up (was {c['before']:g} {unit})")
+        else:
+            lines.append(f"  - {c['item']}: {c['before']:g} → {c['after']:g} {unit} left")
+    return f"Cooked {recipe}. Updated inventory:\n" + "\n".join(lines)
 
 
 if __name__ == "__main__":

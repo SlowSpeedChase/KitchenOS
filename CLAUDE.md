@@ -422,6 +422,7 @@ For the full route list, grep `@app.route` in `api_server.py`. Endpoints with no
 | `/api/meal-plan/<week>` (GET/PUT) | Programmatic meal plan as JSON; PUT round-trips through `rebuild_meal_plan_markdown`. |
 | `/api/recipes?ingredient=<term>` (GET) | Filters the recipe index to recipes whose ingredient list contains the case-insensitive substring. Backs the Siri "recipes with X" intent. |
 | `/api/use-it-up` (GET, `?limit=`) | Recipes ranked by how much expiring/at-risk inventory they use, to avoid waste. `{at_risk, suggestions}`. Staples excluded; only the actionable expiry window. Backs the `use_it_up` MCP tool and the meal-planner "Use It Up" panel. |
+| `/api/cook` (POST) | `{recipe, servings?}` — mark a recipe cooked; decrements its non-staple ingredients from inventory (true partial-package leftovers). Returns the consume summary. Backs the `cook_recipe` MCP tool. Optional. |
 | `/api/meals` (POST) | Create meal — frontmatter saved to `vault/Meals/<name>.meal.md`. |
 | `/api/recipes/import-text` (POST) | Parse a free-text recipe (`{text, title?, source?}`) with Ollama (un-gated) and save it like `/api/recipes/save`. Original text preserved in a collapsible `## Import Source` block. Backs Selene's `/webhook/api/recipe` forward. |
 | `/api/shopping-list/preview` `/confirm` | See "Pantry-aware shopping list flow" above. |
@@ -485,7 +486,7 @@ Items enter via four paths:
 Inventory must never become something the user has to maintain. Load-bearing consequences (honor these in any inventory/waste feature):
 - **Auto-add, auto-age-out.** Items enter automatically from receipts; `inventory.prune_expired()` drops perishables >3 days past expiry (assumed used/tossed) on the daily meal-plan run, so the list self-cleans with no manual "I used this" step. Shelf-stable items (no `expires`) never age out.
 - **Staples are assumed, never tracked.** `config/pantry_staples.json` items (milk, butter, flour, rice, eggs, oil…) are treated as always-on-hand: recipes may use them freely, and they are excluded from Use-It-Up at-risk flagging. The user manages staple freshness themselves; KitchenOS must not nag about them.
-- **Everything is generated, read-only output.** `Inventory.md`, `Use It Up.md`, `Price Tracker.md`, suggestions — the user reads them; they never edit them. Consume-on-cook decrementing (to track true partial-package leftovers) is a deferred, *optional* Layer 2 — never make it a required step.
+- **Everything is generated, read-only output.** `Inventory.md`, `Use It Up.md`, `Price Tracker.md`, suggestions — the user reads them; they never edit them. **Consume-on-cook** (Layer 2 — `lib/cook.consume_recipe`, `POST /api/cook`, the `cook_recipe` MCP tool) decrements a cooked recipe's *non-staple* ingredients so true partial-package leftovers become visible (¼ cup used from a 1 qt buttermilk → 0.94 qt left). It is **optional, never required** — inventory still self-cleans on expiry without it. Reuses `pantry.apply_decisions`; volume/weight convert within family (so `qt`/`gal`/`pt` abbreviations were added to `lib/units.py`).
 
 ### Storage Location & Recipe Assignment
 
@@ -652,6 +653,7 @@ template → Obsidian
 | `config/storage_locations.json` | `by_item` + `by_category` storage-location table (hand-correctable) |
 | `lib/expiry.py` | Shelf-life windows — `compute_expires(purchased, name, category)` / `expiry_status()` from `config/expiry_windows.json` (item override → category → none) |
 | `lib/use_it_up.py` | Food-waste suggester — ranks recipes by how much at-risk (expiring) inventory they use; excludes staples; writes `Use It Up.md`. Backs `/api/use-it-up` + the `use_it_up` MCP tool + the meal-planner panel |
+| `lib/cook.py` | Consume-on-cook — `consume_recipe(name, servings)` decrements a recipe's non-staple ingredients from inventory (via `pantry.apply_decisions`). Backs `POST /api/cook` + the `cook_recipe` MCP tool. Optional |
 | `config/expiry_windows.json` | `by_item` + `by_category` expiry-window (days) table; `null` = no expiry (hand-correctable) |
 | `lib/price_dashboard.py` | Price Tracker dashboard generation from the purchases ledger |
 | `generate_price_dashboard.py` | CLI — writes `Price Tracker.md` to the vault root |
