@@ -522,6 +522,28 @@
             border-color: var(--accent);
         }
 
+        .grid-card .cooked-btn {
+            position: absolute;
+            bottom: 4px;
+            left: 4px;
+            padding: 2px 6px;
+            border: 1px solid var(--border);
+            background: var(--bg);
+            border-radius: 10px;
+            font-size: 11px;
+            color: var(--text-muted);
+            cursor: pointer;
+            min-height: 20px;
+            transition: all 0.15s ease;
+        }
+
+        .grid-card .cooked-btn:hover,
+        .grid-card .cooked-btn:active {
+            background: var(--accent);
+            color: #ffffff;
+            border-color: var(--accent);
+        }
+
         .grid-card.sortable-ghost {
             opacity: 0.4;
         }
@@ -595,6 +617,22 @@
 
         .grid-card.new-idea .grid-card-name {
             font-style: italic;
+        }
+
+        /* Waste-aware pick: this recipe uses food that's about to expire. */
+        .grid-card .waste-badge {
+            position: absolute;
+            top: 4px;
+            left: 4px;
+            background: rgba(76, 175, 80, 0.92);
+            color: #ffffff;
+            font-size: 10px;
+            font-weight: 600;
+            line-height: 1;
+            padding: 3px 6px;
+            border-radius: 10px;
+            z-index: 3;
+            pointer-events: none;
         }
 
         /* --- Toast --- */
@@ -940,6 +978,14 @@
         <div id="prep-body"></div>
     </aside>
 
+    <aside class="prep-panel collapsed" id="useitup-panel">
+        <header>
+            <span>🥗 Use It Up</span>
+            <button class="prep-toggle" id="useitup-toggle" aria-label="Toggle Use It Up panel">▾</button>
+        </header>
+        <div id="useitup-body"></div>
+    </aside>
+
     <!-- Meal editor modal -->
     <div class="modal-backdrop" id="meal-modal">
         <div class="modal">
@@ -1028,6 +1074,7 @@
 
             // Load tasks last so it can reference the meal plan
             loadTasks(currentWeek).catch(err => console.error('tasks load failed', err));
+            loadUseItUp().catch(err => console.error('use-it-up load failed', err));
 
             hideLoading();
         }
@@ -1315,11 +1362,47 @@
                 debounceSave();
             });
 
+            const cookedBtn = document.createElement('button');
+            cookedBtn.className = 'cooked-btn';
+            cookedBtn.innerHTML = '🍳';
+            cookedBtn.title = 'Mark cooked — subtract ingredients from inventory';
+            cookedBtn.setAttribute('aria-label', 'Mark cooked');
+            cookedBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                markCooked(name, parseInt(card.dataset.servings) || 1);
+            });
+
             card.appendChild(nameEl);
             card.appendChild(removeBtn);
             card.appendChild(servingsBtn);
+            card.appendChild(cookedBtn);
 
             return card;
+        }
+
+        async function markCooked(recipe, servings) {
+            if (!confirm(`Mark "${recipe}" cooked? This subtracts its ingredients from your inventory.`)) return;
+            try {
+                const resp = await fetch('/api/cook', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ recipe, servings })
+                });
+                const r = await resp.json();
+                if (r.error) { showToast(r.error, 'error'); return; }
+                const consumed = r.consumed || [];
+                if (!consumed.length) {
+                    showToast('Marked cooked — nothing tracked to decrement', 'success');
+                } else {
+                    const parts = consumed.slice(0, 4).map(c =>
+                        c.depleted ? `${c.item} (used up)` : `${c.item}: ${c.after}${c.unit ? ' ' + c.unit : ''} left`);
+                    showToast(`Cooked — ${parts.join(', ')}`, 'success');
+                }
+                loadUseItUp().catch(() => {});  // refresh the waste panel
+            } catch (err) {
+                showToast('Failed to mark cooked', 'error');
+            }
         }
 
         function updateCellState(cell) {
@@ -1943,6 +2026,42 @@
             }
         }
 
+        // --- Use It Up panel (recipes that use food about to expire) ---
+
+        async function loadUseItUp() {
+            try {
+                const resp = await fetch('/api/use-it-up');
+                if (!resp.ok) return;
+                renderUseItUp(await resp.json());
+            } catch (err) {
+                console.error('use-it-up load failed', err);
+            }
+        }
+
+        function renderUseItUp(data) {
+            const body = document.getElementById('useitup-body');
+            if (!body) return;
+            const atRisk = (data && data.at_risk) || [];
+            const suggestions = (data && data.suggestions) || [];
+            if (!atRisk.length) {
+                body.innerHTML = '<div class="prep-section">Nothing expiring soon — your fridge is in good shape. ✅</div>';
+                return;
+            }
+            const risk = atRisk.map(r => {
+                const mark = r.status === 'expired' ? '🔴' : '🟡';
+                return `<div class="prep-task"><span>${mark}</span><span>${r.name}<span class="meta"> · ${r.location} · exp ${r.expires}</span></span></div>`;
+            }).join('');
+            const cook = suggestions.length
+                ? suggestions.map(s => {
+                    const used = s.uses.map(u => u.name).join(', ');
+                    return `<div class="prep-task"><span>🍽️</span><span>${s.recipe}<span class="meta"> · uses ${used}</span></span></div>`;
+                  }).join('')
+                : '<div class="prep-task"><span class="meta">No recipes in your library use these — time to improvise.</span></div>';
+            body.innerHTML =
+                `<div class="prep-section"><h4>At risk (${atRisk.length})</h4>${risk}</div>` +
+                `<div class="prep-section"><h4>Cook these</h4>${cook}</div>`;
+        }
+
         // --- Today's Prep panel ---
 
         async function loadTasks(week) {
@@ -2157,6 +2276,13 @@
                     prepPanel.classList.toggle('collapsed');
                 });
             }
+            const useToggle = document.getElementById('useitup-toggle');
+            const usePanel = document.getElementById('useitup-panel');
+            if (useToggle && usePanel) {
+                useToggle.addEventListener('click', () => {
+                    usePanel.classList.toggle('collapsed');
+                });
+            }
             const pcCancel = document.getElementById('pantry-modal-cancel');
             const pcConfirm = document.getElementById('pantry-modal-confirm');
             if (pcCancel) pcCancel.addEventListener('click', () => {
@@ -2240,6 +2366,15 @@
             // Mark new ideas
             if (suggestion.is_new_idea) {
                 card.classList.add('new-idea');
+            }
+
+            // Flag waste-aware picks (uses food that's expiring soon)
+            if (suggestion.waste_uses && suggestion.waste_uses.length) {
+                const badge = document.createElement('span');
+                badge.className = 'waste-badge';
+                badge.textContent = '♻️ use it up';
+                badge.title = 'Uses ' + suggestion.waste_uses.join(', ');
+                card.appendChild(badge);
             }
 
             // Add retry button

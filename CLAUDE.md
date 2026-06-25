@@ -87,6 +87,18 @@ cd /Users/chaseeasterling/Dev/KitchenOS
 .venv/bin/python migrate_recipes.py
 ```
 
+### Dedupe Recipes (Maintenance)
+
+Finds duplicate recipe files (same `source_url`, or `X 2.md` Obsidian Sync conflict
+copies) and **moves** the redundant copies to `_Archive/custom-format-dupes/` — never
+deletes. Keeps the most canonical copy (hostname buttons over raw IP, more complete
+nutrition, non-suffixed name, newest). Run after a Sync conflict or a bulk re-extract.
+
+```bash
+.venv/bin/python scripts/dedupe_recipes.py          # dry-run: report only
+.venv/bin/python scripts/dedupe_recipes.py --apply  # move dupes to _Archive
+```
+
 ### Clean Up Cuisine Data, Normalize Tags & Populate Seasonal
 
 ```bash
@@ -409,6 +421,8 @@ For the full route list, grep `@app.route` in `api_server.py`. Endpoints with no
 | `/meal-planner` (GET) | Interactive drag-and-drop meal planner board (HTML). |
 | `/api/meal-plan/<week>` (GET/PUT) | Programmatic meal plan as JSON; PUT round-trips through `rebuild_meal_plan_markdown`. |
 | `/api/recipes?ingredient=<term>` (GET) | Filters the recipe index to recipes whose ingredient list contains the case-insensitive substring. Backs the Siri "recipes with X" intent. |
+| `/api/use-it-up` (GET, `?limit=`) | Recipes ranked by how much expiring/at-risk inventory they use, to avoid waste. `{at_risk, suggestions}`. Staples excluded; only the actionable expiry window. Backs the `use_it_up` MCP tool and the meal-planner "Use It Up" panel. |
+| `/api/cook` (POST) | `{recipe, servings?}` — mark a recipe cooked; decrements its non-staple ingredients from inventory (true partial-package leftovers). Returns the consume summary. Backs the `cook_recipe` MCP tool. Optional. |
 | `/api/meals` (POST) | Create meal — frontmatter saved to `vault/Meals/<name>.meal.md`. |
 | `/api/recipes/import-text` (POST) | Parse a free-text recipe (`{text, title?, source?}`) with Ollama (un-gated) and save it like `/api/recipes/save`. Original text preserved in a collapsible `## Import Source` block. Backs Selene's `/webhook/api/recipe` forward. |
 | `/api/shopping-list/preview` `/confirm` | See "Pantry-aware shopping list flow" above. |
@@ -466,6 +480,14 @@ Items enter via four paths:
 2. **Photo receipt (Claude)** — share a receipt photo with Claude (Desktop, web, or iOS Share Sheet). Claude parses the items, normalizes the cryptic receipt strings (e.g. `GV WHL MLK 1G` → `Whole milk, 1 gal`), assigns category/location, and calls `add_to_inventory` — optionally with per-item `unit_price`/`line_total` and a `trip` block so photo receipts feed the same price ledger.
 3. **Manual** — `add_to_inventory` via MCP, or POST `/api/inventory/add` directly.
 4. **Markdown paste** — paste a markdown table (`| Item | Qty | Unit | Category | Location | Expires | Notes |`; only Item required) for a preview-then-commit bulk add: `lib/receipt_paster.py` parses + routes (location resolved, expiry filled), surfaced by `POST /api/inventory/paste` (`{markdown, commit?}` — preview unless `commit:true`) and the `paste_inventory.py` CLI. Good for ad-hoc adds / a table Claude formatted from a photo.
+
+### Design principle: additive, not another chore
+
+Inventory must never become something the user has to maintain. Load-bearing consequences (honor these in any inventory/waste feature):
+- **Auto-add, auto-age-out.** Items enter automatically from receipts; `inventory.prune_expired()` drops perishables >3 days past expiry (assumed used/tossed) on the daily meal-plan run, so the list self-cleans with no manual "I used this" step. Shelf-stable items (no `expires`) never age out.
+- **Staples are assumed, never tracked.** `config/pantry_staples.json` items (milk, butter, flour, rice, eggs, oil…) are treated as always-on-hand: recipes may use them freely, and they are excluded from Use-It-Up at-risk flagging. The user manages staple freshness themselves; KitchenOS must not nag about them.
+- **Everything is generated, read-only output.** `Inventory.md`, `Use It Up.md`, `Price Tracker.md`, suggestions — the user reads them; they never edit them. **Consume-on-cook** (Layer 2 — `lib/cook.consume_recipe`, `POST /api/cook`, the `cook_recipe` MCP tool) decrements a cooked recipe's *non-staple* ingredients so true partial-package leftovers become visible (¼ cup used from a 1 qt buttermilk → 0.94 qt left). It is **optional, never required** — inventory still self-cleans on expiry without it. Reuses `pantry.apply_decisions`; volume/weight convert within family (so `qt`/`gal`/`pt` abbreviations were added to `lib/units.py`).
+- **The plan itself fights waste (Layer 3).** The interactive suggester (`meal_suggester.suggest_meal`, `POST /api/suggest-meal`, planner "suggest"/↻ button) is waste-aware: `rank_candidates(..., at_risk=…)` sorts recipes by **how many at-risk items they use first**, overlap second, so a recipe that uses expiring food surfaces directly (no LLM tiebreak) with a `"Uses up expiring …"` reason and a `waste_uses` list (♻️ badge in the UI). At-risk items come from `meal_suggester.load_at_risk_index()`, which reuses `use_it_up.at_risk_items` (same expiry window + staple exclusion) — so the suggester and `Use It Up.md` always agree. Loads live inventory when `at_risk` is omitted; pass `at_risk=[]` in tests to isolate overlap. Empty week with something expiring → leads with the waste pick before falling back to Claude.
 
 ### Storage Location & Recipe Assignment
 
@@ -615,9 +637,9 @@ template → Obsidian
 | `lib/mcp_tools.py` | MCP tool implementations (HTTP + Things) |
 | `migrate_cuisine.py` | Cuisine cleanup, tag normalization & seasonal population |
 | `lib/normalizer.py` | Controlled vocabularies and tag normalization |
-| `lib/meal_suggester.py` | Ingredient overlap scoring + Claude/Ollama suggestion |
+| `lib/meal_suggester.py` | Ingredient overlap scoring + Claude/Ollama suggestion. **Waste-aware** (Layer 3): `rank_candidates(at_risk=…)` boosts recipes that use expiring inventory (waste-count primary, overlap tiebreak); `load_at_risk_index()` pulls live at-risk items via `use_it_up` |
 | `prompts/meal_suggestion.py` | Prompt templates for ingredient normalization and meal selection |
-| `config/pantry_staples.json` | Flat keyword list — staples excluded from seasonal overlap scoring (NOT inventory) |
+| `config/pantry_staples.json` | Flat keyword list of "always-have" staples (milk, butter, flour, rice, eggs, oil…). Assumed present; excluded from seasonal overlap scoring AND from Use-It-Up at-risk flagging — KitchenOS never tracks or nags about these. Hand-editable (the one list the user maintains, set-once) |
 | `lib/meal_loader.py` | Read/write composite **meal** definitions (`vault/Meals/<Name>.meal.md`) |
 | `lib/pantry.py` | Pantry adapter over the DB inventory table; split shopping demand against pantry; decrement on confirm |
 | `lib/task_extractor.py` | Cross-recipe prep/active/passive task classification with sidecar cache (`<week>.tasks.json`) |
@@ -631,6 +653,8 @@ template → Obsidian
 | `lib/recipe_matcher.py` | Tag purchases with the meal-plan recipe they were bought for (current + next ISO week; deterministic token match) |
 | `config/storage_locations.json` | `by_item` + `by_category` storage-location table (hand-correctable) |
 | `lib/expiry.py` | Shelf-life windows — `compute_expires(purchased, name, category)` / `expiry_status()` from `config/expiry_windows.json` (item override → category → none) |
+| `lib/use_it_up.py` | Food-waste suggester — ranks recipes by how much at-risk (expiring) inventory they use; excludes staples; writes `Use It Up.md`. Backs `/api/use-it-up` + the `use_it_up` MCP tool + the meal-planner panel |
+| `lib/cook.py` | Consume-on-cook — `consume_recipe(name, servings)` decrements a recipe's non-staple ingredients from inventory (via `pantry.apply_decisions`). Backs `POST /api/cook` + the `cook_recipe` MCP tool. Optional |
 | `config/expiry_windows.json` | `by_item` + `by_category` expiry-window (days) table; `null` = no expiry (hand-correctable) |
 | `lib/price_dashboard.py` | Price Tracker dashboard generation from the purchases ledger |
 | `generate_price_dashboard.py` | CLI — writes `Price Tracker.md` to the vault root |
@@ -748,6 +772,7 @@ Maps YouTube channel names to their recipe website domains. Used to search creat
   - `INSTAGRAM_COOKIES_FROM_BROWSER` - Optional. Browser to pull Instagram cookies from (`chrome`, `safari`, …) when anonymous Reel fetches get throttled
   - `INSTAGRAM_COOKIES_FILE` - Optional. Path to a cookies.txt for Instagram auth (alternative to the browser option)
   - `KITCHENOS_ML_INGREDIENTS` - Optional. Set to `1` to enable the ML ingredient parser fast-path (`lib/ingredient_ml.py`; needs `pip install -r requirements-ml.txt`). Off by default → rule-based parser
+  - `KITCHENOS_API_BASE` - Optional. Base URL baked into recipe action buttons (`templates/recipe_template.py`). Defaults to the Tailscale hostname `http://chases-mac-mini.taila69703.ts.net:5001`. **Keep it a hostname, not a raw `100.x` IP** — a drifting IP makes otherwise-identical re-extractions differ only by button host, which Obsidian Sync forks into `X 2.md` duplicates (clean up with `scripts/dedupe_recipes.py`)
 
 **Note:** Whisper audio transcription (YouTube fallback *and* Instagram Reels) requires `ffmpeg`/`ffprobe` on PATH for yt-dlp's audio extraction. Without it, extraction degrades gracefully to caption/description-only. Install via `brew install ffmpeg`.
 

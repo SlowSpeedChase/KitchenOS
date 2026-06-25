@@ -46,5 +46,15 @@ def shopping_lists_dir() -> Path:
     return vault_root() / "Shopping Lists"
 
 
+def archive_dir() -> Path:
+    """Vault-root folder for retired/duplicate notes.
+
+    Sits beside Recipes/ (not inside it) so the recursive 'Recipes' Base/Dataview
+    queries don't surface archived dupes. Add '_Archive/' to the Obsidian
+    userIgnoreFilters to hide it from search too.
+    """
+    return vault_root() / "_Archive"
+
+
 def calendar_ics_path() -> Path:
     return vault_root() / "meal_calendar.ics"

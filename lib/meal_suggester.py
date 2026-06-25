@@ -24,6 +24,13 @@ CLAUDE_MAX_TOKENS = 200
 
 OVERLAP_THRESHOLD = 0.5
 
+# Layer 3 (waste-aware planning): using up food you already have that's about to
+# spoil is the primary ranking axis — recipes are sorted by how many at-risk
+# items they use first, then by planned-meal overlap as the tiebreak. This bonus
+# is the per-item weight in the informational ``rank_score`` (count + overlap);
+# at 1.0 that number stays monotonic with the (waste_count, overlap) sort key.
+WASTE_BONUS = 1.0
+
 # Words to strip from ingredient names for normalization
 PREP_WORDS = {
     "diced", "minced", "chopped", "sliced", "grated", "shredded",
@@ -41,6 +48,50 @@ def load_pantry_staples() -> set[str]:
             return set(json.load(f))
     except (FileNotFoundError, json.JSONDecodeError):
         return set()
+
+
+def _waste_uses(recipe_items: list[str],
+                at_risk: list[tuple[str, frozenset]]) -> list[str]:
+    """At-risk inventory names this recipe would use up.
+
+    Matches each at-risk item against the recipe's ingredients via the same
+    singularized token-containment as ``use_it_up`` ("fresh strawberries" in the
+    fridge matches a "strawberries" ingredient). Returns the at-risk item names,
+    de-duplicated, preserving the (urgency-sorted) order they were passed in.
+    """
+    if not at_risk:
+        return []
+    from lib.recipe_matcher import _content_tokens
+
+    ing_sets = [t for t in (_content_tokens(i) for i in recipe_items) if t]
+    if not ing_sets:
+        return []
+    used = []
+    for name, item_tokens in at_risk:
+        if not item_tokens:
+            continue
+        if any(item_tokens <= ing or ing <= item_tokens for ing in ing_sets):
+            if name not in used:
+                used.append(name)
+    return used
+
+
+def load_at_risk_index(today=None) -> list[tuple[str, frozenset]]:
+    """Live at-risk inventory as ``(name, token_set)`` pairs, most urgent first.
+
+    Reuses ``use_it_up.at_risk_items`` (expiry window + staple exclusion) so the
+    suggester and the Use-It-Up note agree on what counts as at risk. Returns an
+    empty list (degrading to plain overlap ranking) if inventory can't be read.
+    """
+    try:
+        from lib.inventory import read_inventory
+        from lib.recipe_matcher import _content_tokens
+        from lib.use_it_up import at_risk_items
+
+        flagged = at_risk_items(read_inventory(), today)
+        return [(it.name, _content_tokens(it.name)) for _status, it in flagged]
+    except Exception:
+        return []
 
 
 def normalize_ingredient(item: str) -> str:
@@ -86,8 +137,9 @@ def rank_candidates(
     pantry: set[str],
     limit: int = 10,
     exclude_names: set[str] | None = None,
+    at_risk: list[tuple[str, frozenset]] | None = None,
 ) -> list[dict]:
-    """Rank recipe candidates by ingredient overlap.
+    """Rank recipe candidates by ingredient overlap, biased toward using waste.
 
     Args:
         candidates: List of recipe dicts with 'name' and 'ingredient_items'
@@ -95,11 +147,17 @@ def rank_candidates(
         pantry: Pantry staples to exclude
         limit: Max candidates to return
         exclude_names: Recipe names to skip (already planned)
+        at_risk: Optional ``(name, token_set)`` pairs for inventory that's
+            expiring soon (from :func:`load_at_risk_index`). Recipes that use
+            these get a ``WASTE_BONUS`` per item, so the plan fights food waste.
 
     Returns:
-        Sorted list of dicts with 'name', 'score', 'shared_ingredients' added
+        Sorted list of dicts with 'name', 'score', 'shared_ingredients',
+        'waste_uses' and 'rank_score' (overlap + waste bonus) added. Sorted by
+        'rank_score' — identical to the old score order when ``at_risk`` is empty.
     """
     exclude = exclude_names or set()
+    at_risk = at_risk or []
     scored = []
 
     for recipe in candidates:
@@ -110,14 +168,20 @@ def rank_candidates(
             continue
 
         score, shared = score_overlap(items, planned_items, pantry)
+        waste_uses = _waste_uses(items, at_risk)
+        rank_score = round(score + WASTE_BONUS * len(waste_uses), 3)
         scored.append({
             "name": recipe["name"],
             "score": round(score, 3),
             "shared_ingredients": sorted(shared),
+            "waste_uses": waste_uses,
+            "rank_score": rank_score,
             "ingredient_items": items,
         })
 
-    scored.sort(key=lambda r: r["score"], reverse=True)
+    # Waste count is the primary axis; overlap is the tiebreak. Identical to the
+    # old pure-overlap order when no recipe uses an at-risk item.
+    scored.sort(key=lambda r: (len(r["waste_uses"]), r["score"]), reverse=True)
     return scored[:limit]
 
 
@@ -278,12 +342,23 @@ def suggest_for_empty_week(
         return None
 
 
+def _waste_reason(top: dict) -> str:
+    """Reason string leading with the at-risk items a recipe uses up."""
+    used = ", ".join(top["waste_uses"])
+    reason = f"Uses up expiring {used}"
+    extra = [s for s in top.get("shared_ingredients", []) if s not in top["waste_uses"]]
+    if extra:
+        reason += f"; also shares {', '.join(extra[:2])} with the week"
+    return reason
+
+
 def suggest_meal(
     recipes_dir: Path,
     planned_meals: list[dict],
     day: str,
     meal: str,
     skip_index: int = 0,
+    at_risk: list[tuple[str, frozenset]] | None = None,
 ) -> Optional[dict]:
     """Top-level orchestrator: suggest a meal for an empty slot.
 
@@ -291,10 +366,11 @@ def suggest_meal(
     1. If no meals planned -> ask Claude for a starting recipe (or return None)
     2. Collect planned ingredient names
     3. Load recipe library with ingredients
-    4. Score and rank candidates
-    5. If top candidate score >= threshold -> return it directly
-    6. Else -> ask Claude to pick from candidates
-    7. skip_index allows cycling through candidates (for "try another")
+    4. Score and rank candidates, boosting recipes that use at-risk inventory
+    5. If the top candidate uses expiring food -> return it directly (waste wins)
+    6. Else if top candidate score >= threshold -> return it directly
+    7. Else -> ask Claude to pick from candidates
+    8. skip_index allows cycling through candidates (for "try another")
 
     Args:
         recipes_dir: Path to Obsidian Recipes folder
@@ -302,6 +378,8 @@ def suggest_meal(
         day: Target day name
         meal: Target meal type
         skip_index: Skip this many top candidates (for retry)
+        at_risk: Optional at-risk ``(name, token_set)`` pairs; loaded from live
+            inventory when omitted so suggestions help use food before it spoils.
 
     Returns:
         Dict with name, score, reason, shared_ingredients, is_new_idea, or None
@@ -309,6 +387,8 @@ def suggest_meal(
     from lib.recipe_index import get_recipe_index
 
     pantry = load_pantry_staples()
+    if at_risk is None:
+        at_risk = load_at_risk_index()
 
     # Load all recipes with ingredients
     all_recipes = get_recipe_index(recipes_dir, include_ingredients=True)
@@ -316,8 +396,20 @@ def suggest_meal(
     # Names already in the plan
     planned_names = {m["name"] for m in planned_meals}
 
-    # Empty week -- ask Claude or return None
+    # Empty week -- if something's expiring, lead with a recipe that uses it up;
+    # otherwise ask Claude for a starting idea (or return None).
     if not planned_meals:
+        waste_ranked = rank_candidates(
+            all_recipes, set(), pantry,
+            limit=20, exclude_names=planned_names, at_risk=at_risk,
+        )
+        waste_top = waste_ranked[skip_index] if skip_index < len(waste_ranked) else None
+        if waste_top and waste_top["waste_uses"]:
+            waste_top["reason"] = _waste_reason(waste_top)
+            waste_top["is_new_idea"] = False
+            waste_top["new_ingredients_needed"] = []
+            return waste_top
+
         summaries = [
             {"name": r["name"], "cuisine": r.get("cuisine"), "protein": r.get("protein")}
             for r in all_recipes
@@ -334,10 +426,10 @@ def suggest_meal(
         for item in m.get("ingredients", []):
             planned_items.add(normalize_ingredient(item))
 
-    # Score and rank
+    # Score and rank (waste-using recipes are boosted to the top)
     ranked = rank_candidates(
         all_recipes, planned_items, pantry,
-        limit=20, exclude_names=planned_names,
+        limit=20, exclude_names=planned_names, at_risk=at_risk,
     )
 
     if not ranked:
@@ -348,6 +440,13 @@ def suggest_meal(
         return None
 
     top = ranked[skip_index]
+
+    # Waste tier -- the top pick uses food about to spoil; surface it directly.
+    if top["waste_uses"]:
+        top["reason"] = _waste_reason(top)
+        top["is_new_idea"] = False
+        top["new_ingredients_needed"] = []
+        return top
 
     # Tier decision
     if top["score"] >= OVERLAP_THRESHOLD:

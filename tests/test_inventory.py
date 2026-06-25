@@ -258,3 +258,32 @@ class TestExpiry:
         assert "## ⚠️ Expiring Soon" in md
         assert "Yogurt" in md
         assert "Expires" in md  # table column header
+
+
+class TestPruneExpired:
+    def test_drops_long_expired_perishables(self, tmp_vault, tmp_db):
+        from datetime import date, timedelta
+        from lib.inventory import add_items, prune_expired, read_inventory
+        today = date(2026, 6, 24)
+        add_items([
+            InventoryItem(name="Old Spinach", quantity=1, unit="ct", category="produce",
+                          expires=(today - timedelta(days=10)).isoformat()),
+            InventoryItem(name="Fresh Spinach", quantity=1, unit="ct", category="produce",
+                          expires=(today - timedelta(days=1)).isoformat()),  # within grace
+            InventoryItem(name="Canned Beans", quantity=1, unit="can", category="pantry",
+                          expires=(today + timedelta(days=300)).isoformat()),
+            InventoryItem(name="Dish Soap", quantity=1, unit="ct", category="household"),  # no expiry
+        ])
+        removed = prune_expired(today=today)
+        assert removed == 1
+        names = {i.name for i in read_inventory()}
+        assert "Old Spinach" not in names
+        assert {"Fresh Spinach", "Canned Beans", "Dish Soap"} <= names
+
+    def test_noop_when_nothing_stale(self, tmp_vault, tmp_db):
+        from datetime import date, timedelta
+        from lib.inventory import add_items, prune_expired
+        today = date(2026, 6, 24)
+        add_items([InventoryItem(name="Milk", quantity=1, unit="gal", category="dairy",
+                                 expires=(today + timedelta(days=5)).isoformat())])
+        assert prune_expired(today=today) == 0

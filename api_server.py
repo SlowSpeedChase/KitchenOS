@@ -1546,6 +1546,43 @@ def api_inventory_list():
     return jsonify([i.to_dict() for i in items])
 
 
+@app.route('/api/use-it-up', methods=['GET'])
+def api_use_it_up():
+    """Recipes that use up at-risk (expiring) inventory, so nothing is wasted.
+
+    Returns {at_risk: [...], suggestions: [...]} — see lib/use_it_up.suggest.
+    Staples are excluded; only the actionable expiry window is surfaced.
+    """
+    from lib import use_it_up
+
+    limit = request.args.get('limit', type=int) or 10
+    return jsonify(use_it_up.generate(limit=limit))
+
+
+@app.route('/api/cook', methods=['POST'])
+def api_cook():
+    """Mark a recipe cooked: decrement its non-staple ingredients from inventory.
+
+    Body: {recipe: str, servings?: float}. Optional/additive — surfaces true
+    partial-package leftovers. Returns the consume summary (see lib/cook).
+    """
+    from lib.cook import consume_recipe
+
+    data = request.get_json(force=True, silent=True) or {}
+    recipe = data.get('recipe')
+    if not recipe:
+        return jsonify({"error": "'recipe' is required"}), 400
+    servings = data.get('servings')
+    try:
+        servings = float(servings) if servings is not None else 1.0
+    except (TypeError, ValueError):
+        servings = 1.0
+    result = consume_recipe(recipe, servings=servings)
+    if result.get("error") == "recipe not found":
+        return jsonify(result), 404
+    return jsonify(result)
+
+
 @app.route('/api/inventory/add', methods=['POST'])
 def api_inventory_add():
     """Add items to inventory. Body: {items: [{name, quantity, unit, ...}]}."""

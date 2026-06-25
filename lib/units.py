@@ -38,6 +38,8 @@ from lib.ingredient_parser import normalize_unit, parse_amount
 # --- Canonical conversion tables (everything resolves to grams) ---------------
 
 # Volume units → millilitres. Density (g/ml) converts ml → grams.
+# Common abbreviations sit alongside canonical spellings so units from
+# receipts/inventory ("1 gal" milk, "qt" buttermilk) convert too.
 VOLUME_ML = {
     "tsp": 4.92892,
     "tbsp": 14.7868,
@@ -45,9 +47,14 @@ VOLUME_ML = {
     "ml": 1.0,
     "l": 1000.0,
     "fl_oz": 29.5735,
+    "fl oz": 29.5735,
+    "floz": 29.5735,
     "pint": 473.176,
+    "pt": 473.176,
     "quart": 946.353,
+    "qt": 946.353,
     "gallon": 3785.41,
+    "gal": 3785.41,
 }
 
 # Mass units → grams.
@@ -57,6 +64,7 @@ MASS_G = {
     "mg": 0.001,
     "oz": 28.3495,
     "lb": 453.592,
+    "lbs": 453.592,
 }
 
 # Count-like units: a quantity of discrete items needing a per-piece weight.
