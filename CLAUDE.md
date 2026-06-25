@@ -87,6 +87,18 @@ cd /Users/chaseeasterling/Dev/KitchenOS
 .venv/bin/python migrate_recipes.py
 ```
 
+### Dedupe Recipes (Maintenance)
+
+Finds duplicate recipe files (same `source_url`, or `X 2.md` Obsidian Sync conflict
+copies) and **moves** the redundant copies to `_Archive/custom-format-dupes/` — never
+deletes. Keeps the most canonical copy (hostname buttons over raw IP, more complete
+nutrition, non-suffixed name, newest). Run after a Sync conflict or a bulk re-extract.
+
+```bash
+.venv/bin/python scripts/dedupe_recipes.py          # dry-run: report only
+.venv/bin/python scripts/dedupe_recipes.py --apply  # move dupes to _Archive
+```
+
 ### Clean Up Cuisine Data, Normalize Tags & Populate Seasonal
 
 ```bash
@@ -748,6 +760,7 @@ Maps YouTube channel names to their recipe website domains. Used to search creat
   - `INSTAGRAM_COOKIES_FROM_BROWSER` - Optional. Browser to pull Instagram cookies from (`chrome`, `safari`, …) when anonymous Reel fetches get throttled
   - `INSTAGRAM_COOKIES_FILE` - Optional. Path to a cookies.txt for Instagram auth (alternative to the browser option)
   - `KITCHENOS_ML_INGREDIENTS` - Optional. Set to `1` to enable the ML ingredient parser fast-path (`lib/ingredient_ml.py`; needs `pip install -r requirements-ml.txt`). Off by default → rule-based parser
+  - `KITCHENOS_API_BASE` - Optional. Base URL baked into recipe action buttons (`templates/recipe_template.py`). Defaults to the Tailscale hostname `http://chases-mac-mini.taila69703.ts.net:5001`. **Keep it a hostname, not a raw `100.x` IP** — a drifting IP makes otherwise-identical re-extractions differ only by button host, which Obsidian Sync forks into `X 2.md` duplicates (clean up with `scripts/dedupe_recipes.py`)
 
 **Note:** Whisper audio transcription (YouTube fallback *and* Instagram Reels) requires `ffmpeg`/`ffprobe` on PATH for yt-dlp's audio extraction. Without it, extraction degrades gracefully to caption/description-only. Install via `brew install ffmpeg`.
 

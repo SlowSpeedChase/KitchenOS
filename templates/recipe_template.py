@@ -1,5 +1,6 @@
 """Markdown template for recipe output"""
 
+import os
 from datetime import date
 import re
 from fractions import Fraction
@@ -7,7 +8,13 @@ from urllib.parse import quote
 
 from lib.ingredient_parser import parse_ingredient
 
-API_BASE_URL = "http://chases-mac-mini.taila69703.ts.net:5001"
+# Base URL baked into recipe action buttons. Override with KITCHENOS_API_BASE.
+# Pin this to the stable Tailscale *hostname* (not a raw 100.x IP): a raw IP
+# drifts between extractions and produces near-identical recipe files that
+# differ only by button host, which Obsidian Sync then forks into "X 2.md".
+API_BASE_URL = os.environ.get(
+    "KITCHENOS_API_BASE", "http://chases-mac-mini.taila69703.ts.net:5001"
+).rstrip("/")
 
 # Schema definition for recipe frontmatter
 # Used by migration to add missing fields
