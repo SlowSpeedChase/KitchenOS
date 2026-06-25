@@ -3,8 +3,18 @@
 Creates standard iCalendar format for Obsidian Full Calendar and Apple Calendar.
 """
 
-from datetime import date
+from datetime import date, datetime, timedelta
 from icalendar import Calendar, Event
+
+# Start time for each meal slot's timed calendar event, in slot order.
+# Events are 30 min and marked TRANSP:TRANSPARENT so they show as free, not busy.
+MEAL_TIMES = [
+    ('breakfast', (8, 0)),
+    ('lunch', (12, 0)),
+    ('snack', (15, 0)),
+    ('dinner', (19, 30)),
+]
+MEAL_DURATION_MINUTES = 30
 
 
 def _format_meal_display(meal) -> str:
@@ -48,35 +58,45 @@ def format_day_summary(breakfast=None, lunch=None, snack=None, dinner=None) -> s
     return ' | '.join(parts)
 
 
-def create_meal_event(
+def create_meal_events(
     day_date: date,
-    breakfast: str | None,
-    lunch: str | None,
-    dinner: str | None,
-    snack: str | None = None
-) -> Event | None:
-    """Create an all-day calendar event for a day's meals.
+    breakfast=None,
+    lunch=None,
+    dinner=None,
+    snack=None,
+) -> list[Event]:
+    """Create a timed 30-minute event per planned meal slot.
+
+    Each slot gets its own event at its scheduled time (breakfast 8:00,
+    lunch 12:00, snack 15:00, dinner 19:30), marked TRANSP:TRANSPARENT so it
+    shows as free. This makes the meal plan read as an actual day schedule in
+    any calendar app, rather than a single all-day blob.
 
     Args:
-        day_date: The date for this event
-        breakfast: Recipe name or None
-        lunch: Recipe name or None
-        dinner: Recipe name or None
-        snack: Recipe name or None
+        day_date: The date for these events
+        breakfast/lunch/dinner/snack: MealEntry, recipe name string, or None
 
     Returns:
-        Event object, or None if no meals planned
+        List of Event objects (empty if no meals planned that day)
     """
-    # Skip days with no meals
-    if not any([breakfast, lunch, snack, dinner]):
-        return None
+    slots = {'breakfast': breakfast, 'lunch': lunch, 'snack': snack, 'dinner': dinner}
+    events = []
 
-    event = Event()
-    event.add('summary', format_day_summary(breakfast, lunch, snack, dinner))
-    event.add('dtstart', day_date)
-    event.add('uid', f'{day_date.isoformat()}@kitchenos')
+    for slot, (hour, minute) in MEAL_TIMES:
+        meal = slots.get(slot)
+        if not meal:
+            continue
 
-    return event
+        start = datetime.combine(day_date, datetime.min.time()).replace(hour=hour, minute=minute)
+        event = Event()
+        event.add('summary', _format_meal_display(meal))
+        event.add('dtstart', start)
+        event.add('dtend', start + timedelta(minutes=MEAL_DURATION_MINUTES))
+        event.add('transp', 'TRANSPARENT')
+        event.add('uid', f'{day_date.isoformat()}-{slot}@kitchenos')
+        events.append(event)
+
+    return events
 
 
 def generate_ics(days: list[dict]) -> bytes:
@@ -96,14 +116,13 @@ def generate_ics(days: list[dict]) -> bytes:
     cal.add('x-wr-calname', 'Meal Plans')
 
     for day in days:
-        event = create_meal_event(
+        for event in create_meal_events(
             day['date'],
             day.get('breakfast'),
             day.get('lunch'),
             day.get('dinner'),
-            snack=day.get('snack')
-        )
-        if event:
+            snack=day.get('snack'),
+        ):
             cal.add_component(event)
 
     return cal.to_ical()

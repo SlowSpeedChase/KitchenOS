@@ -297,6 +297,8 @@ ICS file is written to: `{Obsidian Vault}/meal_calendar.ics`
 
 Accessible via API at: `http://localhost:5001/calendar.ics` (or Tailscale IP)
 
+Each planned meal becomes its own 30-min timed event (breakfast 8:00, lunch 12:00, snack 15:00, dinner 19:30) marked `TRANSP:TRANSPARENT` (shown as free) — see `MEAL_TIMES` in `lib/ics_generator.py`. Empty slots produce no event.
+
 ## Batch Extract (LaunchAgent)
 
 Processes YouTube URLs from the "Recipies to Process" iOS Reminders list hourly (at :10 past each hour).

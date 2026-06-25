@@ -1,9 +1,9 @@
 """Tests for ICS calendar generator."""
 
 import pytest
-from datetime import date
+from datetime import date, datetime
 from icalendar import Calendar
-from lib.ics_generator import format_day_summary, create_meal_event, generate_ics
+from lib.ics_generator import format_day_summary, create_meal_events, generate_ics
 from lib.meal_plan_parser import MealEntry
 
 
@@ -43,30 +43,44 @@ class TestFormatDaySummary:
         assert result == 'B: Pancakes x2 | L: — | D: Steak'
 
 
-class TestCreateMealEvent:
-    """Test ICS event creation."""
+class TestCreateMealEvents:
+    """Test timed per-slot ICS event creation."""
 
-    def test_creates_all_day_event(self):
-        event = create_meal_event(
+    def test_creates_one_timed_event_per_meal(self):
+        events = create_meal_events(
             date(2026, 1, 19),
             'Pancakes',
             'Salad',
-            'Steak'
+            'Steak',
         )
+        # breakfast + lunch + dinner = 3 events (no snack)
+        assert len(events) == 3
+        summaries = [str(e['SUMMARY']) for e in events]
+        assert summaries == ['Pancakes', 'Salad', 'Steak']
 
-        assert event['SUMMARY'] == 'B: Pancakes | L: Salad | D: Steak'
-        assert str(event['DTSTART'].dt) == '2026-01-19'
-        assert event['UID'] == '2026-01-19@kitchenos'
+    def test_event_times_and_transparency(self):
+        events = create_meal_events(date(2026, 1, 19), breakfast='Pancakes')
+        ev = events[0]
+        assert ev['DTSTART'].dt == datetime(2026, 1, 19, 8, 0)
+        assert ev['DTEND'].dt == datetime(2026, 1, 19, 8, 30)
+        assert str(ev['TRANSP']) == 'TRANSPARENT'
+        assert str(ev['UID']) == '2026-01-19-breakfast@kitchenos'
 
-    def test_skips_empty_days(self):
-        event = create_meal_event(
-            date(2026, 1, 19),
-            None,
-            None,
-            None
-        )
+    def test_dinner_time(self):
+        events = create_meal_events(date(2026, 1, 19), dinner='Steak')
+        assert events[0]['DTSTART'].dt == datetime(2026, 1, 19, 19, 30)
 
-        assert event is None
+    def test_snack_included_when_present(self):
+        events = create_meal_events(date(2026, 1, 19), snack='Almonds')
+        assert len(events) == 1
+        assert events[0]['DTSTART'].dt == datetime(2026, 1, 19, 15, 0)
+
+    def test_meal_entry_multiplier_in_summary(self):
+        events = create_meal_events(date(2026, 1, 19), dinner=MealEntry('Steak', 2))
+        assert str(events[0]['SUMMARY']) == 'Steak x2'
+
+    def test_empty_day_yields_no_events(self):
+        assert create_meal_events(date(2026, 1, 19), None, None, None) == []
 
 
 class TestGenerateIcs:
@@ -95,10 +109,11 @@ class TestGenerateIcs:
         # Parse to verify valid
         cal = Calendar.from_ical(ics_content)
 
-        # Should have 1 event (Tuesday has no meals)
+        # Monday has breakfast + dinner = 2 timed events; Tuesday has none.
         events = [c for c in cal.walk() if c.name == 'VEVENT']
-        assert len(events) == 1
-        assert events[0]['SUMMARY'] == 'B: Pancakes | L: — | D: Pasta'
+        assert len(events) == 2
+        summaries = sorted(str(e['SUMMARY']) for e in events)
+        assert summaries == ['Pancakes', 'Pasta']
 
     def test_includes_calendar_metadata(self):
         days = [{'date': date(2026, 1, 19), 'day': 'Monday', 'breakfast': 'X', 'lunch': None, 'dinner': None}]
