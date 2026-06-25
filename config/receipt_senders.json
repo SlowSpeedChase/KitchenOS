@@ -1,3 +1,6 @@
 {
-  "HEB": ["heb.com", "hebtoyou.net"]
+  "HEB": {
+    "domains": ["hebdigital.com", "heb.com", "hebtoyou.net"],
+    "subject_includes": ["receipt"]
+  }
 }

@@ -32,3 +32,37 @@ def test_sender_matches_domains():
 def test_load_sender_domains():
     domains = ef.load_sender_domains()
     assert "heb.com" in domains
+
+
+def test_load_sender_domains_includes_hebdigital():
+    domains = ef.load_sender_domains()
+    assert "hebdigital.com" in domains  # curbside receipts come from here
+
+
+def test_load_sender_rules_parses_subject_filter():
+    rules = ef.load_sender_rules()
+    heb = next(r for r in rules if "hebdigital.com" in r["domains"])
+    assert "receipt" in heb["subject_includes"]
+
+
+def test_load_sender_rules_back_compat_list_form(tmp_path, monkeypatch):
+    cfg = tmp_path / "senders.json"
+    cfg.write_text('{"FOO": ["foo.com"]}', encoding="utf-8")
+    monkeypatch.setattr(ef, "SENDERS_PATH", cfg)
+    rules = ef.load_sender_rules()
+    assert rules == [{"domains": ["foo.com"], "subject_includes": []}]
+
+
+class TestSubjectAllowed:
+    def test_no_filter_allows_all(self):
+        assert ef.subject_allowed("anything", []) is True
+
+    def test_keeps_matching_subject(self):
+        assert ef.subject_allowed("Here's your curbside order receipt", ["receipt"]) is True
+
+    def test_drops_confirmation_subject(self):
+        # HEB's "We received your curbside order" confirmation has no "receipt"
+        assert ef.subject_allowed("We received your curbside order", ["receipt"]) is False
+
+    def test_case_insensitive(self):
+        assert ef.subject_allowed("YOUR RECEIPT", ["receipt"]) is True

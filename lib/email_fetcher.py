@@ -24,9 +24,43 @@ SENDERS_PATH = Path(__file__).resolve().parent.parent / "config" / "receipt_send
 IMAP_HOST = "imap.gmail.com"
 
 
-def load_sender_domains() -> list[str]:
+def load_sender_rules() -> list[dict]:
+    """Per-store match rules from config/receipt_senders.json.
+
+    Two config shapes are accepted per store:
+      "STORE": ["domain", ...]                                  (no subject filter)
+      "STORE": {"domains": [...], "subject_includes": [...]}    (subject filter)
+
+    ``subject_includes`` (case-insensitive substrings) keeps only emails whose
+    subject matches at least one keyword — used to ingest HEB's actual
+    "...order receipt" while skipping its "We received your order" confirmation.
+    Returns ``[{"domains": [...], "subject_includes": [...]}, ...]``.
+    """
     data = json.loads(SENDERS_PATH.read_text(encoding="utf-8"))
-    return [d for domains in data.values() for d in domains]
+    rules: list[dict] = []
+    for value in data.values():
+        if isinstance(value, dict):
+            domains = [d.lower() for d in value.get("domains", [])]
+            subject = [s.lower() for s in value.get("subject_includes", [])]
+        else:  # bare list — back-compatible, no subject filter
+            domains = [d.lower() for d in value]
+            subject = []
+        if domains:
+            rules.append({"domains": domains, "subject_includes": subject})
+    return rules
+
+
+def load_sender_domains() -> list[str]:
+    """Flat list of every configured sender domain (across all stores)."""
+    return [d for rule in load_sender_rules() for d in rule["domains"]]
+
+
+def subject_allowed(subject: str, subject_includes: list[str]) -> bool:
+    """True if no filter is set, or the subject contains a keyword."""
+    if not subject_includes:
+        return True
+    low = (subject or "").lower()
+    return any(kw in low for kw in subject_includes)
 
 
 def sender_matches(from_addr: str, domains: list[str]) -> bool:
@@ -55,26 +89,38 @@ def fetch_receipt_emails(since_days: int = 14) -> list[dict]:
     if not address or not password:
         raise RuntimeError("GMAIL_ADDRESS / GMAIL_APP_PASSWORD not set in .env")
 
-    domains = load_sender_domains()
+    rules = load_sender_rules()
     since = (date.today() - timedelta(days=since_days)).strftime("%d-%b-%Y")
 
     results: list[dict] = []
+    seen_ids: set[str] = set()
     conn = imaplib.IMAP4_SSL(IMAP_HOST)
     try:
         conn.login(address, password)
         conn.select("INBOX", readonly=True)
-        for domain in domains:
-            status, data = conn.search(
-                None, f'(FROM "{domain}" SINCE {since})'
-            )
-            if status != "OK" or not data or not data[0]:
-                continue
-            for num in data[0].split():
-                status, msg_data = conn.fetch(num, "(RFC822)")
-                if status != "OK":
+        for rule in rules:
+            domains = rule["domains"]
+            subject_includes = rule["subject_includes"]
+            for domain in domains:
+                status, data = conn.search(
+                    None, f'(FROM "{domain}" SINCE {since})'
+                )
+                if status != "OK" or not data or not data[0]:
                     continue
-                payload = extract_email_payload(msg_data[0][1])
-                if sender_matches(payload["from"], domains):
+                for num in data[0].split():
+                    status, msg_data = conn.fetch(num, "(RFC822)")
+                    if status != "OK":
+                        continue
+                    payload = extract_email_payload(msg_data[0][1])
+                    if not sender_matches(payload["from"], domains):
+                        continue
+                    if not subject_allowed(payload["subject"], subject_includes):
+                        continue
+                    mid = payload["message_id"]
+                    if mid and mid in seen_ids:
+                        continue
+                    if mid:
+                        seen_ids.add(mid)
                     results.append(payload)
     finally:
         try:
