@@ -27,7 +27,12 @@ from EventKit import (
 )
 from Foundation import NSRunLoop, NSDate
 
-from extract_recipe import extract_single_recipe, extract_single_web_recipe
+from extract_recipe import (
+    extract_single_recipe,
+    extract_single_web_recipe,
+    extract_single_instagram_recipe,
+)
+from main import instagram_parser
 
 RUNS_LOG_DIR = Path(__file__).parent / "logs" / "runs"
 
@@ -257,6 +262,9 @@ def main():
         try:
             if is_youtube_url(url):
                 result = extract_single_recipe(url, dry_run=args.dry_run, on_status=print_status)
+            elif instagram_parser(url):
+                print("       → Instagram Reel, routing to reel pipeline")
+                result = extract_single_instagram_recipe(url, dry_run=args.dry_run, on_status=print_status)
             else:
                 print("       → Web recipe URL, routing to scrape pipeline")
                 result = extract_single_web_recipe(url, dry_run=args.dry_run, on_status=print_status)
