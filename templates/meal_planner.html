@@ -522,6 +522,28 @@
             border-color: var(--accent);
         }
 
+        .grid-card .cooked-btn {
+            position: absolute;
+            bottom: 4px;
+            left: 4px;
+            padding: 2px 6px;
+            border: 1px solid var(--border);
+            background: var(--bg);
+            border-radius: 10px;
+            font-size: 11px;
+            color: var(--text-muted);
+            cursor: pointer;
+            min-height: 20px;
+            transition: all 0.15s ease;
+        }
+
+        .grid-card .cooked-btn:hover,
+        .grid-card .cooked-btn:active {
+            background: var(--accent);
+            color: #ffffff;
+            border-color: var(--accent);
+        }
+
         .grid-card.sortable-ghost {
             opacity: 0.4;
         }
@@ -1324,11 +1346,47 @@
                 debounceSave();
             });
 
+            const cookedBtn = document.createElement('button');
+            cookedBtn.className = 'cooked-btn';
+            cookedBtn.innerHTML = '🍳';
+            cookedBtn.title = 'Mark cooked — subtract ingredients from inventory';
+            cookedBtn.setAttribute('aria-label', 'Mark cooked');
+            cookedBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                markCooked(name, parseInt(card.dataset.servings) || 1);
+            });
+
             card.appendChild(nameEl);
             card.appendChild(removeBtn);
             card.appendChild(servingsBtn);
+            card.appendChild(cookedBtn);
 
             return card;
+        }
+
+        async function markCooked(recipe, servings) {
+            if (!confirm(`Mark "${recipe}" cooked? This subtracts its ingredients from your inventory.`)) return;
+            try {
+                const resp = await fetch('/api/cook', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ recipe, servings })
+                });
+                const r = await resp.json();
+                if (r.error) { showToast(r.error, 'error'); return; }
+                const consumed = r.consumed || [];
+                if (!consumed.length) {
+                    showToast('Marked cooked — nothing tracked to decrement', 'success');
+                } else {
+                    const parts = consumed.slice(0, 4).map(c =>
+                        c.depleted ? `${c.item} (used up)` : `${c.item}: ${c.after}${c.unit ? ' ' + c.unit : ''} left`);
+                    showToast(`Cooked — ${parts.join(', ')}`, 'success');
+                }
+                loadUseItUp().catch(() => {});  // refresh the waste panel
+            } catch (err) {
+                showToast('Failed to mark cooked', 'error');
+            }
         }
 
         function updateCellState(cell) {
