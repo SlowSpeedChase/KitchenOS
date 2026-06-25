@@ -4,7 +4,7 @@ Library modules powering the KitchenOS pipeline. Each file should have a top-lev
 
 ## Conventions
 
-- **Vault paths**: derive every recipe/meal-plan/meals path from `paths.py` helpers (`vault_root()`, `recipes_dir()`, `meal_plans_dir()`, `meals_dir()`). Never hardcode a vault path or join `~/KitchenOS/vault/...` directly. The vault location is overridable via the `KITCHENOS_VAULT` env var, and only `paths.py` honors it.
+- **Vault paths**: derive every recipe/meal-plan/meals path from `paths.py` helpers (`vault_root()`, `recipes_dir()`, `meal_plans_dir()`, `meals_dir()`). Never hardcode a vault path or join `~/KitchenOS/vault/...` directly. The vault location is overridable via the `KITCHENOS_VAULT` env var, and only `paths.py` honors it. `paths.py` calls `load_dotenv()` on import (override=False) so cron scripts (whose plists set no `EnvironmentVariables`) still resolve the configured vault — don't rely on entry-point scripts loading `.env` themselves for path resolution.
 - **Controlled vocabularies** live in `normalizer.py` (recipe tags) and `inventory.py` (`CATEGORIES`, `LOCATIONS`, `SOURCES`). When adding a new tag-like field, add a `*_MAP` and route it through `normalize_field()` rather than letting raw AI output flow through.
 - **Backups before destructive writes**: any code that overwrites a recipe file should call `backup.create_backup()` first. Backups live in a sibling `.history/` folder and auto-clean after 30 days.
 - **Atomic JSON writes**: see `item_aliases.py` for the `tmp + replace` pattern. Use it for any small JSON sidecar that would corrupt if a write is interrupted (alias cache, task cache).

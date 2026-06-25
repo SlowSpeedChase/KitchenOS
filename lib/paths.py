@@ -5,9 +5,21 @@ variable. Default is ~/KitchenOS/KitchenOSApp/.
 
 All recipe-data paths in the codebase should be derived from these
 helpers — never hardcoded.
+
+This module loads the repo's .env on import so KITCHENOS_VAULT resolves
+consistently for every entry point — including the cron scripts
+(sync_calendar, generate_meal_plan, …) whose LaunchAgent plists set no
+EnvironmentVariables and which don't call load_dotenv themselves. paths is
+imported before any module-level path constant is computed, so it's the one
+reliable chokepoint. override=False keeps a real env var (set by launchd, CI,
+or a test) winning over the .env file.
 """
 import os
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
 
 
 def vault_root() -> Path:
