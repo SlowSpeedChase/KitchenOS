@@ -9,10 +9,28 @@ a saved alias always wins over the model's suggestion.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Optional
 
 ALIASES_PATH = Path(__file__).resolve().parent.parent / "config" / "item_aliases.json"
+
+# "Fresh" is a retail descriptor (vs. frozen/canned), not part of an item's
+# identity — HEB stamps it on produce ("Fresh Cilantro"). Strip it so
+# "fresh cilantro" and "cilantro" canonicalize to the same name and merge.
+_FRESH_RE = re.compile(r"\bfresh\b", re.IGNORECASE)
+
+
+def strip_fresh(name: str) -> str:
+    """Drop the standalone 'fresh' descriptor from a canonical name.
+
+    'fresh cilantro' -> 'cilantro'. Collapses leftover whitespace/commas and
+    never returns empty (falls back to the original if 'fresh' was the whole
+    name).
+    """
+    cleaned = _FRESH_RE.sub("", name)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,")
+    return cleaned or name
 
 
 def load_aliases() -> dict:
@@ -44,8 +62,8 @@ def canonicalize(raw_name: str, suggested: Optional[str]) -> str:
     key = (raw_name or "").lower().strip()
     aliases = load_aliases()
     if key in aliases:
-        return aliases[key]
-    canonical = (suggested or "").lower().strip() or key
+        return strip_fresh(aliases[key])
+    canonical = strip_fresh((suggested or "").lower().strip() or key)
     if key and canonical != key:
         aliases[key] = canonical
         save_aliases(aliases)
