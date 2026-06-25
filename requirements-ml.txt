@@ -1,0 +1,8 @@
+# Optional ML ingredient parser — opt-in fast-path.
+#
+# Enable at runtime with KITCHENOS_ML_INGREDIENTS=1; the rule-based parser
+# stays the default and fallback. Install separately (kept out of the core
+# requirements to keep the base install lean):
+#     pip install -r requirements-ml.txt
+# The first import downloads NLTK models (one-time).
+ingredient-parser-nlp>=1.1.0

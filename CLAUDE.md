@@ -579,7 +579,8 @@ template → Obsidian
 | `templates/recipe_template.py` | Markdown formatter with YAML frontmatter |
 | `templates/meal_plan_template.py` | Weekly meal plan template generator; `parse_week_id`/`format_week_range` week→date-range helpers |
 | `lib/meal_plan_index.py` | Regenerates `Meal Plans/Meal Plans Index.md` (week → date range → link) so plans are findable by date, not bare ISO id |
-| `lib/ingredient_parser.py` | Parses ingredient strings into amount/unit/item |
+| `lib/ingredient_parser.py` | Parses ingredient strings into amount/unit/item; `parse_ingredient_best()` adds the opt-in ML fast-path with rule-based fallback |
+| `lib/ingredient_ml.py` | Optional ML parser (`ingredient-parser-nlp`) → `{amount, unit, item, preparation, confidence}`; used only when `KITCHENOS_ML_INGREDIENTS=1` and confident (`requirements-ml.txt`) |
 | `lib/ingredient_validator.py` | Validates/repairs AI extraction errors in ingredients |
 | `lib/ingredient_aggregator.py` | Combines like ingredients for shopping lists |
 | `lib/shopping_list_generator.py` | Core logic for generating shopping lists from meal plans |
@@ -746,6 +747,7 @@ Maps YouTube channel names to their recipe website domains. Used to search creat
   - `GMAIL_APP_PASSWORD` - Google app password for IMAP (requires 2-step verification)
   - `INSTAGRAM_COOKIES_FROM_BROWSER` - Optional. Browser to pull Instagram cookies from (`chrome`, `safari`, …) when anonymous Reel fetches get throttled
   - `INSTAGRAM_COOKIES_FILE` - Optional. Path to a cookies.txt for Instagram auth (alternative to the browser option)
+  - `KITCHENOS_ML_INGREDIENTS` - Optional. Set to `1` to enable the ML ingredient parser fast-path (`lib/ingredient_ml.py`; needs `pip install -r requirements-ml.txt`). Off by default → rule-based parser
 
 **Note:** Whisper audio transcription (YouTube fallback *and* Instagram Reels) requires `ffmpeg`/`ffprobe` on PATH for yt-dlp's audio extraction. Without it, extraction degrades gracefully to caption/description-only. Install via `brew install ffmpeg`.
 

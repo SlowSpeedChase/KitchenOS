@@ -1,8 +1,11 @@
 """Ingredient string parser - splits amount, unit, and item"""
 
+import os
 from fractions import Fraction
 import re
 from typing import Dict
+
+_ML_FLAGS = {"1", "true", "yes", "on"}
 
 # Unit normalization map
 UNIT_ABBREVIATIONS = {
@@ -298,3 +301,25 @@ def _parse_standard_format(text: str) -> Dict[str, str]:
 
     # No unit found - use "whole"
     return {"amount": amount, "unit": "whole", "item": _clean_item(remainder)}
+
+
+def ml_enabled() -> bool:
+    """Whether the opt-in ML ingredient fast-path is turned on."""
+    return os.environ.get("KITCHENOS_ML_INGREDIENTS", "").strip().lower() in _ML_FLAGS
+
+
+def parse_ingredient_best(text: str) -> Dict[str, str]:
+    """Parse an ingredient, using the ML fast-path when opted in.
+
+    When ``KITCHENOS_ML_INGREDIENTS`` is enabled and the ML parser returns a
+    high-confidence result (>= CONFIDENCE_THRESHOLD), use it; otherwise fall
+    back to the rule-based ``parse_ingredient`` (also for low-confidence/edge
+    lines). Off by default → identical to ``parse_ingredient``. The returned
+    dict is the same ``{amount, unit, item}`` shape either way (a drop-in).
+    """
+    if ml_enabled():
+        from lib.ingredient_ml import parse_ingredient_ml, CONFIDENCE_THRESHOLD
+        ml = parse_ingredient_ml(text)
+        if ml and ml.get("confidence", 0) >= CONFIDENCE_THRESHOLD and ml.get("item"):
+            return {"amount": ml["amount"], "unit": ml["unit"], "item": ml["item"]}
+    return parse_ingredient(text)

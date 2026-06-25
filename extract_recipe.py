@@ -18,7 +18,7 @@ from lib.backup import create_backup
 from lib.recipe_parser import find_existing_recipe, find_existing_recipe_by_source_url, parse_recipe_file, extract_my_notes
 from lib.ingredient_validator import validate_ingredients
 from lib.ingredient_cleaner import clean_ingredient_list
-from lib.ingredient_parser import parse_ingredient
+from lib.ingredient_parser import parse_ingredient, parse_ingredient_best
 from lib.nutrition_engine import calculate_recipe_nutrition
 from lib.image_downloader import download_image
 from lib.seasonality import match_ingredients_to_seasonal, calculate_season_score, get_peak_months
@@ -105,7 +105,7 @@ def normalize_ingredients(ingredients: list) -> list:
             quantity = str(ing.get('quantity', ''))
             # Combine quantity and name for re-parsing
             combined = f"{quantity} {name}".strip() if quantity else name
-            parsed = parse_ingredient(combined)
+            parsed = parse_ingredient_best(combined)
             parsed['inferred'] = ing.get('inferred', False)
             normalized.append(parsed)
             continue
@@ -115,7 +115,7 @@ def normalize_ingredients(ingredients: list) -> list:
             quantity = str(ing.get('quantity', ''))
             item = str(ing.get('item', ''))
             combined = f"{quantity} {item}".strip()
-            parsed = parse_ingredient(combined)
+            parsed = parse_ingredient_best(combined)
             parsed['inferred'] = ing.get('inferred', False)
             normalized.append(parsed)
             continue
@@ -123,7 +123,7 @@ def normalize_ingredients(ingredients: list) -> list:
         # Unknown format - try to make sense of it
         item = str(ing.get('item', ing.get('name', '')))
         if item:
-            parsed = parse_ingredient(item)
+            parsed = parse_ingredient_best(item)
             parsed['inferred'] = ing.get('inferred', False)
             normalized.append(parsed)
 
