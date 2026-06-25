@@ -1,0 +1,32 @@
+{
+  "by_item": {
+    "avocado": 5,
+    "bananas": 5,
+    "berries": 4,
+    "blueberries": 5,
+    "bread": 7,
+    "butter": 60,
+    "cheese": 30,
+    "chicken": 2,
+    "eggs": 28,
+    "fish": 2,
+    "ground beef": 2,
+    "lettuce": 7,
+    "milk": 10,
+    "spinach": 5,
+    "strawberries": 4,
+    "yogurt": 14
+  },
+  "by_category": {
+    "produce": 7,
+    "dairy": 14,
+    "meat": 4,
+    "seafood": 3,
+    "frozen": 180,
+    "bakery": 5,
+    "beverages": 90,
+    "pantry": 365,
+    "household": null,
+    "other": null
+  }
+}

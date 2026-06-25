@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 from lib import paths
+from lib.expiry import compute_expires, expiry_status
 
 CATEGORIES = (
     "produce", "dairy", "meat", "seafood", "pantry",
@@ -24,8 +25,8 @@ CATEGORIES = (
 LOCATIONS = ("fridge", "freezer", "pantry", "counter", "other")
 SOURCES = ("receipt", "manual", "claude")
 
-HEADER = "| Item | Quantity | Unit | Category | Location | For Recipe | Purchased | Source | Notes |"
-SEPARATOR = "|------|----------|------|----------|----------|------------|-----------|--------|-------|"
+HEADER = "| Item | Quantity | Unit | Category | Location | For Recipe | Purchased | Expires | Source | Notes |"
+SEPARATOR = "|------|----------|------|----------|----------|------------|-----------|---------|--------|-------|"
 
 
 @dataclass
@@ -39,6 +40,7 @@ class InventoryItem:
     source: str = "manual"
     notes: str = ""
     for_recipe: Optional[str] = None
+    expires: Optional[str] = None
 
     def merge_key(self) -> tuple[str, str, str]:
         return (
@@ -141,9 +143,16 @@ def read_inventory() -> list[InventoryItem]:
             source=normalize_source(r["source"]),
             notes=r["notes"] or "",
             for_recipe=r["for_recipe"] or None,
+            expires=r["expires"] or None,
         )
         for r in inventory_db.fetch_inventory_rows()
     ]
+
+
+def _earliest_expiry(a: Optional[str], b: Optional[str]) -> Optional[str]:
+    """The earlier of two ISO expiry dates; whichever is set if only one is."""
+    candidates = [d for d in (a, b) if d]
+    return min(candidates) if candidates else None
 
 
 def _merge_recipes(a: Optional[str], b: Optional[str]) -> Optional[str]:
@@ -157,11 +166,45 @@ def _merge_recipes(a: Optional[str], b: Optional[str]) -> Optional[str]:
     return ", ".join(names) or None
 
 
+def _expiry_cell(expires: Optional[str], status: Optional[str]) -> str:
+    """Expires column text with a status marker (🔴 expired, 🟡 soon)."""
+    if not expires:
+        return ""
+    if status == "expired":
+        return f"🔴 {expires}"
+    if status == "soon":
+        return f"🟡 {expires}"
+    return expires
+
+
+def _expiry_warning_section(flagged: list[tuple[str, InventoryItem]]) -> str:
+    """A '⚠️ Expiring Soon' list shown above the table (expired first)."""
+    if not flagged:
+        return ""
+    order = {"expired": 0, "soon": 1}
+    lines = ["## ⚠️ Expiring Soon", ""]
+    for status, it in sorted(flagged, key=lambda f: (order[f[0]], f[1].expires or "")):
+        label = "🔴 **Expired**" if status == "expired" else "🟡 Soon"
+        lines.append(
+            f"- {label} — **{it.name}** "
+            f"({_format_quantity(it.quantity)} {it.unit}, {it.location}) "
+            f"— expires {it.expires}"
+        )
+    lines.append("")
+    return "\n".join(lines) + "\n"
+
+
 def render_inventory_md(items: list[InventoryItem]) -> str:
     """Render the read-only Obsidian view of current stock."""
+    today = date.today()
     sorted_items = sorted(items, key=lambda i: (i.category, i.name.lower()))
+
+    flagged: list[tuple[str, InventoryItem]] = []
     rows = [HEADER, SEPARATOR]
     for it in sorted_items:
+        status = expiry_status(it.expires, today)
+        if status in ("expired", "soon"):
+            flagged.append((status, it))
         cells = [
             it.name,
             _format_quantity(it.quantity),
@@ -170,6 +213,7 @@ def render_inventory_md(items: list[InventoryItem]) -> str:
             it.location,
             (it.for_recipe or "").replace("|", "\\|"),
             it.purchased or "",
+            _expiry_cell(it.expires, status),
             it.source,
             it.notes.replace("|", "\\|"),
         ]
@@ -177,12 +221,13 @@ def render_inventory_md(items: list[InventoryItem]) -> str:
     return (
         "---\n"
         "type: inventory\n"
-        f"last_updated: {date.today().isoformat()}\n"
+        f"last_updated: {today.isoformat()}\n"
         "---\n\n"
         "# Pantry Inventory\n\n"
         "> ⚠️ This file is **generated** from the KitchenOS database. "
         "Do not edit here — changes will be overwritten. "
         "Update inventory via Claude (MCP tools) or the API.\n\n"
+        + _expiry_warning_section(flagged)
         + "\n".join(rows)
         + "\n"
     )
@@ -218,6 +263,11 @@ def add_items(new_items: list[InventoryItem]) -> dict:
     added = 0
     merged = 0
     for new in new_items:
+        # Auto-fill expiry from the configured shelf-life windows when the
+        # caller didn't supply one (category null window -> stays None).
+        if new.expires is None:
+            new.expires = compute_expires(new.purchased, new.name, new.category)
+
         key = new.merge_key()
         if key in by_key:
             cur = by_key[key]
@@ -229,6 +279,8 @@ def add_items(new_items: list[InventoryItem]) -> dict:
             if new.category != "other":
                 cur.category = new.category
             cur.for_recipe = _merge_recipes(cur.for_recipe, new.for_recipe)
+            # Keep the earliest expiry so warnings fire for the oldest stock.
+            cur.expires = _earliest_expiry(cur.expires, new.expires)
             merged += 1
         else:
             by_key[key] = new

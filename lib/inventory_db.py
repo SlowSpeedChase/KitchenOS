@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS inventory (
     source TEXT NOT NULL DEFAULT 'manual',
     notes TEXT NOT NULL DEFAULT '',
     for_recipe TEXT,
+    expires TEXT,
     UNIQUE(name, unit, location)
 );
 CREATE TABLE IF NOT EXISTS food_cache (
@@ -84,13 +85,13 @@ CREATE TABLE IF NOT EXISTS food_resolution (
 
 _INVENTORY_COLS = (
     "name", "quantity", "unit", "category",
-    "location", "purchased", "source", "notes", "for_recipe",
+    "location", "purchased", "source", "notes", "for_recipe", "expires",
 )
 
 # Columns added after the original schema shipped. ``connect()`` adds any that
 # an existing DB is missing — SQLite ``ADD COLUMN`` is cheap and append-only.
 _MIGRATIONS = {
-    "inventory": (("for_recipe", "TEXT"),),
+    "inventory": (("for_recipe", "TEXT"), ("expires", "TEXT")),
     "purchases": (("for_recipe", "TEXT"),),
 }
 

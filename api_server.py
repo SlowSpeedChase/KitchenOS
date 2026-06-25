@@ -1597,6 +1597,7 @@ def api_inventory_add():
             source=normalize_source(raw.get('source') or 'claude'),
             notes=(raw.get('notes') or '').strip(),
             for_recipe=(raw.get('for_recipe') or None),
+            expires=(raw.get('expires') or None),  # else auto-filled in add_items
         ))
 
     # Fill for_recipe for any item that didn't carry an explicit assignment.

@@ -212,3 +212,49 @@ class TestParsing:
         assert len(items) == 2
         names = sorted(i.name for i in items)
         assert names == ["Eggs", "Milk"]
+
+
+class TestExpiry:
+    def test_add_autofills_expires_from_window(self, tmp_vault, tmp_db):
+        add_items([
+            InventoryItem(name="Milk", quantity=1, unit="gal",
+                          category="dairy", purchased="2026-06-01"),
+        ])
+        item = read_inventory()[0]
+        assert item.expires == "2026-06-11"  # milk window = 10 days
+
+    def test_null_window_leaves_expires_none(self, tmp_vault, tmp_db):
+        add_items([
+            InventoryItem(name="Dish soap", quantity=1, unit="ct",
+                          category="household", purchased="2026-06-01"),
+        ])
+        assert read_inventory()[0].expires is None
+
+    def test_explicit_expires_is_respected(self, tmp_vault, tmp_db):
+        add_items([
+            InventoryItem(name="Milk", quantity=1, unit="gal", category="dairy",
+                          purchased="2026-06-01", expires="2026-06-05"),
+        ])
+        assert read_inventory()[0].expires == "2026-06-05"
+
+    def test_merge_keeps_earliest_expiry(self, tmp_vault, tmp_db):
+        add_items([InventoryItem(name="Milk", quantity=1, unit="gal",
+                                 location="fridge", category="dairy",
+                                 expires="2026-06-20")])
+        add_items([InventoryItem(name="Milk", quantity=1, unit="gal",
+                                 location="fridge", category="dairy",
+                                 expires="2026-06-10")])
+        items = read_inventory()
+        assert len(items) == 1
+        assert items[0].expires == "2026-06-10"
+
+    def test_render_includes_expiry_warning_section(self, tmp_vault, tmp_db):
+        from datetime import date, timedelta
+        from lib.inventory import render_inventory_md
+        soon = (date.today() + timedelta(days=1)).isoformat()
+        items = [InventoryItem(name="Yogurt", quantity=1, unit="ct",
+                               category="dairy", expires=soon)]
+        md = render_inventory_md(items)
+        assert "## ⚠️ Expiring Soon" in md
+        assert "Yogurt" in md
+        assert "Expires" in md  # table column header

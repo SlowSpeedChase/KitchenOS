@@ -486,6 +486,7 @@ Every incoming item gets two derived fields before it lands in inventory:
 | `source` | no | `receipt`, `manual`, `claude` |
 | `notes` | no | Free text (often the raw receipt line) |
 | `for_recipe` | no | Comma-joined meal-plan recipe name(s) the item was bought for. Auto-assigned by the matcher when omitted; `null` = general inventory |
+| `expires` | no | ISO expiry date. Auto-filled on add from `config/expiry_windows.json` shelf-life windows (`purchased` or today + days); `null` window (household/other) = no date. An explicit value wins; merge keeps the earliest. `Inventory.md` flags 🔴 expired / 🟡 soon (≤3 days) with an "Expiring Soon" section |
 
 ### MCP Tools
 
@@ -627,6 +628,8 @@ template → Obsidian
 | `lib/storage_locations.py` | Storage-location router — `resolve_location(name, category)` from `config/storage_locations.json` (item override → category → pantry) |
 | `lib/recipe_matcher.py` | Tag purchases with the meal-plan recipe they were bought for (current + next ISO week; deterministic token match) |
 | `config/storage_locations.json` | `by_item` + `by_category` storage-location table (hand-correctable) |
+| `lib/expiry.py` | Shelf-life windows — `compute_expires(purchased, name, category)` / `expiry_status()` from `config/expiry_windows.json` (item override → category → none) |
+| `config/expiry_windows.json` | `by_item` + `by_category` expiry-window (days) table; `null` = no expiry (hand-correctable) |
 | `lib/price_dashboard.py` | Price Tracker dashboard generation from the purchases ledger |
 | `generate_price_dashboard.py` | CLI — writes `Price Tracker.md` to the vault root |
 | `prompts/receipt_extraction.py` | Ollama prompt for structured receipt extraction |
