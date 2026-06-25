@@ -273,6 +273,7 @@ class TestSuggestMeal:
                 day="Tuesday",
                 meal="dinner",
                 skip_index=0,
+                at_risk=[],
             )
             assert result is not None
             assert result["name"] == "Chicken Gyros"
@@ -298,6 +299,7 @@ class TestSuggestMeal:
                 day="Tuesday",
                 meal="dinner",
                 skip_index=0,
+                at_risk=[],
             )
             assert result is None or result["name"] != "Chicken Shawarma"
 
@@ -317,9 +319,111 @@ class TestSuggestMeal:
                  "ingredients": ["chicken", "yogurt"]},
             ]
             first = suggest_meal(recipes_dir=recipes_dir, planned_meals=planned,
-                                 day="Tue", meal="dinner", skip_index=0)
+                                 day="Tue", meal="dinner", skip_index=0, at_risk=[])
             second = suggest_meal(recipes_dir=recipes_dir, planned_meals=planned,
-                                  day="Tue", meal="dinner", skip_index=1)
+                                  day="Tue", meal="dinner", skip_index=1, at_risk=[])
             assert first is not None
             assert second is not None
             assert first["name"] != second["name"]
+
+
+from lib.recipe_matcher import _content_tokens
+
+
+def _at_risk(*names):
+    """Build at-risk (name, token_set) pairs as load_at_risk_index() would."""
+    return [(n, _content_tokens(n)) for n in names]
+
+
+class TestWasteAwareRanking:
+    """Layer 3: rank_candidates boosts recipes that use expiring inventory."""
+
+    def test_waste_outranks_higher_overlap(self):
+        """A recipe using at-risk food beats a higher-overlap one that doesn't."""
+        candidates = [
+            {"name": "Overlap King", "ingredient_items": ["chicken", "rice"]},
+            {"name": "Buttermilk Bake", "ingredient_items": ["buttermilk", "berries"]},
+        ]
+        planned_items = {"chicken", "rice"}  # Overlap King = 1.0 overlap
+        ranked = rank_candidates(candidates, planned_items, set(),
+                                 at_risk=_at_risk("buttermilk"))
+        assert ranked[0]["name"] == "Buttermilk Bake"
+        assert ranked[0]["waste_uses"] == ["buttermilk"]
+        # Overlap score is preserved separately from the waste-boosted rank_score.
+        assert ranked[1]["name"] == "Overlap King"
+        assert ranked[1]["score"] == 1.0
+
+    def test_no_at_risk_preserves_overlap_order(self):
+        """Without at-risk items, ordering matches the old score-based ranking."""
+        candidates = [
+            {"name": "A", "ingredient_items": ["chicken", "yogurt"]},
+            {"name": "B", "ingredient_items": ["chicken", "rice", "soy sauce"]},
+        ]
+        ranked = rank_candidates(candidates, {"chicken", "yogurt"}, set(), at_risk=[])
+        assert [r["name"] for r in ranked] == ["A", "B"]
+        assert all(r["waste_uses"] == [] for r in ranked)
+
+    def test_singularized_token_match(self):
+        """'strawberries' in the fridge matches a 'strawberry' ingredient."""
+        candidates = [{"name": "Tart", "ingredient_items": ["fresh strawberry", "sugar"]}]
+        ranked = rank_candidates(candidates, set(), set(),
+                                 at_risk=_at_risk("strawberries"))
+        assert ranked[0]["waste_uses"] == ["strawberries"]
+
+
+class TestSuggestMealWaste:
+    """suggest_meal surfaces waste-using recipes with an explanatory reason."""
+
+    def _make_recipes_dir(self, tmpdir, recipes):
+        recipes_dir = Path(tmpdir)
+        for name, ingredients in recipes.items():
+            rows = "".join(f"| 1 | whole | {item} |\n" for item in ingredients)
+            content = (
+                f'---\ntitle: "{name}"\ncuisine: "test"\nprotein: "test"\n---\n\n'
+                f"# {name}\n\n## Ingredients\n\n"
+                f"| Amount | Unit | Ingredient |\n|--------|------|------------|\n{rows}"
+            )
+            (recipes_dir / f"{name}.md").write_text(content)
+        return recipes_dir
+
+    @patch("lib.meal_suggester.anthropic_client", None)
+    def test_waste_recipe_returned_with_reason(self):
+        from lib.meal_suggester import suggest_meal
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = self._make_recipes_dir(tmpdir, {
+                "Buttermilk Pancakes": ["buttermilk", "flour", "egg"],
+                "Salmon Bowl": ["salmon", "rice", "avocado"],
+            })
+            planned = [
+                {"day": "Monday", "meal": "dinner", "name": "Tacos",
+                 "ingredients": ["salmon", "rice"]},
+            ]
+            result = suggest_meal(
+                recipes_dir=recipes_dir, planned_meals=planned,
+                day="Tuesday", meal="dinner", skip_index=0,
+                at_risk=_at_risk("buttermilk"),
+            )
+            assert result["name"] == "Buttermilk Pancakes"
+            assert result["waste_uses"] == ["buttermilk"]
+            assert "expiring buttermilk" in result["reason"]
+            assert result["is_new_idea"] is False
+
+    @patch("lib.meal_suggester.anthropic_client", None)
+    def test_empty_week_leads_with_waste(self):
+        """Even with nothing planned, an expiring item drives the first pick."""
+        from lib.meal_suggester import suggest_meal
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = self._make_recipes_dir(tmpdir, {
+                "Buttermilk Pancakes": ["buttermilk", "flour", "egg"],
+                "Salmon Bowl": ["salmon", "rice", "avocado"],
+            })
+            result = suggest_meal(
+                recipes_dir=recipes_dir, planned_meals=[],
+                day="Monday", meal="dinner", skip_index=0,
+                at_risk=_at_risk("buttermilk"),
+            )
+            assert result is not None
+            assert result["name"] == "Buttermilk Pancakes"
+            assert "expiring buttermilk" in result["reason"]

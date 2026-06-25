@@ -619,6 +619,22 @@
             font-style: italic;
         }
 
+        /* Waste-aware pick: this recipe uses food that's about to expire. */
+        .grid-card .waste-badge {
+            position: absolute;
+            top: 4px;
+            left: 4px;
+            background: rgba(76, 175, 80, 0.92);
+            color: #ffffff;
+            font-size: 10px;
+            font-weight: 600;
+            line-height: 1;
+            padding: 3px 6px;
+            border-radius: 10px;
+            z-index: 3;
+            pointer-events: none;
+        }
+
         /* --- Toast --- */
         .toast {
             position: fixed;
@@ -2350,6 +2366,15 @@
             // Mark new ideas
             if (suggestion.is_new_idea) {
                 card.classList.add('new-idea');
+            }
+
+            // Flag waste-aware picks (uses food that's expiring soon)
+            if (suggestion.waste_uses && suggestion.waste_uses.length) {
+                const badge = document.createElement('span');
+                badge.className = 'waste-badge';
+                badge.textContent = '♻️ use it up';
+                badge.title = 'Uses ' + suggestion.waste_uses.join(', ');
+                card.appendChild(badge);
             }
 
             // Add retry button

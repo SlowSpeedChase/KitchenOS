@@ -487,6 +487,7 @@ Inventory must never become something the user has to maintain. Load-bearing con
 - **Auto-add, auto-age-out.** Items enter automatically from receipts; `inventory.prune_expired()` drops perishables >3 days past expiry (assumed used/tossed) on the daily meal-plan run, so the list self-cleans with no manual "I used this" step. Shelf-stable items (no `expires`) never age out.
 - **Staples are assumed, never tracked.** `config/pantry_staples.json` items (milk, butter, flour, rice, eggs, oil…) are treated as always-on-hand: recipes may use them freely, and they are excluded from Use-It-Up at-risk flagging. The user manages staple freshness themselves; KitchenOS must not nag about them.
 - **Everything is generated, read-only output.** `Inventory.md`, `Use It Up.md`, `Price Tracker.md`, suggestions — the user reads them; they never edit them. **Consume-on-cook** (Layer 2 — `lib/cook.consume_recipe`, `POST /api/cook`, the `cook_recipe` MCP tool) decrements a cooked recipe's *non-staple* ingredients so true partial-package leftovers become visible (¼ cup used from a 1 qt buttermilk → 0.94 qt left). It is **optional, never required** — inventory still self-cleans on expiry without it. Reuses `pantry.apply_decisions`; volume/weight convert within family (so `qt`/`gal`/`pt` abbreviations were added to `lib/units.py`).
+- **The plan itself fights waste (Layer 3).** The interactive suggester (`meal_suggester.suggest_meal`, `POST /api/suggest-meal`, planner "suggest"/↻ button) is waste-aware: `rank_candidates(..., at_risk=…)` sorts recipes by **how many at-risk items they use first**, overlap second, so a recipe that uses expiring food surfaces directly (no LLM tiebreak) with a `"Uses up expiring …"` reason and a `waste_uses` list (♻️ badge in the UI). At-risk items come from `meal_suggester.load_at_risk_index()`, which reuses `use_it_up.at_risk_items` (same expiry window + staple exclusion) — so the suggester and `Use It Up.md` always agree. Loads live inventory when `at_risk` is omitted; pass `at_risk=[]` in tests to isolate overlap. Empty week with something expiring → leads with the waste pick before falling back to Claude.
 
 ### Storage Location & Recipe Assignment
 
@@ -636,7 +637,7 @@ template → Obsidian
 | `lib/mcp_tools.py` | MCP tool implementations (HTTP + Things) |
 | `migrate_cuisine.py` | Cuisine cleanup, tag normalization & seasonal population |
 | `lib/normalizer.py` | Controlled vocabularies and tag normalization |
-| `lib/meal_suggester.py` | Ingredient overlap scoring + Claude/Ollama suggestion |
+| `lib/meal_suggester.py` | Ingredient overlap scoring + Claude/Ollama suggestion. **Waste-aware** (Layer 3): `rank_candidates(at_risk=…)` boosts recipes that use expiring inventory (waste-count primary, overlap tiebreak); `load_at_risk_index()` pulls live at-risk items via `use_it_up` |
 | `prompts/meal_suggestion.py` | Prompt templates for ingredient normalization and meal selection |
 | `config/pantry_staples.json` | Flat keyword list of "always-have" staples (milk, butter, flour, rice, eggs, oil…). Assumed present; excluded from seasonal overlap scoring AND from Use-It-Up at-risk flagging — KitchenOS never tracks or nags about these. Hand-editable (the one list the user maintains, set-once) |
 | `lib/meal_loader.py` | Read/write composite **meal** definitions (`vault/Meals/<Name>.meal.md`) |
