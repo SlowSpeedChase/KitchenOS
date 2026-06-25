@@ -26,14 +26,14 @@ def test_to_cents():
     assert rp.to_cents(-2.00) == -200
 
 
-def test_parse_receipt_text_uses_ollama():
+def test_parse_receipt_text_uses_injected_llm():
     calls = {}
 
-    def fake_ollama(prompt):
+    def fake_llm(prompt):
         calls["prompt"] = prompt
         return json.dumps(PARSED_OK)
 
-    parsed = rp.parse_receipt_text("some receipt text", ollama_call=fake_ollama)
+    parsed = rp.parse_receipt_text("some receipt text", llm_call=fake_llm)
     assert parsed["date"] == "2026-06-09"
     assert len(parsed["items"]) == 4
     assert "some receipt text" in calls["prompt"]
@@ -41,7 +41,7 @@ def test_parse_receipt_text_uses_ollama():
 
 def test_parse_receipt_text_rejects_non_object():
     with pytest.raises(ValueError):
-        rp.parse_receipt_text("x", ollama_call=lambda p: "[1, 2]")
+        rp.parse_receipt_text("x", llm_call=lambda p: "[1, 2]")
 
 
 def test_validate_receipt_ok():
@@ -84,3 +84,16 @@ def test_build_purchases_canonicalizes(tmp_path, monkeypatch):
     assert purchases[0]["unit_price_cents"] == 549
     assert purchases[0]["total_cents"] == 1153
     assert purchases[3]["category"] == "fee"
+
+
+def test_extract_json_object_strips_fences_and_prose():
+    assert json.loads(rp._extract_json_object('```json\n{"a": 1}\n```'))["a"] == 1
+    assert json.loads(rp._extract_json_object('Here you go:\n{"b": 2}\nDone'))["b"] == 2
+    assert json.loads(rp._extract_json_object('{"c": 3}'))["c"] == 3
+
+
+def test_default_llm_call_prefers_claude_when_key_set(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    assert rp._default_llm_call() is rp._call_claude
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    assert rp._default_llm_call() is rp._call_ollama

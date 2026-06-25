@@ -323,7 +323,7 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.batch-extract.plist
 
 ## Receipt Ingest (LaunchAgent)
 
-Ingests HEB receipt emails from Gmail hourly (at :25 past each hour). Parses with Ollama, records trips/purchases in `data/kitchenos.db`, updates inventory, then regenerates `Inventory.md` and `Price Tracker.md`.
+Ingests HEB receipt emails from Gmail hourly (at :25 past each hour). Parses with the Claude API (Opus, when `ANTHROPIC_API_KEY` is set; Ollama fallback), records trips/purchases in `data/kitchenos.db`, updates inventory, then regenerates `Inventory.md` and `Price Tracker.md`.
 
 ### Management
 
@@ -462,7 +462,7 @@ Inventory and price history live in one SQLite database: `data/kitchenos.db` (`l
 
 Items enter via four paths:
 
-1. **Email (automatic)** — the hourly receipt-ingest LaunchAgent fetches HEB receipt emails over IMAP (`GMAIL_ADDRESS` + `GMAIL_APP_PASSWORD` in `.env`; sender domains in `config/receipt_senders.json`), parses them with Ollama, and validates line totals against the receipt total (tolerance: max($1, 2%)). Pass → trip + purchases recorded, inventory updated. Fail → trip stored with `needs_review` + raw text, **no** inventory update; failures also logged via `lib/failure_logger`. Dedup is by Gmail Message-ID (`trips.source_id` UNIQUE; content-hash fallback). Raw receipt strings are canonicalized through `config/item_aliases.json` — a saved alias always wins over the model's suggestion, and the file is hand-correctable.
+1. **Email (automatic)** — the hourly receipt-ingest LaunchAgent fetches HEB receipt emails over IMAP (`GMAIL_ADDRESS` + `GMAIL_APP_PASSWORD` in `.env`; sender domains + per-store `subject_includes` filter in `config/receipt_senders.json`), parses them with the Claude API (`lib/receipt_parser.py`; Opus when `ANTHROPIC_API_KEY` is set, else Ollama `mistral:7b`), and validates line totals against the receipt total (tolerance: max($1, 2%)). HEB curbside receipts come from `heb@hebdigital.com`; the `subject_includes: ["receipt"]` filter skips the non-itemized "We received your order" confirmations. Pass → trip + purchases recorded, inventory updated. Fail → trip stored with `needs_review` + raw text, **no** inventory update; failures also logged via `lib/failure_logger`. Dedup is by Gmail Message-ID (`trips.source_id` UNIQUE; content-hash fallback). Raw receipt strings are canonicalized through `config/item_aliases.json` — a saved alias always wins over the model's suggestion, and the file is hand-correctable.
 2. **Photo receipt (Claude)** — share a receipt photo with Claude (Desktop, web, or iOS Share Sheet). Claude parses the items, normalizes the cryptic receipt strings (e.g. `GV WHL MLK 1G` → `Whole milk, 1 gal`), assigns category/location, and calls `add_to_inventory` — optionally with per-item `unit_price`/`line_total` and a `trip` block so photo receipts feed the same price ledger.
 3. **Manual** — `add_to_inventory` via MCP, or POST `/api/inventory/add` directly.
 4. **Markdown paste** — paste a markdown table (`| Item | Qty | Unit | Category | Location | Expires | Notes |`; only Item required) for a preview-then-commit bulk add: `lib/receipt_paster.py` parses + routes (location resolved, expiry filled), surfaced by `POST /api/inventory/paste` (`{markdown, commit?}` — preview unless `commit:true`) and the `paste_inventory.py` CLI. Good for ad-hoc adds / a table Claude formatted from a photo.
@@ -622,7 +622,7 @@ template → Obsidian
 | `lib/pantry.py` | Pantry adapter over the DB inventory table; split shopping demand against pantry; decrement on confirm |
 | `lib/task_extractor.py` | Cross-recipe prep/active/passive task classification with sidecar cache (`<week>.tasks.json`) |
 | `prompts/task_classification.py` | Prompt template for the task classifier |
-| `ingest_receipts.py` | Hourly email receipt ingestion (IMAP fetch → Ollama parse → ledger + inventory) |
+| `ingest_receipts.py` | Hourly email receipt ingestion (IMAP fetch → Claude/Ollama parse → ledger + inventory) |
 | `lib/inventory_db.py` | SQLite store (`data/kitchenos.db`): trips, purchases ledger, inventory |
 | `lib/receipt_parser.py` | Receipt email HTML → text → Ollama extraction → line-total validation |
 | `lib/email_fetcher.py` | Gmail IMAP fetcher for receipt emails (read-only mailbox) |
