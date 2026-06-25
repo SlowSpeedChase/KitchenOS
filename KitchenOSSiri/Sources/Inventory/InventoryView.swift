@@ -62,6 +62,14 @@ struct InventoryView: View {
             .labelsHidden()
             Text("\(formatQty(item.quantity)) \(item.unit)")
                 .font(.callout).foregroundStyle(.secondary)
+            Button(role: .destructive) {
+                Task { await remove(item) }
+            } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.borderless)
+            .tint(.red)
+            .help("Remove from inventory")
         }
         .swipeActions {
             Button(role: .destructive) {

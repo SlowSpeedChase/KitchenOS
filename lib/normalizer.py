@@ -69,6 +69,11 @@ PROTEIN_MAP = {
     "ricotta": "dairy",
     "mozzarella": "dairy",
     "parmesan": "dairy",
+    "parm": "dairy",
+    "milk": "dairy",
+    "whole milk": "dairy",
+    "low-fat milk": "dairy",
+    "low fat milk": "dairy",
     # Fish variants
     "salmon": "fish",
     "tuna": "fish",
@@ -110,6 +115,13 @@ PROTEIN_MAP = {
     "protein pancake mix and protein powder": "protein powder",
     "kodiak cakes protein pancake mix": "protein powder",
     "grassfed vanilla protein": "protein powder",
+    "whey": "protein powder",
+    "whey protein": "protein powder",
+    "vanilla whey protein": "protein powder",
+    "collagen peptides": "protein powder",
+    "collagen": "protein powder",
+    # Veal → beef family
+    "veal": "beef",
 }
 
 # Descriptive phrases that should map to None
@@ -125,6 +137,9 @@ _PROTEIN_DISCARD_PATTERNS = [
     "plant-based",
     "chia seeds",
     "king oyster",
+    "peanut butter",
+    "hemp hearts",
+    "meat of choice",
 ]
 
 DISH_TYPE_MAP = {
@@ -218,8 +233,9 @@ VALID_MEAL_OCCASIONS = {
     "family-meal",
 }
 
-# Regex to catch numeric gram values like "70g", "42G", "50g (Whole Pizza)", "20G Protein"
-_NUMERIC_PROTEIN_RE = re.compile(r"^\d+[gG]")
+# A protein *type* never starts with a digit, so any leading-number value is a
+# stray gram amount, not a category: "70g", "42G", "20 grams", "35", "50g (Whole Pizza)".
+_NUMERIC_PROTEIN_RE = re.compile(r"^\d")
 
 
 # ---------------------------------------------------------------------------

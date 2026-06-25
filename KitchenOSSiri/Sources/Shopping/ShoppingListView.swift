@@ -55,7 +55,11 @@ struct ShoppingListView: View {
         .toolbar {
             ToolbarItemGroup {
                 Button { shiftWeek(-1) } label: { Image(systemName: "chevron.left") }
-                Text(weekID).font(.callout.monospaced())
+                VStack(spacing: 1) {
+                    Text(weekID).font(.callout.monospaced())
+                    Text(WeekDate.weekRangeLabel(for: weekAnchor))
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
                 Button { shiftWeek(1) } label: { Image(systemName: "chevron.right") }
             }
         }
