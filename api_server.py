@@ -1662,6 +1662,26 @@ def api_inventory_add():
     return jsonify({"status": "ok", **result})
 
 
+@app.route('/api/inventory/paste', methods=['POST'])
+def api_inventory_paste():
+    """Bulk-add from a pasted markdown table (preview-then-commit).
+
+    Body: {markdown: str, commit?: bool}. With commit=false (default) returns
+    the parsed + routed rows for confirmation without writing; with commit=true
+    persists them via inventory.add_items.
+    """
+    from lib import receipt_paster
+
+    data = request.get_json(force=True, silent=True) or {}
+    markdown = data.get('markdown')
+    if not markdown or not markdown.strip():
+        return jsonify({"error": "'markdown' is required"}), 400
+
+    if data.get('commit'):
+        return jsonify({"status": "committed", **receipt_paster.commit(markdown)})
+    return jsonify({"status": "preview", **receipt_paster.preview(markdown)})
+
+
 @app.route('/api/inventory/remove', methods=['POST'])
 def api_inventory_remove():
     """Remove an item. Body: {name, location?}."""

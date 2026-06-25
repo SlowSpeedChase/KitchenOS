@@ -460,11 +460,12 @@ Configured in `~/Library/Application Support/Claude/claude_desktop_config.json`.
 
 Inventory and price history live in one SQLite database: `data/kitchenos.db` (`lib/inventory_db.py`). `Inventory.md` at the vault root is a **generated read-only view** with a do-not-edit banner — it is rewritten on every inventory change; hand edits are overwritten.
 
-Items enter via three paths:
+Items enter via four paths:
 
 1. **Email (automatic)** — the hourly receipt-ingest LaunchAgent fetches HEB receipt emails over IMAP (`GMAIL_ADDRESS` + `GMAIL_APP_PASSWORD` in `.env`; sender domains in `config/receipt_senders.json`), parses them with Ollama, and validates line totals against the receipt total (tolerance: max($1, 2%)). Pass → trip + purchases recorded, inventory updated. Fail → trip stored with `needs_review` + raw text, **no** inventory update; failures also logged via `lib/failure_logger`. Dedup is by Gmail Message-ID (`trips.source_id` UNIQUE; content-hash fallback). Raw receipt strings are canonicalized through `config/item_aliases.json` — a saved alias always wins over the model's suggestion, and the file is hand-correctable.
 2. **Photo receipt (Claude)** — share a receipt photo with Claude (Desktop, web, or iOS Share Sheet). Claude parses the items, normalizes the cryptic receipt strings (e.g. `GV WHL MLK 1G` → `Whole milk, 1 gal`), assigns category/location, and calls `add_to_inventory` — optionally with per-item `unit_price`/`line_total` and a `trip` block so photo receipts feed the same price ledger.
 3. **Manual** — `add_to_inventory` via MCP, or POST `/api/inventory/add` directly.
+4. **Markdown paste** — paste a markdown table (`| Item | Qty | Unit | Category | Location | Expires | Notes |`; only Item required) for a preview-then-commit bulk add: `lib/receipt_paster.py` parses + routes (location resolved, expiry filled), surfaced by `POST /api/inventory/paste` (`{markdown, commit?}` — preview unless `commit:true`) and the `paste_inventory.py` CLI. Good for ad-hoc adds / a table Claude formatted from a photo.
 
 ### Storage Location & Recipe Assignment
 
