@@ -18,6 +18,7 @@ from lib.mcp_tools import (
     list_inventory as _list_inventory,
     remove_from_inventory as _remove_from_inventory,
     update_inventory_item as _update_inventory_item,
+    use_it_up as _use_it_up,
 )
 
 mcp = FastMCP("KitchenOS")
@@ -322,6 +323,36 @@ def create_things_task(title: str, notes: str = None) -> str:
     """
     result = _create_things_task(title, notes=notes)
     return f"Things task created: {result['title']}"
+
+
+@mcp.tool()
+def use_it_up(limit: int = 10) -> str:
+    """Suggest recipes to cook that use up food about to expire, to avoid waste.
+
+    Answers "what can I make to use up what's expiring?". Staples (milk, butter,
+    flour, …) are excluded; only at-risk perishables are considered.
+
+    Args:
+        limit: Max number of recipe suggestions to return (default 10)
+    """
+    if err := _require_api():
+        return err
+    data = _use_it_up(limit=limit)
+    at_risk = data.get("at_risk", [])
+    suggestions = data.get("suggestions", [])
+    if not at_risk:
+        return "Nothing expiring soon — your fridge is in good shape. ✅"
+
+    risk_lines = "\n".join(
+        f"  - {r['name']} ({r['status']}, expires {r['expires']})" for r in at_risk
+    )
+    if not suggestions:
+        return f"At risk:\n{risk_lines}\n\nNo recipes in your library use these — time to improvise."
+    cook_lines = "\n".join(
+        f"  - {s['recipe']} — uses {', '.join(u['name'] for u in s['uses'])}"
+        for s in suggestions
+    )
+    return f"At risk ({len(at_risk)}):\n{risk_lines}\n\nCook these to use them up:\n{cook_lines}"
 
 
 if __name__ == "__main__":

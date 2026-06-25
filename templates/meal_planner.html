@@ -940,6 +940,14 @@
         <div id="prep-body"></div>
     </aside>
 
+    <aside class="prep-panel collapsed" id="useitup-panel">
+        <header>
+            <span>🥗 Use It Up</span>
+            <button class="prep-toggle" id="useitup-toggle" aria-label="Toggle Use It Up panel">▾</button>
+        </header>
+        <div id="useitup-body"></div>
+    </aside>
+
     <!-- Meal editor modal -->
     <div class="modal-backdrop" id="meal-modal">
         <div class="modal">
@@ -1028,6 +1036,7 @@
 
             // Load tasks last so it can reference the meal plan
             loadTasks(currentWeek).catch(err => console.error('tasks load failed', err));
+            loadUseItUp().catch(err => console.error('use-it-up load failed', err));
 
             hideLoading();
         }
@@ -1943,6 +1952,42 @@
             }
         }
 
+        // --- Use It Up panel (recipes that use food about to expire) ---
+
+        async function loadUseItUp() {
+            try {
+                const resp = await fetch('/api/use-it-up');
+                if (!resp.ok) return;
+                renderUseItUp(await resp.json());
+            } catch (err) {
+                console.error('use-it-up load failed', err);
+            }
+        }
+
+        function renderUseItUp(data) {
+            const body = document.getElementById('useitup-body');
+            if (!body) return;
+            const atRisk = (data && data.at_risk) || [];
+            const suggestions = (data && data.suggestions) || [];
+            if (!atRisk.length) {
+                body.innerHTML = '<div class="prep-section">Nothing expiring soon — your fridge is in good shape. ✅</div>';
+                return;
+            }
+            const risk = atRisk.map(r => {
+                const mark = r.status === 'expired' ? '🔴' : '🟡';
+                return `<div class="prep-task"><span>${mark}</span><span>${r.name}<span class="meta"> · ${r.location} · exp ${r.expires}</span></span></div>`;
+            }).join('');
+            const cook = suggestions.length
+                ? suggestions.map(s => {
+                    const used = s.uses.map(u => u.name).join(', ');
+                    return `<div class="prep-task"><span>🍽️</span><span>${s.recipe}<span class="meta"> · uses ${used}</span></span></div>`;
+                  }).join('')
+                : '<div class="prep-task"><span class="meta">No recipes in your library use these — time to improvise.</span></div>';
+            body.innerHTML =
+                `<div class="prep-section"><h4>At risk (${atRisk.length})</h4>${risk}</div>` +
+                `<div class="prep-section"><h4>Cook these</h4>${cook}</div>`;
+        }
+
         // --- Today's Prep panel ---
 
         async function loadTasks(week) {
@@ -2155,6 +2200,13 @@
             if (prepToggle && prepPanel) {
                 prepToggle.addEventListener('click', () => {
                     prepPanel.classList.toggle('collapsed');
+                });
+            }
+            const useToggle = document.getElementById('useitup-toggle');
+            const usePanel = document.getElementById('useitup-panel');
+            if (useToggle && usePanel) {
+                useToggle.addEventListener('click', () => {
+                    usePanel.classList.toggle('collapsed');
                 });
             }
             const pcCancel = document.getElementById('pantry-modal-cancel');

@@ -249,6 +249,40 @@ def write_inventory(items: list[InventoryItem]) -> None:
         print(f"⚠️  Inventory view write failed: {e}", file=sys.stderr)
 
 
+# Perishables this many days past their (estimated) expiry are assumed used or
+# tossed and dropped from inventory. Keeps the list self-cleaning so it never
+# becomes a chore — KitchenOS auto-adds from receipts and auto-ages out here,
+# with no manual "I used this" step. A few days' grace past expiry stays so the
+# Use-It-Up nudge still catches just-expired items.
+PRUNE_GRACE_DAYS = 3
+
+
+def prune_expired(today: Optional[date] = None,
+                  grace_days: int = PRUNE_GRACE_DAYS) -> int:
+    """Drop perishables more than ``grace_days`` past expiry. Returns count removed.
+
+    Shelf-stable items (no ``expires`` — household/other) and anything still
+    within the grace window stay. Persists via write_inventory when something
+    is removed.
+    """
+    today = today or date.today()
+    kept, removed = [], 0
+    for it in read_inventory():
+        delta = None
+        if it.expires:
+            try:
+                delta = (date.fromisoformat(it.expires) - today).days
+            except ValueError:
+                delta = None
+        if delta is not None and delta < -grace_days:
+            removed += 1
+        else:
+            kept.append(it)
+    if removed:
+        write_inventory(kept)
+    return removed
+
+
 # TODO(receipt-ingestion plan, task 9): read→merge→replace can lose updates
 # with concurrent writers (Flask threads + ingest LaunchAgent). Switch to
 # INSERT ... ON CONFLICT(name, unit, location) DO UPDATE SET

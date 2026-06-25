@@ -156,6 +156,14 @@ def ingest(since_days: int = 14, dry_run: bool = False,
             # Tolerate a partially-deployed checkout where price_dashboard is
             # missing — dashboard regeneration is non-critical to ingestion.
             pass
+        # Refresh the Use-It-Up waste suggestions after new purchases. (Pruning
+        # stale inventory is left to the daily meal-plan run — pruning here would
+        # immediately drop items from an old backfilled receipt.)
+        try:
+            from lib import use_it_up
+            use_it_up.write_note()
+        except Exception as e:
+            print(f"Warning: use-it-up refresh failed: {e}", file=sys.stderr)
 
     print(f"Done: {summary}")
     return summary

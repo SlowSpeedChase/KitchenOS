@@ -189,6 +189,19 @@ def main():
     if index_path:
         print(f"Updated index: {index_path.name}")
 
+    # Daily: self-clean inventory (age out long-expired perishables) and refresh
+    # the Use-It-Up waste suggestions, since expiry status drifts day to day.
+    try:
+        from lib.inventory import prune_expired
+        from lib import use_it_up
+        pruned = prune_expired()
+        if pruned:
+            print(f"Aged out {pruned} expired item(s) from inventory")
+        use_it_up.write_note()
+        print("Updated Use It Up.md")
+    except Exception as e:
+        print(f"Warning: use-it-up refresh failed: {e}", file=sys.stderr)
+
     # Cleanup old recipe backups (runs daily with meal plan generation)
     if RECIPES_HISTORY_PATH.exists():
         removed = cleanup_old_backups(RECIPES_HISTORY_PATH, max_age_days=30)

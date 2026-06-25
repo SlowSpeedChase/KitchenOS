@@ -180,3 +180,12 @@ def create_things_task(title: str, notes: str = None) -> dict:
     url = f"things:///add?{'&'.join(params)}"
     subprocess.run(["open", url], check=True)
     return {"status": "created", "title": title}
+
+
+def use_it_up(limit: int = 10) -> dict:
+    """Recipes that use up at-risk (expiring) inventory so nothing is wasted."""
+    try:
+        r = requests.get(f"{API_BASE}/api/use-it-up", params={"limit": limit}, timeout=15)
+        return r.json()
+    except requests.exceptions.RequestException as e:
+        return {"error": str(e), "at_risk": [], "suggestions": []}
