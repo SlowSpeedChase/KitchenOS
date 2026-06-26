@@ -16,7 +16,7 @@ struct KitchenOSSiriApp: App {
             TabView {
                 AssistantView()
                     .tabItem { Label("Assistant", systemImage: "bubble.left.and.bubble.right") }
-                MealPlanView()
+                NavigationStack { MealPlanView() }
                     .tabItem { Label("Plan", systemImage: "calendar") }
                 CookView()
                     .tabItem { Label("Cook", systemImage: "frying.pan") }
@@ -26,7 +26,7 @@ struct KitchenOSSiriApp: App {
                     .tabItem { Label("Settings", systemImage: "gearshape") }
             }
             // Refresh the semantic index once per launch (best-effort).
-            .task { try? await RecipeIndexer.reindexAll() }
+            .task { _ = try? await RecipeIndexer.reindexAll() }
             // A tapped recipe (Spotlight result / OpenRecipeIntent) shows its detail.
             .sheet(item: Binding(get: { router.selectedRecipe.map(RecipeRef.init) },
                                  set: { router.selectedRecipe = $0?.id })) { ref in
