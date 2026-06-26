@@ -221,6 +221,11 @@ curl -X POST http://localhost:5001/send-to-reminders \
 
 # Parse a single local file instead of Gmail
 .venv/bin/python ingest_receipts.py --file receipt.eml   # or .html
+
+# Ingest CSA produce-share newsletters into inventory (also runs at the tail of
+# ingest_receipts.py). --dry-run previews; only the subscriber's tier/week add.
+.venv/bin/python ingest_csa.py --dry-run
+.venv/bin/python ingest_csa.py
 ```
 
 ### Generate Price Dashboard
@@ -474,12 +479,13 @@ Configured in `~/Library/Application Support/Claude/claude_desktop_config.json`.
 
 Inventory and price history live in one SQLite database: `data/kitchenos.db` (`lib/inventory_db.py`). `Inventory.md` at the vault root is a **generated read-only view** with a do-not-edit banner — it is rewritten on every inventory change; hand edits are overwritten.
 
-Items enter via four paths:
+Items enter via five paths:
 
-1. **Email (automatic)** — the hourly receipt-ingest LaunchAgent fetches HEB receipt emails over IMAP (`GMAIL_ADDRESS` + `GMAIL_APP_PASSWORD` in `.env`; sender domains + per-store `subject_includes` filter in `config/receipt_senders.json`), parses them with the Claude API (`lib/receipt_parser.py`; Opus when `ANTHROPIC_API_KEY` is set, else Ollama `mistral:7b`), and validates line totals against the receipt total (tolerance: max($1, 2%)). HEB curbside receipts come from `heb@hebdigital.com`; the `subject_includes: ["receipt"]` filter skips the non-itemized "We received your order" confirmations. Pass → trip + purchases recorded, inventory updated. Fail → trip stored with `needs_review` + raw text, **no** inventory update; failures also logged via `lib/failure_logger`. Dedup is by Gmail Message-ID (`trips.source_id` UNIQUE; content-hash fallback). Raw receipt strings are canonicalized through `config/item_aliases.json` — a saved alias always wins over the model's suggestion, and the file is hand-correctable.
-2. **Photo receipt (Claude)** — share a receipt photo with Claude (Desktop, web, or iOS Share Sheet). Claude parses the items, normalizes the cryptic receipt strings (e.g. `GV WHL MLK 1G` → `Whole milk, 1 gal`), assigns category/location, and calls `add_to_inventory` — optionally with per-item `unit_price`/`line_total` and a `trip` block so photo receipts feed the same price ledger.
-3. **Manual** — `add_to_inventory` via MCP, or POST `/api/inventory/add` directly.
-4. **Markdown paste** — paste a markdown table (`| Item | Qty | Unit | Category | Location | Expires | Notes |`; only Item required) for a preview-then-commit bulk add: `lib/receipt_paster.py` parses + routes (location resolved, expiry filled), surfaced by `POST /api/inventory/paste` (`{markdown, commit?}` — preview unless `commit:true`) and the `paste_inventory.py` CLI. Good for ad-hoc adds / a table Claude formatted from a photo.
+1. **Email (automatic)** — the hourly receipt-ingest LaunchAgent fetches HEB receipt emails over IMAP and parses them with the Claude API (`lib/receipt_parser.py`; Opus when `ANTHROPIC_API_KEY` is set, else Ollama `mistral:7b`), validating line totals against the receipt total (tolerance: max($1, 2%)). HEB curbside receipts come from `heb@hebdigital.com`; the `subject_includes: ["receipt"]` filter skips the non-itemized "We received your order" confirmations. Pass → trip + purchases recorded, inventory updated. Fail → trip stored with `needs_review` + raw text, **no** inventory update; failures also logged via `lib/failure_logger`. Dedup is by Gmail Message-ID (`trips.source_id` UNIQUE; content-hash fallback). Raw receipt strings are canonicalized through `config/item_aliases.json` — a saved alias always wins over the model's suggestion, and the file is hand-correctable. **Multi-account**: `email_fetcher.load_accounts()` reads the primary `GMAIL_ADDRESS`/`GMAIL_APP_PASSWORD` plus numbered extras (`GMAIL_ADDRESS_2`/`GMAIL_APP_PASSWORD_2`, …); every account is scanned and results de-duped by Message-ID. Sender domains + per-store `subject_includes` live in `config/receipt_senders.json`.
+2. **CSA newsletter (automatic)** — the Central Texas Farmers Co-op emails a weekly "Week N(A/B)" newsletter (from `info@centraltexasfarmers.com`, via Klaviyo, in `chase8732@gmail.com`) listing each share tier's produce — **no prices**, just a list. `ingest_csa.py` (run best-effort at the tail of the hourly receipt ingest) fetches it via `email_fetcher.fetch_emails(..., mailbox="ALL_MAIL")` (newsletters skip the inbox, so it scans Gmail's archive), parses the subscriber's tier deterministically with `lib/csa_parser.py` (`email_to_text` flattens the Klaviyo HTML to one item per line; items run from the tier heading to the next tier / "As Always…" terminator), and adds the produce with `source="csa"`. Config in `config/csa.json` (`tier`, `week_letter` — only the subscriber's pickup weeks ingest; `Individual` / `A` here). `purchased` is rolled forward to the **Wednesday pickup** (newsletters arrive ~5 days early) so expiry windows are honest. Dedup + a zero-total "delivery" trip via `record_trip` (`source="csa_newsletter"`).
+3. **Photo receipt (Claude)** — share a receipt photo with Claude (Desktop, web, or iOS Share Sheet). Claude parses the items, normalizes the cryptic receipt strings (e.g. `GV WHL MLK 1G` → `Whole milk, 1 gal`), assigns category/location, and calls `add_to_inventory` — optionally with per-item `unit_price`/`line_total` and a `trip` block so photo receipts feed the same price ledger.
+4. **Manual** — `add_to_inventory` via MCP, or POST `/api/inventory/add` directly.
+5. **Markdown paste** — paste a markdown table (`| Item | Qty | Unit | Category | Location | Expires | Notes |`; only Item required) for a preview-then-commit bulk add: `lib/receipt_paster.py` parses + routes (location resolved, expiry filled), surfaced by `POST /api/inventory/paste` (`{markdown, commit?}` — preview unless `commit:true`) and the `paste_inventory.py` CLI. Good for ad-hoc adds / a table Claude formatted from a photo.
 
 ### Design principle: additive, not another chore
 
@@ -647,7 +653,8 @@ template → Obsidian
 | `ingest_receipts.py` | Hourly email receipt ingestion (IMAP fetch → Claude/Ollama parse → ledger + inventory) |
 | `lib/inventory_db.py` | SQLite store (`data/kitchenos.db`): trips, purchases ledger, inventory |
 | `lib/receipt_parser.py` | Receipt email HTML → text → Ollama extraction → line-total validation |
-| `lib/email_fetcher.py` | Gmail IMAP fetcher for receipt emails (read-only mailbox) |
+| `lib/email_fetcher.py` | Gmail IMAP fetcher (read-only). Multi-account via `load_accounts()`; `fetch_emails(domains, subject_includes, mailbox)` is the generic non-receipt fetch (`mailbox="ALL_MAIL"` for archived senders) |
+| `lib/csa_parser.py` | Parse Central Texas Farmers Co-op "Week N(A/B)" newsletters → produce list for a share tier (deterministic; config in `config/csa.json`). Backs `ingest_csa.py` |
 | `lib/item_aliases.py` | Raw receipt string → canonical item name cache |
 | `lib/storage_locations.py` | Storage-location router — `resolve_location(name, category)` from `config/storage_locations.json` (item override → category → pantry) |
 | `lib/recipe_matcher.py` | Tag purchases with the meal-plan recipe they were bought for (current + next ISO week; deterministic token match) |

@@ -112,14 +112,36 @@ def load_accounts() -> list[tuple[str, str]]:
     return accounts
 
 
+def _resolve_all_mail(conn) -> str:
+    """Find the Gmail "All Mail" folder by its \\All special-use flag.
+
+    The display name is locale-dependent ("[Gmail]/All Mail", "[Google Mail]/…"),
+    so match the flag rather than hard-coding a name. Falls back to INBOX.
+    """
+    typ, boxes = conn.list()
+    if typ == "OK" and boxes:
+        for raw in boxes:
+            line = raw.decode(errors="ignore") if isinstance(raw, bytes) else str(raw)
+            if "\\All" in line:
+                # The mailbox name is the quoted segment after the delimiter.
+                return line.split(' "/" ')[-1].strip().strip('"')
+    return "INBOX"
+
+
 def _fetch_from_account(address: str, password: str, rules: list[dict],
-                        since: str, seen_ids: set[str]) -> list[dict]:
-    """Scan one mailbox for receipts, skipping Message-IDs already in seen_ids."""
+                        since: str, seen_ids: set[str],
+                        mailbox: str = "INBOX") -> list[dict]:
+    """Scan one mailbox for receipts, skipping Message-IDs already in seen_ids.
+
+    ``mailbox`` is an IMAP folder name, or the sentinel ``"ALL_MAIL"`` to scan
+    Gmail's archive (needed for senders whose mail skips the inbox).
+    """
     results: list[dict] = []
     conn = imaplib.IMAP4_SSL(IMAP_HOST)
     try:
         conn.login(address, password)
-        conn.select("INBOX", readonly=True)
+        folder = _resolve_all_mail(conn) if mailbox == "ALL_MAIL" else mailbox
+        conn.select(f'"{folder}"', readonly=True)
         for rule in rules:
             domains = rule["domains"]
             subject_includes = rule["subject_includes"]
@@ -150,6 +172,34 @@ def _fetch_from_account(address: str, password: str, rules: list[dict],
             conn.logout()
         except Exception:
             pass
+    return results
+
+
+def fetch_emails(domains: list[str], subject_includes: Optional[list[str]] = None,
+                 since_days: int = 14, mailbox: str = "INBOX") -> list[dict]:
+    """Fetch emails from ``domains`` (optionally subject-filtered) across accounts.
+
+    Generic counterpart to :func:`fetch_receipt_emails` for non-receipt senders
+    (e.g. the CSA newsletter). Scans every configured Gmail account and merges
+    results, de-duplicating by Message-ID. Each payload records its ``account``.
+    ``mailbox="ALL_MAIL"`` scans Gmail's archive for senders that skip the inbox.
+    """
+    accounts = load_accounts()
+    if not accounts:
+        raise RuntimeError("GMAIL_ADDRESS / GMAIL_APP_PASSWORD not set in .env")
+
+    rule = {
+        "domains": [d.lower() for d in domains],
+        "subject_includes": [s.lower() for s in (subject_includes or [])],
+    }
+    since = (date.today() - timedelta(days=since_days)).strftime("%d-%b-%Y")
+
+    results: list[dict] = []
+    seen_ids: set[str] = set()
+    for address, password in accounts:
+        results.extend(
+            _fetch_from_account(address, password, [rule], since, seen_ids, mailbox)
+        )
     return results
 
 

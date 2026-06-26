@@ -23,7 +23,7 @@ CATEGORIES = (
     "frozen", "bakery", "beverages", "household", "other",
 )
 LOCATIONS = ("fridge", "freezer", "pantry", "counter", "other")
-SOURCES = ("receipt", "manual", "claude")
+SOURCES = ("receipt", "manual", "claude", "csa")
 
 HEADER = "| Item | Quantity | Unit | Category | Location | For Recipe | Purchased | Expires | Source | Notes |"
 SEPARATOR = "|------|----------|------|----------|----------|------------|-----------|---------|--------|-------|"
