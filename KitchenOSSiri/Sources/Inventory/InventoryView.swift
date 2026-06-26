@@ -12,7 +12,10 @@ struct InventoryView: View {
 
     private var grouped: [(category: String, items: [InventoryItem])] {
         Dictionary(grouping: items, by: \.category)
-            .map { (category: $0.key, items: $0.value.sorted { $0.name < $1.name }) }
+            .map { (category: $0.key,
+                    items: $0.value.sorted {
+                        ($0.expiryRank, $0.name) < ($1.expiryRank, $1.name)
+                    }) }
             .sorted { $0.category < $1.category }
     }
 
@@ -49,12 +52,23 @@ struct InventoryView: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name)
-                Text(item.location).font(.caption).foregroundStyle(.secondary)
+                Text(item.inventorySecondaryLine)
+                    .font(.caption).foregroundStyle(.secondary)
+                Text(item.location)
+                    .font(.caption2).foregroundStyle(.tertiary)
             }
             Spacer()
             Stepper(value: Binding(
                 get: { item.quantity },
-                set: { newQty in Task { await update(item, quantity: max(0, newQty)) } }
+                set: { newQty in
+                    Task {
+                        if newQty <= 0 {
+                            await remove(item)
+                        } else {
+                            await update(item, quantity: newQty)
+                        }
+                    }
+                }
             ), in: 0...999, step: 1) {
                 Text("\(formatQty(item.quantity)) \(item.unit)")
                     .font(.callout).monospacedDigit()

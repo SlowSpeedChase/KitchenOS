@@ -74,7 +74,15 @@ struct MealPlanView: View {
         HStack {
             Text(meal.label).frame(width: 80, alignment: .leading).foregroundStyle(.secondary)
             if let value {
-                Text(value.name)
+                if value.kind == "recipe" {
+                    NavigationLink {
+                        RecipeDetailView(name: value.name)
+                    } label: {
+                        Text(value.name)
+                    }
+                } else {
+                    Text(value.name)
+                }
                 Spacer()
                 Stepper("×\(value.servings)", value: Binding(
                     get: { value.servings },

@@ -80,7 +80,16 @@ struct PlannerBoardView: View {
         return VStack(alignment: .leading, spacing: 2) {
             Text(meal.label).font(.caption2).foregroundStyle(.secondary)
             if let value {
-                Text(value.name).font(.caption).lineLimit(2)
+                if value.kind == "recipe" {
+                    NavigationLink {
+                        RecipeDetailView(name: value.name)
+                    } label: {
+                        Text(value.name).font(.caption).lineLimit(2)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Text(value.name).font(.caption).lineLimit(2)
+                }
                 Spacer(minLength: 0)
                 Button(role: .destructive) {
                     setSlot(dayIndex: dayIndex, meal: meal, value: nil)

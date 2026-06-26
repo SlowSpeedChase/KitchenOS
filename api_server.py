@@ -1535,6 +1535,7 @@ def api_task_mark_done(week, task_id):
 def api_inventory_list():
     """List inventory items, with optional category/location filters."""
     from lib.inventory import read_inventory
+    from lib.expiry import expiry_status
 
     items = read_inventory()
     category = (request.args.get('category') or '').lower().strip()
@@ -1543,7 +1544,13 @@ def api_inventory_list():
         items = [i for i in items if i.category == category]
     if location:
         items = [i for i in items if i.location == location]
-    return jsonify([i.to_dict() for i in items])
+
+    payload = []
+    for i in items:
+        d = i.to_dict()
+        d["expiry_status"] = expiry_status(d.get("expires"))
+        payload.append(d)
+    return jsonify(payload)
 
 
 @app.route('/api/use-it-up', methods=['GET'])
