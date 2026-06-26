@@ -54,5 +54,15 @@ struct KitchenOSShortcuts: AppShortcutsProvider {
             shortTitle: "Summarize",
             systemImageName: "text.quote"
         )
+        AppShortcut(
+            intent: AskKitchenOSIntent(),
+            phrases: [
+                "Ask \(.applicationName)",
+                "Ask \(.applicationName) about my meals",
+                "Talk to \(.applicationName)",
+            ],
+            shortTitle: "Ask KitchenOS",
+            systemImageName: "bubble.left.and.bubble.right"
+        )
     }
 }
