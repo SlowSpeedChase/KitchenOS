@@ -68,4 +68,25 @@ final class ModelsTests: XCTestCase {
         XCTAssertNil(d.ingredients)
         XCTAssertNil(d.nutritionCalories)
     }
+
+    func testDecodeInventoryItemWithExpiry() throws {
+        let json = Data("""
+        {"name":"old milk","quantity":1,"unit":"gal","category":"dairy",
+         "location":"fridge","purchased":"2026-06-13","expires":"2026-06-23",
+         "expiry_status":"expired","source":"receipt","notes":""}
+        """.utf8)
+        let item = try JSONDecoder().decode(InventoryItem.self, from: json)
+        XCTAssertEqual(item.expires, "2026-06-23")
+        XCTAssertEqual(item.expiryStatus, "expired")
+        XCTAssertEqual(item.purchased, "2026-06-13")
+    }
+
+    func testDecodeInventoryItemWithoutExpiryFields() throws {
+        // Back-compat: name-only payloads still decode; new fields are nil.
+        let json = Data(#"{"name":"rice"}"#.utf8)
+        let item = try JSONDecoder().decode(InventoryItem.self, from: json)
+        XCTAssertNil(item.expires)
+        XCTAssertNil(item.expiryStatus)
+        XCTAssertEqual(item.name, "rice")
+    }
 }
