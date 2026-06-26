@@ -13,6 +13,14 @@ FIXTURES = Path(__file__).parent / "fixtures"
 PARSED_OK = json.loads((FIXTURES / "parsed_ereceipt.json").read_text())
 
 
+@pytest.fixture(autouse=True)
+def _stub_csa(monkeypatch):
+    """Keep receipt-ingest tests hermetic: the run() tail also pulls CSA
+    newsletters over the network — stub that out here."""
+    import ingest_csa
+    monkeypatch.setattr(ingest_csa, "run", lambda *a, **k: {"ingested": 0})
+
+
 @pytest.fixture
 def alias_tmp(tmp_path, monkeypatch):
     from lib import item_aliases

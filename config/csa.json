@@ -1,0 +1,8 @@
+{
+  "store": "Central Texas Farmers Co-op",
+  "sender_domain": "centraltexasfarmers.com",
+  "newsletter_subject_includes": ["week"],
+  "tier": "Individual",
+  "week_letter": "A",
+  "category": "produce"
+}

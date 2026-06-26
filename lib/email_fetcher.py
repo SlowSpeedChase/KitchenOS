@@ -1,8 +1,13 @@
 """Fetch grocery receipt emails from Gmail over IMAP.
 
-Credentials come from the environment: GMAIL_ADDRESS + GMAIL_APP_PASSWORD
-(a Google "app password" — requires 2-step verification on the account).
-Sender domains per store live in config/receipt_senders.json.
+Credentials come from the environment. The primary account is
+GMAIL_ADDRESS + GMAIL_APP_PASSWORD (a Google "app password" — requires
+2-step verification on the account). Additional accounts are read from
+numbered vars: GMAIL_ADDRESS_2 / GMAIL_APP_PASSWORD_2,
+GMAIL_ADDRESS_3 / GMAIL_APP_PASSWORD_3, … — so receipts that arrive in
+more than one inbox (e.g. HEB in one, a farm co-op in another) are all
+pulled in a single run. Sender domains per store live in
+config/receipt_senders.json.
 
 Only message *reading* happens here; dedup against already-ingested
 Message-IDs is the caller's job (ingest_receipts.py checks
@@ -82,22 +87,61 @@ def extract_email_payload(raw_bytes: bytes) -> dict:
     }
 
 
-def fetch_receipt_emails(since_days: int = 14) -> list[dict]:
-    """Fetch candidate receipt emails from the last ``since_days`` days."""
-    address = os.environ.get("GMAIL_ADDRESS")
-    password = os.environ.get("GMAIL_APP_PASSWORD")
-    if not address or not password:
-        raise RuntimeError("GMAIL_ADDRESS / GMAIL_APP_PASSWORD not set in .env")
+def load_accounts() -> list[tuple[str, str]]:
+    """Gmail ``(address, app_password)`` pairs to scan, primary first.
 
-    rules = load_sender_rules()
-    since = (date.today() - timedelta(days=since_days)).strftime("%d-%b-%Y")
+    Reads GMAIL_ADDRESS / GMAIL_APP_PASSWORD, then GMAIL_ADDRESS_2 /
+    GMAIL_APP_PASSWORD_2, GMAIL_ADDRESS_3 / … until a numbered address is
+    missing. An address with no matching password (or vice versa) is skipped.
+    """
+    accounts: list[tuple[str, str]] = []
+    primary = os.environ.get("GMAIL_ADDRESS")
+    primary_pw = os.environ.get("GMAIL_APP_PASSWORD")
+    if primary and primary_pw:
+        accounts.append((primary, primary_pw))
 
+    n = 2
+    while True:
+        addr = os.environ.get(f"GMAIL_ADDRESS_{n}")
+        if not addr:
+            break
+        pw = os.environ.get(f"GMAIL_APP_PASSWORD_{n}")
+        if pw:
+            accounts.append((addr, pw))
+        n += 1
+    return accounts
+
+
+def _resolve_all_mail(conn) -> str:
+    """Find the Gmail "All Mail" folder by its \\All special-use flag.
+
+    The display name is locale-dependent ("[Gmail]/All Mail", "[Google Mail]/…"),
+    so match the flag rather than hard-coding a name. Falls back to INBOX.
+    """
+    typ, boxes = conn.list()
+    if typ == "OK" and boxes:
+        for raw in boxes:
+            line = raw.decode(errors="ignore") if isinstance(raw, bytes) else str(raw)
+            if "\\All" in line:
+                # The mailbox name is the quoted segment after the delimiter.
+                return line.split(' "/" ')[-1].strip().strip('"')
+    return "INBOX"
+
+
+def _fetch_from_account(address: str, password: str, rules: list[dict],
+                        since: str, seen_ids: set[str],
+                        mailbox: str = "INBOX") -> list[dict]:
+    """Scan one mailbox for receipts, skipping Message-IDs already in seen_ids.
+
+    ``mailbox`` is an IMAP folder name, or the sentinel ``"ALL_MAIL"`` to scan
+    Gmail's archive (needed for senders whose mail skips the inbox).
+    """
     results: list[dict] = []
-    seen_ids: set[str] = set()
     conn = imaplib.IMAP4_SSL(IMAP_HOST)
     try:
         conn.login(address, password)
-        conn.select("INBOX", readonly=True)
+        folder = _resolve_all_mail(conn) if mailbox == "ALL_MAIL" else mailbox
+        conn.select(f'"{folder}"', readonly=True)
         for rule in rules:
             domains = rule["domains"]
             subject_includes = rule["subject_includes"]
@@ -121,10 +165,59 @@ def fetch_receipt_emails(since_days: int = 14) -> list[dict]:
                         continue
                     if mid:
                         seen_ids.add(mid)
+                    payload["account"] = address
                     results.append(payload)
     finally:
         try:
             conn.logout()
         except Exception:
             pass
+    return results
+
+
+def fetch_emails(domains: list[str], subject_includes: Optional[list[str]] = None,
+                 since_days: int = 14, mailbox: str = "INBOX") -> list[dict]:
+    """Fetch emails from ``domains`` (optionally subject-filtered) across accounts.
+
+    Generic counterpart to :func:`fetch_receipt_emails` for non-receipt senders
+    (e.g. the CSA newsletter). Scans every configured Gmail account and merges
+    results, de-duplicating by Message-ID. Each payload records its ``account``.
+    ``mailbox="ALL_MAIL"`` scans Gmail's archive for senders that skip the inbox.
+    """
+    accounts = load_accounts()
+    if not accounts:
+        raise RuntimeError("GMAIL_ADDRESS / GMAIL_APP_PASSWORD not set in .env")
+
+    rule = {
+        "domains": [d.lower() for d in domains],
+        "subject_includes": [s.lower() for s in (subject_includes or [])],
+    }
+    since = (date.today() - timedelta(days=since_days)).strftime("%d-%b-%Y")
+
+    results: list[dict] = []
+    seen_ids: set[str] = set()
+    for address, password in accounts:
+        results.extend(
+            _fetch_from_account(address, password, [rule], since, seen_ids, mailbox)
+        )
+    return results
+
+
+def fetch_receipt_emails(since_days: int = 14) -> list[dict]:
+    """Fetch candidate receipt emails from the last ``since_days`` days.
+
+    Scans every configured Gmail account (see :func:`load_accounts`) and merges
+    the results, de-duplicating by Message-ID across accounts.
+    """
+    accounts = load_accounts()
+    if not accounts:
+        raise RuntimeError("GMAIL_ADDRESS / GMAIL_APP_PASSWORD not set in .env")
+
+    rules = load_sender_rules()
+    since = (date.today() - timedelta(days=since_days)).strftime("%d-%b-%Y")
+
+    results: list[dict] = []
+    seen_ids: set[str] = set()
+    for address, password in accounts:
+        results.extend(_fetch_from_account(address, password, rules, since, seen_ids))
     return results

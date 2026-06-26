@@ -53,6 +53,38 @@ def test_load_sender_rules_back_compat_list_form(tmp_path, monkeypatch):
     assert rules == [{"domains": ["foo.com"], "subject_includes": []}]
 
 
+class TestLoadAccounts:
+    """Multi-account credential loading (primary + numbered extras)."""
+
+    def test_primary_only(self, monkeypatch):
+        monkeypatch.setenv("GMAIL_ADDRESS", "a@gmail.com")
+        monkeypatch.setenv("GMAIL_APP_PASSWORD", "pw1")
+        monkeypatch.delenv("GMAIL_ADDRESS_2", raising=False)
+        assert ef.load_accounts() == [("a@gmail.com", "pw1")]
+
+    def test_second_account(self, monkeypatch):
+        monkeypatch.setenv("GMAIL_ADDRESS", "a@gmail.com")
+        monkeypatch.setenv("GMAIL_APP_PASSWORD", "pw1")
+        monkeypatch.setenv("GMAIL_ADDRESS_2", "b@gmail.com")
+        monkeypatch.setenv("GMAIL_APP_PASSWORD_2", "pw2")
+        monkeypatch.delenv("GMAIL_ADDRESS_3", raising=False)
+        assert ef.load_accounts() == [("a@gmail.com", "pw1"), ("b@gmail.com", "pw2")]
+
+    def test_skips_account_missing_password(self, monkeypatch):
+        monkeypatch.setenv("GMAIL_ADDRESS", "a@gmail.com")
+        monkeypatch.setenv("GMAIL_APP_PASSWORD", "pw1")
+        monkeypatch.setenv("GMAIL_ADDRESS_2", "b@gmail.com")
+        monkeypatch.delenv("GMAIL_APP_PASSWORD_2", raising=False)
+        monkeypatch.delenv("GMAIL_ADDRESS_3", raising=False)
+        assert ef.load_accounts() == [("a@gmail.com", "pw1")]
+
+    def test_empty_when_unset(self, monkeypatch):
+        monkeypatch.delenv("GMAIL_ADDRESS", raising=False)
+        monkeypatch.delenv("GMAIL_APP_PASSWORD", raising=False)
+        monkeypatch.delenv("GMAIL_ADDRESS_2", raising=False)
+        assert ef.load_accounts() == []
+
+
 class TestSubjectAllowed:
     def test_no_filter_allows_all(self):
         assert ef.subject_allowed("anything", []) is True
