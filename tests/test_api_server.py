@@ -871,3 +871,29 @@ def test_inventory_add_without_trip_unchanged(client, tmp_vault, tmp_db):
     conn = idb.connect()
     assert conn.execute("SELECT COUNT(*) FROM trips").fetchone()[0] == 0
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# /api/inventory — computed expiry_status field (additive)
+# ---------------------------------------------------------------------------
+
+def test_inventory_list_includes_expiry_status(client, tmp_vault, tmp_db):
+    # An always-expired perishable, and a no-expiry household item.
+    client.post("/api/inventory/add", json={"items": [
+        {"name": "old milk", "quantity": 1, "unit": "gal", "category": "dairy",
+         "location": "fridge", "expires": "2020-01-01"},
+        {"name": "dish soap", "quantity": 1, "unit": "ct", "category": "household",
+         "location": "pantry"},
+    ]})
+
+    resp = client.get("/api/inventory")
+    assert resp.status_code == 200
+    by_name = {i["name"]: i for i in resp.get_json()}
+
+    assert by_name["old milk"]["expiry_status"] == "expired"
+    # No expiry configured for household → null/None, but the key is present.
+    assert "expiry_status" in by_name["dish soap"]
+    assert by_name["dish soap"]["expiry_status"] is None
+    # Field is additive — existing keys still present.
+    assert by_name["old milk"]["expires"] == "2020-01-01"
+    assert by_name["old milk"]["purchased"] is not None or "purchased" in by_name["old milk"]

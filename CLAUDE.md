@@ -433,6 +433,7 @@ For the full route list, grep `@app.route` in `api_server.py`. Endpoints with no
 | `/api/shopping-list/preview` `/confirm` | See "Pantry-aware shopping list flow" above. |
 | `/api/tasks/<week>` (GET, `?force=1`) | Prep-task sidecar payload; cached in `<week>.tasks.json`. |
 | `/api/inventory/add` (POST) | Accepts optional `trip` `{date, store, total, source_id, source}` + per-item `unit_price`/`line_total` → records into the price ledger. See "Receipt → Inventory Workflow". |
+| `/api/inventory` (GET, `?category=&location=`) | Lists inventory items. Each item carries a computed `expiry_status` (`expired`/`soon`/`ok`/`null`) from `lib/expiry.py` — same thresholds as `Inventory.md`. Backs the native app's inventory cleanup screen. |
 | `/add-to-meal-plan` (GET/POST) | Recipe-button entry. POST branches on `mode={direct,existing,new,schedule_meal}`. `existing`/`new` mutate `vault/Meals/<name>.meal.md` and end on an optional schedule prompt. |
 
 ### Configuration

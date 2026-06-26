@@ -177,15 +177,24 @@ public struct InventoryItem: Codable, Sendable, Hashable, Identifiable {
     public var purchased: String?
     public var source: String
     public var notes: String
+    public var expires: String?
+    public var expiryStatus: String?
 
     public var id: String { "\(name)|\(unit)|\(location)" }
 
+    enum CodingKeys: String, CodingKey {
+        case name, quantity, unit, category, location, purchased, source, notes, expires
+        case expiryStatus = "expiry_status"
+    }
+
     public init(name: String, quantity: Double, unit: String = "ct",
                 category: String = "other", location: String = "pantry",
-                purchased: String? = nil, source: String = "manual", notes: String = "") {
+                purchased: String? = nil, source: String = "manual", notes: String = "",
+                expires: String? = nil, expiryStatus: String? = nil) {
         self.name = name; self.quantity = quantity; self.unit = unit
         self.category = category; self.location = location
         self.purchased = purchased; self.source = source; self.notes = notes
+        self.expires = expires; self.expiryStatus = expiryStatus
     }
 
     /// Tolerant decode: only `name` is required; everything else falls back to
@@ -201,6 +210,8 @@ public struct InventoryItem: Codable, Sendable, Hashable, Identifiable {
         purchased = try c.decodeIfPresent(String.self, forKey: .purchased)
         source = (try? c.decode(String.self, forKey: .source)) ?? "manual"
         notes = (try? c.decode(String.self, forKey: .notes)) ?? ""
+        expires = try c.decodeIfPresent(String.self, forKey: .expires)
+        expiryStatus = try c.decodeIfPresent(String.self, forKey: .expiryStatus)
     }
 }
 
