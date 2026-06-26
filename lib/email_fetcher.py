@@ -1,8 +1,13 @@
 """Fetch grocery receipt emails from Gmail over IMAP.
 
-Credentials come from the environment: GMAIL_ADDRESS + GMAIL_APP_PASSWORD
-(a Google "app password" — requires 2-step verification on the account).
-Sender domains per store live in config/receipt_senders.json.
+Credentials come from the environment. The primary account is
+GMAIL_ADDRESS + GMAIL_APP_PASSWORD (a Google "app password" — requires
+2-step verification on the account). Additional accounts are read from
+numbered vars: GMAIL_ADDRESS_2 / GMAIL_APP_PASSWORD_2,
+GMAIL_ADDRESS_3 / GMAIL_APP_PASSWORD_3, … — so receipts that arrive in
+more than one inbox (e.g. HEB in one, a farm co-op in another) are all
+pulled in a single run. Sender domains per store live in
+config/receipt_senders.json.
 
 Only message *reading* happens here; dedup against already-ingested
 Message-IDs is the caller's job (ingest_receipts.py checks
@@ -82,18 +87,35 @@ def extract_email_payload(raw_bytes: bytes) -> dict:
     }
 
 
-def fetch_receipt_emails(since_days: int = 14) -> list[dict]:
-    """Fetch candidate receipt emails from the last ``since_days`` days."""
-    address = os.environ.get("GMAIL_ADDRESS")
-    password = os.environ.get("GMAIL_APP_PASSWORD")
-    if not address or not password:
-        raise RuntimeError("GMAIL_ADDRESS / GMAIL_APP_PASSWORD not set in .env")
+def load_accounts() -> list[tuple[str, str]]:
+    """Gmail ``(address, app_password)`` pairs to scan, primary first.
 
-    rules = load_sender_rules()
-    since = (date.today() - timedelta(days=since_days)).strftime("%d-%b-%Y")
+    Reads GMAIL_ADDRESS / GMAIL_APP_PASSWORD, then GMAIL_ADDRESS_2 /
+    GMAIL_APP_PASSWORD_2, GMAIL_ADDRESS_3 / … until a numbered address is
+    missing. An address with no matching password (or vice versa) is skipped.
+    """
+    accounts: list[tuple[str, str]] = []
+    primary = os.environ.get("GMAIL_ADDRESS")
+    primary_pw = os.environ.get("GMAIL_APP_PASSWORD")
+    if primary and primary_pw:
+        accounts.append((primary, primary_pw))
 
+    n = 2
+    while True:
+        addr = os.environ.get(f"GMAIL_ADDRESS_{n}")
+        if not addr:
+            break
+        pw = os.environ.get(f"GMAIL_APP_PASSWORD_{n}")
+        if pw:
+            accounts.append((addr, pw))
+        n += 1
+    return accounts
+
+
+def _fetch_from_account(address: str, password: str, rules: list[dict],
+                        since: str, seen_ids: set[str]) -> list[dict]:
+    """Scan one mailbox for receipts, skipping Message-IDs already in seen_ids."""
     results: list[dict] = []
-    seen_ids: set[str] = set()
     conn = imaplib.IMAP4_SSL(IMAP_HOST)
     try:
         conn.login(address, password)
@@ -121,10 +143,31 @@ def fetch_receipt_emails(since_days: int = 14) -> list[dict]:
                         continue
                     if mid:
                         seen_ids.add(mid)
+                    payload["account"] = address
                     results.append(payload)
     finally:
         try:
             conn.logout()
         except Exception:
             pass
+    return results
+
+
+def fetch_receipt_emails(since_days: int = 14) -> list[dict]:
+    """Fetch candidate receipt emails from the last ``since_days`` days.
+
+    Scans every configured Gmail account (see :func:`load_accounts`) and merges
+    the results, de-duplicating by Message-ID across accounts.
+    """
+    accounts = load_accounts()
+    if not accounts:
+        raise RuntimeError("GMAIL_ADDRESS / GMAIL_APP_PASSWORD not set in .env")
+
+    rules = load_sender_rules()
+    since = (date.today() - timedelta(days=since_days)).strftime("%d-%b-%Y")
+
+    results: list[dict] = []
+    seen_ids: set[str] = set()
+    for address, password in accounts:
+        results.extend(_fetch_from_account(address, password, rules, since, seen_ids))
     return results
