@@ -138,3 +138,6 @@ failure_analysis.log
 
 # SQLite store (never commit)
 data/
+
+# Rebuildable URL-scheme handler app (see scripts/kitchenos-uri-handler/install.sh)
+scripts/kitchenos-uri-handler/KitchenOSHandler.app/
