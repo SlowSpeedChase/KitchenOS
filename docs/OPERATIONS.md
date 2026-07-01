@@ -515,7 +515,7 @@ architecture/API/CLI changes").
 | Roadmap / future-enhancement idea | `docs/ROADMAP.md` |
 | User-facing change (setup, usage, configuration) | `README.md` |
 | New `lib/` convention | `lib/CLAUDE.md` |
-| Lessons learned | `docs/IMPLEMENTATION_SUMMARY.md` → "Lessons Learned" |
+| Lessons learned | `docs/history/ORIGINS.md` → "Lessons learned" |
 
 Do not re-embed the full HTTP route table here — link to `docs/API.md`,
 which is the single canonical route/tool reference.
