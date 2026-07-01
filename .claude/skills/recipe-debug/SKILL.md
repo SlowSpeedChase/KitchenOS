@@ -28,7 +28,7 @@ which stage went wrong.
 | 7 | Ollama extraction | `extract_recipe.py::extract_recipe_with_ollama` | Malformed JSON, Ollama timeout |
 | 8 | Ingredient validator | `lib/ingredient_validator.py` | Repair leaves item empty |
 | 9 | Seasonal match | `lib/seasonality.py` | Item is non-string (recent bug!) |
-| 10 | Nutrition lookup | `lib/nutrition_lookup.py` | API keys missing, all three fallbacks fail |
+| 10 | Nutrition lookup | `lib/nutrition_engine.py` → `lib/food_db.py`/`lib/food_resolver.py` | `USDA_FDC_API_KEY` missing, USDA FoodData Central / Open Food Facts lookup fails |
 | 11 | Image download | `lib/image_downloader.py` | Content-type mismatch, 404 |
 | 12 | Template render | `templates/recipe_template.py` | Non-string tag field → `.lower()` crash |
 
