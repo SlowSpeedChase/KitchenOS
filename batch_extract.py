@@ -10,6 +10,7 @@ Usage:
 
 import argparse
 import json
+import re
 import sys
 import time
 import traceback
@@ -17,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 from lib.failure_logger import classify_error, log_failures, cleanup_old_failure_logs, FAILURES_DIR_NAME
+from lib.reminders_url import urls_by_identifier
 
 # macOS Reminders integration
 from EventKit import (
@@ -125,6 +127,42 @@ def is_youtube_url(text):
         return False
     text = text.strip().lower()
     return any(domain in text for domain in ['youtube.com', 'youtu.be'])
+
+
+_URL_RE = re.compile(r'https?://[^\s<>"\')]+')
+
+
+def _first_url(text):
+    """Return the first http(s) URL found in text, or None."""
+    if not text:
+        return None
+    m = _URL_RE.search(str(text))
+    return m.group(0) if m else None
+
+
+def resolve_reminder_url(title, url_field=None, notes=None):
+    """Resolve the best URL for a reminder.
+
+    iOS share-sheet reminders often store the page title as the reminder title
+    and the link in the reminder's URL field or notes. Prefer, in order:
+    a URL in the title, then the reminder URL field, then the first URL in notes.
+    Returns the URL string, or None if none is found.
+    """
+    title = (title or "").strip()
+    if title.startswith(('http://', 'https://')):
+        return title
+
+    embedded = _first_url(title)
+    if embedded:
+        return embedded
+
+    if url_field:
+        u = url_field.absoluteString() if hasattr(url_field, 'absoluteString') else str(url_field)
+        u = (u or "").strip()
+        if u.startswith(('http://', 'https://')):
+            return u
+
+    return _first_url(notes)
 
 
 def _cleanup_run_logs(runs_dir: Path, max_age_days: int = 30) -> int:
@@ -242,22 +280,35 @@ def main():
     failed = []
     invalid = []
 
+    # Share-sheet reminders store the shared link as a rich-link attachment that
+    # EventKit/AppleScript can't read; recover those URLs from the Reminders
+    # SQLite store, keyed by calendarItemIdentifier. Empty dict if unreadable.
+    attachment_urls = urls_by_identifier(REMINDERS_LIST_NAME)
+
     # Process each reminder
     for i, reminder in enumerate(reminders, 1):
-        url = reminder.title()
-        print(f"[{i}/{len(reminders)}] {url}")
+        title = reminder.title()
+        # Resolve the URL from the title / URL field / notes first, then fall
+        # back to the rich-link attachment recovered from the Reminders store.
+        url = resolve_reminder_url(title, reminder.URL(), reminder.notes())
+        if not url:
+            url = attachment_urls.get(reminder.calendarItemIdentifier())
+        print(f"[{i}/{len(reminders)}] {title}")
 
         # Validate URL and route to appropriate extractor
         def print_status(msg):
             print(f"       {msg}")
 
-        is_web_url = url.startswith('http://') or url.startswith('https://')
-
-        if not is_youtube_url(url) and not is_web_url:
-            print("       → Not a URL, skipping")
+        if not url:
+            print("       → No URL in title, URL field, or notes — skipping")
             print("       ✗ Left unchecked")
-            invalid.append((url, "Not a URL"))
+            invalid.append((title, "Not a URL"))
             continue
+
+        if url != title:
+            print(f"       → Resolved URL: {url}")
+
+        is_web_url = url.startswith('http://') or url.startswith('https://')
 
         try:
             if is_youtube_url(url):
@@ -318,7 +369,7 @@ def main():
                 "error": error,
                 "error_category": category,
                 "traceback": tb,
-                "reminder_title": url,
+                "reminder_title": title,
                 "timestamp": datetime.now().isoformat(timespec="seconds"),
             })
 
