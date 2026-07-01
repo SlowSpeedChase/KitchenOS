@@ -105,8 +105,8 @@ curl http://localhost:5678/healthz
 
 ## Design Documents
 
-- **Full Design:** `docs/plans/2026-01-07-youtube-recipe-extraction-design.md`
-- **Implementation Plan:** `docs/plans/2026-01-07-recipe-extraction-implementation.md`
+- **Full Design:** `docs/plans/archive/2026-01-07-youtube-recipe-extraction-design.md`
+- **Implementation Plan:** `docs/plans/archive/2026-01-07-recipe-extraction-implementation.md`
 
 ---
 

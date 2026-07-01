@@ -1,0 +1,77 @@
+# Archived Legacy Plans (pre-superpowers)
+
+Frozen build records for features that shipped on `main` before the superpowers spec/plan convention. Kept for provenance only — not live. Live per-feature design lives in `docs/superpowers/`; current work lives in `docs/ROADMAP.md`.
+
+| Date | Plan file | Kind |
+|---|---|---|
+| 2026-01-07 | [2026-01-07-menu-bar-app-design.md](2026-01-07-menu-bar-app-design.md) | design |
+| 2026-01-07 | [2026-01-07-menu-bar-app-implementation.md](2026-01-07-menu-bar-app-implementation.md) | plan |
+| 2026-01-07 | [2026-01-07-recipe-extraction-implementation.md](2026-01-07-recipe-extraction-implementation.md) | plan |
+| 2026-01-07 | [2026-01-07-recipe-link-detection-design.md](2026-01-07-recipe-link-detection-design.md) | design |
+| 2026-01-07 | [2026-01-07-recipe-link-detection-implementation.md](2026-01-07-recipe-link-detection-implementation.md) | plan |
+| 2026-01-07 | [2026-01-07-recipe-update-system-design.md](2026-01-07-recipe-update-system-design.md) | design |
+| 2026-01-07 | [2026-01-07-recipe-update-system-implementation.md](2026-01-07-recipe-update-system-implementation.md) | plan |
+| 2026-01-07 | [2026-01-07-staged-recipe-blocks-design.md](2026-01-07-staged-recipe-blocks-design.md) | design |
+| 2026-01-07 | [2026-01-07-youtube-recipe-extraction-design.md](2026-01-07-youtube-recipe-extraction-design.md) | design |
+| 2026-01-08 | [2026-01-08-batch-processing-design.md](2026-01-08-batch-processing-design.md) | design |
+| 2026-01-08 | [2026-01-08-batch-processing-impl.md](2026-01-08-batch-processing-impl.md) | impl |
+| 2026-01-08 | [2026-01-08-competitive-research.md](2026-01-08-competitive-research.md) | plan |
+| 2026-01-08 | [2026-01-08-ingredient-amount-unit-split-design.md](2026-01-08-ingredient-amount-unit-split-design.md) | design |
+| 2026-01-08 | [2026-01-08-ingredient-amount-unit-split.md](2026-01-08-ingredient-amount-unit-split.md) | plan |
+| 2026-01-08 | [2026-01-08-ingredient-parsing-fix-design.md](2026-01-08-ingredient-parsing-fix-design.md) | design |
+| 2026-01-08 | [2026-01-08-ios-shortcut-extraction-design.md](2026-01-08-ios-shortcut-extraction-design.md) | design |
+| 2026-01-08 | [2026-01-08-recipemd-export-design.md](2026-01-08-recipemd-export-design.md) | design |
+| 2026-01-08 | [2026-01-08-shopping-list-design.md](2026-01-08-shopping-list-design.md) | design |
+| 2026-01-08 | [2026-01-08-youtube-shorts-support-design.md](2026-01-08-youtube-shorts-support-design.md) | design |
+| 2026-01-09 | [2026-01-09-creator-website-search-design.md](2026-01-09-creator-website-search-design.md) | design |
+| 2026-01-09 | [2026-01-09-creator-website-search.md](2026-01-09-creator-website-search.md) | plan |
+| 2026-01-09 | [2026-01-09-meal-plan-calendar-impl.md](2026-01-09-meal-plan-calendar-impl.md) | impl |
+| 2026-01-09 | [2026-01-09-meal-plan-calendar-view-design.md](2026-01-09-meal-plan-calendar-view-design.md) | design |
+| 2026-01-09 | [2026-01-09-meal-plan-generation-design.md](2026-01-09-meal-plan-generation-design.md) | design |
+| 2026-01-09 | [2026-01-09-recipe-dashboard-design.md](2026-01-09-recipe-dashboard-design.md) | design |
+| 2026-01-09 | [2026-01-09-recipe-reprocess-button-design.md](2026-01-09-recipe-reprocess-button-design.md) | design |
+| 2026-01-09 | [2026-01-09-recipe-reprocess-button-impl.md](2026-01-09-recipe-reprocess-button-impl.md) | impl |
+| 2026-01-09 | [2026-01-09-shopping-list-buttons-design.md](2026-01-09-shopping-list-buttons-design.md) | design |
+| 2026-01-09 | [2026-01-09-shopping-list-buttons-impl.md](2026-01-09-shopping-list-buttons-impl.md) | impl |
+| 2026-01-10 | [2026-01-10-nutrition-tracking-design.md](2026-01-10-nutrition-tracking-design.md) | design |
+| 2026-01-10 | [2026-01-10-nutrition-tracking.md](2026-01-10-nutrition-tracking.md) | plan |
+| 2026-01-10 | [2026-01-10-paste-ingredients-design.md](2026-01-10-paste-ingredients-design.md) | design |
+| 2026-01-10 | [2026-01-10-timed-meal-events-design.md](2026-01-10-timed-meal-events-design.md) | design |
+| 2026-02-09 | [2026-02-09-meal-occasion-design.md](2026-02-09-meal-occasion-design.md) | design |
+| 2026-02-13 | [2026-02-13-add-to-meal-plan-button-design.md](2026-02-13-add-to-meal-plan-button-design.md) | design |
+| 2026-02-13 | [2026-02-13-add-to-meal-plan-button.md](2026-02-13-add-to-meal-plan-button.md) | plan |
+| 2026-02-13 | [2026-02-13-batch-failure-agent-design.md](2026-02-13-batch-failure-agent-design.md) | design |
+| 2026-02-13 | [2026-02-13-batch-failure-agent-impl.md](2026-02-13-batch-failure-agent-impl.md) | impl |
+| 2026-02-14 | [2026-02-14-smart-fill-design.md](2026-02-14-smart-fill-design.md) | design |
+| 2026-02-14 | [2026-02-14-smart-fill-impl.md](2026-02-14-smart-fill-impl.md) | impl |
+| 2026-02-17 | [2026-02-17-crouton-import-design.md](2026-02-17-crouton-import-design.md) | design |
+| 2026-02-17 | [2026-02-17-crouton-import-impl.md](2026-02-17-crouton-import-impl.md) | impl |
+| 2026-02-21 | [2026-02-21-interactive-meal-planner-design.md](2026-02-21-interactive-meal-planner-design.md) | design |
+| 2026-02-21 | [2026-02-21-interactive-meal-planner-plan.md](2026-02-21-interactive-meal-planner-plan.md) | plan |
+| 2026-02-21 | [2026-02-21-recipe-images-design.md](2026-02-21-recipe-images-design.md) | design |
+| 2026-02-21 | [2026-02-21-recipe-images-plan.md](2026-02-21-recipe-images-plan.md) | plan |
+| 2026-02-21 | [2026-02-21-season-filter-cuisine-cleanup-design.md](2026-02-21-season-filter-cuisine-cleanup-design.md) | design |
+| 2026-02-21 | [2026-02-21-season-filter-cuisine-cleanup-plan.md](2026-02-21-season-filter-cuisine-cleanup-plan.md) | plan |
+| 2026-02-21 | [2026-02-21-seasonality-design.md](2026-02-21-seasonality-design.md) | design |
+| 2026-02-21 | [2026-02-21-tag-normalization-design.md](2026-02-21-tag-normalization-design.md) | design |
+| 2026-02-21 | [2026-02-21-tag-normalization-plan.md](2026-02-21-tag-normalization-plan.md) | plan |
+| 2026-02-22 | [2026-02-22-meal-suggestions-design.md](2026-02-22-meal-suggestions-design.md) | design |
+| 2026-02-22 | [2026-02-22-meal-suggestions-plan.md](2026-02-22-meal-suggestions-plan.md) | plan |
+| 2026-02-22 | [2026-02-22-visual-meal-planner-cards-design.md](2026-02-22-visual-meal-planner-cards-design.md) | design |
+| 2026-02-22 | [2026-02-22-visual-meal-planner-cards-plan.md](2026-02-22-visual-meal-planner-cards-plan.md) | plan |
+| 2026-04-19 | [2026-04-19-smart-meal-plan-design.md](2026-04-19-smart-meal-plan-design.md) | design |
+| 2026-04-19 | [2026-04-19-smart-meal-plan-implementation.md](2026-04-19-smart-meal-plan-implementation.md) | plan |
+| 2026-04-25 | [2026-04-25-cleanup-and-consolidate-design.md](2026-04-25-cleanup-and-consolidate-design.md) | design |
+| 2026-04-25 | [2026-04-25-cleanup-and-consolidate-plan.md](2026-04-25-cleanup-and-consolidate-plan.md) | plan |
+| 2026-05-01 | [2026-05-01-recipe-button-meal-builder-design.md](2026-05-01-recipe-button-meal-builder-design.md) | design |
+| 2026-05-01 | [2026-05-01-recipe-button-meal-builder.md](2026-05-01-recipe-button-meal-builder.md) | plan |
+| 2026-05-03 | [2026-05-03-vault-icloud-to-obsidian-sync-design.md](2026-05-03-vault-icloud-to-obsidian-sync-design.md) | design |
+| 2026-05-03 | [2026-05-03-vault-icloud-to-obsidian-sync.md](2026-05-03-vault-icloud-to-obsidian-sync.md) | plan |
+| 2026-05-28 | [2026-05-28-nutrition-macros-design.md](2026-05-28-nutrition-macros-design.md) | design |
+| 2026-05-28 | [2026-05-28-nutrition-macros-plan.md](2026-05-28-nutrition-macros-plan.md) | plan |
+| 2026-05-29 | [2026-05-29-macro-browser-design.md](2026-05-29-macro-browser-design.md) | design |
+| 2026-05-29 | [2026-05-29-macro-browser-plan.md](2026-05-29-macro-browser-plan.md) | plan |
+| 2026-06-10 | [2026-06-10-email-receipt-ingestion-design.md](2026-06-10-email-receipt-ingestion-design.md) | design |
+| 2026-06-10 | [2026-06-10-email-receipt-ingestion-plan.md](2026-06-10-email-receipt-ingestion-plan.md) | plan |
+| 2026-06-15 | [2026-06-15-home-canvas-dashboard-design.md](2026-06-15-home-canvas-dashboard-design.md) | design |
+| 2026-06-15 | [2026-06-15-home-canvas-dashboard.md](2026-06-15-home-canvas-dashboard.md) | plan |

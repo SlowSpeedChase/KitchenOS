@@ -367,8 +367,8 @@ KitchenOS/
 ## Documentation
 
 - **iOS Shortcut Setup**: `iOS_SHORTCUT_SETUP.md`
-- **Design**: `docs/plans/2026-01-07-youtube-recipe-extraction-design.md`
-- **Implementation**: `docs/plans/2026-01-07-recipe-extraction-implementation.md`
+- **Design**: `docs/plans/archive/2026-01-07-youtube-recipe-extraction-design.md`
+- **Implementation**: `docs/plans/archive/2026-01-07-recipe-extraction-implementation.md`
 - **Development Guide**: `CLAUDE.md`
 
 ## License
