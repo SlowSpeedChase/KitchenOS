@@ -21,7 +21,7 @@ cd ~/Dev/KitchenOS
 git fetch origin
 git status --short                 # MUST be clean (other agent committed). If dirty, stop & commit/stash their work first.
 git switch ingredient-cleaning && git pull
-git switch siri-app-intents && git pull   # this updates the branch ref; the iOS worktree is at ~/Dev/KitchenOS
+git switch siri-app-intents && git pull   # this updates the branch ref; the iOS worktree is at ~/Dev/KitchenOS-siri
 git switch ingredient-cleaning            # base the merge on the bigger branch (their app + nutrition)
 git switch -c converge-to-main
 ```
@@ -120,7 +120,7 @@ launchctl unload ~/Library/LaunchAgents/com.kitchenos.api.plist && launchctl loa
 sleep 3 && curl -s 'http://localhost:5001/health'       # {"status":"ok"}
 curl -s -X POST 'http://localhost:5001/api/recipes/by-ingredients' -H 'Content-Type: application/json' -d '{"ingredients":["chicken","rice"]}'
 ```
-Build the iOS app from `main` going forward (the `~/Dev/KitchenOS` worktree can be retired once main is canonical).
+Build the iOS app from `main` going forward (the `~/Dev/KitchenOS-siri` worktree can be retired once main is canonical).
 
 ## Rollback (safe at any point)
 - Mid-merge mess: `git merge --abort` (branches untouched).
