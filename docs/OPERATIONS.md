@@ -121,26 +121,35 @@ curl -X POST http://localhost:5001/send-to-reminders \
 .venv/bin/python generate_price_dashboard.py --dry-run   # print markdown without saving
 ```
 
-### Completed one-time migrations
+### Migrations: one-time vs. re-runnable maintenance
 
-These are historical/schema migrations, not routine operations — run once,
-already applied to the live vault/DB. Kept here for reference in case a
-fresh environment (new machine, restored backup) needs them replayed.
+**Re-runnable maintenance / backfill** — `migrate_recipes.py` and
+`migrate_cuisine.py` are not one-off historical scripts; they're safe to
+re-run incrementally (e.g. after new imports or rule changes). Both default
+to skipping recipes that are already up to date/correctly tagged, so a
+repeat run is cheap and only touches what's changed.
 
 ```bash
-# Applies template changes to existing recipe files
+# Applies template changes to existing recipe files — re-run after template edits
 .venv/bin/python migrate_recipes.py --dry-run
 .venv/bin/python migrate_recipes.py
 
-# Cuisine cleanup, tag normalization & seasonal population
+# Cuisine cleanup, tag normalization & seasonal population — re-run after new
+# imports or rule changes; default path skips recipes already tagged/correct
 .venv/bin/python migrate_cuisine.py --dry-run
 .venv/bin/python migrate_cuisine.py
 .venv/bin/python migrate_cuisine.py --no-seasonal            # cuisine + tags only
 .venv/bin/python migrate_cuisine.py --no-tags --force-seasonal  # force re-match seasonal data
+```
 
-# One-time import of legacy Inventory.md into data/kitchenos.db.
-# Refuses to run if the inventory table already has rows — safe to leave in
-# a startup script, it's a no-op once migrated.
+**Truly one-time (guarded)** — `migrate_inventory_db.py` imports legacy
+`Inventory.md` into `data/kitchenos.db` and explicitly refuses to run once
+the inventory table already has rows, so it's a genuine one-off (safe to
+leave in a startup script — it's a no-op once migrated). Kept here for
+reference in case a fresh environment (new machine, restored backup) needs
+it replayed.
+
+```bash
 .venv/bin/python migrate_inventory_db.py --dry-run
 .venv/bin/python migrate_inventory_db.py
 ```
@@ -270,7 +279,9 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.dashboard-update.plist
 ### com.kitchenos.mealplan
 
 Auto-generates weekly meal plan templates 2 weeks in advance. Runs
-`generate_meal_plan.py` daily at 6:00am (`RunAtLoad: true`).
+`generate_meal_plan.py` daily at 6:00am. No `RunAtLoad` — reloading the
+agent does not trigger an immediate run, it only fires at the next 6:00am
+`StartCalendarInterval`.
 
 ```bash
 cp ops/com.kitchenos.mealplan.plist ~/Library/LaunchAgents/
