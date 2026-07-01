@@ -144,6 +144,7 @@ an explicit Siri confirmation.
 | `GetRecipeNutritionIntent` | `recipe: RecipeEntity` | `GET /api/recipes/<name>` | "How many calories are in X" — reads `nutrition_calories`/`nutrition_protein`/etc. off the recipe detail response. |
 | `SummarizeRecipeIntent` | `recipe: RecipeEntity` | `GET /api/recipes/<name>`, then on-device `RecipeAI.summarize` | On-device summary of a recipe's steps/ingredients — no separate summarization endpoint. |
 | `AskKitchenOSIntent` | `request: String` (free-text, open-ended) | Indirect — delegates to `MealPlanAssistant`/`RecipeAI` (on-device LLM + tools), which itself calls into `KitchenOSClient`; any proposed write goes through the same read-modify-write `addRecipe`/`putMealPlan` path after a confirmation gate | Freeform natural-language entry point ("what should I make tonight", "add pasta to Friday"). |
+| `OpenRecipeIntent` | `target: RecipeEntity` | None — pure in-app navigation via `RecipeRouter`, no HTTP endpoint | Opens a recipe directly in the app (e.g. tapping the indexed entity in Spotlight). |
 
 `KitchenOSClient` also exposes `recipesByIngredients(_:limit:)` →
 `POST /api/recipes/by-ingredients` and `inventoryItems()` → `GET /api/inventory`,

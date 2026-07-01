@@ -34,7 +34,7 @@ Everything is markdown in the Obsidian vault (`~/Dev/KitchenOS/vault/KitchenOS/`
 | `Meal Plans/` | One file per ISO week (`2026-W18.md`) |
 | `Meal Plans/<week>.tasks.json` | Sidecar cache for the prep-task panel |
 | `Shopping Lists/` | One markdown checklist per week |
-| `Nutrition Dashboard/` | One per week |
+| `Nutrition Dashboard.md` | Single file at vault root, rewritten in place |
 | `Inventory.md` | Generated read-only view of the inventory DB (`data/kitchenos.db`) |
 | `meal_calendar.ics` | All weeks merged into one calendar feed |
 
@@ -77,7 +77,7 @@ Five entry points, all converge on `extract_recipe.py` (or `import_crouton.py` f
 - Full intent table and backing endpoints: `docs/API.md` § 3.
 
 ### What extraction actually does
-For each URL: fetch metadata + transcript + first comment → try recipe-link in description → try description-as-recipe → try comment → try creator's website → fall back to Ollama (`mistral:7b`) on the transcript. Then validate ingredients, match against the seasonal calendar, look up nutrition (Nutritionix → USDA → AI), download a hero image, render the template. The recipe markdown gets three Obsidian Buttons baked into the body: **Reprocess** (`/reprocess`), **Refresh template** (`/refresh`), and **Add to Meal Plan** (`/add-to-meal-plan` — see Stage 2c).
+For each URL: fetch metadata + transcript + first comment → try recipe-link in description → try description-as-recipe → try comment → try creator's website → fall back to Ollama (`mistral:7b`) on the transcript. Then validate ingredients, match against the seasonal calendar, look up nutrition (USDA FoodData Central, with Open Food Facts as a fallback for branded/packaged items), download a hero image, render the template. The recipe markdown gets three Obsidian Buttons baked into the body: **Reprocess** (`/reprocess`), **Refresh template** (`/refresh`), and **Add to Meal Plan** (`/add-to-meal-plan` — see Stage 2c).
 
 ---
 
@@ -177,7 +177,7 @@ Not part of the linear cook flow, but feeds back into Stage 3 eventually.
 
 ## 7. Review — nutrition dashboard
 
-- `com.kitchenos.dashboard-update` runs daily (6:15 AM) and writes `Nutrition Dashboard/<week>.md`: per-day calorie/macro totals from the recipes on that week's plan, weighted by servings multipliers and meal expansion.
+- `com.kitchenos.dashboard-update` runs daily (6:15 AM) and rewrites the single `Nutrition Dashboard.md` at the vault root: per-day calorie/macro totals from the recipes on that week's plan, weighted by servings multipliers and meal expansion.
 - Targets come from `My Macros.md` in the vault (parsed by `lib/macro_targets.py`).
 - Manual rebuild: `.venv/bin/python generate_nutrition_dashboard.py --week 2026-W18`.
 
@@ -194,7 +194,8 @@ All in `~/Library/LaunchAgents/` (copied from `ops/*.plist`).
 | `com.kitchenos.mealplan` | 06:00 daily | Creates the empty meal-plan template two weeks out |
 | `com.kitchenos.calendar-sync` | 06:05 daily | Regenerates `meal_calendar.ics` |
 | `com.kitchenos.dashboard-update` | 06:15 daily | Regenerates current week's nutrition dashboard |
-| `com.kitchenos.cleanup-icloud-old` | Monthly | iCloud housekeeping (low-importance) |
+| `com.kitchenos.receipt-ingest` | Hourly | Ingests HEB receipt emails into the inventory/price ledger |
+| `com.kitchenos.cleanup-icloud-old` | Yearly (May 2) | iCloud housekeeping (low-importance) |
 
 Logs: `~/Dev/KitchenOS/logs/<service>.log`. Reload all: `scripts/reload_launch_agents.sh`.
 
