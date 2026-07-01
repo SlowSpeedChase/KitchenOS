@@ -1,5 +1,10 @@
 # iOS Shortcut Setup
 
+> **Legacy/alternate path.** The primary way to extract recipes on iOS is now the native
+> KitchenOS app (Siri / App Intents) — see `docs/API.md` for the Siri-facing routes. This
+> Share-Sheet `/extract` shortcut still works and remains useful for ad-hoc extraction from
+> a browser share sheet, but it is no longer the main flow.
+
 Extract recipes from YouTube videos via iOS Share Sheet. Works from anywhere using Tailscale.
 
 ## Prerequisites
@@ -8,15 +13,7 @@ Extract recipes from YouTube videos via iOS Share Sheet. Works from anywhere usi
 - API server running on Mac
 - Ollama running on Mac
 
-## Step 1: Find Your Mac's Tailscale IP
-
-```bash
-tailscale ip -4
-```
-
-This returns something like `100.x.y.z`. Save this - it stays stable.
-
-## Step 2: Start the Server on Your Mac
+## Step 1: Start the Server on Your Mac
 
 ```bash
 cd /Users/chaseeasterling/Dev/KitchenOS
@@ -34,7 +31,7 @@ curl http://localhost:5001/health
 # Should return: {"status":"ok"}
 ```
 
-## Step 3: Create the iOS Shortcut
+## Step 2: Create the iOS Shortcut
 
 1. Open **Shortcuts** app on iPhone/iPad
 2. Tap **+** to create new shortcut
@@ -69,7 +66,7 @@ curl http://localhost:5001/health
 3. Enable **Show in Share Sheet**
 4. Under "Share Sheet Types", select only **URLs**
 
-## Step 4: Use the Shortcut
+## Step 3: Use the Shortcut
 
 1. Watch a YouTube video in Safari or YouTube app
 2. Tap **Share**
@@ -81,55 +78,16 @@ The recipe is now in your Obsidian vault.
 
 ## Running Server at Startup (Optional)
 
-Create a LaunchAgent to start the server automatically:
-
-```bash
-cat > ~/Library/LaunchAgents/com.kitchenos.api.plist << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.kitchenos.api</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/Users/chaseeasterling/Dev/KitchenOS/.venv/bin/python</string>
-        <string>/Users/chaseeasterling/Dev/KitchenOS/api_server.py</string>
-    </array>
-    <key>WorkingDirectory</key>
-    <string>/Users/chaseeasterling/Dev/KitchenOS</string>
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>PORT</key>
-        <string>5001</string>
-    </dict>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>/Users/chaseeasterling/Dev/KitchenOS/logs/server.log</string>
-    <key>StandardErrorPath</key>
-    <string>/Users/chaseeasterling/Dev/KitchenOS/logs/server.log</string>
-</dict>
-</plist>
-EOF
-
-# Load it
-launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist
-```
-
-To stop:
-```bash
-launchctl unload ~/Library/LaunchAgents/com.kitchenos.api.plist
-```
+The `com.kitchenos.api` LaunchAgent starts the server automatically. The plist lives in
+the repo at `ops/com.kitchenos.api.plist` — see `docs/OPERATIONS.md` for the install/
+restart/uninstall commands rather than hand-authoring one here.
 
 ## Troubleshooting
 
 **"Could not connect to server"**
 - Check Tailscale is connected on both devices
 - Verify server is running: `curl http://localhost:5001/health`
-- Check your Tailscale IP is correct
+- Check the Mac's Tailscale hostname (`chases-mac-mini.taila69703.ts.net`) resolves from the iOS device
 
 **"Extraction failed"**
 - Ensure Ollama is running: `ollama serve`

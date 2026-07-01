@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-26
 **Surface:** Native iPad/iOS app (`KitchenOSSiri/`)
-**Status:** Approved
+**Status:** Implemented
 
 ## Goal
 
