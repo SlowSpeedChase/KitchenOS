@@ -227,11 +227,9 @@ def aggregate_ingredients(all_ingredients: List[dict]) -> List[dict]:
     results = []
     for key, items in groups.items():
         combined = combine_ingredient_group(items)
-        # Consolidate to a single entry per normalized name
-        # (taking the first result, which will be the best representative)
-        if combined:
-            combined[0]["item"] = key  # canonical normalized name
-            results.append(combined[0])
+        for c in combined:
+            c["item"] = key  # canonical normalized name
+        results.extend(combined)
 
     results.sort(key=lambda x: normalize_item_name(x.get('item', '')))
 
