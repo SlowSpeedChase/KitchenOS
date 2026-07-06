@@ -5,6 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>KitchenOS Meal Planner</title>
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
+    <script>
+        // Touch mode: real touch devices via pointer:coarse, or force with ?touch=1
+        // (lets desktop Playwright exercise the touch UI). Gates the html.touch
+        // CSS section and IS_TOUCH-conditional JS below.
+        window.IS_TOUCH = matchMedia('(pointer: coarse)').matches
+            || new URLSearchParams(location.search).has('touch');
+        if (window.IS_TOUCH) document.documentElement.classList.add('touch');
+    </script>
     <style>
         :root {
             --bg: #f5f5f7;
@@ -100,6 +108,7 @@
             height: 6px;
             flex-shrink: 0;
             cursor: row-resize;
+            touch-action: none; /* without this iOS cancels the pointer stream to scroll */
             background: var(--card-bg);
             border-bottom: 1px solid var(--border);
             display: flex;
@@ -732,8 +741,11 @@
             z-index: 9;
         }
 
-        /* --- Responsive --- */
-        @media (max-width: 768px) {
+        /* --- Responsive ---
+           1080px so iPad portrait (810-834px) AND classic-iPad landscape (1024px)
+           both get the off-canvas drawer; iPad Air/Pro landscape keeps the docked
+           sidebar with room for the board. */
+        @media (max-width: 1080px) {
             .sidebar {
                 position: fixed;
                 left: 0;
@@ -757,9 +769,16 @@
             .main {
                 width: 100vw;
             }
+
+            /* div.panel-dock: outrank the base .panel-dock rule, which is
+               declared later in the stylesheet and would win a class-only tie */
+            div.panel-dock {
+                bottom: 92px; /* clear the 56px sidebar FAB at bottom:24 */
+                right: 24px;
+            }
         }
 
-        @media (min-width: 769px) {
+        @media (min-width: 1081px) {
             .sidebar-toggle {
                 display: none;
             }
@@ -842,10 +861,17 @@
         }
 
         /* --- Today's Prep panel --- */
-        .prep-panel {
+        .panel-dock {
             position: fixed;
             right: 16px;
             bottom: 16px;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 8px;
+            z-index: 50;
+        }
+        .prep-panel {
             width: 320px;
             max-height: 60dvh;
             background: #fff;
@@ -853,7 +879,6 @@
             border-radius: 12px;
             box-shadow: 0 8px 24px rgba(0,0,0,0.12);
             overflow: auto;
-            z-index: 50;
             font-size: 13px;
         }
         .prep-panel header {
@@ -926,6 +951,156 @@
         .sub-recipe-row select { flex: 1; }
         .sub-recipe-row input { width: 60px; }
         .sub-recipe-row button { padding: 4px 8px; }
+
+        /* --- Card action sheet (touch replacement for the tiny grid-card buttons) --- */
+        .sheet-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.4);
+            display: none;
+            align-items: flex-end;
+            justify-content: center;
+            z-index: 100;
+        }
+        .sheet-backdrop.visible { display: flex; }
+        .sheet {
+            background: var(--bg);
+            border-radius: 16px 16px 0 0;
+            width: 100%;
+            max-width: 480px;
+            padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+            max-height: 70dvh;
+            overflow: auto;
+        }
+        .sheet-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-align: center;
+            padding-bottom: 12px;
+        }
+        .sheet-actions { display: flex; flex-direction: column; gap: 8px; }
+        .sheet-actions button {
+            min-height: 52px;
+            font-size: 17px;
+            font-weight: 500;
+            border: none;
+            border-radius: 12px;
+            background: var(--card-bg);
+            color: var(--accent);
+            cursor: pointer;
+        }
+        .sheet-actions button.danger { color: var(--danger); }
+        .sheet-actions .segment { display: flex; gap: 8px; }
+        .sheet-actions .segment button { flex: 1; }
+        .sheet-actions .segment button.selected {
+            background: var(--accent);
+            color: #fff;
+        }
+        .sheet-cancel {
+            width: 100%;
+            min-height: 52px;
+            font-size: 17px;
+            font-weight: 600;
+            border: none;
+            border-radius: 12px;
+            background: var(--card-bg);
+            color: var(--text);
+            margin-top: 12px;
+            cursor: pointer;
+        }
+        .meal-edit-btn {
+            float: right;
+            border: 1px solid var(--border);
+            background: var(--bg);
+            border-radius: 8px;
+            padding: 2px 8px;
+            font-size: 13px;
+            color: var(--text-muted);
+            cursor: pointer;
+        }
+
+        /* --- Touch mode (html.touch set by the head script) ---
+           44px+ tap targets per Apple HIG; also reachable via ?touch=1 for testing. */
+        html.touch button,
+        html.touch .chip { touch-action: manipulation; }
+
+        html.touch .chip {
+            min-height: 44px;
+            padding: 8px 16px;
+            font-size: 14px;
+            border-radius: 22px;
+        }
+        html.touch .filter-chips {
+            gap: 8px;
+            height: 152px;
+        }
+        html.touch .resize-handle { height: 28px; }
+        html.touch .resize-handle::after {
+            width: 48px;
+            height: 5px;
+        }
+        html.touch .sidebar-tab { min-height: 48px; }
+        html.touch .new-meal-btn { min-height: 48px; }
+        html.touch .sidebar { --sidebar-width: 320px; }
+
+        html.touch .modal input[type=text],
+        html.touch .modal textarea,
+        html.touch .modal select {
+            min-height: 44px;
+            font-size: 16px; /* 16px stops Safari's focus zoom */
+        }
+        html.touch .modal-actions button {
+            min-height: 44px;
+            padding: 10px 20px;
+        }
+        html.touch .sub-recipe-row input { width: 76px; }
+        html.touch .sub-recipe-row button {
+            min-width: 44px;
+            min-height: 44px;
+        }
+        html.touch #add-sub-recipe {
+            min-height: 44px;
+            padding: 10px 16px !important;
+        }
+
+        html.touch .prep-panel header { cursor: pointer; }
+        html.touch .prep-toggle {
+            min-width: 44px;
+            min-height: 44px;
+        }
+        html.touch .prep-panel.collapsed { max-height: 48px; }
+        html.touch .prep-task {
+            min-height: 44px;
+            align-items: center;
+        }
+        html.touch .prep-task input[type=checkbox] { transform: scale(1.5); }
+        html.touch .meal-edit-btn {
+            min-width: 44px;
+            min-height: 44px;
+        }
+
+        /* Compressed 7-column board: no horizontal scroll on iPad portrait.
+           Viable because the corner buttons are hidden (action sheet replaces them). */
+        html.touch .grid {
+            min-width: 0;
+            grid-template-columns: repeat(7, minmax(0, 1fr));
+            gap: 6px;
+        }
+        html.touch .grid-card {
+            padding: 8px;
+            min-height: 56px;
+        }
+        html.touch .grid-card .grid-card-name {
+            font-size: 12px;
+            overflow-wrap: anywhere;
+        }
+        html.touch .grid-card .remove-btn,
+        html.touch .grid-card .servings-btn,
+        html.touch .grid-card .cooked-btn,
+        html.touch .grid-card .retry-btn {
+            display: none; /* kept in the DOM — the action sheet drives their handlers */
+        }
     </style>
 </head>
 <body>
@@ -969,22 +1144,24 @@
     <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Toggle recipes">+</button>
     <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
 
-    <!-- Today's Prep panel -->
-    <aside class="prep-panel collapsed" id="prep-panel">
-        <header>
-            <span>Today's Prep</span>
-            <button class="prep-toggle" id="prep-toggle" aria-label="Toggle prep panel">▾</button>
-        </header>
-        <div id="prep-body"></div>
-    </aside>
+    <!-- Floating panels (stacked dock, bottom-right) -->
+    <div class="panel-dock">
+        <aside class="prep-panel collapsed" id="prep-panel">
+            <header>
+                <span>Today's Prep</span>
+                <button class="prep-toggle" id="prep-toggle" aria-label="Toggle prep panel">▾</button>
+            </header>
+            <div id="prep-body"></div>
+        </aside>
 
-    <aside class="prep-panel collapsed" id="useitup-panel">
-        <header>
-            <span>🥗 Use It Up</span>
-            <button class="prep-toggle" id="useitup-toggle" aria-label="Toggle Use It Up panel">▾</button>
-        </header>
-        <div id="useitup-body"></div>
-    </aside>
+        <aside class="prep-panel collapsed" id="useitup-panel">
+            <header>
+                <span>🥗 Use It Up</span>
+                <button class="prep-toggle" id="useitup-toggle" aria-label="Toggle Use It Up panel">▾</button>
+            </header>
+            <div id="useitup-body"></div>
+        </aside>
+    </div>
 
     <!-- Meal editor modal -->
     <div class="modal-backdrop" id="meal-modal">
@@ -1018,6 +1195,15 @@
                 <button id="pantry-modal-cancel">Cancel</button>
                 <button class="primary" id="pantry-modal-confirm">Generate List</button>
             </div>
+        </div>
+    </div>
+
+    <!-- Card action sheet (touch mode) -->
+    <div class="sheet-backdrop" id="card-sheet-backdrop">
+        <div class="sheet" id="card-sheet">
+            <div class="sheet-title" id="card-sheet-title"></div>
+            <div class="sheet-actions" id="card-sheet-actions"></div>
+            <button class="sheet-cancel" id="card-sheet-cancel">Cancel</button>
         </div>
     </div>
 
@@ -1234,7 +1420,17 @@
                 delayOnTouchOnly: true,
                 touchStartThreshold: 5,
                 animation: 150,
-                filter: '.hidden, .new-meal-btn'
+                filter: '.hidden, .new-meal-btn, .meal-edit-btn',
+                // Sortable preventDefaults filtered elements by default, which
+                // would swallow the edit button's click on touch.
+                preventOnFilter: false,
+                // Close the drawer as soon as a drag starts: the full-screen
+                // backdrop otherwise sits over the grid and swallows the drop
+                // (Sortable hit-tests with elementFromPoint). The drag clone
+                // lives on <body> (fallbackOnBody), so it survives the close.
+                onStart: function() {
+                    closeSidebar();
+                }
             };
 
             const recipeList = document.getElementById('recipe-list');
@@ -1267,10 +1463,15 @@
                         forceFallback: true,
                         fallbackOnBody: true,
                         fallbackTolerance: 5,
-                        delay: 100,
+                        // Longer hold-to-drag on touch so quick taps reach the
+                        // card action sheet instead of starting a drag.
+                        delay: window.IS_TOUCH ? 200 : 100,
                         delayOnTouchOnly: true,
                         touchStartThreshold: 5,
                         animation: 150,
+                        onStart: function() {
+                            suppressCardTapUntil = Date.now() + 400;
+                        },
                         onAdd: function(evt) {
                             const cell = evt.to;
                             const item = evt.item;
@@ -1304,6 +1505,7 @@
                             updateCellState(cell);
                         },
                         onEnd: function(evt) {
+                            suppressCardTapUntil = Date.now() + 400;
                             if (evt.from !== evt.to) {
                                 updateCellState(evt.from);
                                 updateCellState(evt.to);
@@ -1313,6 +1515,18 @@
                     })
                 );
             });
+        }
+
+        function setCardServings(card, s) {
+            card.dataset.servings = s;
+            const btn = card.querySelector('.servings-btn');
+            if (btn) btn.textContent = `×${s}`;
+            debounceSave();
+        }
+
+        function cycleCardServings(card) {
+            const s = parseInt(card.dataset.servings) || 1;
+            setCardServings(card, s >= 3 ? 1 : s + 1);
         }
 
         function createGridCard(name, servings) {
@@ -1355,11 +1569,7 @@
             servingsBtn.addEventListener('click', function(e) {
                 e.stopPropagation();
                 e.preventDefault();
-                let s = parseInt(card.dataset.servings) || 1;
-                s = s >= 3 ? 1 : s + 1;
-                card.dataset.servings = s;
-                servingsBtn.textContent = `\u00d7${s}`;
-                debounceSave();
+                cycleCardServings(card);
             });
 
             const cookedBtn = document.createElement('button');
@@ -1510,11 +1720,7 @@
             servingsBtn.addEventListener('click', function(e) {
                 e.stopPropagation();
                 e.preventDefault();
-                let s = parseInt(card.dataset.servings) || 1;
-                s = s >= 3 ? 1 : s + 1;
-                card.dataset.servings = s;
-                servingsBtn.textContent = `×${s}`;
-                debounceSave();
+                cycleCardServings(card);
             });
 
             card.appendChild(headerEl);
@@ -1755,6 +1961,91 @@
             document.getElementById('sidebar-backdrop').addEventListener('click', function() {
                 closeSidebar();
             });
+
+            // Touch: tap a grid card to open its action sheet (replaces the
+            // tiny corner buttons, which are display:none under html.touch).
+            // Capture phase so it wins over the card's Obsidian link.
+            document.getElementById('grid').addEventListener('click', function(e) {
+                if (!window.IS_TOUCH) return;
+                // The sheet's actions fire the hidden corner buttons via
+                // programmatic .click(), which bubbles through here — hijacking
+                // it would cancel the button's handler and re-open the sheet.
+                if (!e.isTrusted) return;
+                if (e.target.closest('.remove-btn, .servings-btn, .cooked-btn, .retry-btn')) return;
+                const card = e.target.closest('.grid-card');
+                if (!card) return; // empty-cell taps fall through to suggest
+                e.preventDefault();
+                e.stopPropagation();
+                if (Date.now() < suppressCardTapUntil) return;
+                openCardSheet(card);
+            }, true);
+
+            document.getElementById('card-sheet-cancel').addEventListener('click', closeCardSheet);
+            document.getElementById('card-sheet-backdrop').addEventListener('click', function(e) {
+                if (e.target === this) closeCardSheet();
+            });
+        }
+
+        // --- Card action sheet (touch mode) ---
+
+        let suppressCardTapUntil = 0; // set around drags so a drop never opens the sheet
+
+        function closeCardSheet() {
+            document.getElementById('card-sheet-backdrop').classList.remove('visible');
+        }
+
+        function openCardSheet(card) {
+            const actions = document.getElementById('card-sheet-actions');
+            actions.innerHTML = '';
+            document.getElementById('card-sheet-title').textContent = card.dataset.name;
+
+            function addAction(label, fn, cssClass) {
+                const btn = document.createElement('button');
+                btn.textContent = label;
+                if (cssClass) btn.className = cssClass;
+                btn.addEventListener('click', () => { closeCardSheet(); fn(); });
+                actions.appendChild(btn);
+                return btn;
+            }
+
+            const link = card.querySelector('.grid-card-name-link');
+            if (link) {
+                addAction('Open recipe', () => { window.location.href = link.href; });
+            }
+
+            // Servings segment: ×1 / ×2 / ×3
+            const segment = document.createElement('div');
+            segment.className = 'segment';
+            const current = parseInt(card.dataset.servings) || 1;
+            [1, 2, 3].forEach(n => {
+                const btn = document.createElement('button');
+                btn.textContent = `×${n}`;
+                if (n === current) btn.className = 'selected';
+                btn.addEventListener('click', () => {
+                    closeCardSheet();
+                    if (n !== current) setCardServings(card, n);
+                });
+                segment.appendChild(btn);
+            });
+            actions.appendChild(segment);
+
+            if (card.dataset.kind === 'meal') {
+                addAction('Edit meal', () => openMealEditor(card.dataset.name));
+            }
+            const cookedBtn = card.querySelector('.cooked-btn');
+            if (cookedBtn) {
+                addAction('Mark cooked 🍳', () => cookedBtn.click());
+            }
+            const retryBtn = card.querySelector('.retry-btn');
+            if (retryBtn) {
+                addAction('Try another suggestion ↻', () => retryBtn.click());
+            }
+            const removeBtn = card.querySelector('.remove-btn');
+            if (removeBtn) {
+                addAction('Remove from plan', () => removeBtn.click(), 'danger');
+            }
+
+            document.getElementById('card-sheet-backdrop').classList.add('visible');
         }
 
         function initResizeHandle() {
@@ -1794,6 +2085,7 @@
         }
 
         async function navigateWeek(delta) {
+            closeCardSheet();
             showLoading();
             currentWeek = offsetWeek(currentWeek, delta);
             suggestionSkipIndex = {};
@@ -1921,6 +2213,16 @@
                     <div class="meal-card-meta">${sub} sub-recipe${sub === 1 ? '' : 's'}${meal.description ? ' · ' + escapeHtml(meal.description) : ''}</div>
                 `;
                 card.addEventListener('dblclick', () => openMealEditor(meal.name));
+                // Visible edit affordance — dblclick has no touch equivalent
+                const editBtn = document.createElement('button');
+                editBtn.className = 'meal-edit-btn';
+                editBtn.textContent = '✎';
+                editBtn.setAttribute('aria-label', `Edit ${meal.name}`);
+                editBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    openMealEditor(meal.name);
+                });
+                card.prepend(editBtn);
                 list.appendChild(card);
             });
             initSidebarSortable();
@@ -2269,17 +2571,16 @@
             if (saveBtn) saveBtn.addEventListener('click', saveMealFromModal);
             const addSubBtn = document.getElementById('add-sub-recipe');
             if (addSubBtn) addSubBtn.addEventListener('click', () => addSubRecipeRow('', 1));
-            const prepToggle = document.getElementById('prep-toggle');
+            // Whole header toggles collapse (the ▾ button click bubbles here)
             const prepPanel = document.getElementById('prep-panel');
-            if (prepToggle && prepPanel) {
-                prepToggle.addEventListener('click', () => {
+            if (prepPanel) {
+                prepPanel.querySelector('header').addEventListener('click', () => {
                     prepPanel.classList.toggle('collapsed');
                 });
             }
-            const useToggle = document.getElementById('useitup-toggle');
             const usePanel = document.getElementById('useitup-panel');
-            if (useToggle && usePanel) {
-                useToggle.addEventListener('click', () => {
+            if (usePanel) {
+                usePanel.querySelector('header').addEventListener('click', () => {
                     usePanel.classList.toggle('collapsed');
                 });
             }
