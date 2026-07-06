@@ -821,6 +821,68 @@
             font-size: 13px;
         }
 
+        /* --- Unscheduled section (top of Freezer tab): cooks with no
+           date/meal yet — e.g. "Add to this week" from the recipe detail
+           page. Without this, such cooks have no home cell and never
+           render anywhere on the board, so the feature looks like it
+           silently drops the recipe. --- */
+        .unscheduled-section {
+            display: none;
+            flex-direction: column;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+            max-height: 40%;
+            overflow-y: auto;
+        }
+
+        .unscheduled-section.active {
+            display: flex;
+        }
+
+        .unscheduled-section.empty {
+            display: none;
+        }
+
+        .unscheduled-title {
+            padding: 10px 12px 0;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+        }
+
+        .unscheduled-tray {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            padding: 8px 12px 12px;
+        }
+
+        .unscheduled-tray.sortable-drag-over,
+        .unscheduled-tray:has(.sortable-ghost) {
+            outline: 2px dashed var(--accent);
+            outline-offset: -4px;
+        }
+
+        .unscheduled-row-header {
+            display: flex;
+            justify-content: space-between;
+            gap: 6px;
+            font-size: 12px;
+        }
+
+        .unscheduled-row-name {
+            font-weight: 600;
+            color: var(--text);
+            overflow-wrap: anywhere;
+        }
+
+        .unscheduled-row-meta {
+            color: var(--text-muted);
+            white-space: nowrap;
+        }
+
         /* --- Trash target (serving chips only) --- */
         #trash-target {
             position: fixed;
@@ -1358,6 +1420,10 @@
             <div class="recipe-list" id="recipe-list"></div>
             <div class="meals-list" id="meals-list">
                 <button class="new-meal-btn" id="new-meal-btn">+ New Meal</button>
+            </div>
+            <div class="unscheduled-section" id="unscheduled-section">
+                <div class="unscheduled-title">Unscheduled</div>
+                <div class="unscheduled-tray" id="unscheduled-tray"></div>
             </div>
             <div class="freezer-tray" id="freezer-tray"></div>
             <div class="sidebar-count" id="sidebar-count"></div>
@@ -2068,6 +2134,7 @@
         // --- Board render ---
 
         function renderFreezerTab() {
+            renderUnscheduledSection();
             const tray = document.getElementById('freezer-tray');
             if (!tray) return;
             tray.innerHTML = '';
@@ -2080,6 +2147,43 @@
                 return;
             }
             items.forEach(entry => tray.appendChild(makeFreezerChip(entry)));
+        }
+
+        // Cooks with no date/meal yet (e.g. "Add to this week" from the
+        // recipe detail page) have no home cell, so the grid renderers
+        // (which gate on cook.date && cook.meal) never show them. Surface
+        // them here instead, at the top of the Freezer tab, with a
+        // draggable chip using the exact same pattern/dataset attributes
+        // as an anchored cook's unassigned chip (see makeUnassignedChip)
+        // so the existing chip-drop handler works unchanged.
+        function renderUnscheduledSection() {
+            const section = document.getElementById('unscheduled-section');
+            const tray = document.getElementById('unscheduled-tray');
+            if (!section || !tray) return;
+            tray.innerHTML = '';
+            const cooks = ((weekBoard && weekBoard.cooks) || [])
+                .filter(cook => !cook.date || !cook.meal);
+            section.classList.toggle('empty', cooks.length === 0);
+            cooks.forEach(cook => {
+                const header = document.createElement('div');
+                header.className = 'unscheduled-row-header';
+
+                const nameEl = document.createElement('span');
+                nameEl.className = 'unscheduled-row-name';
+                nameEl.textContent = cook.recipe;
+
+                const metaEl = document.createElement('span');
+                metaEl.className = 'unscheduled-row-meta';
+                metaEl.textContent = `${fmtMult(cook.scale)}× · ${fmtMult(cook.unassigned)} unassigned`;
+
+                header.appendChild(nameEl);
+                header.appendChild(metaEl);
+                tray.appendChild(header);
+
+                if (cook.unassigned > 1e-6) {
+                    tray.appendChild(makeUnassignedChip(cook.id, cook.unassigned));
+                }
+            });
         }
 
         function renderDayTotals() {
@@ -2382,6 +2486,8 @@
             });
             const freezerTray = document.getElementById('freezer-tray');
             if (freezerTray) chipSortables.push(Sortable.create(freezerTray, { ...commonOptions }));
+            const unscheduledTray = document.getElementById('unscheduled-tray');
+            if (unscheduledTray) chipSortables.push(Sortable.create(unscheduledTray, { ...commonOptions }));
             const trashTarget = document.getElementById('trash-target');
             if (trashTarget) chipSortables.push(Sortable.create(trashTarget, { ...commonOptions }));
         }
@@ -2948,6 +3054,7 @@
             const recipeList = document.getElementById('recipe-list');
             const mealsList = document.getElementById('meals-list');
             const freezerTray = document.getElementById('freezer-tray');
+            const unscheduledSection = document.getElementById('unscheduled-section');
             const chips = document.getElementById('filter-chips');
             const title = document.getElementById('sidebar-title');
             const search = document.getElementById('search-input');
@@ -2955,6 +3062,7 @@
             recipeList.classList.toggle('hidden-tab', tab !== 'recipes');
             mealsList.classList.toggle('active', tab === 'meals');
             if (freezerTray) freezerTray.classList.toggle('active', tab === 'freezer');
+            if (unscheduledSection) unscheduledSection.classList.toggle('active', tab === 'freezer');
             chips.style.display = (tab === 'recipes') ? '' : 'none';
             search.style.display = (tab === 'freezer') ? 'none' : '';
 

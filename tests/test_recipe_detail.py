@@ -1,5 +1,7 @@
 """Recipe detail: extended API payload + page route."""
 
+from urllib.parse import quote
+
 import pytest
 
 from api_server import app
@@ -77,3 +79,13 @@ def test_recipe_page_renders(client, tmp_vault):
 def test_recipe_page_404(client, tmp_vault):
     _write(tmp_vault)
     assert client.get("/recipe/Nope").status_code == 404
+
+
+def test_recipe_page_404_escapes_reflected_name(client, tmp_vault):
+    """Recipe name is attacker-controlled URL input; must not be reflected raw."""
+    _write(tmp_vault)
+    payload = "<script>alert(1)</script>"
+    resp = client.get(f"/recipe/{quote(payload, safe='')}")
+    assert resp.status_code == 404
+    body = resp.get_data(as_text=True)
+    assert "<script>alert" not in body

@@ -2,6 +2,7 @@
 """Simple API server for iOS Shortcuts integration."""
 
 from flask import Flask, request, jsonify, send_file, redirect
+from markupsafe import escape
 from urllib.parse import quote
 from youtube_transcript_api import YouTubeTranscriptApi
 from googleapiclient.discovery import build
@@ -479,11 +480,13 @@ def _resolve_recipes_dir() -> Path:
     already captured at import time (from the repo's real .env-configured
     vault) and won't see that change.
 
-    Compare the current env var against the value captured at import: if it
-    changed, a test has monkeypatched it, so recompute fresh via
-    ``paths.recipes_dir()`` (mirrors ``_recipe_base_servings`` below). If
-    unchanged, fall back to the module constant, which respects a direct
-    ``unittest.mock.patch`` of it.
+    Compare the current env var against the value captured at import
+    (``_RECIPES_ENV_AT_IMPORT``): if it changed, a test has monkeypatched
+    ``KITCHENOS_VAULT``, so recompute fresh via ``paths.recipes_dir()`` to
+    pick it up. If unchanged, fall back to the module constant, which
+    respects a direct ``unittest.mock.patch`` of it. This differs from
+    ``_recipe_base_servings`` below, which always calls ``paths.recipes_dir()``
+    fresh regardless of env state.
     """
     if os.environ.get("KITCHENOS_VAULT") != _RECIPES_ENV_AT_IMPORT:
         return paths.recipes_dir()
@@ -562,7 +565,7 @@ def recipe_detail_page(name):
     recipes_dir = _resolve_recipes_dir()
     filepath = (recipes_dir / f"{name}.md").resolve()
     if not filepath.is_relative_to(recipes_dir.resolve()) or not filepath.exists():
-        return error_page(f"Recipe not found: {name}"), 404
+        return error_page(f"Recipe not found: {escape(name)}"), 404
 
     html = open('templates/recipe_detail.html').read()
     html = html.replace('vault=KitchenOS', f'vault={VAULT_NAME}')
