@@ -83,3 +83,55 @@ def test_ledger_busy_returns_503(client, tmp_db, tmp_vault, monkeypatch):
         "cook_id": cook["id"], "destination": "freezer", "count": 1})
     assert resp.status_code == 503
     assert resp.get_json()["error"] == "ledger busy, retry"
+
+
+def test_cook_create_regenerates_both_weeks_on_cross_week_date(client, tmp_db, tmp_vault):
+    """cook.week and the week implied by `date` can differ; both must regen."""
+    resp = _create_cook(client, week="2026-W28", date="2026-07-14")  # W28 -> W29
+    assert resp.status_code == 201
+    week_file = tmp_vault / "Meal Plans" / "2026-W28.md"
+    cross_week_file = tmp_vault / "Meal Plans" / "2026-W29.md"
+    assert week_file.exists()
+    assert cross_week_file.exists()
+
+
+def test_placement_patch_moving_date_regenerates_old_week(client, tmp_db, tmp_vault):
+    cook = _create_cook(client).get_json()
+    placement = client.post("/api/placements", json={
+        "cook_id": cook["id"], "destination": "slot",
+        "date": "2026-07-07", "meal": "lunch", "count": 1}).get_json()
+
+    old_week_file = tmp_vault / "Meal Plans" / "2026-W28.md"
+    old_week_file.unlink()
+    assert not old_week_file.exists()
+
+    resp = client.patch(f"/api/placements/{placement['id']}", json={
+        "date": "2026-07-14", "meal": "lunch"})  # moves into 2026-W29
+    assert resp.status_code == 200
+    assert old_week_file.exists(), "old week's markdown should be regenerated"
+    assert (tmp_vault / "Meal Plans" / "2026-W29.md").exists()
+
+
+def test_placement_create_unknown_cook_returns_404(client, tmp_db, tmp_vault):
+    resp = client.post("/api/placements", json={
+        "cook_id": 999999, "destination": "freezer", "count": 1})
+    assert resp.status_code == 404
+    assert resp.get_json()["error"] == "cook not found"
+
+
+def test_placement_patch_unknown_id_returns_404(client, tmp_db, tmp_vault):
+    resp = client.patch("/api/placements/999999", json={"count": 1})
+    assert resp.status_code == 404
+    assert resp.get_json()["error"] == "placement not found"
+
+
+def test_placement_move_unknown_id_returns_404(client, tmp_db, tmp_vault):
+    resp = client.post("/api/placements/999999/move", json={
+        "count": 1, "destination": "freezer"})
+    assert resp.status_code == 404
+    assert resp.get_json()["error"] == "placement not found"
+
+
+def test_cook_create_null_scale_returns_400(client, tmp_db, tmp_vault):
+    resp = _create_cook(client, scale=None)
+    assert resp.status_code == 400

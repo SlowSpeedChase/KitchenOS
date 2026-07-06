@@ -939,7 +939,7 @@ def _ledger_error(fn):
             return jsonify({"error": str(e)}), 409
         except sqlite3.OperationalError:
             return jsonify({"error": "ledger busy, retry"}), 503
-        except ValueError as e:
+        except (ValueError, TypeError) as e:
             return jsonify({"error": str(e)}), 400
     return wrapper
 
@@ -981,7 +981,7 @@ def api_cook_create():
         date=data.get('date'), meal=data.get('meal'),
         initial_placement_count=float(data.get('initial_placement_count', 1.0)),
         notes=data.get('notes'))
-    _regen_weeks(cook["week"])
+    _regen_weeks(cook["week"], _iso_week_of(data["date"]) if data.get("date") else None)
     return jsonify(cook), 201
 
 
@@ -1001,6 +1001,7 @@ def api_cook_update(cook_id):
 
 @app.route('/api/cooks/<int:cook_id>', methods=['DELETE'])
 @require_token
+@_ledger_error
 def api_cook_delete(cook_id):
     from lib import serving_ledger
     cook = serving_ledger.get_cook(cook_id)
@@ -1019,8 +1020,11 @@ def api_cook_delete(cook_id):
 def api_placement_create():
     from lib import serving_ledger
     data = request.get_json(force=True, silent=True) or {}
+    cook_id = int(data.get('cook_id', 0))
+    if serving_ledger.get_cook(cook_id) is None:
+        return jsonify({"error": "cook not found"}), 404
     p = serving_ledger.add_placement(
-        cook_id=int(data.get('cook_id', 0)),
+        cook_id=cook_id,
         destination=data.get('destination'),
         count=float(data.get('count', 0)),
         date=data.get('date'), meal=data.get('meal'))
@@ -1033,16 +1037,26 @@ def api_placement_create():
 @require_token
 @_ledger_error
 def api_placement_update(pid):
-    from lib import serving_ledger
+    from lib import serving_ledger, inventory_db
     data = request.get_json(force=True, silent=True) or {}
+    conn = inventory_db.connect()
+    try:
+        before = conn.execute("SELECT * FROM placements WHERE id = ?", (pid,)).fetchone()
+    finally:
+        conn.close()
+    if before is None:
+        return jsonify({"error": "placement not found"}), 404
     p = serving_ledger.update_placement(pid, **data)
     cook = serving_ledger.get_cook(p["cook_id"])
-    _regen_weeks(cook["week"], _iso_week_of(p["date"]) if p.get("date") else None)
+    _regen_weeks(cook["week"],
+                 _iso_week_of(before["date"]) if before["date"] else None,
+                 _iso_week_of(p["date"]) if p.get("date") else None)
     return jsonify(p)
 
 
 @app.route('/api/placements/<int:pid>', methods=['DELETE'])
 @require_token
+@_ledger_error
 def api_placement_delete(pid):
     from lib import serving_ledger, inventory_db
     conn = inventory_db.connect()
@@ -1063,8 +1077,15 @@ def api_placement_delete(pid):
 @require_token
 @_ledger_error
 def api_placement_move(pid):
-    from lib import serving_ledger
+    from lib import serving_ledger, inventory_db
     data = request.get_json(force=True, silent=True) or {}
+    conn = inventory_db.connect()
+    try:
+        before = conn.execute("SELECT * FROM placements WHERE id = ?", (pid,)).fetchone()
+    finally:
+        conn.close()
+    if before is None:
+        return jsonify({"error": "placement not found"}), 404
     result = serving_ledger.move_servings(
         pid, count=float(data.get('count', 0)),
         destination=data.get('destination'),
