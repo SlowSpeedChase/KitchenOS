@@ -1,6 +1,9 @@
 """Serving ledger: cooks produce servings; every serving is placed."""
+import sqlite3
+
 import pytest
 
+from lib import inventory_db
 from lib import serving_ledger as sl
 from lib.serving_ledger import OverplacementError
 
@@ -100,3 +103,113 @@ def test_cooks_for_week_filters(tmp_db):
     _mk_cook()
     _mk_cook(week="2026-W29", date="2026-07-15")
     assert len(sl.cooks_for_week("2026-W28")) == 1
+
+
+# --- Finding 1: TOCTOU race on capacity checks ---------------------------
+# A bare SELECT doesn't start sqlite3's implicit transaction, so the
+# check-then-write in add_placement/update_placement/update_cook/
+# move_servings must open its transaction with BEGIN IMMEDIATE *before* the
+# read, so the read happens under the write lock. We prove this
+# deterministically: hold the write lock on a second connection via
+# BEGIN IMMEDIATE, then show add_placement's own BEGIN IMMEDIATE contends
+# for that same lock (blocks until busy_timeout, then raises
+# OperationalError) rather than sailing through on a stale read.
+def test_add_placement_write_lock_contends_with_concurrent_writer(tmp_db, monkeypatch):
+    cook = _mk_cook()
+
+    # A second, independent connection takes the write lock and holds it.
+    blocker = inventory_db.connect()
+    blocker.execute("BEGIN IMMEDIATE")
+    blocker.execute("SELECT 1")
+
+    # Shrink busy_timeout for connections opened from here on so the test
+    # doesn't have to wait out the real 5000ms before observing the
+    # contention.
+    orig_connect = inventory_db.connect
+
+    def fast_connect(*args, **kwargs):
+        conn = orig_connect(*args, **kwargs)
+        conn.execute("PRAGMA busy_timeout = 200")
+        return conn
+
+    monkeypatch.setattr(inventory_db, "connect", fast_connect)
+
+    try:
+        with pytest.raises(sqlite3.OperationalError):
+            sl.add_placement(cook["id"], "freezer", 1.0)
+    finally:
+        blocker.rollback()
+        blocker.close()
+
+
+# --- Finding 2: update_cook validation gaps -------------------------------
+
+def test_update_cook_rejects_invalid_meal(tmp_db):
+    cook = _mk_cook()
+    with pytest.raises(ValueError):
+        sl.update_cook(cook["id"], meal="brunch")
+
+
+def test_update_cook_allows_clearing_meal(tmp_db):
+    cook = _mk_cook()
+    updated = sl.update_cook(cook["id"], meal=None)
+    assert updated["meal"] is None
+
+
+def test_update_cook_no_fields_rejected(tmp_db):
+    cook = _mk_cook()
+    with pytest.raises(ValueError):
+        sl.update_cook(cook["id"])
+
+
+# --- Finding 3: coverage gaps ----------------------------------------------
+
+def test_update_placement_changes_count_capacity_checked(tmp_db):
+    cook = _mk_cook()
+    frozen = sl.add_placement(cook["id"], "freezer", 4.0)  # placed: 1 + 4 = 5
+    updated = sl.update_placement(frozen["id"], count=2.0)  # placed: 1 + 2 = 3
+    assert updated["count"] == 2.0
+    c = sl.get_cook(cook["id"])
+    assert c["unassigned"] == 3.0
+    with pytest.raises(OverplacementError):
+        sl.update_placement(frozen["id"], count=6.0)  # 1 + 6 = 7 > 6
+
+
+def test_update_placement_slot_to_freezer_nulls_date_and_meal(tmp_db):
+    cook = _mk_cook()
+    anchor = sl.get_cook(cook["id"])["placements"][0]
+    assert anchor["destination"] == "slot"
+    updated = sl.update_placement(anchor["id"], destination="freezer")
+    assert updated["destination"] == "freezer"
+    assert updated["date"] is None and updated["meal"] is None
+    stored = sl.get_cook(cook["id"])["placements"][0]
+    assert stored["destination"] == "freezer"
+    assert stored["date"] is None and stored["meal"] is None
+
+
+def test_delete_placement_removes_row(tmp_db):
+    cook = _mk_cook()
+    frozen = sl.add_placement(cook["id"], "freezer", 2.0)
+    sl.delete_placement(frozen["id"])
+    c = sl.get_cook(cook["id"])
+    assert all(p["id"] != frozen["id"] for p in c["placements"])
+    assert c["unassigned"] == 5.0
+
+
+def test_placements_for_week_includes_cross_week_cook_excludes_non_slot(tmp_db):
+    # Week 2026-W28 runs Mon 2026-07-06 .. Sun 2026-07-12.
+    cook_a = _mk_cook()  # week 2026-W28, anchor slot 2026-07-07 dinner
+    sl.add_placement(cook_a["id"], "freezer", 2.0)
+    sl.add_placement(cook_a["id"], "trash", 1.0)
+
+    # Anchored in a different week, but with a slot placement dated inside
+    # 2026-W28 — placements_for_week goes by placement date, not cook week.
+    cook_b = _mk_cook(recipe="Soup", week="2026-W29", date="2026-07-15")
+    sl.add_placement(cook_b["id"], "slot", 1.0, date="2026-07-11", meal="lunch")
+
+    rows = sl.placements_for_week("2026-W28")
+    assert {r["destination"] for r in rows} == {"slot"}
+    assert {r["recipe"] for r in rows} == {"Chili", "Soup"}
+    dates = sorted(r["date"] for r in rows)
+    assert dates == ["2026-07-07", "2026-07-11"]
+    assert all("2026-07-06" <= d <= "2026-07-12" for d in dates)

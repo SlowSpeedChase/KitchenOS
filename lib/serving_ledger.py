@@ -11,9 +11,24 @@ A *cook* is one preparation of a recipe at a fractional scale, producing
 Invariant: SUM(placements.count) <= servings_produced. The difference is
 "unassigned" and surfaced by the UI. SQLite is authoritative; the weekly
 Markdown file is a regenerated view (see lib/week_view.py).
+
+Concurrency: the app is served by threaded Flask, so writers can overlap.
+A bare SELECT does not start sqlite3's implicit transaction, so a
+check-then-write sequence (read placed sum, compare to capacity, then
+INSERT/UPDATE) is a TOCTOU race unless the read itself happens under the
+write lock. Every write path that checks capacity (or otherwise reads a
+row it is about to mutate) therefore opens its transaction explicitly with
+``conn.execute("BEGIN IMMEDIATE")`` as the *first* statement, taking the
+RESERVED lock before the read. A second connection attempting the same
+thing blocks (up to ``busy_timeout``, 5000ms) or raises
+``sqlite3.OperationalError: database is locked``. These paths do not use
+``with conn:`` (which relies on the implicit transaction) — instead they
+commit or roll back explicitly in a try/except/finally.
 """
 from __future__ import annotations
 
+import contextlib
+import sqlite3
 from typing import Optional
 
 from lib import inventory_db
@@ -27,6 +42,24 @@ _EPS = 1e-6
 
 class OverplacementError(ValueError):
     """More servings placed than the cook produced."""
+
+
+@contextlib.contextmanager
+def _write_txn(conn: sqlite3.Connection):
+    """Explicit write transaction: BEGIN IMMEDIATE takes the write lock
+    before the first read, so a check-then-write sequence (read placed
+    sum / row, compare, then INSERT or UPDATE) can't race with another
+    connection doing the same. See the module docstring. Commits on
+    clean exit, rolls back and re-raises on any exception.
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+    except BaseException:
+        conn.rollback()
+        raise
+    else:
+        conn.commit()
 
 
 def _row_to_dict(row) -> dict:
@@ -142,9 +175,13 @@ def update_cook(cook_id: int, **fields) -> dict:
     bad = set(fields) - set(_COOK_FIELDS)
     if bad:
         raise ValueError(f"cannot update fields: {sorted(bad)}")
+    if not fields:
+        raise ValueError("no fields to update")
+    if "meal" in fields and fields["meal"] is not None and fields["meal"] not in MEALS:
+        raise ValueError(f"meal must be one of {MEALS}")
     conn = inventory_db.connect()
     try:
-        with conn:
+        with _write_txn(conn):
             if "servings_produced" in fields:
                 new_cap = float(fields["servings_produced"])
                 placed = _placed_sum(conn, cook_id)
@@ -178,7 +215,7 @@ def add_placement(cook_id: int, destination: str, count: float,
     _validate_placement(destination, date, meal)
     conn = inventory_db.connect()
     try:
-        with conn:
+        with _write_txn(conn):
             _check_capacity(conn, cook_id, float(count))
             return _merge_or_insert(conn, cook_id, destination, date, meal, float(count))
     finally:
@@ -192,7 +229,7 @@ def update_placement(placement_id: int, **fields) -> dict:
         raise ValueError(f"cannot update fields: {sorted(bad)}")
     conn = inventory_db.connect()
     try:
-        with conn:
+        with _write_txn(conn):
             row = conn.execute("SELECT * FROM placements WHERE id = ?",
                                (placement_id,)).fetchone()
             if row is None:
@@ -232,7 +269,7 @@ def move_servings(placement_id: int, count: float, destination: str,
     _validate_placement(destination, date, meal)
     conn = inventory_db.connect()
     try:
-        with conn:
+        with _write_txn(conn):
             src = conn.execute("SELECT * FROM placements WHERE id = ?",
                                (placement_id,)).fetchone()
             if src is None:
