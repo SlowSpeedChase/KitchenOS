@@ -526,20 +526,26 @@
         const targets = flaggedRows().map(r => r.name);
         if (!targets.length) return;
         btn.disabled = true;
-        let done = 0, failed = 0;
-        for (const name of targets) {
-            progress.textContent = `Re-running ${done + 1}/${targets.length}…`;
-            try {
-                await apiPost('/api/nutrition-review/recompute', { recipe: name });
-            } catch (e) {
-                failed += 1;
+        try {
+            let done = 0, failed = 0;
+            for (const name of targets) {
+                progress.textContent = `Re-running ${done + 1}/${targets.length}…`;
+                try {
+                    await apiPost('/api/nutrition-review/recompute', { recipe: name });
+                } catch (e) {
+                    failed += 1;
+                }
+                done += 1;
             }
-            done += 1;
+            progress.textContent = `Done: ${done}/${targets.length}${failed ? ` (${failed} failed)` : ''}`;
+            showToast(`Backfill re-run complete: ${done - failed}/${targets.length} succeeded`, failed > 0);
+            await loadList();
+            setTimeout(() => { progress.textContent = ''; }, 5000);
+        } finally {
+            // loadList() can throw (renderTable on bad payload); the button
+            // must always come back.
+            btn.disabled = false;
         }
-        progress.textContent = `Done: ${done}/${targets.length}${failed ? ` (${failed} failed)` : ''}`;
-        showToast(`Backfill re-run complete: ${done - failed}/${targets.length} succeeded`, failed > 0);
-        await loadList();
-        setTimeout(() => { progress.textContent = ''; }, 5000);
     }
 
     function escapeHtml(s) {

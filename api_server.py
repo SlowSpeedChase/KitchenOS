@@ -76,12 +76,16 @@ RECIPE_CACHE_TTL = 300  # 5 minutes
 
 
 def error_page(message: str) -> str:
-    """Generate simple HTML error page."""
+    """Generate simple HTML error page.
+
+    The message is escaped here (call sites pass raw text, often str(e));
+    escaping already-escaped Markup is a no-op.
+    """
     return f'''<!DOCTYPE html>
 <html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>KitchenOS</title></head>
 <body style="font-family: system-ui; padding: 2rem; max-width: 600px; margin: 0 auto;">
 <div style="background: #fee; border: 1px solid #c00; padding: 1rem; border-radius: 8px;">
-<strong style="color: #c00;">Error</strong><br>{message}
+<strong style="color: #c00;">Error</strong><br>{escape(message)}
 </div>
 <p><a href="obsidian://open?vault={VAULT_NAME}" style="display: inline-block; padding: 12px 20px; border: 1px solid #ccc; border-radius: 8px; text-decoration: none;">Return to Obsidian</a></p>
 </body></html>'''
@@ -565,7 +569,10 @@ def recipe_detail_page(name):
     recipes_dir = _resolve_recipes_dir()
     filepath = (recipes_dir / f"{name}.md").resolve()
     if not filepath.is_relative_to(recipes_dir.resolve()) or not filepath.exists():
-        return error_page(f"Recipe not found: {escape(name)}"), 404
+        # error_page() escapes the reflected name itself now; escaping here
+        # too would double-escape (the f-string demotes Markup to plain str,
+        # so the outer escape would re-escape the entities).
+        return error_page(f"Recipe not found: {name}"), 404
 
     html = open('templates/recipe_detail.html').read()
     html = html.replace('vault=KitchenOS', f'vault={VAULT_NAME}')
