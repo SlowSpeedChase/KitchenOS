@@ -396,8 +396,36 @@
         .grid {
             display: grid;
             grid-template-columns: repeat(7, minmax(120px, 1fr));
+            grid-auto-rows: auto;
             gap: 8px;
             min-width: 840px;
+        }
+
+        .totals-cell {
+            text-align: center;
+            padding: 6px 4px;
+            border-top: 1px solid var(--border);
+        }
+
+        .totals-cell .totals-empty {
+            color: var(--text-muted);
+            font-size: 12px;
+        }
+
+        .totals-cell .totals-kcal {
+            font-weight: 600;
+            font-size: 13px;
+            color: var(--text);
+        }
+
+        .totals-cell .totals-macros {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 1px;
+        }
+
+        .totals-cell .totals-warn {
+            color: var(--danger);
         }
 
         .day-header {
@@ -1566,6 +1594,15 @@
                     });
                 });
             });
+
+            // Daily totals row (populated by renderDayTotals)
+            DAYS.forEach(day => {
+                const cell = document.createElement('div');
+                cell.className = 'totals-cell';
+                cell.dataset.day = day;
+                cell.innerHTML = '<span class="totals-empty">—</span>';
+                grid.appendChild(cell);
+            });
         }
 
         // --- SortableJS Setup ---
@@ -1998,6 +2035,25 @@
             items.forEach(entry => tray.appendChild(makeFreezerChip(entry)));
         }
 
+        function renderDayTotals() {
+            const totals = (weekBoard && weekBoard.day_totals) || {};
+            DAYS.forEach(day => {
+                const cell = document.querySelector(`.totals-cell[data-day="${day}"]`);
+                if (!cell) return;
+                const t = totals[dayDates[day]];
+                if (!t || (!t.calories && !t.protein && !t.carbs && !t.fat)) {
+                    cell.innerHTML = '<span class="totals-empty">—</span>';
+                    return;
+                }
+                const warn = t.incomplete
+                    ? ' <span class="totals-warn" title="Some recipes have missing or low-confidence nutrition data">⚠</span>'
+                    : '';
+                cell.innerHTML =
+                    `<div class="totals-kcal">${Math.round(t.calories)} kcal${warn}</div>` +
+                    `<div class="totals-macros">${Math.round(t.protein)}p · ${Math.round(t.carbs)}c · ${Math.round(t.fat)}f</div>`;
+            });
+        }
+
         function renderBoardIfActive() {
             boardMode = !!(weekBoard && weekBoard.cooks && weekBoard.cooks.length > 0);
             document.body.classList.toggle('board-mode', boardMode);
@@ -2062,6 +2118,7 @@
             weekBoard = loaded;
             renderFreezerTab();
             renderBoardIfActive();
+            renderDayTotals();
         }
 
         // --- Board mutations ---
@@ -2240,6 +2297,11 @@
             } catch (err) {
                 showToast('Failed to move serving', 'error');
             } finally {
+                // Remove the dragged chip node before reloading: a drop on
+                // #trash-target isn't a .chip-tray, so renderBoardIfActive()
+                // never clears it — without this the chip accumulates there
+                // forever across repeated trash drops.
+                chip.remove();
                 // Always reload — even on failure — so the DOM (which Sortable
                 // already moved the chip within) reflects server truth.
                 await loadWeekBoard(currentWeek);
@@ -3270,6 +3332,11 @@
         // --- Suggestion ---
 
         async function suggestMeal(cell) {
+            // Board weeks own their cells via the ledger (cook/chip cards);
+            // a legacy suggested card here would be cosmetic-only (its save
+            // is already blocked) but would still flash a phantom card.
+            if (weekBoard && weekBoard.cooks.length > 0) return;
+
             const day = cell.dataset.day;
             const meal = cell.dataset.meal;
             const cellKey = `${day}-${meal}`;
