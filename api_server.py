@@ -74,12 +74,12 @@ RECIPE_CACHE_TTL = 300  # 5 minutes
 def error_page(message: str) -> str:
     """Generate simple HTML error page."""
     return f'''<!DOCTYPE html>
-<html><head><title>KitchenOS</title></head>
+<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>KitchenOS</title></head>
 <body style="font-family: system-ui; padding: 2rem; max-width: 600px; margin: 0 auto;">
 <div style="background: #fee; border: 1px solid #c00; padding: 1rem; border-radius: 8px;">
 <strong style="color: #c00;">Error</strong><br>{message}
 </div>
-<p><a href="obsidian://open?vault={VAULT_NAME}">Return to Obsidian</a></p>
+<p><a href="obsidian://open?vault={VAULT_NAME}" style="display: inline-block; padding: 12px 20px; border: 1px solid #ccc; border-radius: 8px; text-decoration: none;">Return to Obsidian</a></p>
 </body></html>'''
 
 
@@ -88,12 +88,12 @@ def success_page(message: str, filename: str) -> str:
     from urllib.parse import quote
     encoded_filename = quote(filename, safe='')
     return f'''<!DOCTYPE html>
-<html><head><title>KitchenOS</title></head>
+<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>KitchenOS</title></head>
 <body style="font-family: system-ui; padding: 2rem; max-width: 600px; margin: 0 auto;">
 <div style="background: #efe; border: 1px solid #0a0; padding: 1rem; border-radius: 8px;">
 <strong style="color: #0a0;">Success</strong><br>{message}
 </div>
-<p><a href="obsidian://open?vault={VAULT_NAME}&file=Recipes/{encoded_filename}">Return to {filename}</a></p>
+<p><a href="obsidian://open?vault={VAULT_NAME}&file=Recipes/{encoded_filename}" style="display: inline-block; padding: 12px 20px; border: 1px solid #ccc; border-radius: 8px; text-decoration: none;">Return to {filename}</a></p>
 </body></html>'''
 
 
