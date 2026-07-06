@@ -619,6 +619,164 @@
             background: rgba(0, 113, 227, 0.7);
         }
 
+        /* --- Cook cards (serving-ledger board mode) --- */
+        .grid-card.cook-card {
+            min-height: auto;
+            padding-bottom: 30px;
+            gap: 6px;
+        }
+
+        .scale-stepper {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 2px;
+        }
+
+        .scale-btn {
+            width: 22px;
+            height: 22px;
+            flex-shrink: 0;
+            border: 1px solid var(--border);
+            background: var(--bg);
+            border-radius: 50%;
+            font-size: 14px;
+            line-height: 1;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text);
+        }
+
+        .scale-btn:active {
+            background: var(--accent);
+            color: #ffffff;
+            border-color: var(--accent);
+        }
+
+        .scale-value {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text);
+            min-width: 30px;
+            text-align: center;
+        }
+
+        .chip-tray {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-top: 4px;
+            min-height: 10px; /* keeps empty trays droppable even with no chips */
+        }
+
+        .serving-chip {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            cursor: grab;
+            user-select: none;
+            -webkit-user-select: none;
+            white-space: nowrap;
+        }
+
+        .serving-chip.unassigned-chip {
+            border-style: dashed;
+            color: var(--text-muted);
+        }
+
+        .serving-chip.sortable-ghost {
+            opacity: 0.4;
+        }
+
+        .serving-chip.sortable-drag {
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        /* --- Freezer tab --- */
+        .freezer-tray {
+            display: none;
+            flex-direction: column;
+            gap: 8px;
+            padding: 12px;
+            overflow-y: auto;
+            flex: 1;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .freezer-tray.active {
+            display: flex;
+        }
+
+        .freezer-tray.sortable-drag-over,
+        .freezer-tray:has(.sortable-ghost) {
+            outline: 2px dashed var(--accent);
+            outline-offset: -4px;
+        }
+
+        .freezer-chip {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 8px 10px;
+            cursor: grab;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        .freezer-chip-name {
+            display: block;
+            font-weight: 600;
+            font-size: 13px;
+            color: var(--text);
+        }
+
+        .freezer-chip-meta {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .freezer-empty {
+            padding: 24px 12px;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 13px;
+        }
+
+        /* --- Trash target (serving chips only) --- */
+        #trash-target {
+            position: fixed;
+            right: 24px;
+            bottom: 96px;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: var(--danger);
+            color: #ffffff;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            font-size: 26px;
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+            z-index: 200;
+        }
+
+        body.dragging-serving #trash-target {
+            display: flex;
+        }
+
+        #trash-target.sortable-drag-over,
+        #trash-target:has(.sortable-ghost) {
+            background: #b8291f;
+            transform: scale(1.12);
+        }
+
         .grid-card.new-idea {
             border-style: dashed;
             border-color: var(--accent);
@@ -1043,6 +1201,10 @@
         html.touch .sidebar-tab { min-height: 48px; }
         html.touch .new-meal-btn { min-height: 48px; }
         html.touch .sidebar { --sidebar-width: 320px; }
+        html.touch .scale-btn { width: 32px; height: 32px; font-size: 16px; }
+        html.touch .serving-chip { min-height: 32px; padding: 4px 10px; }
+        html.touch .freezer-chip { min-height: 44px; }
+        html.touch #trash-target { width: 72px; height: 72px; font-size: 32px; }
 
         html.touch .modal input[type=text],
         html.touch .modal textarea,
@@ -1114,6 +1276,7 @@
             <div class="sidebar-tabs">
                 <button class="sidebar-tab active" data-tab="recipes" id="tab-recipes">Recipes</button>
                 <button class="sidebar-tab" data-tab="meals" id="tab-meals">Meals</button>
+                <button class="sidebar-tab" data-tab="freezer" id="tab-freezer">Freezer</button>
             </div>
             <div class="filter-chips" id="filter-chips"></div>
             <div class="resize-handle" id="resize-handle"></div>
@@ -1121,6 +1284,7 @@
             <div class="meals-list" id="meals-list">
                 <button class="new-meal-btn" id="new-meal-btn">+ New Meal</button>
             </div>
+            <div class="freezer-tray" id="freezer-tray"></div>
             <div class="sidebar-count" id="sidebar-count"></div>
         </aside>
 
@@ -1207,6 +1371,9 @@
         </div>
     </div>
 
+    <!-- Trash target for serving chips (visible only mid-drag) -->
+    <div id="trash-target" aria-label="Drop here to discard serving">🗑</div>
+
     <!-- Toast -->
     <div class="toast" id="toast"></div>
 
@@ -1237,6 +1404,9 @@
         let mealsByName = {};           // lookup helper for slot rendering
         let weekTasks = null;           // { week, tasks: [...] } — populated by loadTasks()
         let pendingShoppingPreview = null;  // result of /api/shopping-list/preview during pantry modal flow
+        let weekBoard = null;           // { week, cooks, freezer, day_totals } from GET /api/week-board/<week>
+        let boardMode = false;          // true when weekBoard.cooks.length > 0 — board wins over legacy grid cards
+        let chipSortables = [];         // Sortable instances for the 'servings' chip-drag group
 
         // --- Init ---
         document.addEventListener('DOMContentLoaded', init);
@@ -1253,6 +1423,8 @@
                     loadMeals(),
                     loadMealPlan(currentWeek)
                 ]);
+                // Board wins over the legacy grid rendered by loadMealPlan above.
+                await loadWeekBoard(currentWeek);
             } catch (err) {
                 showToast('Failed to load data', 'error');
                 console.error(err);
@@ -1475,12 +1647,29 @@
                         onAdd: function(evt) {
                             const cell = evt.to;
                             const item = evt.item;
-                            // Convert sidebar recipe-card to grid-card
+                            // Recipe drops always go through the serving ledger (createCook),
+                            // regardless of whether this week is board-backed yet — the first
+                            // drop on a legacy week converts it (see ensureLegacyImported).
                             if (item.classList.contains('recipe-card')) {
                                 const name = item.dataset.name;
-                                const gridCard = createGridCard(name, 1);
-                                item.replaceWith(gridCard);
-                            } else if (item.classList.contains('meal-card')) {
+                                const recipe = allRecipes.find(r => r.name === name);
+                                const baseServings = (recipe && recipe.servings) ? recipe.servings : 4;
+                                item.remove();  // placeholder; board re-render replaces it
+                                (async () => {
+                                    await ensureLegacyImported();
+                                    await createCook(name, cell.dataset.day, cell.dataset.meal, 1.0, baseServings);
+                                })();
+                                closeSidebar();
+                                return;
+                            }
+                            if (item.classList.contains('meal-card')) {
+                                if (boardMode) {
+                                    // Meal bundles aren't modeled as a single ledger cook yet.
+                                    item.remove();
+                                    showToast('Meal bundles aren\'t supported on the board yet — add individual recipes.', 'error');
+                                    closeSidebar();
+                                    return;
+                                }
                                 // Meals replace whatever was in the slot (per design)
                                 const name = item.dataset.name;
                                 cell.querySelectorAll('.grid-card').forEach(c => c.remove());
@@ -1627,6 +1816,409 @@
                 cell.classList.remove('has-card');
                 if (emptyLabel) emptyLabel.style.display = '';
             }
+        }
+
+        // --- Serving ledger board (cooks, scale stepper, chips, freezer, trash) ---
+        //
+        // Board mode wins for any week whose ledger has cooks (boardMode =
+        // weekBoard.cooks.length > 0). All mutations for a board-backed week go
+        // through the ledger API below; saveMealPlan()/debounceSave() are never
+        // called for it — the server regenerates that week's Markdown itself.
+        // After every mutation (success OR failure) we reload the whole board
+        // and re-render from scratch: simple + correct beats optimistic DOM
+        // surgery on an iPad.
+
+        function fmtMult(x) {
+            x = parseFloat(x);
+            if (!isFinite(x)) return '0';
+            const rounded = Math.round(x * 100) / 100;
+            return (Math.abs(rounded - Math.round(rounded)) < 1e-6)
+                ? String(Math.round(rounded))
+                : String(rounded);
+        }
+
+        function findCell(dateIso, meal) {
+            const day = DAYS.find(d => dayDates[d] === dateIso);
+            if (!day) return null;
+            return document.querySelector(`.grid-cell[data-day="${day}"][data-meal="${meal}"]`);
+        }
+
+        function chipTrayFor(cell) {
+            let tray = cell.querySelector('.chip-tray');
+            if (!tray) {
+                tray = document.createElement('div');
+                tray.className = 'chip-tray';
+                cell.appendChild(tray);
+            }
+            return tray;
+        }
+
+        function makeServingChip(cookId, placementId, count, recipeNameIfForeign) {
+            const chip = document.createElement('div');
+            chip.className = 'serving-chip';
+            chip.dataset.cookId = cookId;
+            chip.dataset.placementId = placementId;
+            chip.dataset.count = count;
+            chip.textContent = recipeNameIfForeign
+                ? `🍽 ${recipeNameIfForeign} ×${fmtMult(count)}`
+                : `🍽×${fmtMult(count)}`;
+            return chip;
+        }
+
+        function makeUnassignedChip(cookId, unassigned) {
+            const chip = document.createElement('div');
+            chip.className = 'serving-chip unassigned-chip';
+            chip.dataset.cookId = cookId;
+            chip.dataset.count = unassigned;
+            chip.dataset.placementId = '';  // none yet — dropping this creates a new placement
+            chip.textContent = `+${fmtMult(unassigned)}`;
+            return chip;
+        }
+
+        function makeFreezerChip(entry) {
+            const chip = document.createElement('div');
+            chip.className = 'freezer-chip';
+            chip.dataset.cookId = entry.cook_id;
+            chip.dataset.placementId = entry.placement_id;
+            chip.dataset.count = entry.count;
+            const ageDays = Math.max(0, Math.round((Date.now() - Date.parse(entry.created_at)) / 86400000));
+            const nameEl = document.createElement('span');
+            nameEl.className = 'freezer-chip-name';
+            nameEl.textContent = entry.recipe;
+            const metaEl = document.createElement('span');
+            metaEl.className = 'freezer-chip-meta';
+            metaEl.textContent = `×${fmtMult(entry.count)} · ${ageDays}d`;
+            chip.appendChild(nameEl);
+            chip.appendChild(metaEl);
+            return chip;
+        }
+
+        function createCookCard(cook) {
+            const card = document.createElement('div');
+            card.className = 'grid-card cook-card';
+            card.dataset.cookId = cook.id;
+            card.dataset.name = cook.recipe;
+
+            const recipe = allRecipes.find(r => r.name === cook.recipe);
+            if (recipe && recipe.image) {
+                card.classList.add('has-image');
+                card.style.backgroundImage = `url(/images/${encodeURIComponent(recipe.image)})`;
+            }
+
+            const obsidianUrl = `obsidian://open?vault=KitchenOS&file=${encodeURIComponent('Recipes/' + cook.recipe)}`;
+            const nameEl = document.createElement('a');
+            nameEl.className = 'grid-card-name grid-card-name-link';
+            nameEl.href = obsidianUrl;
+            nameEl.textContent = cook.recipe;
+
+            const removeBtn = document.createElement('button');
+            removeBtn.className = 'remove-btn';
+            removeBtn.innerHTML = '&times;';
+            removeBtn.setAttribute('aria-label', 'Remove cook');
+            removeBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                deleteCook(cook.id);
+            });
+
+            const stepper = document.createElement('div');
+            stepper.className = 'scale-stepper';
+            const minusBtn = document.createElement('button');
+            minusBtn.className = 'scale-btn scale-minus';
+            minusBtn.textContent = '−';
+            minusBtn.setAttribute('aria-label', 'Decrease scale');
+            minusBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                adjustScale(cook, -0.5);
+            });
+            const valueEl = document.createElement('span');
+            valueEl.className = 'scale-value';
+            valueEl.textContent = `${fmtMult(cook.scale)}×`;
+            const plusBtn = document.createElement('button');
+            plusBtn.className = 'scale-btn scale-plus';
+            plusBtn.textContent = '+';
+            plusBtn.setAttribute('aria-label', 'Increase scale');
+            plusBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                adjustScale(cook, 0.5);
+            });
+            stepper.appendChild(minusBtn);
+            stepper.appendChild(valueEl);
+            stepper.appendChild(plusBtn);
+
+            const cookedBtn = document.createElement('button');
+            cookedBtn.className = 'cooked-btn';
+            cookedBtn.innerHTML = '🍳';
+            cookedBtn.title = 'Mark cooked — subtract ingredients from inventory';
+            cookedBtn.setAttribute('aria-label', 'Mark cooked');
+            cookedBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                markCookCooked(cook);
+            });
+
+            card.appendChild(nameEl);
+            card.appendChild(removeBtn);
+            card.appendChild(stepper);
+            card.appendChild(cookedBtn);
+
+            return card;
+        }
+
+        // --- Board render ---
+
+        function renderFreezerTab() {
+            const tray = document.getElementById('freezer-tray');
+            if (!tray) return;
+            tray.innerHTML = '';
+            const items = (weekBoard && weekBoard.freezer) || [];
+            if (!items.length) {
+                const empty = document.createElement('div');
+                empty.className = 'freezer-empty';
+                empty.textContent = 'Freezer is empty';
+                tray.appendChild(empty);
+                return;
+            }
+            items.forEach(entry => tray.appendChild(makeFreezerChip(entry)));
+        }
+
+        function renderBoardIfActive() {
+            boardMode = !!(weekBoard && weekBoard.cooks && weekBoard.cooks.length > 0);
+            document.body.classList.toggle('board-mode', boardMode);
+
+            // Chip trays are always rebuilt from scratch (both board and legacy
+            // weeks need a fresh, empty tray in every cell so frozen leftovers
+            // can still be dragged into a legacy week's slots).
+            document.querySelectorAll('.chip-tray').forEach(t => t.remove());
+
+            if (boardMode) {
+                document.querySelectorAll('.grid-card').forEach(c => c.remove());
+
+                weekBoard.cooks.forEach(cook => {
+                    if (cook.date && cook.meal) {
+                        const homeCell = findCell(cook.date, cook.meal);
+                        if (homeCell) homeCell.appendChild(createCookCard(cook));
+                    }
+                    cook.placements.forEach(p => {
+                        if (p.destination !== 'slot') return;
+                        const cell = findCell(p.date, p.meal);
+                        if (!cell) return;
+                        const isHome = p.date === cook.date && p.meal === cook.meal;
+                        chipTrayFor(cell).appendChild(
+                            makeServingChip(cook.id, p.id, p.count, isHome ? null : cook.recipe));
+                    });
+                    if (cook.unassigned > 1e-6 && cook.date && cook.meal) {
+                        const homeCell = findCell(cook.date, cook.meal);
+                        if (homeCell) chipTrayFor(homeCell).appendChild(makeUnassignedChip(cook.id, cook.unassigned));
+                    }
+                });
+
+                initGridSortables();
+            }
+
+            document.querySelectorAll('.grid-cell').forEach(updateCellState);
+            wireChipSortables();
+        }
+
+        async function loadWeekBoard(week) {
+            try {
+                const resp = await fetch(`/api/week-board/${week}`);
+                weekBoard = resp.ok ? await resp.json() : null;
+            } catch (err) {
+                console.error('Failed to load week board', err);
+                weekBoard = null;
+            }
+            renderFreezerTab();
+            renderBoardIfActive();
+        }
+
+        // --- Board mutations ---
+
+        async function ensureLegacyImported() {
+            // Cheap client-side check first: if the board already has cooks we
+            // never need to import (also protects against the server's own
+            // idempotence guard, which 409s on a week that already has cooks).
+            if (weekBoard && weekBoard.cooks && weekBoard.cooks.length > 0) return;
+            try {
+                const resp = await fetch(`/api/week-board/${currentWeek}/import-legacy`, { method: 'POST' });
+                if (!resp.ok && resp.status !== 409) {
+                    const err = await resp.json().catch(() => ({}));
+                    console.warn('legacy import failed', err.error || resp.status);
+                }
+            } catch (err) {
+                console.warn('legacy import request failed', err);
+            }
+        }
+
+        async function createCook(name, day, meal, scale, baseServings) {
+            try {
+                const resp = await fetch('/api/cooks', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        recipe: name, week: currentWeek, scale: scale,
+                        servings_produced: baseServings * scale,
+                        date: dayDates[day], meal: meal,
+                        initial_placement_count: 1
+                    })
+                });
+                if (!resp.ok) { showToast((await resp.json()).error || 'Failed to add recipe', 'error'); return; }
+                await loadWeekBoard(currentWeek);
+            } catch (err) { showToast('Failed to create cook', 'error'); }
+        }
+
+        async function adjustScale(cook, delta) {
+            const newScale = Math.min(4.0, Math.max(0.5, Math.round((cook.scale + delta) * 2) / 2));
+            if (Math.abs(newScale - cook.scale) < 1e-9) return;
+            const baseServings = cook.servings_produced / cook.scale;
+            const newServingsProduced = baseServings * newScale;
+            try {
+                const resp = await fetch(`/api/cooks/${cook.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ scale: newScale, servings_produced: newServingsProduced })
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    showToast(err.error || 'Failed to update scale', 'error');
+                    return;
+                }
+                await loadWeekBoard(currentWeek);
+            } catch (err) {
+                showToast('Failed to update scale', 'error');
+            }
+        }
+
+        async function markCookCooked(cook) {
+            if (!confirm(`Mark "${cook.recipe}" cooked? This subtracts its ingredients from your inventory.`)) return;
+            try {
+                await fetch(`/api/cooks/${cook.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cooked_at: new Date().toISOString() })
+                });
+                const resp = await fetch('/api/cook', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ recipe: cook.recipe, servings: cook.scale })
+                });
+                const r = await resp.json();
+                if (r.error) {
+                    showToast(r.error, 'error');
+                } else {
+                    const consumed = r.consumed || [];
+                    if (!consumed.length) {
+                        showToast('Marked cooked — nothing tracked to decrement', 'success');
+                    } else {
+                        const parts = consumed.slice(0, 4).map(c =>
+                            c.depleted ? `${c.item} (used up)` : `${c.item}: ${c.after}${c.unit ? ' ' + c.unit : ''} left`);
+                        showToast(`Cooked — ${parts.join(', ')}`, 'success');
+                    }
+                    loadUseItUp().catch(() => {});
+                }
+            } catch (err) {
+                showToast('Failed to mark cooked', 'error');
+            } finally {
+                await loadWeekBoard(currentWeek);
+            }
+        }
+
+        async function deleteCook(cookId) {
+            if (!confirm('Delete this cook and all its servings?')) return;
+            try {
+                const resp = await fetch(`/api/cooks/${cookId}`, { method: 'DELETE' });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    showToast(err.error || 'Failed to delete cook', 'error');
+                }
+            } catch (err) {
+                showToast('Failed to delete cook', 'error');
+            } finally {
+                await loadWeekBoard(currentWeek);
+            }
+        }
+
+        // --- Chip drag wiring (group 'servings': grid cells, freezer tray, trash) ---
+
+        async function handleChipDrop(evt) {
+            const chip = evt.item;
+            const toEl = evt.to;
+            const count = Math.min(1, parseFloat(chip.dataset.count) || 0);
+            let destination, date = null, meal = null;
+
+            if (toEl.id === 'freezer-tray') {
+                destination = 'freezer';
+            } else if (toEl.id === 'trash-target') {
+                destination = 'trash';
+            } else {
+                const cell = toEl.closest('.grid-cell');
+                if (!cell) { chip.remove(); return; }
+                destination = 'slot';
+                date = dayDates[cell.dataset.day];
+                meal = cell.dataset.meal;
+            }
+
+            const placementId = chip.dataset.placementId;
+            const cookId = chip.dataset.cookId;
+
+            try {
+                let resp;
+                if (placementId) {
+                    resp = await fetch(`/api/placements/${placementId}/move`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ count, destination, date, meal })
+                    });
+                } else {
+                    resp = await fetch('/api/placements', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ cook_id: Number(cookId), destination, count, date, meal })
+                    });
+                }
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    showToast(err.error || 'Failed to move serving', 'error');
+                }
+            } catch (err) {
+                showToast('Failed to move serving', 'error');
+            } finally {
+                // Always reload — even on failure — so the DOM (which Sortable
+                // already moved the chip within) reflects server truth.
+                await loadWeekBoard(currentWeek);
+            }
+        }
+
+        function wireChipSortables() {
+            chipSortables.forEach(s => s.destroy());
+            chipSortables = [];
+
+            const commonOptions = {
+                group: 'servings',
+                draggable: '.serving-chip, .freezer-chip',
+                ghostClass: 'sortable-ghost',
+                dragClass: 'sortable-drag',
+                forceFallback: true,
+                fallbackOnBody: true,
+                fallbackTolerance: 5,
+                delay: window.IS_TOUCH ? 200 : 100,
+                delayOnTouchOnly: true,
+                touchStartThreshold: 5,
+                animation: 150,
+                onStart: function() { document.body.classList.add('dragging-serving'); },
+                onEnd: function() { document.body.classList.remove('dragging-serving'); },
+                onAdd: handleChipDrop,
+            };
+
+            document.querySelectorAll('.grid-cell').forEach(cell => {
+                chipSortables.push(Sortable.create(chipTrayFor(cell), { ...commonOptions }));
+            });
+            const freezerTray = document.getElementById('freezer-tray');
+            if (freezerTray) chipSortables.push(Sortable.create(freezerTray, { ...commonOptions }));
+            const trashTarget = document.getElementById('trash-target');
+            if (trashTarget) chipSortables.push(Sortable.create(trashTarget, { ...commonOptions }));
         }
 
         // --- API Calls ---
@@ -1971,7 +2563,7 @@
                 // programmatic .click(), which bubbles through here — hijacking
                 // it would cancel the button's handler and re-open the sheet.
                 if (!e.isTrusted) return;
-                if (e.target.closest('.remove-btn, .servings-btn, .cooked-btn, .retry-btn')) return;
+                if (e.target.closest('.remove-btn, .servings-btn, .cooked-btn, .retry-btn, .scale-btn, .serving-chip, .unassigned-chip')) return;
                 const card = e.target.closest('.grid-card');
                 if (!card) return; // empty-cell taps fall through to suggest
                 e.preventDefault();
@@ -2013,21 +2605,25 @@
                 addAction('Open recipe', () => { window.location.href = link.href; });
             }
 
-            // Servings segment: ×1 / ×2 / ×3
-            const segment = document.createElement('div');
-            segment.className = 'segment';
-            const current = parseFloat(card.dataset.servings) || 1;
-            [1, 2, 3].forEach(n => {
-                const btn = document.createElement('button');
-                btn.textContent = `×${n}`;
-                if (n === current) btn.className = 'selected';
-                btn.addEventListener('click', () => {
-                    closeCardSheet();
-                    if (n !== current) setCardServings(card, n);
+            // Servings segment: ×1 / ×2 / ×3 — legacy grid cards only. Cook
+            // cards (board mode) carry their own scale stepper (± 0.5, visible
+            // inline, not display:none'd on touch) instead of this fixed menu.
+            if (!card.classList.contains('cook-card')) {
+                const segment = document.createElement('div');
+                segment.className = 'segment';
+                const current = parseFloat(card.dataset.servings) || 1;
+                [1, 2, 3].forEach(n => {
+                    const btn = document.createElement('button');
+                    btn.textContent = `×${n}`;
+                    if (n === current) btn.className = 'selected';
+                    btn.addEventListener('click', () => {
+                        closeCardSheet();
+                        if (n !== current) setCardServings(card, n);
+                    });
+                    segment.appendChild(btn);
                 });
-                segment.appendChild(btn);
-            });
-            actions.appendChild(segment);
+                actions.appendChild(segment);
+            }
 
             if (card.dataset.kind === 'meal') {
                 addAction('Edit meal', () => openMealEditor(card.dataset.name));
@@ -2092,6 +2688,7 @@
             updateURL(currentWeek);
             try {
                 await loadMealPlan(currentWeek);
+                await loadWeekBoard(currentWeek);
                 loadTasks(currentWeek).catch(err => console.error('tasks load failed', err));
             } catch (err) {
                 showToast('Failed to load meal plan', 'error');
@@ -2162,21 +2759,25 @@
             });
             const recipeList = document.getElementById('recipe-list');
             const mealsList = document.getElementById('meals-list');
+            const freezerTray = document.getElementById('freezer-tray');
             const chips = document.getElementById('filter-chips');
             const title = document.getElementById('sidebar-title');
             const search = document.getElementById('search-input');
+
+            recipeList.classList.toggle('hidden-tab', tab !== 'recipes');
+            mealsList.classList.toggle('active', tab === 'meals');
+            if (freezerTray) freezerTray.classList.toggle('active', tab === 'freezer');
+            chips.style.display = (tab === 'recipes') ? '' : 'none';
+            search.style.display = (tab === 'freezer') ? 'none' : '';
+
             if (tab === 'recipes') {
-                recipeList.classList.remove('hidden-tab');
-                mealsList.classList.remove('active');
-                chips.style.display = '';
                 title.textContent = 'Recipes';
                 search.placeholder = 'Search recipes...';
-            } else {
-                recipeList.classList.add('hidden-tab');
-                mealsList.classList.add('active');
-                chips.style.display = 'none';
+            } else if (tab === 'meals') {
                 title.textContent = 'Meals';
                 search.placeholder = 'Search meals...';
+            } else {
+                title.textContent = 'Freezer';
             }
         }
 

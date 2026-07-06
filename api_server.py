@@ -968,6 +968,69 @@ def api_week_board(week):
     return jsonify(serving_ledger.week_board(week, OBSIDIAN_RECIPES_PATH))
 
 
+def _recipe_base_servings(recipe_name):
+    """Per-recipe servings from frontmatter, falling back to 4.
+
+    Reads via a fresh ``paths.recipes_dir()`` call (not the module-level
+    ``OBSIDIAN_RECIPES_PATH`` constant captured at import time) so tests that
+    monkeypatch ``KITCHENOS_VAULT`` after import see the right directory.
+    """
+    from lib import paths
+    path = paths.recipes_dir() / f"{recipe_name}.md"
+    if not path.exists():
+        return 4.0
+    try:
+        fm = parse_recipe_file(path.read_text(encoding="utf-8"))["frontmatter"]
+        servings = fm.get("servings")
+        return float(servings) if servings else 4.0
+    except Exception:
+        return 4.0
+
+
+@app.route('/api/week-board/<week>/import-legacy', methods=['POST'])
+@require_token
+@_ledger_error
+def api_week_board_import_legacy(week):
+    """One-time conversion of a hand-edited week to the serving ledger.
+
+    Walks the week's Markdown (if any) via parse_meal_plan and creates one
+    cook per filled slot: scale = the entry's servings multiplier,
+    servings_produced = recipe frontmatter servings x scale (fallback 4),
+    and all of it placed at that slot (legacy assumption: eaten there).
+    Guarded against re-import: 409 if the week already has ledger cooks.
+    """
+    from lib import serving_ledger, paths
+    from lib.meal_plan_parser import flatten_to_recipes
+    if not re.match(r'^\d{4}-W\d{2}$', week):
+        return jsonify({"error": "Invalid week format. Expected YYYY-WNN"}), 400
+    if serving_ledger.cooks_for_week(week):
+        return jsonify({"error": "week already has cooks"}), 409
+
+    plan_file = paths.meal_plans_dir() / f"{week}.md"
+    imported = []
+    if plan_file.exists():
+        year_num, week_num = int(week[:4]), int(week.split("-W")[1])
+        content = plan_file.read_text(encoding="utf-8")
+        parsed = parse_meal_plan(content, year_num, week_num)
+        for day_data in parsed:
+            date_iso = day_data["date"].isoformat()
+            for meal in ("breakfast", "lunch", "snack", "dinner"):
+                entry = day_data.get(meal)
+                if entry is None:
+                    continue
+                for sub in flatten_to_recipes(entry, meals_dir=paths.meals_dir()):
+                    scale = float(sub.servings)
+                    servings_produced = _recipe_base_servings(sub.name) * scale
+                    cook = serving_ledger.create_cook(
+                        recipe=sub.name, week=week, scale=scale,
+                        servings_produced=servings_produced,
+                        date=date_iso, meal=meal,
+                        initial_placement_count=servings_produced)
+                    imported.append(cook["id"])
+    _regen_weeks(week)
+    return jsonify({"imported": imported})
+
+
 @app.route('/api/cooks', methods=['POST'])
 @require_token
 @_ledger_error

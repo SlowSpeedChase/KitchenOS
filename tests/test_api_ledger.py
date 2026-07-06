@@ -135,3 +135,76 @@ def test_placement_move_unknown_id_returns_404(client, tmp_db, tmp_vault):
 def test_cook_create_null_scale_returns_400(client, tmp_db, tmp_vault):
     resp = _create_cook(client, scale=None)
     assert resp.status_code == 400
+
+
+def test_import_legacy_week(client, tmp_db, tmp_vault):
+    """A week's Markdown with [[links]] but no ledger cooks imports on demand:
+    one cook per filled slot, scale = the entry's servings multiplier."""
+    recipes_dir = tmp_vault / "Recipes"
+    recipes_dir.mkdir(parents=True, exist_ok=True)
+    (recipes_dir / "Chili.md").write_text(
+        "---\nservings: 4\n---\n\nSome chili.\n", encoding="utf-8")
+
+    plans_dir = tmp_vault / "Meal Plans"
+    plans_dir.mkdir(parents=True, exist_ok=True)
+    (plans_dir / "2026-W28.md").write_text(
+        "# Meal Plan\n\n"
+        "## Monday (Jul 6)\n"
+        "### Breakfast\n"
+        "### Lunch\n"
+        "### Snack\n"
+        "### Dinner\n"
+        "[[Chili]] x2\n"
+        "### Notes\n\n"
+        "## Tuesday (Jul 7)\n"
+        "### Breakfast\n"
+        "### Lunch\n"
+        "### Snack\n"
+        "### Dinner\n"
+        "### Notes\n\n",
+        encoding="utf-8")
+
+    resp = client.post("/api/week-board/2026-W28/import-legacy")
+    assert resp.status_code == 200
+    assert len(resp.get_json()["imported"]) == 1
+
+    board = client.get("/api/week-board/2026-W28").get_json()
+    assert len(board["cooks"]) == 1
+    cook = board["cooks"][0]
+    assert cook["recipe"] == "Chili"
+    assert cook["scale"] == 2.0
+    assert cook["servings_produced"] == 8.0
+    assert cook["meal"] == "dinner"
+    # Legacy assumption: all produced servings are placed at that slot.
+    assert cook["unassigned"] == 0.0
+
+
+def test_import_legacy_falls_back_to_default_servings(client, tmp_db, tmp_vault):
+    """No frontmatter servings on the recipe file -> base servings default to 4."""
+    plans_dir = tmp_vault / "Meal Plans"
+    plans_dir.mkdir(parents=True, exist_ok=True)
+    (plans_dir / "2026-W29.md").write_text(
+        "## Monday (Jul 13)\n### Breakfast\n### Lunch\n### Snack\n"
+        "### Dinner\n[[Mystery Stew]]\n### Notes\n\n",
+        encoding="utf-8")
+
+    resp = client.post("/api/week-board/2026-W29/import-legacy")
+    assert resp.status_code == 200
+
+    board = client.get("/api/week-board/2026-W29").get_json()
+    cook = board["cooks"][0]
+    assert cook["scale"] == 1.0
+    assert cook["servings_produced"] == 4.0
+
+
+def test_import_legacy_already_has_cooks_returns_409(client, tmp_db, tmp_vault):
+    """Idempotence guard: a week the ledger already owns must not be re-imported."""
+    _create_cook(client, week="2026-W28")
+    resp = client.post("/api/week-board/2026-W28/import-legacy")
+    assert resp.status_code == 409
+    assert resp.get_json()["error"] == "week already has cooks"
+
+
+def test_import_legacy_invalid_week_400(client, tmp_db, tmp_vault):
+    resp = client.post("/api/week-board/garbage/import-legacy")
+    assert resp.status_code == 400
