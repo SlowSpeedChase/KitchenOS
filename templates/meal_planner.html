@@ -1407,6 +1407,8 @@
         let weekBoard = null;           // { week, cooks, freezer, day_totals } from GET /api/week-board/<week>
         let boardMode = false;          // true when weekBoard.cooks.length > 0 — board wins over legacy grid cards
         let chipSortables = [];         // Sortable instances for the 'servings' chip-drag group
+        let ledgerBusy = false;         // true while a board mutation is in flight — serializes rapid taps
+        let boardLoadGen = 0;           // monotonically increasing — a stale loadWeekBoard response never renders over a newer one
 
         // --- Init ---
         document.addEventListener('DOMContentLoaded', init);
@@ -1629,7 +1631,13 @@
                 gridSortables.push(
                     Sortable.create(cell, {
                         group: { name: 'recipes', pull: true, put: true },
-                        draggable: '.grid-card',
+                        // Cook cards (board mode) must never be draggable through
+                        // the legacy grid Sortable — its onAdd falls through to
+                        // debounceSave()/saveMealPlan(), which PUTs scale-less
+                        // legacy meal-plan data over ledger-authored Markdown.
+                        // Cook cards move only via the ledger API (scale stepper,
+                        // remove button, chip drags).
+                        draggable: '.grid-card:not(.cook-card)',
                         ghostClass: 'sortable-ghost',
                         dragClass: 'sortable-drag',
                         forceFallback: true,
@@ -1806,7 +1814,13 @@
 
         function updateCellState(cell) {
             if (!cell) return;
-            const hasCard = cell.querySelector('.grid-card') !== null;
+            // A cell also counts as occupied when it holds a leftover chip
+            // (e.g. a foreign placement or the unassigned chip) even with no
+            // .grid-card of its own — otherwise the "Drop recipe" empty-label
+            // stays visible over the chip and taps on it still fire
+            // suggestMeal() instead of interacting with the chip.
+            const hasChip = cell.querySelector('.chip-tray .serving-chip') !== null;
+            const hasCard = cell.querySelector('.grid-card') !== null || hasChip;
             const emptyLabel = cell.querySelector('.empty-label');
 
             if (hasCard) {
@@ -1993,7 +2007,16 @@
             // can still be dragged into a legacy week's slots).
             document.querySelectorAll('.chip-tray').forEach(t => t.remove());
 
+            // Cook cards are cleared unconditionally — not just when boardMode
+            // is true. Otherwise deleting the last cook (boardMode flips back
+            // to false) leaves its stale .cook-card in the DOM forever, since
+            // nothing else ever re-renders that cell.
+            document.querySelectorAll('.cook-card').forEach(c => c.remove());
+
             if (boardMode) {
+                // Also clear any legacy (non-cook) grid cards left over from
+                // the initial loadMealPlan() render before rebuilding from the
+                // ledger.
                 document.querySelectorAll('.grid-card').forEach(c => c.remove());
 
                 weekBoard.cooks.forEach(cook => {
@@ -2023,13 +2046,20 @@
         }
 
         async function loadWeekBoard(week) {
+            const gen = ++boardLoadGen;
+            let loaded;
             try {
                 const resp = await fetch(`/api/week-board/${week}`);
-                weekBoard = resp.ok ? await resp.json() : null;
+                loaded = resp.ok ? await resp.json() : null;
             } catch (err) {
                 console.error('Failed to load week board', err);
-                weekBoard = null;
+                loaded = null;
             }
+            // If a newer loadWeekBoard() started (and possibly already
+            // resolved) while this fetch was in flight, drop this stale
+            // response instead of rendering over the newer state.
+            if (gen !== boardLoadGen) return;
+            weekBoard = loaded;
             renderFreezerTab();
             renderBoardIfActive();
         }
@@ -2053,6 +2083,11 @@
         }
 
         async function createCook(name, day, meal, scale, baseServings) {
+            // Guard against rapid double-drops (or a drop racing another
+            // mutation) reading/writing stale state — see adjustScale below
+            // for the fuller rationale.
+            if (ledgerBusy) return;
+            ledgerBusy = true;
             try {
                 const resp = await fetch('/api/cooks', {
                     method: 'POST',
@@ -2067,14 +2102,24 @@
                 if (!resp.ok) { showToast((await resp.json()).error || 'Failed to add recipe', 'error'); return; }
                 await loadWeekBoard(currentWeek);
             } catch (err) { showToast('Failed to create cook', 'error'); }
+            finally { ledgerBusy = false; }
         }
 
         async function adjustScale(cook, delta) {
-            const newScale = Math.min(4.0, Math.max(0.5, Math.round((cook.scale + delta) * 2) / 2));
-            if (Math.abs(newScale - cook.scale) < 1e-9) return;
-            const baseServings = cook.servings_produced / cook.scale;
-            const newServingsProduced = baseServings * newScale;
+            // Serialize board mutations: two rapid stepper taps both close
+            // over the same `cook` object (captured before either PATCH
+            // resolves), so without this guard the second click computes its
+            // new scale from the same stale `cook.scale` as the first,
+            // silently dropping one of the two increments. Blocking until the
+            // in-flight mutation's loadWeekBoard() has re-rendered (with a
+            // fresh `cook` reference for the next click) fixes it.
+            if (ledgerBusy) return;
+            ledgerBusy = true;
             try {
+                const newScale = Math.min(4.0, Math.max(0.5, Math.round((cook.scale + delta) * 2) / 2));
+                if (Math.abs(newScale - cook.scale) < 1e-9) return;
+                const baseServings = cook.servings_produced / cook.scale;
+                const newServingsProduced = baseServings * newScale;
                 const resp = await fetch(`/api/cooks/${cook.id}`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
@@ -2088,11 +2133,15 @@
                 await loadWeekBoard(currentWeek);
             } catch (err) {
                 showToast('Failed to update scale', 'error');
+            } finally {
+                ledgerBusy = false;
             }
         }
 
         async function markCookCooked(cook) {
             if (!confirm(`Mark "${cook.recipe}" cooked? This subtracts its ingredients from your inventory.`)) return;
+            if (ledgerBusy) return;
+            ledgerBusy = true;
             try {
                 await fetch(`/api/cooks/${cook.id}`, {
                     method: 'PATCH',
@@ -2122,11 +2171,14 @@
                 showToast('Failed to mark cooked', 'error');
             } finally {
                 await loadWeekBoard(currentWeek);
+                ledgerBusy = false;
             }
         }
 
         async function deleteCook(cookId) {
             if (!confirm('Delete this cook and all its servings?')) return;
+            if (ledgerBusy) return;
+            ledgerBusy = true;
             try {
                 const resp = await fetch(`/api/cooks/${cookId}`, { method: 'DELETE' });
                 if (!resp.ok) {
@@ -2137,6 +2189,7 @@
                 showToast('Failed to delete cook', 'error');
             } finally {
                 await loadWeekBoard(currentWeek);
+                ledgerBusy = false;
             }
         }
 
@@ -2163,6 +2216,8 @@
             const placementId = chip.dataset.placementId;
             const cookId = chip.dataset.cookId;
 
+            if (ledgerBusy) return;
+            ledgerBusy = true;
             try {
                 let resp;
                 if (placementId) {
@@ -2188,6 +2243,7 @@
                 // Always reload — even on failure — so the DOM (which Sortable
                 // already moved the chip within) reflects server truth.
                 await loadWeekBoard(currentWeek);
+                ledgerBusy = false;
             }
         }
 
@@ -2328,6 +2384,16 @@
         }
 
         async function saveMealPlan() {
+            // Belt-and-suspenders guard: a board-backed week must never be
+            // written through the legacy PUT /api/meal-plan/<week> path — that
+            // payload has no scale/placement info and would clobber the
+            // ledger-authored Markdown. Compute the gate inline (rather than
+            // trusting the `boardMode` flag alone) in case this is ever called
+            // before a render has run.
+            if (weekBoard && weekBoard.cooks && weekBoard.cooks.length > 0) {
+                console.warn('saveMealPlan() skipped — week is board-backed (ledger owns this week\'s Markdown)');
+                return;
+            }
             const days = [];
             for (const dayName of DAYS) {
                 const dayData = {
