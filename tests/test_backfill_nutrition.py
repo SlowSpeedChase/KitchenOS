@@ -112,12 +112,16 @@ class TestBackfillNutrition:
         with patch("backfill_nutrition.calculate_recipe_nutrition", return_value=result):
             backfill_recipe(recipe_path, dry_run=False)
 
-        assert "needs_review: true" in recipe_path.read_text()
+        content = recipe_path.read_text()
+        assert "needs_review: true" in content
+        assert "nutrition_needs_review: true" in content
 
     def test_needs_review_clears_when_no_longer_flagged(self, tmp_path):
-        # Regression: a recipe previously flagged needs_review: true must have
-        # that key rewritten to false once the recipe is no longer flagged —
-        # otherwise the review page's fix-a-match-and-clear loop never clears.
+        # Regression: nutrition's own verdict (nutrition_needs_review) must
+        # flip to false once the recipe is no longer flagged — but the shared
+        # needs_review flag is NOT nutrition's to clear (it may have been set
+        # by extraction/normalizer/crouton_parser for an unrelated reason), so
+        # a pre-existing needs_review: true must survive untouched.
         from backfill_nutrition import write_nutrition_to_file
 
         content = '''---
@@ -142,8 +146,69 @@ serving_size: null
         write_nutrition_to_file(recipe_path, result)
 
         out = recipe_path.read_text()
-        assert "needs_review: false" in out
-        assert "needs_review: true" not in out
+        assert "nutrition_needs_review: false" in out
+        lines = out.splitlines()
+        assert lines.count("needs_review: true") == 1
+        assert not any(l.startswith("needs_review: false") for l in lines)
+
+    def test_needs_review_not_added_when_absent_and_unflagged(self, tmp_path):
+        # An unflagged nutrition result must not introduce a needs_review key
+        # where none existed — only nutrition_needs_review is nutrition's to write.
+        from backfill_nutrition import write_nutrition_to_file
+
+        content = '''---
+title: "Clean Recipe"
+source_url: "https://youtube.com/watch?v=abc"
+nutrition_calories: null
+servings: 2
+serving_size: null
+---
+
+# Clean Recipe
+
+## Instructions
+
+1. Cook it.
+'''
+        recipe_path = tmp_path / "Clean Recipe.md"
+        recipe_path.write_text(content)
+
+        result = make_result(300, 10, 40, 8, needs_review=False)
+        write_nutrition_to_file(recipe_path, result)
+
+        out = recipe_path.read_text()
+        assert "nutrition_needs_review: false" in out
+        lines = out.splitlines()
+        assert not any(l.startswith("needs_review:") for l in lines)
+
+    def test_flagged_result_writes_both_keys_once(self, tmp_path):
+        # A flagged result writes both the scoped and shared keys, each exactly once.
+        from backfill_nutrition import write_nutrition_to_file
+
+        content = '''---
+title: "New Flag Recipe"
+source_url: "https://youtube.com/watch?v=abc"
+nutrition_calories: null
+servings: 2
+serving_size: null
+---
+
+# New Flag Recipe
+
+## Instructions
+
+1. Cook it.
+'''
+        recipe_path = tmp_path / "New Flag Recipe.md"
+        recipe_path.write_text(content)
+
+        result = make_result(300, 10, 40, 8, needs_review=True)
+        write_nutrition_to_file(recipe_path, result)
+
+        out = recipe_path.read_text()
+        lines = out.splitlines()
+        assert lines.count("needs_review: true") == 1
+        assert lines.count("nutrition_needs_review: true") == 1
 
     def test_defaults_null_servings_to_one(self, tmp_path):
         from backfill_nutrition import backfill_recipe
