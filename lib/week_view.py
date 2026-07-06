@@ -37,6 +37,7 @@ def _slot_lines(date_iso: str, meal: str, cooks: list[dict]) -> list[str]:
                 summary.append(f"Unassigned: {fmt_mult(cook['unassigned'])}")
             if summary:
                 lines.append("> " + " · ".join(summary))
+    # NOTE: "(leftover xN)" is display text; parse_meal_plan sees the link but not N — leftover-only slots round-trip with servings=1. Ledger weeks are re-rendered from the DB, so nothing is lost.
     for cook in cooks:
         for p in cook["placements"]:
             if (p["destination"] == "slot" and p["date"] == date_iso

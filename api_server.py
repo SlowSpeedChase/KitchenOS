@@ -884,6 +884,7 @@ def api_meal_plan_get(week):
         for meal in ("breakfast", "lunch", "snack", "dinner"):
             entry = day_data[meal]
             if entry is not None:
+                # servings is a float (fractional multipliers, e.g. 1.5); JSON numbers are JS-native
                 slot_json = {"name": entry.name, "servings": entry.servings, "kind": entry.kind}
                 if entry.kind == "meal":
                     meal_def = meal_loader.load_meal(entry.name)

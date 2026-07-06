@@ -1525,8 +1525,8 @@
         }
 
         function cycleCardServings(card) {
-            const s = parseInt(card.dataset.servings) || 1;
-            setCardServings(card, s >= 3 ? 1 : s + 1);
+            const s = parseFloat(card.dataset.servings) || 1;
+            setCardServings(card, s >= 3 ? 1 : Math.floor(s) + 1);
         }
 
         function createGridCard(name, servings) {
@@ -1580,7 +1580,7 @@
             cookedBtn.addEventListener('click', function(e) {
                 e.stopPropagation();
                 e.preventDefault();
-                markCooked(name, parseInt(card.dataset.servings) || 1);
+                markCooked(name, parseFloat(card.dataset.servings) || 1);
             });
 
             card.appendChild(nameEl);
@@ -1751,7 +1751,7 @@
                         const kind = card.dataset.kind || 'recipe';
                         dayData[meal] = {
                             name: card.dataset.name,
-                            servings: parseInt(card.dataset.servings) || 1,
+                            servings: parseFloat(card.dataset.servings) || 1,
                             kind: kind
                         };
                     } else {
@@ -2016,7 +2016,7 @@
             // Servings segment: ×1 / ×2 / ×3
             const segment = document.createElement('div');
             segment.className = 'segment';
-            const current = parseInt(card.dataset.servings) || 1;
+            const current = parseFloat(card.dataset.servings) || 1;
             [1, 2, 3].forEach(n => {
                 const btn = document.createElement('button');
                 btn.textContent = `×${n}`;
