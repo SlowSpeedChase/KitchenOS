@@ -31,6 +31,17 @@ from lib.nutrition import NutritionData
 # Below this line confidence, a recipe is flagged needs_review.
 REVIEW_CONFIDENCE = 0.5
 
+# Below this resolved-fraction, a recipe is flagged needs_review. Must match
+# lib.serving_ledger.COVERAGE_REVIEW_THRESHOLD.
+COVERAGE_REVIEW_THRESHOLD = 0.8
+# Per-serving calorie range outside of which a recipe is almost certainly a
+# parse/resolution error (e.g. a single-ingredient recipe resolving to an
+# implausible energy density).
+KCAL_SANITY_RANGE = (50, 2500)          # per serving
+# One ingredient line contributing more than this fraction of total recipe
+# grams is flagged for review (only when there is more than one resolved line).
+DOMINANT_LINE_FRACTION = 0.5            # one line > 50% of recipe grams
+
 # A single ingredient line over this many grams (~24 lb) is almost certainly a
 # parse error (e.g. a stray oven temperature parsed as an ingredient). Treat it
 # as unresolved rather than letting an absurd weight pollute the recipe.
@@ -65,6 +76,9 @@ class RecipeNutritionResult:
     needs_review: bool
     confidence: float
     line_items: list = field(default_factory=list)
+    coverage: float = 1.0
+    unmatched: list = field(default_factory=list)
+    sanity_flags: list = field(default_factory=list)
 
     # --- backward-compat: old call sites use .nutrition and .source ---
     @property
@@ -260,12 +274,26 @@ def calculate_recipe_nutrition(
     confidences: list[float] = []
     any_resolved = False
 
+    # Coverage/sanity bookkeeping. "to taste" (and similarly negligible informal
+    # amounts) are excluded from the denominator — they legitimately carry no
+    # meaningful macro contribution, so failing to resolve them shouldn't ding
+    # coverage.
+    countable = 0
+    resolved_count = 0
+    resolved_confs: list[float] = []
+    unmatched: list[str] = []
+    grams_list: list[float] = []
+
     for ing in ingredients:
         item = (ing.get("item") or "").strip()
         amount = ing.get("amount", "1")
         unit = ing.get("unit", "") or ""
         if not item:
             continue
+
+        is_negligible = (unit or "").strip().lower() == "to taste"
+        if not is_negligible:
+            countable += 1
 
         record, food_conf, resolver = _resolve_food(
             item, use_cache=use_cache, resolution_provider=resolution_provider)
@@ -275,6 +303,8 @@ def calculate_recipe_nutrition(
                 {}, dict(_EMPTY_CONTRIB), 0.0, True, note="food not found",
             ))
             confidences.append(0.0)
+            if not is_negligible:
+                unmatched.append(item)
             continue
 
         gr = _resolve_grams(amount, unit, item, record, use_cache=use_cache,
@@ -288,6 +318,8 @@ def calculate_recipe_nutrition(
                 note = f"implausible weight {gr.grams:.0f}g — skipped"
             else:
                 note = gr.note
+            if not is_negligible:
+                unmatched.append(item)
         else:
             factor = gr.grams / 100.0
             contribution = {k: float(per_100g.get(k, 0) or 0) * factor for k in _EMPTY_CONTRIB}
@@ -298,6 +330,10 @@ def calculate_recipe_nutrition(
             note = gr.note
             any_resolved = True
             sources.add(record["source"])
+            if not is_negligible:
+                resolved_count += 1
+                resolved_confs.append(line_conf)
+                grams_list.append(gr.grams)
 
         confidences.append(line_conf)
         line_items.append(IngredientNutrition(
@@ -335,11 +371,24 @@ def calculate_recipe_nutrition(
     )
 
     source = next(iter(sources)) if len(sources) == 1 else "mixed"
-    recipe_conf = round(min(confidences), 2) if confidences else 0.0
+    coverage = round(resolved_count / countable, 2) if countable else 0.0
+    confidence = round(sum(resolved_confs) / len(resolved_confs), 2) \
+        if resolved_confs else 0.0
+
+    sanity_flags: list[str] = []
+    lo, hi = KCAL_SANITY_RANGE
+    if not (lo <= per_serving.calories <= hi):
+        sanity_flags.append("kcal_out_of_range")
+    total_grams = sum(grams_list)
+    if total_grams and max(grams_list) / total_grams > DOMINANT_LINE_FRACTION \
+            and len(grams_list) > 1:
+        sanity_flags.append("dominant_line")
+
     needs_review = (
         servings_inferred
-        or any(li.needs_review for li in line_items)
-        or recipe_conf < REVIEW_CONFIDENCE
+        or coverage < COVERAGE_REVIEW_THRESHOLD
+        or bool(sanity_flags)
+        or confidence < REVIEW_CONFIDENCE
     )
 
     return RecipeNutritionResult(
@@ -349,6 +398,9 @@ def calculate_recipe_nutrition(
         servings_used=servings_used,
         servings_inferred=servings_inferred,
         needs_review=needs_review,
-        confidence=recipe_conf,
+        confidence=confidence,
         line_items=line_items,
+        coverage=coverage,
+        unmatched=unmatched,
+        sanity_flags=sanity_flags,
     )

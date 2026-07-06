@@ -35,6 +35,7 @@ _MANAGED_KEYS = {
     "nutrition_calories", "nutrition_protein", "nutrition_carbs",
     "nutrition_fat", "nutrition_source", "nutrition_confidence",
     "serving_size", "needs_review",
+    "nutrition_coverage", "nutrition_unmatched",
 }
 
 
@@ -117,7 +118,20 @@ def write_nutrition_to_file(filepath: Path, result) -> None:
     if result.needs_review:
         updates["needs_review"] = "true"
 
+    updates["nutrition_coverage"] = result.coverage
+    if result.unmatched:
+        joined = "; ".join(result.unmatched)
+        updates["nutrition_unmatched"] = f'"{joined}"'
+
     new_fm = rewrite_frontmatter(fm, updates)
+    if not result.unmatched:
+        # No unmatched items this run — drop any stale nutrition_unmatched line
+        # a previous (partial) backfill left behind.
+        new_fm = "\n".join(
+            l for l in new_fm.split("\n") if not l.startswith("nutrition_unmatched:")
+        )
+        if not new_fm.endswith("\n"):
+            new_fm += "\n"
     filepath.write_text(f"---{new_fm}---{rest}", encoding="utf-8")
 
 

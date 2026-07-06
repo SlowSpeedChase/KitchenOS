@@ -150,4 +150,12 @@ class TestLlmPortionFallback:
         # 200 g * 60 kcal/100g = 120 kcal
         assert res.total.calories == 120
         assert res.line_items[0].grams_method == "llm"
-        assert res.needs_review  # llm portion → flagged
+        # Line-level audit still flags the LLM portion estimate...
+        assert res.line_items[0].needs_review
+        # ...but recipe-level needs_review is now driven by coverage/mean
+        # confidence/sanity, not "any line flagged". This line fully resolves
+        # (coverage 1.0) with confidence exactly at REVIEW_CONFIDENCE (0.5, the
+        # min of food_conf=0.8 and the LLM grams confidence=0.5), so the recipe
+        # itself isn't auto-flagged — mean-confidence semantics, not min().
+        assert res.confidence == 0.5
+        assert res.needs_review is False
