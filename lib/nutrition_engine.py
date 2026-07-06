@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from lib import food_db, food_resolver, inventory_db, units
+from lib.ingredient_text import apply_aliases, clean_for_matching
 from lib.nutrition import NutritionData
 
 # Below this line confidence, a recipe is flagged needs_review.
@@ -121,7 +122,7 @@ def _resolve_food(item: str, *, use_cache: bool, resolution_provider: str):
     record_dict has keys: source, source_id, description, per_100g(dict),
     portions(list), density_g_per_ml.
     """
-    norm = units._normalize_item(item)
+    norm = units._normalize_item(apply_aliases(clean_for_matching(item)))
     if not norm:
         return None, 0.0, "unresolved"
 

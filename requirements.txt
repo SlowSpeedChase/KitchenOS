@@ -42,5 +42,8 @@ setproctitle>=1.3.0
 # Linting (used by Claude Code PostToolUse hook)
 ruff>=0.15.0
 
+# YAML parsing (ingredient aliases, recipe config)
+pyyaml>=6.0
+
 # Test-only
 pytest-mock>=3.12.0
