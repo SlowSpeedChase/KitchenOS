@@ -35,7 +35,7 @@ def parse_week_string(week_str: str) -> Path:
     return filepath
 
 
-def extract_recipe_links(meal_plan_path: Path) -> list[tuple[str, int]]:
+def extract_recipe_links(meal_plan_path: Path) -> list[tuple[str, float]]:
     """Extract recipe references from a meal plan, expanding any meals.
 
     Recognizes both `[[Recipe Name]]` and `[[Meal: Bundle Name]]` (the latter
@@ -44,14 +44,14 @@ def extract_recipe_links(meal_plan_path: Path) -> list[tuple[str, int]]:
     sub-recipe's own per-bundle servings override.
 
     Returns:
-        List of (recipe_name, servings) tuples. Unknown meals are emitted
-        as-is so the caller can surface a "Recipe not found" warning.
+        List of (recipe_name, multiplier: float) tuples. Unknown meals are
+        emitted as-is so the caller can surface a "Recipe not found" warning.
     """
     content = meal_plan_path.read_text(encoding='utf-8')
-    matches = re.findall(r'\[\[(Meal:\s*)?([^\]]+)\]\]\s*(?:x(\d+))?', content)
-    out: list[tuple[str, int]] = []
+    matches = re.findall(r'\[\[(Meal:\s*)?([^\]]+)\]\]\s*(?:x([\d.]+))?', content)
+    out: list[tuple[str, float]] = []
     for prefix, name, mult in matches:
-        servings = int(mult) if mult else 1
+        servings = float(mult) if mult else 1.0
         name = name.strip()
         if prefix:
             meal = meal_loader.load_meal(name)
@@ -88,7 +88,7 @@ def extract_ingredient_table(body: str) -> str:
     return match.group(1).strip() if match else ""
 
 
-def multiply_ingredients(ingredients: list[dict], multiplier: int) -> list[dict]:
+def multiply_ingredients(ingredients: list[dict], multiplier: float) -> list[dict]:
     """Scale ingredient amounts by a multiplier.
 
     Args:
