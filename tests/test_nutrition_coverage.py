@@ -92,3 +92,39 @@ def test_confidence_is_mean_not_min(monkeypatch, tmp_db):
 
 def test_coverage_review_threshold_matches_serving_ledger():
     assert ne.COVERAGE_REVIEW_THRESHOLD == serving_ledger.COVERAGE_REVIEW_THRESHOLD
+
+
+def test_human_negligible_resolves_with_zero_contribution(monkeypatch, tmp_db):
+    """A human-pinned negligible line must count as resolved (coverage 1.0,
+    not left in ``unmatched``) even though it carries a volume unit with no
+    density — it should never reach grams resolution at all."""
+    def fake_resolve_food(item, *, use_cache, resolution_provider):
+        if item == "unicorn dust":
+            record = {"query_norm": item, "source": "none", "source_id": "0",
+                      "description": "negligible (human)",
+                      "per_100g": {"calories": 0, "protein": 0, "carbs": 0, "fat": 0},
+                      "portions": [], "density_g_per_ml": None}
+            return record, 1.0, "human-negligible"
+        return {"source": "usda", "source_id": "1", "description": item,
+                "per_100g": PER, "portions": [], "density_g_per_ml": None}, 0.8, "match"
+
+    def fake_resolve_grams(amount, unit, item, record, *, use_cache, portion_provider):
+        if item == "unicorn dust":
+            raise AssertionError("negligible line must not reach grams resolution")
+        return units.GramResult(100.0, "direct", 1.0, False, note="")
+
+    monkeypatch.setattr(ne, "_resolve_food", fake_resolve_food)
+    monkeypatch.setattr(ne, "_resolve_grams", fake_resolve_grams)
+
+    r = ne.calculate_recipe_nutrition(
+        [{"item": "beans", "amount": "1", "unit": "cup"},
+         {"item": "unicorn dust", "amount": "1", "unit": "tsp"}], 2)
+    assert r.coverage == 1.0
+    assert r.unmatched == []
+    negligible_line = [li for li in r.line_items if li.item == "unicorn dust"][0]
+    assert negligible_line.grams == 0.0
+    assert negligible_line.grams_method == "negligible"
+    assert negligible_line.confidence == 1.0
+    assert negligible_line.needs_review is False
+    assert negligible_line.contribution == {"calories": 0.0, "protein": 0.0,
+                                             "carbs": 0.0, "fat": 0.0}

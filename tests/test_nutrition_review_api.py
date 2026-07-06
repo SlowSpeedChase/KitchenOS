@@ -6,7 +6,7 @@ from lib import inventory_db
 
 WEAK_MD = """---
 title: Mystery Soup
-servings: 4
+servings: 1
 source_url: "https://example.com/soup"
 nutrition_calories: 100
 nutrition_protein: 5
@@ -97,9 +97,36 @@ def test_resolve_pins_match_and_recomputes(client, review_vault):
     assert "nutrition_coverage: 1.0" in md
 
 
+def test_resolve_reports_recipe_error_when_recipe_missing(client, review_vault):
+    """The pin itself can succeed even when the named recipe can't be
+    recomputed (e.g. typo'd name) — that must not be swallowed silently."""
+    resp = client.post("/api/nutrition-review/resolve", json={
+        "item": "unicorn dust", "source_id": "222", "recipe": "No Such Recipe"})
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["status"] == "ok"
+    assert "recipe_result" not in data
+    assert "recipe_error" in data and "No Such Recipe" in data["recipe_error"]
+    # The pin still landed even though the recipe recompute failed.
+    row = inventory_db.get_food_resolution("unicorn dust")
+    assert row and row["resolver"] == "human"
+
+
 def test_resolve_negligible(client, review_vault):
     resp = client.post("/api/nutrition-review/resolve", json={
         "item": "unicorn dust", "negligible": True, "recipe": "Mystery Soup"})
     assert resp.status_code == 200
     row = inventory_db.get_food_resolution("unicorn dust")
     assert row and row["resolver"] == "human-negligible"
+
+    # A negligible pin must clear the review-queue signal: the line no longer
+    # counts as unmatched and coverage is complete, not stuck low because
+    # "unicorn dust" (1 tsp, no density) can't resolve to grams.
+    data = resp.get_json()
+    recipe_result = data["recipe_result"]
+    assert "unicorn dust" not in recipe_result["unmatched"]
+    assert recipe_result["coverage"] == 1.0
+
+    md = (review_vault / "Mystery Soup.md").read_text(encoding="utf-8")
+    assert "nutrition_unmatched:" not in md  # dropped once nothing is unmatched
+    assert "nutrition_needs_review: false" in md

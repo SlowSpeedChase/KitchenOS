@@ -115,6 +115,16 @@ def _deterministic_pick(item_norm: str, candidates: list) -> Optional[int]:
     return None
 
 
+def normalize_ingredient_key(item: str) -> str:
+    """Canonical normalization for an ingredient name used as a cache/lookup key.
+
+    Shared by ``_resolve_food`` and the nutrition-review API (pinning a human
+    match / recompute) so both sides of a resolution cache entry line up on
+    exactly the same key.
+    """
+    return units._normalize_item(apply_aliases(clean_for_matching(item)))
+
+
 def _resolve_food(item: str, *, use_cache: bool, resolution_provider: str):
     """Resolve an ingredient to a FoodRecord-like object + (confidence, resolver).
 
@@ -122,7 +132,7 @@ def _resolve_food(item: str, *, use_cache: bool, resolution_provider: str):
     record_dict has keys: source, source_id, description, per_100g(dict),
     portions(list), density_g_per_ml.
     """
-    norm = units._normalize_item(apply_aliases(clean_for_matching(item)))
+    norm = normalize_ingredient_key(item)
     if not norm:
         return None, 0.0, "unresolved"
 
@@ -304,6 +314,28 @@ def calculate_recipe_nutrition(
 
         record, food_conf, resolver = _resolve_food(
             item, use_cache=use_cache, resolution_provider=resolution_provider)
+
+        if resolver == "human-negligible":
+            # A human explicitly pinned this line as contributing nothing (e.g.
+            # a joke/garnish ingredient with no meaningful macros). Treat it as
+            # fully resolved with a zero contribution rather than routing it
+            # through grams resolution, where a volume/count unit with no
+            # density/piece-weight would fall into "unresolved" and keep
+            # dragging coverage down even after a human confirmed it.
+            confidences.append(1.0)
+            line_items.append(IngredientNutrition(
+                item=item, amount=amount, unit=unit,
+                grams=0.0, grams_method="negligible",
+                food_source=record["source"], food_id=str(record["source_id"]),
+                per_100g=record["per_100g"], contribution=dict(_EMPTY_CONTRIB),
+                confidence=1.0, needs_review=False, note="human-confirmed negligible",
+            ))
+            any_resolved = True
+            if not is_negligible:
+                resolved_count += 1
+                resolved_confs.append(1.0)
+            continue
+
         if record is None:
             line_items.append(IngredientNutrition(
                 item, amount, unit, 0.0, "unresolved", "", "",

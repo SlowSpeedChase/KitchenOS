@@ -2049,9 +2049,21 @@ def _nutrition_review_norm(item: str) -> str:
     """Normalize an ingredient item exactly like ``nutrition_engine._resolve_food``
     so resolutions/cache entries pinned here line up with what the engine looks
     up during recompute."""
-    from lib import units
-    from lib.ingredient_text import apply_aliases, clean_for_matching
-    return units._normalize_item(apply_aliases(clean_for_matching(item)))
+    from lib.nutrition_engine import normalize_ingredient_key
+    return normalize_ingredient_key(item)
+
+
+def _result_summary(result) -> dict:
+    """Shared JSON-able summary of a ``RecipeNutritionResult`` for the
+    nutrition-review ``/resolve`` and ``/recompute`` responses."""
+    return {
+        "per_serving": result.per_serving.to_dict(),
+        "coverage": result.coverage,
+        "confidence": result.confidence,
+        "unmatched": result.unmatched,
+        "needs_review": result.needs_review,
+        "sanity_flags": result.sanity_flags,
+    }
 
 
 @app.route('/api/nutrition-review/recipes', methods=['GET'])
@@ -2170,25 +2182,29 @@ def api_nutrition_review_detail(name):
 
 
 def _recompute_and_write(recipe_name: str):
-    """Recompute one recipe file's nutrition and persist it. Returns the
-    RecipeNutritionResult, or None if the file is missing/unresolvable."""
+    """Recompute one recipe file's nutrition and persist it.
+
+    Returns ``(result, error)`` — exactly one is set. ``error`` distinguishes
+    the two cheap-to-tell-apart failure modes: the recipe file doesn't exist,
+    or it exists but no ingredient line could be resolved at all.
+    """
     import backfill_nutrition
 
     recipes_dir = paths.recipes_dir()
     filepath = (recipes_dir / f"{recipe_name}.md").resolve()
     if not filepath.is_relative_to(recipes_dir.resolve()) or not filepath.exists():
-        return None
+        return None, f"recipe not found: {recipe_name}"
 
     content = filepath.read_text(encoding="utf-8")
     parsed = parse_recipe_file(content)
     ingredients = backfill_nutrition.extract_ingredients(parsed["body"])
     result = calculate_recipe_nutrition(ingredients, parsed["frontmatter"].get("servings"))
     if result is None:
-        return None
+        return None, "no ingredients could be resolved"
 
     create_backup(filepath)
     backfill_nutrition.write_nutrition_to_file(filepath, result)
-    return result
+    return result, None
 
 
 @app.route('/api/nutrition-review/resolve', methods=['POST'])
@@ -2237,15 +2253,14 @@ def api_nutrition_review_resolve():
     response = {"status": "ok"}
     recipe = data.get("recipe")
     if recipe:
-        result = _recompute_and_write(recipe)
+        result, error = _recompute_and_write(recipe)
         if result is not None:
-            response["recipe_result"] = {
-                "per_serving": result.per_serving.to_dict(),
-                "coverage": result.coverage,
-                "confidence": result.confidence,
-                "unmatched": result.unmatched,
-                "needs_review": result.needs_review,
-            }
+            response["recipe_result"] = _result_summary(result)
+        else:
+            # The pin above still succeeded — surface the recompute failure
+            # separately so the UI can tell "pinned but couldn't recompute"
+            # from "everything worked".
+            response["recipe_error"] = error
     return jsonify(response)
 
 
@@ -2259,18 +2274,11 @@ def api_nutrition_review_recompute():
     if not recipe:
         return jsonify({"error": "'recipe' is required"}), 400
 
-    result = _recompute_and_write(recipe)
+    result, error = _recompute_and_write(recipe)
     if result is None:
-        return jsonify({"error": f"Recipe not found or unresolvable: {recipe}"}), 404
+        return jsonify({"error": error or f"Recipe not found or unresolvable: {recipe}"}), 404
 
-    return jsonify({
-        "name": recipe,
-        "per_serving": result.per_serving.to_dict(),
-        "coverage": result.coverage,
-        "confidence": result.confidence,
-        "unmatched": result.unmatched,
-        "needs_review": result.needs_review,
-    })
+    return jsonify({"name": recipe, **_result_summary(result)})
 
 
 @app.route('/api/system-health', methods=['GET'])
