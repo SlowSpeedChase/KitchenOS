@@ -129,6 +129,12 @@ def _resolve_food(item: str, *, use_cache: bool, resolution_provider: str):
     # 1. Resolution cache → cached food record.
     if use_cache:
         res = inventory_db.get_food_resolution(norm)
+        if res and res.get("resolver") == "human-negligible":
+            record = {"query_norm": norm, "source": "none", "source_id": "0",
+                      "description": "negligible (human)", "per_100g":
+                      {"calories": 0, "protein": 0, "carbs": 0, "fat": 0},
+                      "portions": [], "density_g_per_ml": None}
+            return record, 1.0, "human-negligible"
         if res and res.get("resolver") != "llm-portion":
             cached = inventory_db.get_food_cache(norm, res["source"])
             if cached:

@@ -2045,6 +2045,234 @@ def api_nutrition(week):
         return jsonify({"error": str(e)}), 500
 
 
+def _nutrition_review_norm(item: str) -> str:
+    """Normalize an ingredient item exactly like ``nutrition_engine._resolve_food``
+    so resolutions/cache entries pinned here line up with what the engine looks
+    up during recompute."""
+    from lib import units
+    from lib.ingredient_text import apply_aliases, clean_for_matching
+    return units._normalize_item(apply_aliases(clean_for_matching(item)))
+
+
+@app.route('/api/nutrition-review/recipes', methods=['GET'])
+@require_token
+def api_nutrition_review_list():
+    """Ranked queue of recipes needing nutrition review, worst (lowest
+    coverage, then lowest confidence) first. Reads frontmatter only — fast,
+    no live recomputation."""
+    recipes_dir = paths.recipes_dir()
+    rows = []
+    for filepath in sorted(recipes_dir.glob("*.md")):
+        if filepath.name.startswith("."):
+            continue
+        try:
+            content = filepath.read_text(encoding="utf-8")
+            fm = parse_recipe_file(content)["frontmatter"]
+        except Exception:
+            continue
+        if fm.get("nutrition_calories") is None:
+            continue
+
+        coverage = fm.get("nutrition_coverage")
+        coverage = float(coverage) if isinstance(coverage, (int, float)) else 0.0
+        confidence = fm.get("nutrition_confidence")
+        confidence = float(confidence) if isinstance(confidence, (int, float)) else 0.0
+        unmatched_raw = fm.get("nutrition_unmatched") or ""
+        unmatched = [u.strip() for u in str(unmatched_raw).split(";") if u.strip()]
+
+        # Scoped nutrition verdict is the source of truth; fall back to the
+        # shared (escalate-only) flag for recipes backfilled before that key
+        # existed.
+        scoped_review = fm.get("nutrition_needs_review")
+        needs_review = scoped_review if scoped_review is not None else fm.get("needs_review", False)
+
+        rows.append({
+            "name": filepath.stem,
+            "coverage": coverage,
+            "confidence": confidence,
+            "calories": fm.get("nutrition_calories"),
+            "needs_review": bool(needs_review),
+            "unmatched": unmatched,
+            "flags": [],  # sanity_flags aren't persisted to frontmatter (Task 8)
+        })
+
+    rows.sort(key=lambda r: (r["coverage"], r["confidence"]))
+    return jsonify(rows)
+
+
+@app.route('/api/nutrition-review/recipe/<name>', methods=['GET'])
+@require_token
+def api_nutrition_review_detail(name):
+    """Recompute one recipe's nutrition live (deterministic — no LLM) and
+    return an audit-trail view with USDA candidates for any weak/unresolved
+    line, for the human review UI."""
+    import backfill_nutrition
+    from lib import food_db, inventory_db
+
+    recipes_dir = paths.recipes_dir()
+    filepath = (recipes_dir / f"{name}.md").resolve()
+    if not filepath.is_relative_to(recipes_dir.resolve()) or not filepath.exists():
+        return jsonify({"error": f"Recipe not found: {name}"}), 404
+
+    content = filepath.read_text(encoding="utf-8")
+    parsed = parse_recipe_file(content)
+    ingredients = backfill_nutrition.extract_ingredients(parsed["body"])
+    result = calculate_recipe_nutrition(
+        ingredients, parsed["frontmatter"].get("servings"),
+        resolution_provider="none", portion_provider="none",
+    )
+    if result is None:
+        return jsonify({"error": "No ingredients could be resolved"}), 404
+
+    lines = []
+    for li in result.line_items:
+        weak = li.needs_review or li.confidence < 0.8
+        norm = _nutrition_review_norm(li.item)
+        candidates = []
+        if weak:
+            try:
+                candidates = [
+                    {"source_id": c.source_id, "description": c.description}
+                    for c in (food_db.usda_search(norm) or [])[:5]
+                ]
+            except Exception:
+                candidates = []
+        description = ""
+        if li.food_source:
+            cached = inventory_db.get_food_cache(norm, li.food_source)
+            if cached:
+                description = cached.get("description", "")
+        lines.append({
+            "item": li.item,
+            "amount": li.amount,
+            "unit": li.unit,
+            "grams": li.grams,
+            "grams_method": li.grams_method,
+            "food_source": li.food_source,
+            "food_description": description,
+            "confidence": li.confidence,
+            "needs_review": li.needs_review,
+            "candidates": candidates,
+        })
+
+    return jsonify({
+        "name": name,
+        "servings": result.servings_used,
+        "result": {
+            "per_serving": result.per_serving.to_dict(),
+            "coverage": result.coverage,
+            "confidence": result.confidence,
+            "unmatched": result.unmatched,
+            "sanity_flags": result.sanity_flags,
+        },
+        "lines": lines,
+    })
+
+
+def _recompute_and_write(recipe_name: str):
+    """Recompute one recipe file's nutrition and persist it. Returns the
+    RecipeNutritionResult, or None if the file is missing/unresolvable."""
+    import backfill_nutrition
+
+    recipes_dir = paths.recipes_dir()
+    filepath = (recipes_dir / f"{recipe_name}.md").resolve()
+    if not filepath.is_relative_to(recipes_dir.resolve()) or not filepath.exists():
+        return None
+
+    content = filepath.read_text(encoding="utf-8")
+    parsed = parse_recipe_file(content)
+    ingredients = backfill_nutrition.extract_ingredients(parsed["body"])
+    result = calculate_recipe_nutrition(ingredients, parsed["frontmatter"].get("servings"))
+    if result is None:
+        return None
+
+    create_backup(filepath)
+    backfill_nutrition.write_nutrition_to_file(filepath, result)
+    return result
+
+
+@app.route('/api/nutrition-review/resolve', methods=['POST'])
+@require_token
+def api_nutrition_review_resolve():
+    """Pin a human food match (or mark an item resolved-as-zero) so the
+    nutrition engine's cache picks it up on the next recompute. When
+    ``recipe`` is given, also recompute + persist that recipe's nutrition."""
+    from lib import food_db, inventory_db
+
+    data = request.get_json(force=True, silent=True) or {}
+    item = data.get("item")
+    if not item:
+        return jsonify({"error": "'item' is required"}), 400
+    norm = _nutrition_review_norm(item)
+    if not norm:
+        return jsonify({"error": f"'{item}' normalizes to empty"}), 400
+
+    if data.get("negligible"):
+        inventory_db.put_food_resolution(norm, "none", "0", 1.0, "human-negligible")
+    else:
+        source_id = data.get("source_id")
+        if not source_id:
+            return jsonify({"error": "'source_id' is required unless negligible"}), 400
+        detail = food_db.usda_food_detail(source_id)
+        if detail is None:
+            return jsonify({"error": f"USDA detail not found for {source_id}"}), 404
+        # A human just confirmed this is the right food. Real USDA detail
+        # lookups usually carry a usable density/portions; when the source
+        # doesn't (e.g. an item outside our curated staples), default to a
+        # water-like density rather than leaving a confirmed match stuck
+        # "unresolved" for grams forever.
+        density = detail.density_g_per_ml if detail.density_g_per_ml is not None else 1.0
+        record = {
+            "query_norm": norm,
+            "source": "usda",
+            "source_id": detail.source_id,
+            "description": detail.description,
+            "per_100g": detail.per_100g.to_dict(),
+            "portions": detail.portions,
+            "density_g_per_ml": density,
+        }
+        inventory_db.put_food_cache(record)
+        inventory_db.put_food_resolution(norm, "usda", source_id, 1.0, "human")
+
+    response = {"status": "ok"}
+    recipe = data.get("recipe")
+    if recipe:
+        result = _recompute_and_write(recipe)
+        if result is not None:
+            response["recipe_result"] = {
+                "per_serving": result.per_serving.to_dict(),
+                "coverage": result.coverage,
+                "confidence": result.confidence,
+                "unmatched": result.unmatched,
+                "needs_review": result.needs_review,
+            }
+    return jsonify(response)
+
+
+@app.route('/api/nutrition-review/recompute', methods=['POST'])
+@require_token
+def api_nutrition_review_recompute():
+    """Rerun the nutrition engine for one recipe file and persist + return
+    the new summary."""
+    data = request.get_json(force=True, silent=True) or {}
+    recipe = data.get("recipe")
+    if not recipe:
+        return jsonify({"error": "'recipe' is required"}), 400
+
+    result = _recompute_and_write(recipe)
+    if result is None:
+        return jsonify({"error": f"Recipe not found or unresolvable: {recipe}"}), 404
+
+    return jsonify({
+        "name": recipe,
+        "per_serving": result.per_serving.to_dict(),
+        "coverage": result.coverage,
+        "confidence": result.confidence,
+        "unmatched": result.unmatched,
+        "needs_review": result.needs_review,
+    })
+
+
 @app.route('/api/system-health', methods=['GET'])
 def api_system_health():
     """System health JSON: Ollama, vault, recent recipes, run/failure logs, Reminders queue."""
