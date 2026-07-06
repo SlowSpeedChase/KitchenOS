@@ -6,7 +6,7 @@ import pytest
 
 from lib.food_db import FoodRecord
 from lib.nutrition import NutritionData
-from lib.nutrition_engine import calculate_recipe_nutrition
+from lib.nutrition_engine import _resolve_food, calculate_recipe_nutrition
 
 
 def _rec(desc, cal=0, pro=0, carb=0, fat=0, source="usda", sid="1", portions=None):
@@ -159,3 +159,26 @@ class TestLlmPortionFallback:
         # itself isn't auto-flagged — mean-confidence semantics, not min().
         assert res.confidence == 0.5
         assert res.needs_review is False
+
+
+class TestIngredientTextWiring:
+    def test_cleanup_and_aliases_applied_before_search(self):
+        # "evoo *(inferred)*" must reach usda_search as "olive oil": the
+        # *(inferred)* marker stripped by clean_for_matching, then "evoo"
+        # resolved to "olive oil" by apply_aliases — both applied before the
+        # USDA query is built. Regression test for the Phase B wiring in
+        # _resolve_food (lib/nutrition_engine.py).
+        captured = {}
+
+        def fake_usda_search(query):
+            captured["query"] = query
+            return []
+
+        with patch("lib.food_db.usda_search", side_effect=fake_usda_search), \
+             patch("lib.food_db.off_search", return_value=[]):
+            record, confidence, resolver = _resolve_food(
+                "evoo *(inferred)*", use_cache=False, resolution_provider="none")
+
+        assert captured["query"] == "olive oil"
+        assert record is None
+        assert resolver == "unresolved"
