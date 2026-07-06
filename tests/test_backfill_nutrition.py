@@ -7,13 +7,14 @@ from lib.nutrition_engine import RecipeNutritionResult
 
 
 def make_result(cal, pro, carb, fat, source="usda", servings_used=2,
-                needs_review=False, confidence=0.8):
+                needs_review=False, confidence=0.8, coverage=1.0, unmatched=None):
     """Build an engine-style result for mocking calculate_recipe_nutrition."""
     nd = NutritionData(cal, pro, carb, fat)
     return RecipeNutritionResult(
         per_serving=nd, total=nd, source=source, servings_used=servings_used,
         servings_inferred=False, needs_review=needs_review,
         confidence=confidence, line_items=[],
+        coverage=coverage, unmatched=unmatched or [],
     )
 
 
@@ -112,6 +113,37 @@ class TestBackfillNutrition:
             backfill_recipe(recipe_path, dry_run=False)
 
         assert "needs_review: true" in recipe_path.read_text()
+
+    def test_needs_review_clears_when_no_longer_flagged(self, tmp_path):
+        # Regression: a recipe previously flagged needs_review: true must have
+        # that key rewritten to false once the recipe is no longer flagged —
+        # otherwise the review page's fix-a-match-and-clear loop never clears.
+        from backfill_nutrition import write_nutrition_to_file
+
+        content = '''---
+title: "Fixed Recipe"
+source_url: "https://youtube.com/watch?v=abc"
+nutrition_calories: null
+needs_review: true
+servings: 2
+serving_size: null
+---
+
+# Fixed Recipe
+
+## Instructions
+
+1. Cook it.
+'''
+        recipe_path = tmp_path / "Fixed Recipe.md"
+        recipe_path.write_text(content)
+
+        result = make_result(300, 10, 40, 8, needs_review=False)
+        write_nutrition_to_file(recipe_path, result)
+
+        out = recipe_path.read_text()
+        assert "needs_review: false" in out
+        assert "needs_review: true" not in out
 
     def test_defaults_null_servings_to_one(self, tmp_path):
         from backfill_nutrition import backfill_recipe
@@ -259,3 +291,71 @@ nutrition_fat: 11
         names = [r.stem for r in recipes]
         assert "Good Recipe" in names
         assert "Bad Recipe" not in names
+
+    def test_nutrition_coverage_always_written(self, tmp_path):
+        from backfill_nutrition import write_nutrition_to_file
+
+        make_recipe_file(tmp_path, "Coverage Recipe", ingredients=[
+            {"amount": "1", "unit": "cup", "item": "flour"},
+        ])
+        recipe_path = tmp_path / "Coverage Recipe.md"
+
+        result = make_result(150, 4, 30, 0, coverage=0.75)
+        write_nutrition_to_file(recipe_path, result)
+
+        assert "nutrition_coverage: 0.75" in recipe_path.read_text()
+
+    def test_nutrition_unmatched_written_when_present(self, tmp_path):
+        from backfill_nutrition import write_nutrition_to_file
+
+        make_recipe_file(tmp_path, "Unmatched Recipe", ingredients=[
+            {"amount": "1", "unit": "cup", "item": "flour"},
+        ])
+        recipe_path = tmp_path / "Unmatched Recipe.md"
+
+        result = make_result(150, 4, 30, 0, unmatched=["a", "b"])
+        write_nutrition_to_file(recipe_path, result)
+
+        assert 'nutrition_unmatched: "a; b"' in recipe_path.read_text()
+
+    def test_stale_nutrition_unmatched_removed_when_resolved(self, tmp_path):
+        # Regression: a recipe previously written with unmatched ingredients
+        # must have the stale nutrition_unmatched line removed once a later
+        # run resolves everything — and the frontmatter must stay well-formed
+        # (trailing newline before the closing '---', delimiter intact).
+        from backfill_nutrition import write_nutrition_to_file
+
+        content = '''---
+title: "Resolved Recipe"
+source_url: "https://youtube.com/watch?v=abc"
+nutrition_calories: null
+nutrition_unmatched: "unicorn dust"
+servings: 2
+serving_size: null
+---
+
+# Resolved Recipe
+
+## Instructions
+
+1. Cook it.
+'''
+        recipe_path = tmp_path / "Resolved Recipe.md"
+        recipe_path.write_text(content)
+
+        result = make_result(150, 4, 30, 0, unmatched=[])
+        write_nutrition_to_file(recipe_path, result)
+
+        out = recipe_path.read_text()
+        assert "nutrition_unmatched" not in out
+        # Frontmatter well-formed: exactly two '---' delimiters, the
+        # frontmatter text ends in a newline (so the closing '---' sits on
+        # its own line, not glued onto the last key), and the body still
+        # parses correctly afterward.
+        parts = out.split("---", 2)
+        assert len(parts) == 3
+        fm = parts[1]
+        assert fm.endswith("\n")
+        from lib.recipe_parser import parse_recipe_file
+        body = parse_recipe_file(out)["body"]
+        assert "## Instructions" in body

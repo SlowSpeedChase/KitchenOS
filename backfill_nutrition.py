@@ -115,8 +115,7 @@ def write_nutrition_to_file(filepath: Path, result) -> None:
         "nutrition_confidence": result.confidence,
         "serving_size": '"1 serving"',
     }
-    if result.needs_review:
-        updates["needs_review"] = "true"
+    updates["needs_review"] = "true" if result.needs_review else "false"
 
     updates["nutrition_coverage"] = result.coverage
     if result.unmatched:

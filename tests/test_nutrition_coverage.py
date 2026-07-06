@@ -3,18 +3,22 @@
 Stub _resolve_food/_resolve_grams (monkeypatch) so no network is touched.
 """
 import lib.nutrition_engine as ne
-from lib import units
+from lib import serving_ledger, units
 
 
-def _stub_resolvers(monkeypatch, resolves: dict):
-    """resolves: item -> (per100g dict | None). None = unresolved."""
+def _stub_resolvers(monkeypatch, resolves: dict, confidences: dict = None):
+    """resolves: item -> (per100g dict | None). None = unresolved.
+
+    confidences: optional item -> food-resolution confidence override (default 0.8).
+    """
+    confidences = confidences or {}
     def fake_resolve_food(item, *, use_cache, resolution_provider):
         per = resolves.get(item)
         if per is None:
             return None, 0.0, "unresolved"
         rec = {"source": "usda", "source_id": "1", "description": item,
                "per_100g": per, "portions": [], "density_g_per_ml": None}
-        return rec, 0.8, "match"
+        return rec, confidences.get(item, 0.8), "match"
     def fake_resolve_grams(amount, unit, item, record, *, use_cache, portion_provider):
         return units.GramResult(100.0, "direct", 1.0, False, note="")
     monkeypatch.setattr(ne, "_resolve_food", fake_resolve_food)
@@ -73,3 +77,18 @@ def test_dominant_line_flag(monkeypatch, tmp_db):
         [{"item": "beans", "amount": "1", "unit": "cup"},
          {"item": "beef", "amount": "1", "unit": "lb"}], 4)
     assert "dominant_line" in r.sanity_flags
+
+
+def test_confidence_is_mean_not_min(monkeypatch, tmp_db):
+    # Two resolved, non-negligible lines at different confidences: 0.8 and 0.4.
+    # mean([0.8, 0.4]) == 0.6, whereas the old min()-based rollup would give 0.4.
+    _stub_resolvers(monkeypatch, {"beans": PER, "beef": PER},
+                     confidences={"beans": 0.8, "beef": 0.4})
+    r = ne.calculate_recipe_nutrition(
+        [{"item": "beans", "amount": "1", "unit": "cup"},
+         {"item": "beef", "amount": "1", "unit": "lb"}], 2)
+    assert r.confidence == 0.6
+
+
+def test_coverage_review_threshold_matches_serving_ledger():
+    assert ne.COVERAGE_REVIEW_THRESHOLD == serving_ledger.COVERAGE_REVIEW_THRESHOLD
