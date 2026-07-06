@@ -213,3 +213,75 @@ def test_placements_for_week_includes_cross_week_cook_excludes_non_slot(tmp_db):
     dates = sorted(r["date"] for r in rows)
     assert dates == ["2026-07-07", "2026-07-11"]
     assert all("2026-07-06" <= d <= "2026-07-12" for d in dates)
+
+
+# --- Task 2: recipe_macros, day_totals, week_board -------------------------
+
+RECIPE_MD = """---
+title: Chili
+servings: 4
+nutrition_calories: 500
+nutrition_protein: 30
+nutrition_carbs: 40
+nutrition_fat: 20
+nutrition_coverage: 0.95
+---
+
+## Ingredients
+
+| Amount | Unit | Ingredient |
+|--------|------|------------|
+| 1 | lb | ground beef |
+"""
+
+LOW_COVERAGE_MD = RECIPE_MD.replace("title: Chili", "title: Mystery Soup") \
+                           .replace("nutrition_coverage: 0.95",
+                                    "nutrition_coverage: 0.4")
+
+
+def _write_recipe(vault, name, content):
+    recipes = vault / "Recipes"
+    recipes.mkdir(parents=True, exist_ok=True)
+    (recipes / f"{name}.md").write_text(content, encoding="utf-8")
+    return recipes
+
+
+def test_day_totals_sum_placed_servings(tmp_db, tmp_vault):
+    recipes = _write_recipe(tmp_vault, "Chili", RECIPE_MD)
+    cook = _mk_cook()                                  # anchor: 1 serving Jul 7 dinner
+    sl.add_placement(cook["id"], "slot", 2.0, date="2026-07-07", meal="dinner")
+    sl.add_placement(cook["id"], "slot", 1.0, date="2026-07-08", meal="lunch")
+    totals = sl.day_totals("2026-W28", recipes)
+    assert totals["2026-07-07"]["calories"] == 1500    # 3 servings x 500
+    assert totals["2026-07-07"]["incomplete"] is False
+    assert totals["2026-07-08"]["protein"] == 30
+
+
+def test_day_totals_flags_low_coverage(tmp_db, tmp_vault):
+    recipes = _write_recipe(tmp_vault, "Mystery Soup", LOW_COVERAGE_MD)
+    sl.create_cook(recipe="Mystery Soup", week="2026-W28", scale=1.0,
+                   servings_produced=4.0, date="2026-07-07", meal="dinner")
+    totals = sl.day_totals("2026-W28", recipes)
+    assert totals["2026-07-07"]["incomplete"] is True
+
+
+def test_day_totals_flags_missing_recipe(tmp_db, tmp_vault):
+    recipes = tmp_vault / "Recipes"
+    recipes.mkdir(parents=True, exist_ok=True)
+    sl.create_cook(recipe="Ghost Recipe", week="2026-W28", scale=1.0,
+                   servings_produced=2.0, date="2026-07-07", meal="dinner")
+    totals = sl.day_totals("2026-W28", recipes)
+    assert totals["2026-07-07"]["incomplete"] is True
+    assert totals["2026-07-07"]["calories"] == 0
+
+
+def test_week_board_shape(tmp_db, tmp_vault):
+    recipes = _write_recipe(tmp_vault, "Chili", RECIPE_MD)
+    cook = _mk_cook()
+    sl.add_placement(cook["id"], "freezer", 2.0)
+    board = sl.week_board("2026-W28", recipes)
+    assert board["week"] == "2026-W28"
+    assert len(board["cooks"]) == 1
+    assert board["cooks"][0]["unassigned"] == 3.0
+    assert len(board["freezer"]) == 1
+    assert "2026-07-07" in board["day_totals"]

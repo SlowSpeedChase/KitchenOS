@@ -338,3 +338,57 @@ def placements_for_week(week: str) -> list[dict]:
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+COVERAGE_REVIEW_THRESHOLD = 0.8
+
+
+def recipe_macros(recipe_name: str, recipes_dir) -> Optional[dict]:
+    """Per-serving macros + coverage from a recipe's frontmatter, or None."""
+    from lib.recipe_parser import parse_recipe_file
+    path = recipes_dir / f"{recipe_name}.md"
+    if not path.exists():
+        return None
+    fm = parse_recipe_file(path.read_text(encoding="utf-8"))["frontmatter"]
+    if fm.get("nutrition_calories") is None:
+        return None
+    coverage = fm.get("nutrition_coverage")
+    return {
+        "calories": int(fm.get("nutrition_calories") or 0),
+        "protein": int(fm.get("nutrition_protein") or 0),
+        "carbs": int(fm.get("nutrition_carbs") or 0),
+        "fat": int(fm.get("nutrition_fat") or 0),
+        "coverage": float(coverage) if coverage is not None else None,
+    }
+
+
+def day_totals(week: str, recipes_dir) -> dict:
+    totals: dict = {}
+    macro_cache: dict = {}
+    for p in placements_for_week(week):
+        day = totals.setdefault(p["date"], {
+            "calories": 0.0, "protein": 0.0, "carbs": 0.0, "fat": 0.0,
+            "incomplete": False,
+        })
+        name = p["recipe"]
+        if name not in macro_cache:
+            macro_cache[name] = recipe_macros(name, recipes_dir)
+        macros = macro_cache[name]
+        if macros is None:
+            day["incomplete"] = True
+            continue
+        if macros["coverage"] is not None and \
+                macros["coverage"] < COVERAGE_REVIEW_THRESHOLD:
+            day["incomplete"] = True
+        for k in ("calories", "protein", "carbs", "fat"):
+            day[k] += macros[k] * float(p["count"])
+    return totals
+
+
+def week_board(week: str, recipes_dir) -> dict:
+    return {
+        "week": week,
+        "cooks": cooks_for_week(week),
+        "freezer": freezer_contents(),
+        "day_totals": day_totals(week, recipes_dir),
+    }
