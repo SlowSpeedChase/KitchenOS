@@ -162,6 +162,14 @@ def test_update_cook_no_fields_rejected(tmp_db):
         sl.update_cook(cook["id"])
 
 
+def test_update_cook_rejects_invalid_date(tmp_db):
+    """date, like meal, must validate before the row is touched — matches
+    the create/add_placement/move_servings validation via _validate_date."""
+    cook = _mk_cook()
+    with pytest.raises(ValueError):
+        sl.update_cook(cook["id"], date="not-a-date")
+
+
 # --- Finding 3: coverage gaps ----------------------------------------------
 
 def test_update_placement_changes_count_capacity_checked(tmp_db):

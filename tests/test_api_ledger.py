@@ -308,6 +308,98 @@ def test_placement_move_into_legacy_week_imports_first(client, tmp_db, tmp_vault
     assert list((tmp_vault / "Meal Plans" / ".history").glob("2026-W29_*.md"))
 
 
+def test_first_cook_into_week_with_foreign_placement_and_hand_link_imports_and_backs_up(
+        client, tmp_db, tmp_vault):
+    """Residual clobber path: a week with no cooks of its own but a foreign
+    placement (dragged in from another week's cook) *and* a hand-written
+    [[link]] added afterwards via the legacy UI. The old guard skipped the
+    whole hook whenever the week had ANY ledger rows (cooks OR placements),
+    so this hand link would silently get wiped by the next regen. It must
+    now import (and be backed up first) exactly like a pristine legacy week."""
+    anchor = _create_cook(client, recipe="Anchor", week="2026-W27",
+                           date="2026-07-01", meal="dinner").get_json()
+    # A serving of the W27 cook lands in W28 -- a "foreign" placement with
+    # no cook of its own week.
+    client.post("/api/placements", json={
+        "cook_id": anchor["id"], "destination": "slot",
+        "date": "2026-07-08", "meal": "lunch", "count": 1})
+
+    assert serving_ledger.placements_for_week("2026-W28")
+    assert not serving_ledger.cooks_for_week("2026-W28")
+
+    # Simulate a user hand-planning a second meal through the legacy UI:
+    # the file now mixes the auto-rendered leftover reference with a real
+    # [[link]] the ledger has never seen.
+    plan = tmp_vault / "Meal Plans" / "2026-W28.md"
+    plan.write_text(
+        "# Meal Plan - Week 28\n\n"
+        "## Monday (Jul 6)\n### Breakfast\n### Lunch\n### Snack\n"
+        "### Dinner\n### Notes\n\n"
+        "## Wednesday (Jul 8)\n### Breakfast\n### Lunch\n"
+        "[[Anchor]] (leftover x1)\n"
+        "### Snack\n### Dinner\n"
+        "[[Soup]] x1\n"
+        "### Notes\n\n",
+        encoding="utf-8")
+
+    resp = _create_cook(client, recipe="Stew", week="2026-W28",
+                         date="2026-07-09", meal="dinner")
+    assert resp.status_code == 201
+
+    board = client.get("/api/week-board/2026-W28").get_json()
+    recipes_in_board = {c["recipe"] for c in board["cooks"]}
+    assert "Soup" in recipes_in_board       # hand link imported, not wiped
+    assert "Stew" in recipes_in_board
+
+    backups = list((tmp_vault / "Meal Plans" / ".history").glob("2026-W28_*.md"))
+    assert backups, "plan file must be backed up before import/render"
+
+
+def test_notes_only_week_gets_backup_before_first_ledger_write(client, tmp_db, tmp_vault):
+    """A notes-only plan file (no [[links]] at all) has nothing to import,
+    but the old guard also skipped the backup for it -- the first ledger
+    write into that week clobbered hand-written notes with no history. The
+    backup must now be unconditional on the file existing, not on it
+    containing a [[link]]."""
+    plan = _write_legacy_plan(
+        tmp_vault, "2026-W28",
+        "# Meal Plan - Week 28\n\n"
+        "## Monday (Jul 6)\n### Breakfast\n### Lunch\n### Snack\n"
+        "### Dinner\n### Notes\nGrocery day, nothing planned yet.\n\n")
+
+    resp = _create_cook(client, week="2026-W28", date="2026-07-07")
+    assert resp.status_code == 201
+
+    backups = list((tmp_vault / "Meal Plans" / ".history").glob("2026-W28_*.md"))
+    assert len(backups) == 1
+    assert "Grocery day" in backups[0].read_text(encoding="utf-8")
+
+    # Nothing to import: only the one ledger cook we just created.
+    board = client.get("/api/week-board/2026-W28").get_json()
+    assert len(board["cooks"]) == 1
+
+
+def test_placement_patch_date_into_legacy_week_imports_first(client, tmp_db, tmp_vault):
+    """PATCHing a placement's date into a hand-edited legacy week must run
+    the same import/backup hook as create/move -- it was the only
+    mutating ledger route still missing the wiring."""
+    cook = _create_cook(client).get_json()          # 2026-W28
+    frozen = client.post("/api/placements", json={
+        "cook_id": cook["id"], "destination": "freezer", "count": 2}).get_json()
+    plan = _write_legacy_plan(
+        tmp_vault, "2026-W29",
+        "## Monday (Jul 13)\n### Breakfast\n### Lunch\n### Snack\n"
+        "### Dinner\n[[Stew]]\n### Notes\n")
+
+    resp = client.patch(f"/api/placements/{frozen['id']}", json={
+        "destination": "slot", "date": "2026-07-14", "meal": "lunch"})
+    assert resp.status_code == 200
+
+    text = plan.read_text(encoding="utf-8")
+    assert "[[Stew]]" in text                       # legacy link survived
+    assert list((tmp_vault / "Meal Plans" / ".history").glob("2026-W29_*.md"))
+
+
 def test_placement_create_into_legacy_week_imports_first(client, tmp_db, tmp_vault):
     """An unassigned serving placed into a hand-edited week's slot converts
     that week before the mutation renders over it."""

@@ -1045,12 +1045,25 @@ def api_week_board(week):
 
 
 def _import_legacy_if_first_write(*weeks):
-    """Pre-mutation hook: before the FIRST ledger row lands in a week,
-    convert a hand-edited plan file (has [[links]], no ledger rows) into
-    ledger cooks — backing the file up first — so the post-mutation
-    ``_regen_weeks`` renders the converted week instead of clobbering it.
-    Must run BEFORE the mutation: afterwards the week has rows and the
-    no-ledger-rows guard can never fire.
+    """Pre-mutation hook: before the FIRST ledger cook lands in a week,
+    convert a hand-edited plan file's [[links]] into ledger cooks — backing
+    the file up first — so the post-mutation ``_regen_weeks`` renders the
+    converted week instead of clobbering it.
+
+    The backup is unconditional whenever the plan file exists, even a
+    linkless/notes-only file: any first ledger write into an existing plan
+    file is about to overwrite hand-authored content, whether or not that
+    content happens to contain a [[link]] worth importing.
+
+    Placements-only weeks (a foreign placement already dragged in from
+    another week's cook, but no cook of this week's own yet) now import
+    too — safe because ``lib.week_view.import_legacy_week`` strips
+    ``(leftover`` lines before parsing, so it can't double-count a
+    placement that's already backed by a cook elsewhere. The import guard
+    is therefore keyed on cooks only, not placements.
+
+    Must run BEFORE the mutation: afterwards the week has a cook row and
+    the no-cooks guard can never fire again.
     """
     from lib import serving_ledger, week_view, paths
     for wk in {w for w in weeks if w}:
@@ -1059,12 +1072,16 @@ def _import_legacy_if_first_write(*weeks):
         plan_file = paths.meal_plans_dir() / f"{wk}.md"
         if not plan_file.exists():
             continue
-        if "[[" not in plan_file.read_text(encoding="utf-8"):
-            continue
-        if serving_ledger.cooks_for_week(wk) or serving_ledger.placements_for_week(wk):
-            continue
         try:
             create_backup(plan_file)
+        except Exception as e:
+            print(f"Warning: legacy backup failed for {wk}: {e}", file=sys.stderr)
+            continue
+        if "[[" not in plan_file.read_text(encoding="utf-8"):
+            continue
+        if serving_ledger.cooks_for_week(wk):
+            continue
+        try:
             week_view.import_legacy_week(wk)
         except Exception as e:
             # The backup (taken first) preserves the hand-edited content
@@ -1180,6 +1197,11 @@ def api_placement_update(pid):
         conn.close()
     if before is None:
         return jsonify({"error": "placement not found"}), 404
+    # C1: patching a serving's date into a hand-edited legacy week converts
+    # it first (same wiring as create/move — this was the one mutating
+    # ledger route missing it).
+    if data.get('date'):
+        _import_legacy_if_first_write(_iso_week_of(data['date']))
     p = serving_ledger.update_placement(pid, **data)
     cook = serving_ledger.get_cook(p["cook_id"])
     _regen_weeks(cook["week"],

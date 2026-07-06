@@ -197,6 +197,8 @@ def update_cook(cook_id: int, **fields) -> dict:
         raise ValueError("no fields to update")
     if "meal" in fields and fields["meal"] is not None and fields["meal"] not in MEALS:
         raise ValueError(f"meal must be one of {MEALS}")
+    if "date" in fields:
+        _validate_date(fields["date"])
     conn = inventory_db.connect()
     try:
         with _write_txn(conn):
