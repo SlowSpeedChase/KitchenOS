@@ -73,8 +73,25 @@
         .sidebar-header h2 {
             font-size: 17px;
             font-weight: 600;
-            margin-bottom: 12px;
             letter-spacing: -0.2px;
+        }
+
+        .sidebar-header-row {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .nav-link-review {
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-muted);
+            text-decoration: none;
+        }
+
+        .nav-link-review:hover {
+            color: var(--accent);
         }
 
         .search-input {
@@ -1298,7 +1315,10 @@
         <!-- Sidebar -->
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-header">
-                <h2 id="sidebar-title">Recipes</h2>
+                <div class="sidebar-header-row">
+                    <h2 id="sidebar-title">Recipes</h2>
+                    <a class="nav-link-review" href="/nutrition-review">Review</a>
+                </div>
                 <input type="text" class="search-input" id="search-input" placeholder="Search..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
             </div>
             <div class="sidebar-tabs">

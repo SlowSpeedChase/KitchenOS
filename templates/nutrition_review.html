@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KitchenOS Nutrition Review</title>
+    <style>
+        :root {
+            --bg: #f5f5f7;
+            --card-bg: #ffffff;
+            --border: #e5e5e7;
+            --text: #1d1d1f;
+            --text-muted: #86868b;
+            --accent: #0071e3;
+            --success: #34c759;
+            --danger: #ff3b30;
+            --warning: #ff9f0a;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 24px;
+        }
+
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        #flagged-count {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        #flagged-count b { color: var(--text); }
+
+        button {
+            font-family: inherit;
+            font-size: 0.85rem;
+            font-weight: 600;
+            padding: 8px 14px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--card-bg);
+            color: var(--text);
+            cursor: pointer;
+        }
+
+        button:hover { border-color: var(--accent); color: var(--accent); }
+        button:disabled { opacity: 0.5; cursor: default; }
+
+        button.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #fff;
+        }
+
+        button.primary:hover { color: #fff; opacity: 0.9; }
+
+        #rerun-progress {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+
+        th {
+            text-align: left;
+            font-weight: 600;
+            color: var(--text-muted);
+            padding: 6px 8px 10px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        td {
+            padding: 10px 8px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: middle;
+        }
+
+        tbody tr.recipe-row { cursor: pointer; }
+        tbody tr.recipe-row:hover { background: #f9f9fb; }
+        tbody tr.recipe-row.expanded { background: #f2f7ff; }
+
+        .empty { color: var(--text-muted); font-size: 0.85rem; font-style: italic; padding: 12px 0; }
+        .loading { color: var(--text-muted); font-size: 0.85rem; }
+
+        .coverage-bar-wrap {
+            width: 100px;
+            height: 8px;
+            background: #ebebed;
+            border-radius: 4px;
+            overflow: hidden;
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 8px;
+        }
+
+        .coverage-bar-fill {
+            height: 100%;
+            border-radius: 4px;
+            background: var(--success);
+        }
+
+        .coverage-bar-fill.warn { background: var(--warning); }
+        .coverage-bar-fill.bad { background: var(--danger); }
+
+        .coverage-pct { font-size: 0.78rem; color: var(--text-muted); }
+
+        .badge {
+            display: inline-block;
+            padding: 1px 8px;
+            border-radius: 10px;
+            font-size: 0.72rem;
+            font-weight: 600;
+            background: #ebebed;
+            color: #555;
+        }
+
+        .badge.red { background: #fde8e8; color: #c0392b; }
+        .badge.green { background: #d4f5de; color: #1a6b34; }
+        .badge.orange { background: #fff0d6; color: #8a5000; }
+
+        /* Detail panel */
+        tr.detail-row td {
+            background: #fafafc;
+            padding: 0;
+        }
+
+        .detail-panel { padding: 16px 20px 20px; }
+
+        .detail-summary {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            align-items: center;
+            margin-bottom: 14px;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .detail-summary b { color: var(--text); }
+
+        .flag-chip {
+            display: inline-block;
+            padding: 2px 9px;
+            border-radius: 10px;
+            font-size: 0.72rem;
+            font-weight: 600;
+            background: #fff0d6;
+            color: #8a5000;
+            margin-right: 4px;
+        }
+
+        .lines-table th, .lines-table td { font-size: 0.8rem; }
+
+        .lines-table td.weak-row { background: #fff8ec; }
+
+        select, input[type="text"] {
+            font-family: inherit;
+            font-size: 0.8rem;
+            padding: 5px 8px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: #fff;
+            color: var(--text);
+        }
+
+        .line-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            align-items: center;
+            margin-top: 6px;
+        }
+
+        .search-box { display: flex; gap: 4px; }
+        .search-box input { width: 140px; }
+
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            background: var(--text);
+            color: #fff;
+            padding: 10px 16px;
+            border-radius: 10px;
+            font-size: 0.85rem;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+            opacity: 0;
+            transform: translateY(8px);
+            transition: opacity 0.2s ease, transform 0.2s ease;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        .toast.show { opacity: 1; transform: translateY(0); }
+        .toast.error { background: var(--danger); }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Nutrition Review</h1>
+        <div class="header-right">
+            <span id="flagged-count">Loading…</span>
+            <button class="primary" id="rerun-all-btn">Re-run backfill for all flagged</button>
+            <span id="rerun-progress"></span>
+        </div>
+    </header>
+
+    <div class="card">
+        <div id="review-list">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Recipe</th>
+                        <th>Coverage</th>
+                        <th>Confidence</th>
+                        <th>kcal/serving</th>
+                        <th>Flags</th>
+                    </tr>
+                </thead>
+                <tbody id="review-tbody">
+                    <tr><td colspan="5" class="loading">Loading…</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+    let recipesData = [];
+    let expandedName = null;
+    const TOKEN_HEADER = {}; // require_token is a no-op for local/browser callers
+
+    function apiUrl(path) {
+        return path;
+    }
+
+    async function apiGet(path) {
+        const resp = await fetch(apiUrl(path), { headers: TOKEN_HEADER });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+        return data;
+    }
+
+    async function apiPost(path, body) {
+        const resp = await fetch(apiUrl(path), {
+            method: 'POST',
+            headers: Object.assign({ 'Content-Type': 'application/json' }, TOKEN_HEADER),
+            body: JSON.stringify(body),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+        return data;
+    }
+
+    function showToast(msg, isError) {
+        const t = document.getElementById('toast');
+        t.textContent = msg;
+        t.className = 'toast show' + (isError ? ' error' : '');
+        clearTimeout(showToast._timer);
+        showToast._timer = setTimeout(() => { t.className = 'toast'; }, 3500);
+    }
+
+    function coverageClass(cov) {
+        if (cov >= 0.8) return '';
+        if (cov >= 0.5) return 'warn';
+        return 'bad';
+    }
+
+    function coverageBar(cov) {
+        const pct = Math.round((cov || 0) * 100);
+        return `<span class="coverage-bar-wrap"><span class="coverage-bar-fill ${coverageClass(cov)}" style="width:${pct}%"></span></span><span class="coverage-pct">${pct}%</span>`;
+    }
+
+    function flaggedRows() {
+        return recipesData.filter(r => r.coverage < 0.8);
+    }
+
+    function updateFlaggedCount() {
+        const n = flaggedRows().length;
+        document.getElementById('flagged-count').innerHTML =
+            `<b>${n}</b> recipe${n === 1 ? '' : 's'} below 80% coverage`;
+        document.getElementById('rerun-all-btn').disabled = n === 0;
+    }
+
+    function renderTable() {
+        const tbody = document.getElementById('review-tbody');
+        if (!recipesData.length) {
+            tbody.innerHTML = '<tr><td colspan="5" class="empty">No recipes with nutrition data yet</td></tr>';
+            return;
+        }
+        tbody.innerHTML = recipesData.map(r => {
+            const flagBadges = r.needs_review ? '<span class="badge orange">needs review</span>' : '<span class="badge green">ok</span>';
+            const unmatchedBadge = (r.unmatched && r.unmatched.length)
+                ? ` <span class="badge red">${r.unmatched.length} unmatched</span>` : '';
+            return `<tr class="recipe-row${r.name === expandedName ? ' expanded' : ''}" data-name="${escapeAttr(r.name)}">
+                <td>${escapeHtml(r.name)}</td>
+                <td>${coverageBar(r.coverage)}</td>
+                <td>${(r.confidence * 100).toFixed(0)}%</td>
+                <td>${r.calories != null ? r.calories : '—'}</td>
+                <td>${flagBadges}${unmatchedBadge}</td>
+            </tr>`;
+        }).join('');
+
+        document.querySelectorAll('tr.recipe-row').forEach(tr => {
+            tr.addEventListener('click', () => toggleRow(tr.dataset.name));
+        });
+
+        // Re-attach detail row if a recipe is currently expanded.
+        if (expandedName && recipesData.some(r => r.name === expandedName)) {
+            const row = document.querySelector(`tr.recipe-row[data-name="${cssEscape(expandedName)}"]`);
+            if (row) insertDetailRow(row, currentDetailHtml || '<div class="detail-panel loading">Loading…</div>');
+        }
+    }
+
+    let currentDetailHtml = null;
+
+    function insertDetailRow(afterRow, html) {
+        const existing = document.querySelector('tr.detail-row');
+        if (existing) existing.remove();
+        const tr = document.createElement('tr');
+        tr.className = 'detail-row';
+        const td = document.createElement('td');
+        td.colSpan = 5;
+        td.innerHTML = html;
+        tr.appendChild(td);
+        afterRow.after(tr);
+    }
+
+    async function toggleRow(name) {
+        if (expandedName === name) {
+            expandedName = null;
+            currentDetailHtml = null;
+            const existing = document.querySelector('tr.detail-row');
+            if (existing) existing.remove();
+            document.querySelectorAll('tr.recipe-row').forEach(tr => tr.classList.remove('expanded'));
+            return;
+        }
+        expandedName = name;
+        renderTable();
+        await loadDetail(name);
+    }
+
+    async function loadDetail(name) {
+        const row = document.querySelector(`tr.recipe-row[data-name="${cssEscape(name)}"]`);
+        if (!row) return;
+        insertDetailRow(row, '<div class="detail-panel loading">Loading…</div>');
+        try {
+            const detail = await apiGet('/api/nutrition-review/recipe/' + encodeURIComponent(name));
+            currentDetailHtml = renderDetailPanel(detail);
+            if (expandedName === name) insertDetailRow(row, currentDetailHtml);
+            bindDetailEvents(name);
+        } catch (e) {
+            currentDetailHtml = `<div class="detail-panel"><span class="empty">Failed to load: ${escapeHtml(e.message)}</span></div>`;
+            if (expandedName === name) insertDetailRow(row, currentDetailHtml);
+        }
+    }
+
+    function renderDetailPanel(detail) {
+        const r = detail.result;
+        const flags = (r.sanity_flags || []).map(f => `<span class="flag-chip">${escapeHtml(f)}</span>`).join(' ') || '<span class="empty">none</span>';
+        const lines = detail.lines.map((li, idx) => {
+            const weak = li.needs_review || li.confidence < 0.8;
+            const candidatesOptions = (li.candidates || []).map(c =>
+                `<option value="${escapeAttr(c.source_id)}">${escapeHtml(c.description)}</option>`
+            ).join('');
+            let actions = '';
+            if (weak) {
+                actions = `
+                    <div class="line-actions" data-item="${escapeAttr(li.item)}" data-idx="${idx}">
+                        <select class="candidate-select">
+                            <option value="">Choose match…</option>
+                            ${candidatesOptions}
+                        </select>
+                        <button class="use-btn">Use</button>
+                        <button class="negligible-btn">Negligible</button>
+                        <span class="search-box">
+                            <input type="text" class="search-input" placeholder="Search…">
+                            <button class="search-btn">Search</button>
+                        </span>
+                    </div>`;
+            }
+            return `<tr>
+                <td class="${weak ? 'weak-row' : ''}">${escapeHtml(li.item)}${li.amount ? ` (${escapeHtml(String(li.amount))} ${escapeHtml(li.unit || '')})` : ''}</td>
+                <td class="${weak ? 'weak-row' : ''}">${li.grams != null ? Math.round(li.grams) + 'g' : '—'}<span style="color:var(--text-muted)"> ${li.grams_method ? '· ' + escapeHtml(li.grams_method) : ''}</span></td>
+                <td class="${weak ? 'weak-row' : ''}">${escapeHtml(li.food_description || '—')}</td>
+                <td class="${weak ? 'weak-row' : ''}">${(li.confidence * 100).toFixed(0)}%${li.needs_review ? ' <span class="badge orange">review</span>' : ''}</td>
+                <td class="${weak ? 'weak-row' : ''}">${actions}</td>
+            </tr>`;
+        }).join('');
+
+        return `<div class="detail-panel">
+            <div class="detail-summary">
+                <span>Coverage <b>${Math.round(r.coverage * 100)}%</b></span>
+                <span>Confidence <b>${Math.round(r.confidence * 100)}%</b></span>
+                <span>Servings <b>${detail.servings != null ? detail.servings : '—'}</b></span>
+                <span>Unmatched <b>${(r.unmatched || []).length}</b></span>
+                <span>Flags ${flags}</span>
+            </div>
+            <table class="lines-table">
+                <thead><tr><th>Item</th><th>Grams</th><th>Matched food</th><th>Confidence</th><th>Fix</th></tr></thead>
+                <tbody>${lines}</tbody>
+            </table>
+        </div>`;
+    }
+
+    function bindDetailEvents(recipeName) {
+        document.querySelectorAll('.line-actions').forEach(box => {
+            const item = box.dataset.item;
+            const select = box.querySelector('.candidate-select');
+            const useBtn = box.querySelector('.use-btn');
+            const negBtn = box.querySelector('.negligible-btn');
+            const searchInput = box.querySelector('.search-input');
+            const searchBtn = box.querySelector('.search-btn');
+
+            useBtn.addEventListener('click', async () => {
+                const sourceId = select.value;
+                if (!sourceId) { showToast('Choose a candidate first', true); return; }
+                await resolveItem(recipeName, { item, source_id: sourceId, recipe: recipeName });
+            });
+
+            negBtn.addEventListener('click', async () => {
+                await resolveItem(recipeName, { item, negligible: true, recipe: recipeName });
+            });
+
+            searchBtn.addEventListener('click', () => runSearch());
+            searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') runSearch(); });
+
+            async function runSearch() {
+                const q = searchInput.value.trim();
+                if (!q) return;
+                searchBtn.disabled = true;
+                try {
+                    const data = await apiGet('/api/nutrition-review/recipe/' + encodeURIComponent(recipeName) +
+                        '?q=' + encodeURIComponent(q));
+                    select.innerHTML = '<option value="">Choose match…</option>' +
+                        (data.candidates || []).map(c =>
+                            `<option value="${escapeAttr(c.source_id)}">${escapeHtml(c.description)}</option>`
+                        ).join('');
+                    if (!data.candidates || !data.candidates.length) showToast('No matches for "' + q + '"', true);
+                } catch (e) {
+                    showToast('Search failed: ' + e.message, true);
+                } finally {
+                    searchBtn.disabled = false;
+                }
+            }
+        });
+    }
+
+    async function resolveItem(recipeName, payload) {
+        try {
+            const data = await apiPost('/api/nutrition-review/resolve', payload);
+            if (data.recipe_result) {
+                const pct = Math.round(data.recipe_result.coverage * 100);
+                showToast(`Saved — ${recipeName} coverage now ${pct}%`);
+                updateRowFromResult(recipeName, data.recipe_result);
+            } else if (data.recipe_error) {
+                showToast('Pinned, but recompute failed: ' + data.recipe_error, true);
+            } else {
+                showToast('Saved');
+            }
+            await loadDetail(recipeName);
+        } catch (e) {
+            showToast('Failed: ' + e.message, true);
+        }
+    }
+
+    function updateRowFromResult(name, result) {
+        const row = recipesData.find(r => r.name === name);
+        if (!row) return;
+        row.coverage = result.coverage;
+        row.confidence = result.confidence;
+        row.calories = result.per_serving ? result.per_serving.calories : row.calories;
+        row.needs_review = result.needs_review;
+        row.unmatched = result.unmatched || [];
+        recipesData.sort((a, b) => (a.coverage - b.coverage) || (a.confidence - b.confidence));
+        renderTable();
+        updateFlaggedCount();
+    }
+
+    async function loadList() {
+        try {
+            recipesData = await apiGet('/api/nutrition-review/recipes');
+        } catch (e) {
+            document.getElementById('review-tbody').innerHTML =
+                `<tr><td colspan="5" class="empty">Failed to load: ${escapeHtml(e.message)}</td></tr>`;
+            return;
+        }
+        renderTable();
+        updateFlaggedCount();
+    }
+
+    async function rerunAllFlagged() {
+        const btn = document.getElementById('rerun-all-btn');
+        const progress = document.getElementById('rerun-progress');
+        const targets = flaggedRows().map(r => r.name);
+        if (!targets.length) return;
+        btn.disabled = true;
+        let done = 0, failed = 0;
+        for (const name of targets) {
+            progress.textContent = `Re-running ${done + 1}/${targets.length}…`;
+            try {
+                await apiPost('/api/nutrition-review/recompute', { recipe: name });
+            } catch (e) {
+                failed += 1;
+            }
+            done += 1;
+        }
+        progress.textContent = `Done: ${done}/${targets.length}${failed ? ` (${failed} failed)` : ''}`;
+        showToast(`Backfill re-run complete: ${done - failed}/${targets.length} succeeded`, failed > 0);
+        await loadList();
+        setTimeout(() => { progress.textContent = ''; }, 5000);
+    }
+
+    function escapeHtml(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[c]));
+    }
+
+    function escapeAttr(s) { return escapeHtml(s); }
+
+    function cssEscape(s) {
+        return String(s).replace(/["\\]/g, '\\$&');
+    }
+
+    document.getElementById('rerun-all-btn').addEventListener('click', rerunAllFlagged);
+
+    loadList();
+    </script>
+</body>
+</html>

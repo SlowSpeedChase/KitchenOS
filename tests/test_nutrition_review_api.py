@@ -130,3 +130,20 @@ def test_resolve_negligible(client, review_vault):
     md = (review_vault / "Mystery Soup.md").read_text(encoding="utf-8")
     assert "nutrition_unmatched:" not in md  # dropped once nothing is unmatched
     assert "nutrition_needs_review: false" in md
+
+
+def test_recipe_detail_q_param_filters_candidates(client, review_vault):
+    """?q= re-queries USDA for a free-text search instead of the item name,
+    returning candidates for that query (not tied to any specific line)."""
+    resp = client.get("/api/nutrition-review/recipe/Mystery Soup?q=beans")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert "candidates" in data
+    assert data["candidates"]
+    assert data["candidates"][0]["source_id"]
+
+
+def test_review_page_smoke(client):
+    resp = client.get("/nutrition-review")
+    assert resp.status_code == 200
+    assert b'id="review-list"' in resp.data

@@ -2126,6 +2126,20 @@ def api_nutrition_review_detail(name):
     if not filepath.is_relative_to(recipes_dir.resolve()) or not filepath.exists():
         return jsonify({"error": f"Recipe not found: {name}"}), 404
 
+    query = request.args.get("q")
+    if query:
+        # Free-text re-query: the human typed a better search term for a
+        # weak line's "Search…" box. Not tied to any particular ingredient
+        # line, so return candidates at the top level instead of per-line.
+        try:
+            candidates = [
+                {"source_id": c.source_id, "description": c.description}
+                for c in (food_db.usda_search(query) or [])[:10]
+            ]
+        except Exception:
+            candidates = []
+        return jsonify({"name": name, "query": query, "candidates": candidates})
+
     content = filepath.read_text(encoding="utf-8")
     parsed = parse_recipe_file(content)
     ingredients = backfill_nutrition.extract_ingredients(parsed["body"])
@@ -2292,6 +2306,13 @@ def api_system_health():
 def system_health_dashboard():
     """Interactive system health dashboard."""
     html = open('templates/system_health.html').read()
+    return html
+
+
+@app.route('/nutrition-review', methods=['GET'])
+def nutrition_review_page():
+    """Human review UI for weak/unresolved nutrition matches."""
+    html = open('templates/nutrition_review.html').read()
     return html
 
 
