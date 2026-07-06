@@ -485,8 +485,8 @@ def _resolve_recipes_dir() -> Path:
     ``KITCHENOS_VAULT``, so recompute fresh via ``paths.recipes_dir()`` to
     pick it up. If unchanged, fall back to the module constant, which
     respects a direct ``unittest.mock.patch`` of it. This differs from
-    ``_recipe_base_servings`` below, which always calls ``paths.recipes_dir()``
-    fresh regardless of env state.
+    ``lib.week_view.recipe_base_servings``, which always calls
+    ``paths.recipes_dir()`` fresh regardless of env state.
     """
     if os.environ.get("KITCHENOS_VAULT") != _RECIPES_ENV_AT_IMPORT:
         return paths.recipes_dir()
@@ -966,6 +966,12 @@ def api_meal_plan_put(week):
     if not match:
         return jsonify({"error": "Invalid week format. Expected YYYY-WNN"}), 400
 
+    # Fail closed at the legacy/board boundary: this payload carries no
+    # scale/placement info and would clobber ledger-authored Markdown.
+    from lib import serving_ledger
+    if serving_ledger.cooks_for_week(week):
+        return jsonify({"error": "week is ledger-managed"}), 409
+
     data = request.get_json(force=True, silent=True)
     if not data or "days" not in data:
         return jsonify({"error": "Request body must include 'days' array"}), 400
@@ -998,6 +1004,11 @@ def _ledger_error(fn):
             return jsonify({"error": "ledger busy, retry"}), 503
         except (ValueError, TypeError) as e:
             return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            # Residual failures surface as JSON 500s, not HTML tracebacks —
+            # board-mode JS reads resp.json() on every path.
+            print(f"Error in {fn.__name__}: {e}", file=sys.stderr)
+            return jsonify({"error": f"internal error: {e}"}), 500
     return wrapper
 
 
@@ -1018,30 +1029,40 @@ def _regen_weeks(*weeks):
 
 @app.route('/api/week-board/<week>', methods=['GET'])
 @require_token
+@_ledger_error
 def api_week_board(week):
     from lib import serving_ledger
     if not re.match(r'^\d{4}-W\d{2}$', week):
         return jsonify({"error": "Invalid week format. Expected YYYY-WNN"}), 400
-    return jsonify(serving_ledger.week_board(week, OBSIDIAN_RECIPES_PATH))
+    return jsonify(serving_ledger.week_board(week, _resolve_recipes_dir()))
 
 
-def _recipe_base_servings(recipe_name):
-    """Per-recipe servings from frontmatter, falling back to 4.
-
-    Reads via a fresh ``paths.recipes_dir()`` call (not the module-level
-    ``OBSIDIAN_RECIPES_PATH`` constant captured at import time) so tests that
-    monkeypatch ``KITCHENOS_VAULT`` after import see the right directory.
+def _import_legacy_if_first_write(*weeks):
+    """Pre-mutation hook: before the FIRST ledger row lands in a week,
+    convert a hand-edited plan file (has [[links]], no ledger rows) into
+    ledger cooks — backing the file up first — so the post-mutation
+    ``_regen_weeks`` renders the converted week instead of clobbering it.
+    Must run BEFORE the mutation: afterwards the week has rows and the
+    no-ledger-rows guard can never fire.
     """
-    from lib import paths
-    path = paths.recipes_dir() / f"{recipe_name}.md"
-    if not path.exists():
-        return 4.0
-    try:
-        fm = parse_recipe_file(path.read_text(encoding="utf-8"))["frontmatter"]
-        servings = fm.get("servings")
-        return float(servings) if servings else 4.0
-    except Exception:
-        return 4.0
+    from lib import serving_ledger, week_view, paths
+    for wk in {w for w in weeks if w}:
+        if not re.match(r'^\d{4}-W\d{2}$', wk):
+            continue
+        plan_file = paths.meal_plans_dir() / f"{wk}.md"
+        if not plan_file.exists():
+            continue
+        if "[[" not in plan_file.read_text(encoding="utf-8"):
+            continue
+        if serving_ledger.cooks_for_week(wk) or serving_ledger.placements_for_week(wk):
+            continue
+        try:
+            create_backup(plan_file)
+            week_view.import_legacy_week(wk)
+        except Exception as e:
+            # The backup (taken first) preserves the hand-edited content
+            # even if conversion fails and the regen rewrites the file.
+            print(f"Warning: legacy import failed for {wk}: {e}", file=sys.stderr)
 
 
 @app.route('/api/week-board/<week>/import-legacy', methods=['POST'])
@@ -1050,40 +1071,18 @@ def _recipe_base_servings(recipe_name):
 def api_week_board_import_legacy(week):
     """One-time conversion of a hand-edited week to the serving ledger.
 
-    Walks the week's Markdown (if any) via parse_meal_plan and creates one
-    cook per filled slot: scale = the entry's servings multiplier,
-    servings_produced = recipe frontmatter servings x scale (fallback 4),
-    and all of it placed at that slot (legacy assumption: eaten there).
-    Guarded against re-import: 409 if the week already has ledger cooks.
+    Thin wrapper over ``lib.week_view.import_legacy_week`` (the mutation
+    routes run the same conversion server-side before the first ledger
+    write into a legacy week). Guarded against re-import: 409 if the week
+    already has ledger rows (cooks or placements).
     """
-    from lib import serving_ledger, paths
-    from lib.meal_plan_parser import flatten_to_recipes
+    from lib import serving_ledger, week_view
     if not re.match(r'^\d{4}-W\d{2}$', week):
         return jsonify({"error": "Invalid week format. Expected YYYY-WNN"}), 400
-    if serving_ledger.cooks_for_week(week):
-        return jsonify({"error": "week already has cooks"}), 409
+    if serving_ledger.cooks_for_week(week) or serving_ledger.placements_for_week(week):
+        return jsonify({"error": "week already has ledger rows"}), 409
 
-    plan_file = paths.meal_plans_dir() / f"{week}.md"
-    imported = []
-    if plan_file.exists():
-        year_num, week_num = int(week[:4]), int(week.split("-W")[1])
-        content = plan_file.read_text(encoding="utf-8")
-        parsed = parse_meal_plan(content, year_num, week_num)
-        for day_data in parsed:
-            date_iso = day_data["date"].isoformat()
-            for meal in ("breakfast", "lunch", "snack", "dinner"):
-                entry = day_data.get(meal)
-                if entry is None:
-                    continue
-                for sub in flatten_to_recipes(entry, meals_dir=paths.meals_dir()):
-                    scale = float(sub.servings)
-                    servings_produced = _recipe_base_servings(sub.name) * scale
-                    cook = serving_ledger.create_cook(
-                        recipe=sub.name, week=week, scale=scale,
-                        servings_produced=servings_produced,
-                        date=date_iso, meal=meal,
-                        initial_placement_count=servings_produced)
-                    imported.append(cook["id"])
+    imported = week_view.import_legacy_week(week)
     _regen_weeks(week)
     return jsonify({"imported": imported})
 
@@ -1094,6 +1093,11 @@ def api_week_board_import_legacy(week):
 def api_cook_create():
     from lib import serving_ledger
     data = request.get_json(force=True, silent=True) or {}
+    # C1: a hand-edited legacy week must be converted (import + backup)
+    # BEFORE its first ledger row lands, or the regen below clobbers it.
+    _import_legacy_if_first_write(
+        data.get('week'),
+        _iso_week_of(data["date"]) if data.get("date") else None)
     cook = serving_ledger.create_cook(
         recipe=data.get('recipe'), week=data.get('week'),
         scale=float(data.get('scale', 1.0)),
@@ -1143,6 +1147,9 @@ def api_placement_create():
     cook_id = int(data.get('cook_id', 0))
     if serving_ledger.get_cook(cook_id) is None:
         return jsonify({"error": "cook not found"}), 404
+    # C1: dropping a serving into a hand-edited legacy week converts it first.
+    if data.get('date'):
+        _import_legacy_if_first_write(_iso_week_of(data['date']))
     p = serving_ledger.add_placement(
         cook_id=cook_id,
         destination=data.get('destination'),
@@ -1206,6 +1213,9 @@ def api_placement_move(pid):
         conn.close()
     if before is None:
         return jsonify({"error": "placement not found"}), 404
+    # C1: moving a serving into a hand-edited legacy week converts it first.
+    if data.get('date'):
+        _import_legacy_if_first_write(_iso_week_of(data['date']))
     result = serving_ledger.move_servings(
         pid, count=float(data.get('count', 0)),
         destination=data.get('destination'),

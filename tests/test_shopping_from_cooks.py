@@ -54,6 +54,25 @@ def test_freezer_only_week_produces_empty_list(tmp_db, tmp_vault, monkeypatch):
     assert result["items"] == []
 
 
+def test_emptied_ledger_week_has_no_phantom_links(tmp_db, tmp_vault, monkeypatch):
+    """Deleting the last cook regenerates an empty skeleton, so the link-scan
+    grocery fallback no longer sees the deleted recipe."""
+    from lib import week_view
+    _setup_vault(tmp_vault, monkeypatch)
+    cook = sl.create_cook(recipe="Chili", week="2026-W28", scale=1.5,
+                          servings_produced=6.0,
+                          date="2026-07-07", meal="dinner")
+    week_view.write_week_markdown("2026-W28")
+    sl.delete_cook(cook["id"])
+    week_view.write_week_markdown("2026-W28")
+    result = slg.generate_shopping_list("2026-W28")
+    # The stale card would have produced success=True with Chili's
+    # ingredients; the empty skeleton has no links at all.
+    assert result["success"] is False
+    assert "No recipes found" in result["error"]
+    assert not result.get("items")
+
+
 def test_legacy_week_falls_back_to_link_scan(tmp_db, tmp_vault, monkeypatch):
     _, plans = _setup_vault(tmp_vault, monkeypatch)
     (plans / "2026-W20.md").write_text(

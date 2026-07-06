@@ -202,9 +202,166 @@ def test_import_legacy_already_has_cooks_returns_409(client, tmp_db, tmp_vault):
     _create_cook(client, week="2026-W28")
     resp = client.post("/api/week-board/2026-W28/import-legacy")
     assert resp.status_code == 409
-    assert resp.get_json()["error"] == "week already has cooks"
+    assert resp.get_json()["error"] == "week already has ledger rows"
+
+
+def test_import_legacy_409_when_foreign_placement_exists(client, tmp_db, tmp_vault):
+    """A week with no cooks but a foreign slot placement (leftover dragged in)
+    is already ledger-rendered — importing its leftover line would duplicate it."""
+    cook = _create_cook(client).get_json()          # anchored in 2026-W28
+    client.post("/api/placements", json={
+        "cook_id": cook["id"], "destination": "slot",
+        "date": "2026-07-14", "meal": "lunch", "count": 1})  # lands in 2026-W29
+    _write_legacy_plan(tmp_vault, "2026-W29",
+                       "## Monday (Jul 13)\n### Breakfast\n### Lunch\n"
+                       "### Snack\n### Dinner\n[[Chili]] (leftover x1)\n"
+                       "### Notes\n")
+    resp = client.post("/api/week-board/2026-W29/import-legacy")
+    assert resp.status_code == 409
+
+
+def test_import_legacy_skips_leftover_lines(client, tmp_db, tmp_vault):
+    """Even when import runs on a file containing a '(leftover xN)' line and
+    the week has no ledger rows, no cook is created from that line."""
+    _write_legacy_plan(tmp_vault, "2026-W29",
+                       "## Monday (Jul 13)\n### Breakfast\n### Lunch\n"
+                       "### Snack\n### Dinner\n[[Chili]] (leftover x1)\n"
+                       "### Notes\n")
+    resp = client.post("/api/week-board/2026-W29/import-legacy")
+    assert resp.status_code == 200
+    assert resp.get_json()["imported"] == []
+    board = client.get("/api/week-board/2026-W29").get_json()
+    assert board["cooks"] == []
 
 
 def test_import_legacy_invalid_week_400(client, tmp_db, tmp_vault):
     resp = client.post("/api/week-board/garbage/import-legacy")
     assert resp.status_code == 400
+
+
+# --- C1: first ledger write into a legacy week must import-then-render -------
+
+LEGACY_W28 = (
+    "# Meal Plan - Week 28\n\n"
+    "## Monday (Jul 6)\n"
+    "### Breakfast\n### Lunch\n### Snack\n"
+    "### Dinner\n[[Chili]] x2\n"
+    "### Notes\nPrep beans overnight\n\n"
+    "## Tuesday (Jul 7)\n"
+    "### Breakfast\n### Lunch\n### Snack\n### Dinner\n### Notes\n\n")
+
+
+def _write_legacy_plan(tmp_vault, week, body):
+    plans = tmp_vault / "Meal Plans"
+    plans.mkdir(parents=True, exist_ok=True)
+    f = plans / f"{week}.md"
+    f.write_text(body, encoding="utf-8")
+    return f
+
+
+def test_first_cook_into_legacy_week_imports_and_backs_up(client, tmp_db, tmp_vault):
+    """Creating the first ledger row in a hand-edited week converts the
+    week's [[links]] into cooks (with a backup) instead of clobbering them."""
+    recipes = tmp_vault / "Recipes"
+    recipes.mkdir(parents=True)
+    (recipes / "Chili.md").write_text(
+        "---\nservings: 4\n---\n\nChili.\n", encoding="utf-8")
+    plan = _write_legacy_plan(tmp_vault, "2026-W28", LEGACY_W28)
+
+    resp = _create_cook(client, recipe="Soup", date="2026-07-08", meal="lunch")
+    assert resp.status_code == 201
+
+    board = client.get("/api/week-board/2026-W28").get_json()
+    by_recipe = {c["recipe"]: c for c in board["cooks"]}
+    assert set(by_recipe) == {"Chili", "Soup"}
+    assert by_recipe["Chili"]["scale"] == 2.0
+    assert by_recipe["Chili"]["servings_produced"] == 8.0
+
+    text = plan.read_text(encoding="utf-8")
+    assert "[[Chili]] x2" in text          # hand-edited link preserved as a cook
+    assert "[[Soup]]" in text
+
+    backups = list((tmp_vault / "Meal Plans" / ".history").glob("2026-W28_*.md"))
+    assert len(backups) == 1
+    assert "Prep beans overnight" in backups[0].read_text(encoding="utf-8")
+
+
+def test_placement_move_into_legacy_week_imports_first(client, tmp_db, tmp_vault):
+    """Dragging a frozen serving into a hand-edited week's slot converts
+    that week before the mutation renders over it."""
+    cook = _create_cook(client).get_json()          # 2026-W28
+    frozen = client.post("/api/placements", json={
+        "cook_id": cook["id"], "destination": "freezer", "count": 2}).get_json()
+    plan = _write_legacy_plan(
+        tmp_vault, "2026-W29",
+        "## Monday (Jul 13)\n### Breakfast\n### Lunch\n### Snack\n"
+        "### Dinner\n[[Stew]]\n### Notes\n")
+
+    resp = client.post(f"/api/placements/{frozen['id']}/move", json={
+        "count": 1, "destination": "slot",
+        "date": "2026-07-14", "meal": "lunch"})
+    assert resp.status_code == 200
+
+    text = plan.read_text(encoding="utf-8")
+    assert "[[Stew]]" in text                       # legacy link survived
+    assert "[[Chili]] (leftover x1)" in text        # the dropped serving
+    assert list((tmp_vault / "Meal Plans" / ".history").glob("2026-W29_*.md"))
+
+
+def test_placement_create_into_legacy_week_imports_first(client, tmp_db, tmp_vault):
+    """An unassigned serving placed into a hand-edited week's slot converts
+    that week before the mutation renders over it."""
+    cook = _create_cook(client).get_json()          # 2026-W28, 5 unassigned
+    plan = _write_legacy_plan(
+        tmp_vault, "2026-W29",
+        "## Monday (Jul 13)\n### Breakfast\n### Lunch\n### Snack\n"
+        "### Dinner\n[[Stew]]\n### Notes\n")
+
+    resp = client.post("/api/placements", json={
+        "cook_id": cook["id"], "destination": "slot",
+        "date": "2026-07-13", "meal": "dinner", "count": 1})
+    assert resp.status_code == 201
+
+    text = plan.read_text(encoding="utf-8")
+    assert "[[Stew]]" in text
+    assert "[[Chili]] (leftover x1)" in text
+
+
+# --- C2: deleting the last ledger row leaves a clean empty skeleton ----------
+
+def test_delete_last_cook_writes_empty_skeleton(client, tmp_db, tmp_vault):
+    cook = _create_cook(client).get_json()
+    plan = tmp_vault / "Meal Plans" / "2026-W28.md"
+    assert "[[Chili]]" in plan.read_text(encoding="utf-8")
+
+    resp = client.delete(f"/api/cooks/{cook['id']}")
+    assert resp.status_code == 200
+
+    text = plan.read_text(encoding="utf-8")
+    assert "[[" not in text        # no phantom links for the grocery fallback
+    assert "## Monday" in text and "### Dinner" in text
+
+
+# --- I4: garbage recipe frontmatter must not 500 the board -------------------
+
+def test_week_board_garbage_nutrition_returns_json_not_500(client, tmp_db, tmp_vault):
+    recipes = tmp_vault / "Recipes"
+    recipes.mkdir(parents=True)
+    (recipes / "Garbage Stew.md").write_text(
+        "---\nservings: 4\nnutrition_calories: \"lots\"\n---\n\nMystery.\n",
+        encoding="utf-8")
+    _create_cook(client, recipe="Garbage Stew")
+    resp = client.get("/api/week-board/2026-W28")
+    assert resp.status_code == 200
+    board = resp.get_json()
+    assert board["day_totals"]["2026-07-07"]["incomplete"] is True
+
+
+# --- I5: legacy PUT must not clobber a ledger-managed week --------------------
+
+def test_meal_plan_put_409_when_ledger_owns_week(client, tmp_db, tmp_vault):
+    _create_cook(client)
+    resp = client.put("/api/meal-plan/2026-W28", json={
+        "week": "2026-W28", "days": []})
+    assert resp.status_code == 409
+    assert resp.get_json()["error"] == "week is ledger-managed"

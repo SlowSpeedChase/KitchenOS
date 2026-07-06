@@ -275,6 +275,60 @@ def test_day_totals_flags_missing_recipe(tmp_db, tmp_vault):
     assert totals["2026-07-07"]["calories"] == 0
 
 
+# --- M1: validate week/date formats BEFORE any insert ----------------------
+
+def test_create_cook_rejects_bad_week_format(tmp_db):
+    with pytest.raises(ValueError):
+        _mk_cook(week="garbage")
+    conn = inventory_db.connect()
+    try:
+        assert conn.execute("SELECT COUNT(*) AS n FROM cooks").fetchone()["n"] == 0
+    finally:
+        conn.close()
+
+
+def test_create_cook_rejects_bad_date(tmp_db):
+    with pytest.raises(ValueError):
+        _mk_cook(date="July 7th")
+    conn = inventory_db.connect()
+    try:
+        assert conn.execute("SELECT COUNT(*) AS n FROM cooks").fetchone()["n"] == 0
+    finally:
+        conn.close()
+
+
+def test_add_placement_rejects_bad_date(tmp_db):
+    cook = _mk_cook()
+    with pytest.raises(ValueError):
+        sl.add_placement(cook["id"], "slot", 1.0, date="notadate", meal="lunch")
+
+
+def test_move_servings_rejects_bad_date(tmp_db):
+    cook = _mk_cook()
+    frozen = sl.add_placement(cook["id"], "freezer", 2.0)
+    with pytest.raises(ValueError):
+        sl.move_servings(frozen["id"], 1.0, "slot", date="notadate", meal="lunch")
+
+
+# --- I4: garbage nutrition frontmatter must not raise ------------------------
+
+def test_recipe_macros_garbage_frontmatter_returns_none(tmp_db, tmp_vault):
+    garbage = RECIPE_MD.replace("nutrition_calories: 500",
+                                'nutrition_calories: "lots"')
+    recipes = _write_recipe(tmp_vault, "Garbage Stew", garbage)
+    assert sl.recipe_macros("Garbage Stew", recipes) is None
+
+
+def test_day_totals_garbage_frontmatter_marks_incomplete(tmp_db, tmp_vault):
+    garbage = RECIPE_MD.replace("nutrition_calories: 500",
+                                'nutrition_calories: "lots"')
+    recipes = _write_recipe(tmp_vault, "Garbage Stew", garbage)
+    sl.create_cook(recipe="Garbage Stew", week="2026-W28", scale=1.0,
+                   servings_produced=4.0, date="2026-07-07", meal="dinner")
+    totals = sl.day_totals("2026-W28", recipes)
+    assert totals["2026-07-07"]["incomplete"] is True
+
+
 def test_week_board_shape(tmp_db, tmp_vault):
     recipes = _write_recipe(tmp_vault, "Chili", RECIPE_MD)
     cook = _mk_cook()

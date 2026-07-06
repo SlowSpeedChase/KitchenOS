@@ -33,9 +33,56 @@ def test_render_week_markdown_anchor_and_leftover(tmp_db, tmp_vault):
 
 
 def test_write_week_markdown_skips_ledgerless_weeks(tmp_db, tmp_vault):
+    """A week the ledger never owned (no rows, no plan file) is left alone —
+    no file is created."""
+    week_view.write_week_markdown("2026-W20")
+    assert not (tmp_vault / "Meal Plans" / "2026-W20.md").exists()
+
+
+def test_write_week_markdown_writes_empty_skeleton_when_ledger_empties(tmp_db, tmp_vault):
+    """When the plan file exists but the ledger just emptied (last cook
+    deleted), the file becomes the clean empty skeleton — stale cards and
+    [[links]] must not linger (the link-scan grocery fallback would see
+    phantom recipes)."""
     plans = tmp_vault / "Meal Plans"
     plans.mkdir(parents=True)
-    legacy = plans / "2026-W20.md"
-    legacy.write_text("# hand-made\n", encoding="utf-8")
-    week_view.write_week_markdown("2026-W20")
-    assert legacy.read_text(encoding="utf-8") == "# hand-made\n"
+    stale = plans / "2026-W28.md"
+    stale.write_text(
+        "# Meal Plan - Week 28\n\n## Monday (Jul 6)\n### Dinner\n"
+        "[[Chili]] x2\n### Notes\n", encoding="utf-8")
+    week_view.write_week_markdown("2026-W28")
+    text = stale.read_text(encoding="utf-8")
+    assert "[[Chili]]" not in text
+    assert "## Monday" in text and "### Dinner" in text
+
+
+def test_import_legacy_week_creates_cooks_from_links(tmp_db, tmp_vault):
+    recipes = tmp_vault / "Recipes"
+    recipes.mkdir(parents=True)
+    (recipes / "Chili.md").write_text(
+        "---\nservings: 4\n---\n\nChili.\n", encoding="utf-8")
+    plans = tmp_vault / "Meal Plans"
+    plans.mkdir(parents=True)
+    (plans / "2026-W28.md").write_text(
+        "## Monday (Jul 6)\n### Breakfast\n### Lunch\n### Snack\n"
+        "### Dinner\n[[Chili]] x2\n### Notes\n", encoding="utf-8")
+    imported = week_view.import_legacy_week("2026-W28")
+    assert len(imported) == 1
+    cooks = sl.cooks_for_week("2026-W28")
+    assert cooks[0]["recipe"] == "Chili"
+    assert cooks[0]["scale"] == 2.0
+    assert cooks[0]["servings_produced"] == 8.0
+    assert cooks[0]["unassigned"] == 0.0
+
+
+def test_import_legacy_week_skips_leftover_lines(tmp_db, tmp_vault):
+    """'(leftover xN)' lines are display text rendered from slot placements —
+    they must never become cooks."""
+    plans = tmp_vault / "Meal Plans"
+    plans.mkdir(parents=True)
+    (plans / "2026-W28.md").write_text(
+        "## Monday (Jul 6)\n### Breakfast\n### Lunch\n### Snack\n"
+        "### Dinner\n[[Chili]] (leftover x1)\n### Notes\n", encoding="utf-8")
+    imported = week_view.import_legacy_week("2026-W28")
+    assert imported == []
+    assert sl.cooks_for_week("2026-W28") == []

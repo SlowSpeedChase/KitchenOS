@@ -1544,6 +1544,7 @@
         let chipSortables = [];         // Sortable instances for the 'servings' chip-drag group
         let ledgerBusy = false;         // true while a board mutation is in flight — serializes rapid taps
         let boardLoadGen = 0;           // monotonically increasing — a stale loadWeekBoard response never renders over a newer one
+        let boardStateUnknown = false;  // true when the last loadWeekBoard failed — legacy writes (save/suggest) must fail closed until a load succeeds
 
         // --- Init ---
         document.addEventListener('DOMContentLoaded', init);
@@ -2260,6 +2261,11 @@
             // resolved) while this fetch was in flight, drop this stale
             // response instead of rendering over the newer state.
             if (gen !== boardLoadGen) return;
+            // Fail closed: if we couldn't learn whether this week is
+            // ledger-managed, legacy-path writes (saveMealPlan/suggestMeal)
+            // could clobber ledger-authored Markdown — block them until a
+            // load succeeds.
+            boardStateUnknown = (loaded === null);
             weekBoard = loaded;
             renderFreezerTab();
             renderBoardIfActive();
@@ -2418,7 +2424,14 @@
             const placementId = chip.dataset.placementId;
             const cookId = chip.dataset.cookId;
 
-            if (ledgerBusy) return;
+            if (ledgerBusy) {
+                // Sortable already moved the chip node into the drop target;
+                // remove it so it can't linger there — the in-flight
+                // mutation's loadWeekBoard() re-render restores truth.
+                chip.remove();
+                showToast('Busy — try again', 'error');
+                return;
+            }
             ledgerBusy = true;
             try {
                 let resp;
@@ -2598,6 +2611,15 @@
         }
 
         async function saveMealPlan() {
+            // Fail closed while the board state is unknown (last load
+            // failed): this week might be ledger-managed, and the legacy PUT
+            // would clobber it. The server 409s as backstop, but don't even
+            // try.
+            if (boardStateUnknown) {
+                console.warn('saveMealPlan() skipped — board state unknown (last week-board load failed)');
+                showToast('Not saved — board state unknown, reload the page', 'error');
+                return;
+            }
             // Belt-and-suspenders guard: a board-backed week must never be
             // written through the legacy PUT /api/meal-plan/<week> path — that
             // payload has no scale/placement info and would clobber the
@@ -3499,6 +3521,8 @@
         // --- Suggestion ---
 
         async function suggestMeal(cell) {
+            // Fail closed while the board state is unknown — see saveMealPlan.
+            if (boardStateUnknown) return;
             // Board weeks own their cells via the ledger (cook/chip cards);
             // a legacy suggested card here would be cosmetic-only (its save
             // is already blocked) but would still flash a phantom card.

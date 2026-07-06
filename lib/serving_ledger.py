@@ -28,13 +28,16 @@ commit or roll back explicitly in a try/except/finally.
 from __future__ import annotations
 
 import contextlib
+import re
 import sqlite3
+from datetime import date as _date
 from typing import Optional
 
 from lib import inventory_db
 
 MEALS = ("breakfast", "lunch", "snack", "dinner")
 DESTINATIONS = ("slot", "freezer", "trash")
+_WEEK_RE = re.compile(r"^\d{4}-W\d{2}$")
 
 _COOK_FIELDS = ("scale", "servings_produced", "date", "meal", "notes", "cooked_at")
 _EPS = 1e-6
@@ -66,6 +69,17 @@ def _row_to_dict(row) -> dict:
     return dict(row)
 
 
+def _validate_date(date_str: Optional[str]) -> None:
+    """Reject non-ISO dates before any row is written (a bad date would
+    otherwise commit, then blow up in the caller's week-regen step)."""
+    if date_str is None:
+        return
+    try:
+        _date.fromisoformat(date_str)
+    except (ValueError, TypeError):
+        raise ValueError(f"invalid date (expected YYYY-MM-DD): {date_str!r}") from None
+
+
 def _validate_placement(destination: str, date: Optional[str], meal: Optional[str]):
     if destination not in DESTINATIONS:
         raise ValueError(f"destination must be one of {DESTINATIONS}")
@@ -74,6 +88,7 @@ def _validate_placement(destination: str, date: Optional[str], meal: Optional[st
             raise ValueError("slot placements require date and meal")
         if meal not in MEALS:
             raise ValueError(f"meal must be one of {MEALS}")
+    _validate_date(date)
 
 
 def _placed_sum(conn, cook_id: int, exclude_placement: Optional[int] = None) -> float:
@@ -128,6 +143,9 @@ def create_cook(recipe: str, week: str, scale: float = 1.0,
                 notes: Optional[str] = None) -> dict:
     if not recipe or not week:
         raise ValueError("recipe and week are required")
+    if not _WEEK_RE.match(week):
+        raise ValueError(f"invalid week (expected YYYY-WNN): {week!r}")
+    _validate_date(date)
     if servings_produced is None or servings_produced <= 0:
         raise ValueError("servings_produced is required and must be > 0")
     if meal is not None and meal not in MEALS:
@@ -344,22 +362,30 @@ COVERAGE_REVIEW_THRESHOLD = 0.8
 
 
 def recipe_macros(recipe_name: str, recipes_dir) -> Optional[dict]:
-    """Per-serving macros + coverage from a recipe's frontmatter, or None."""
+    """Per-serving macros + coverage from a recipe's frontmatter, or None.
+
+    Any per-recipe failure (unreadable file, garbage frontmatter like
+    ``nutrition_calories: "lots"``) degrades to None — the day shows as
+    incomplete instead of the whole board 500ing.
+    """
     from lib.recipe_parser import parse_recipe_file
-    path = recipes_dir / f"{recipe_name}.md"
-    if not path.exists():
+    try:
+        path = recipes_dir / f"{recipe_name}.md"
+        if not path.exists():
+            return None
+        fm = parse_recipe_file(path.read_text(encoding="utf-8"))["frontmatter"]
+        if fm.get("nutrition_calories") is None:
+            return None
+        coverage = fm.get("nutrition_coverage")
+        return {
+            "calories": int(fm.get("nutrition_calories") or 0),
+            "protein": int(fm.get("nutrition_protein") or 0),
+            "carbs": int(fm.get("nutrition_carbs") or 0),
+            "fat": int(fm.get("nutrition_fat") or 0),
+            "coverage": float(coverage) if coverage is not None else None,
+        }
+    except Exception:
         return None
-    fm = parse_recipe_file(path.read_text(encoding="utf-8"))["frontmatter"]
-    if fm.get("nutrition_calories") is None:
-        return None
-    coverage = fm.get("nutrition_coverage")
-    return {
-        "calories": int(fm.get("nutrition_calories") or 0),
-        "protein": int(fm.get("nutrition_protein") or 0),
-        "carbs": int(fm.get("nutrition_carbs") or 0),
-        "fat": int(fm.get("nutrition_fat") or 0),
-        "coverage": float(coverage) if coverage is not None else None,
-    }
 
 
 def day_totals(week: str, recipes_dir) -> dict:

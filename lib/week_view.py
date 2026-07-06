@@ -2,8 +2,10 @@
 
 The ledger (SQLite) is authoritative; this module regenerates the weekly
 Markdown as a human-readable Obsidian view after every ledger mutation.
-Weeks with no ledger rows are left alone so legacy hand-edited plans and
-the link-scan shopping fallback keep working.
+Weeks the ledger has never owned (no rows AND no plan file) are left
+alone so legacy hand-edited plans and the link-scan shopping fallback
+keep working; ``import_legacy_week`` converts a hand-edited week into
+ledger cooks before the first mutation renders over it.
 """
 from __future__ import annotations
 
@@ -96,12 +98,80 @@ def render_week_markdown(week: str, recipes_dir) -> str:
 
 
 def write_week_markdown(week: str) -> None:
-    """Regenerate the week's Markdown, only if the ledger owns that week."""
+    """Regenerate the week's Markdown view from the ledger.
+
+    A week the ledger has never owned (no rows AND no plan file) is
+    skipped. When the plan file exists but the ledger just emptied (last
+    cook deleted), the clean empty skeleton is written so stale cards and
+    [[links]] don't linger (the link-scan grocery fallback would see
+    phantom recipes). This is only called (via ``_regen_weeks``) for weeks
+    a mutation touched, and the pre-mutation legacy import converts
+    hand-edited files first, so untouched legacy weeks are never clobbered.
+    """
     cooks = serving_ledger.cooks_for_week(week)
     placements = serving_ledger.placements_for_week(week)
-    if not cooks and not placements:
-        return
     plans_dir = paths.meal_plans_dir()
+    plan_file = plans_dir / f"{week}.md"
+    if not cooks and not placements and not plan_file.exists():
+        return
     plans_dir.mkdir(parents=True, exist_ok=True)
     content = render_week_markdown(week, paths.recipes_dir())
-    (plans_dir / f"{week}.md").write_text(content, encoding="utf-8")
+    plan_file.write_text(content, encoding="utf-8")
+
+
+def recipe_base_servings(recipe_name: str) -> float:
+    """Per-recipe servings from frontmatter, falling back to 4.
+
+    Reads via a fresh ``paths.recipes_dir()`` call so tests that
+    monkeypatch ``KITCHENOS_VAULT`` after import see the right directory.
+    """
+    from lib.recipe_parser import parse_recipe_file
+    path = paths.recipes_dir() / f"{recipe_name}.md"
+    if not path.exists():
+        return 4.0
+    try:
+        fm = parse_recipe_file(path.read_text(encoding="utf-8"))["frontmatter"]
+        servings = fm.get("servings")
+        return float(servings) if servings else 4.0
+    except Exception:
+        return 4.0
+
+
+def import_legacy_week(week: str) -> list[int]:
+    """One-time conversion of a hand-edited week's Markdown to ledger cooks.
+
+    Walks the week's plan file (if any) via parse_meal_plan and creates one
+    cook per filled slot: scale = the entry's servings multiplier,
+    servings_produced = recipe frontmatter servings x scale (fallback 4),
+    all of it placed at that slot (legacy assumption: eaten there).
+    Lines containing ``(leftover`` are display text this module renders
+    for slot placements — they never represent a cook, so they are
+    dropped before parsing. Callers must guard against weeks that already
+    have ledger rows (cooks or placements); this function does not.
+    Returns the created cook ids.
+    """
+    from lib.meal_plan_parser import parse_meal_plan, flatten_to_recipes
+    plan_file = paths.meal_plans_dir() / f"{week}.md"
+    imported: list[int] = []
+    if not plan_file.exists():
+        return imported
+    year, week_num = int(week[:4]), int(week.split("-W")[1])
+    content = plan_file.read_text(encoding="utf-8")
+    content = "\n".join(line for line in content.splitlines()
+                        if "(leftover" not in line)
+    for day_data in parse_meal_plan(content, year, week_num):
+        date_iso = day_data["date"].isoformat()
+        for meal in MEALS:
+            entry = day_data.get(meal)
+            if entry is None:
+                continue
+            for sub in flatten_to_recipes(entry, meals_dir=paths.meals_dir()):
+                scale = float(sub.servings)
+                servings_produced = recipe_base_servings(sub.name) * scale
+                cook = serving_ledger.create_cook(
+                    recipe=sub.name, week=week, scale=scale,
+                    servings_produced=servings_produced,
+                    date=date_iso, meal=meal,
+                    initial_placement_count=servings_produced)
+                imported.append(cook["id"])
+    return imported
