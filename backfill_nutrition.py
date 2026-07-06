@@ -164,11 +164,12 @@ def _print_audit(result) -> None:
             f" {li.food_source or '-':5} {cal:6.0f} kcal"
         )
     flag = " [needs review]" if result.needs_review else ""
+    sanity = f" [{', '.join(result.sanity_flags)}]" if result.sanity_flags else ""
     print(
         f"      → per serving: {result.nutrition.calories} kcal /"
         f" {result.nutrition.protein}p / {result.nutrition.carbs}c /"
         f" {result.nutrition.fat}f  (servings={result.servings_used},"
-        f" conf={result.confidence}){flag}"
+        f" coverage={result.coverage}, conf={result.confidence}){flag}{sanity}"
     )
 
 
