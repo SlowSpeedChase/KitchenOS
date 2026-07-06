@@ -43,6 +43,7 @@ warnings.filterwarnings('ignore', message='urllib3 v2 only supports OpenSSL 1.1.
 
 YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')
 OBSIDIAN_RECIPES_PATH = paths.recipes_dir()
+_RECIPES_ENV_AT_IMPORT = os.environ.get("KITCHENOS_VAULT")
 MEAL_PLANS_PATH = paths.meal_plans_dir()
 VAULT_NAME = paths.vault_root().name
 
@@ -468,12 +469,34 @@ def api_recipe_import_text():
         return jsonify({"error": str(e)}), 500
 
 
+def _resolve_recipes_dir() -> Path:
+    """Resolve the recipes directory for the current request.
+
+    Older tests patch ``api_server.OBSIDIAN_RECIPES_PATH`` directly via
+    ``unittest.mock.patch`` (env var untouched). Newer tests use the
+    ``tmp_vault`` fixture, which monkeypatches the ``KITCHENOS_VAULT`` env
+    var instead — the module-level ``OBSIDIAN_RECIPES_PATH`` constant was
+    already captured at import time (from the repo's real .env-configured
+    vault) and won't see that change.
+
+    Compare the current env var against the value captured at import: if it
+    changed, a test has monkeypatched it, so recompute fresh via
+    ``paths.recipes_dir()`` (mirrors ``_recipe_base_servings`` below). If
+    unchanged, fall back to the module constant, which respects a direct
+    ``unittest.mock.patch`` of it.
+    """
+    if os.environ.get("KITCHENOS_VAULT") != _RECIPES_ENV_AT_IMPORT:
+        return paths.recipes_dir()
+    return OBSIDIAN_RECIPES_PATH
+
+
 @app.route('/api/recipes/<name>', methods=['GET'])
 @require_token
 def api_recipe_detail(name):
     """Return full recipe details as JSON."""
-    filepath = (OBSIDIAN_RECIPES_PATH / f"{name}.md").resolve()
-    if not filepath.is_relative_to(OBSIDIAN_RECIPES_PATH.resolve()):
+    recipes_dir = _resolve_recipes_dir()
+    filepath = (recipes_dir / f"{name}.md").resolve()
+    if not filepath.is_relative_to(recipes_dir.resolve()):
         return jsonify({"error": "Invalid recipe name"}), 400
 
     if not filepath.exists():
@@ -484,6 +507,21 @@ def api_recipe_detail(name):
         parsed = parse_recipe_file(content)
         fm = parsed['frontmatter']
         body_data = parse_recipe_body(parsed['body'])
+
+        nutrition = None
+        if fm.get('nutrition_calories') is not None:
+            nutrition = {
+                "calories": fm.get('nutrition_calories'),
+                "protein": fm.get('nutrition_protein'),
+                "carbs": fm.get('nutrition_carbs'),
+                "fat": fm.get('nutrition_fat'),
+                "coverage": fm.get('nutrition_coverage'),
+                "confidence": fm.get('nutrition_confidence'),
+                "source": fm.get('nutrition_source'),
+            }
+
+        image_file = recipes_dir / "Images" / f"{name}.jpg"
+        image = f"{name}.jpg" if image_file.exists() else None
 
         return jsonify({
             "title": fm.get('title', name),
@@ -502,6 +540,8 @@ def api_recipe_detail(name):
             "nutrition_protein": fm.get('nutrition_protein'),
             "nutrition_carbs": fm.get('nutrition_carbs'),
             "nutrition_fat": fm.get('nutrition_fat'),
+            "nutrition": nutrition,
+            "image": image,
             "seasonal_ingredients": fm.get('seasonal_ingredients', []),
             "peak_months": fm.get('peak_months', []),
             "source_url": fm.get('source_url'),
@@ -510,9 +550,23 @@ def api_recipe_detail(name):
             "ingredients": body_data.get('ingredients', []),
             "instructions": body_data.get('instructions', []),
             "video_tips": body_data.get('video_tips', []),
+            "body_markdown": parsed['body'],
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/recipe/<name>', methods=['GET'])
+def recipe_detail_page(name):
+    """Serve the interactive recipe detail page with live ingredient scaling."""
+    recipes_dir = _resolve_recipes_dir()
+    filepath = (recipes_dir / f"{name}.md").resolve()
+    if not filepath.is_relative_to(recipes_dir.resolve()) or not filepath.exists():
+        return error_page(f"Recipe not found: {name}"), 404
+
+    html = open('templates/recipe_detail.html').read()
+    html = html.replace('vault=KitchenOS', f'vault={VAULT_NAME}')
+    return html, 200, {'Content-Type': 'text/html'}
 
 
 @app.route('/images/<path:filename>', methods=['GET'])

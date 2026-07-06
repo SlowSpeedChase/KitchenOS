@@ -209,6 +209,33 @@
             flex-direction: column;
             justify-content: center;
             transition: box-shadow 0.15s ease;
+            position: relative;
+        }
+
+        .recipe-card .recipe-info-link {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            width: 20px;
+            height: 20px;
+            line-height: 20px;
+            text-align: center;
+            font-size: 13px;
+            border-radius: 50%;
+            background: rgba(0, 0, 0, 0.06);
+            color: var(--text-muted);
+            text-decoration: none;
+            z-index: 2;
+        }
+
+        .recipe-card .recipe-info-link:hover {
+            background: rgba(0, 0, 0, 0.12);
+            color: var(--text);
+        }
+
+        .recipe-card.has-image .recipe-info-link {
+            background: rgba(0, 0, 0, 0.35);
+            color: #fff;
         }
 
         .recipe-card:active {
@@ -1651,7 +1678,7 @@
                 delayOnTouchOnly: true,
                 touchStartThreshold: 5,
                 animation: 150,
-                filter: '.hidden, .new-meal-btn, .meal-edit-btn',
+                filter: '.hidden, .new-meal-btn, .meal-edit-btn, .recipe-info-link',
                 // Sortable preventDefaults filtered elements by default, which
                 // would swallow the edit button's click on touch.
                 preventOnFilter: false,
@@ -2552,6 +2579,19 @@
                     <a href="${obsidianUrl}" class="recipe-name recipe-name-link">${escapeHtml(recipe.name)}</a>
                     ${metaParts.length ? `<div class="recipe-meta">${escapeHtml(metaParts.join(' \u00b7 '))}</div>` : ''}
                 `;
+
+                // Detail-page link \u2014 a real <a> (not innerHTML text) so we
+                // can attach a listener; stopPropagation keeps a tap from
+                // being swallowed/reinterpreted by SortableJS's drag
+                // handling on the card (it's also excluded via the `filter`
+                // option in initSidebarSortable below).
+                const infoLink = document.createElement('a');
+                infoLink.className = 'recipe-info-link';
+                infoLink.href = `/recipe/${encodeURIComponent(recipe.name)}`;
+                infoLink.textContent = '\u24d8';
+                infoLink.setAttribute('aria-label', `View details for ${recipe.name}`);
+                infoLink.addEventListener('click', (e) => e.stopPropagation());
+                card.appendChild(infoLink);
 
                 // Apply search filter
                 const matchesSearch = !searchTerm || recipe.name.toLowerCase().includes(searchTerm);
