@@ -8,7 +8,9 @@ from googleapiclient.discovery import build
 import functools
 import os
 import re
+import sqlite3
 import subprocess
+import sys
 import time
 import warnings
 from datetime import date, timedelta
@@ -920,6 +922,160 @@ def api_meal_plan_put(week):
     _recipe_cache["data"] = None
 
     return jsonify({"status": "saved", "week": week})
+
+
+# --- Serving ledger -----------------------------------------------------------
+
+def _ledger_error(fn):
+    """Map ledger exceptions to HTTP codes; regenerate affected week views."""
+    from functools import wraps
+    from lib.serving_ledger import OverplacementError
+
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except OverplacementError as e:
+            return jsonify({"error": str(e)}), 409
+        except sqlite3.OperationalError:
+            return jsonify({"error": "ledger busy, retry"}), 503
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+    return wrapper
+
+
+def _iso_week_of(date_str):
+    from datetime import date as _date
+    y, w, _ = _date.fromisoformat(date_str).isocalendar()
+    return f"{y}-W{w:02d}"
+
+
+def _regen_weeks(*weeks):
+    from lib import week_view
+    for wk in {w for w in weeks if w}:
+        try:
+            week_view.write_week_markdown(wk)
+        except Exception as e:
+            print(f"Warning: week view regen failed for {wk}: {e}", file=sys.stderr)
+
+
+@app.route('/api/week-board/<week>', methods=['GET'])
+@require_token
+def api_week_board(week):
+    from lib import serving_ledger
+    if not re.match(r'^\d{4}-W\d{2}$', week):
+        return jsonify({"error": "Invalid week format. Expected YYYY-WNN"}), 400
+    return jsonify(serving_ledger.week_board(week, OBSIDIAN_RECIPES_PATH))
+
+
+@app.route('/api/cooks', methods=['POST'])
+@require_token
+@_ledger_error
+def api_cook_create():
+    from lib import serving_ledger
+    data = request.get_json(force=True, silent=True) or {}
+    cook = serving_ledger.create_cook(
+        recipe=data.get('recipe'), week=data.get('week'),
+        scale=float(data.get('scale', 1.0)),
+        servings_produced=data.get('servings_produced'),
+        date=data.get('date'), meal=data.get('meal'),
+        initial_placement_count=float(data.get('initial_placement_count', 1.0)),
+        notes=data.get('notes'))
+    _regen_weeks(cook["week"])
+    return jsonify(cook), 201
+
+
+@app.route('/api/cooks/<int:cook_id>', methods=['PATCH'])
+@require_token
+@_ledger_error
+def api_cook_update(cook_id):
+    from lib import serving_ledger
+    data = request.get_json(force=True, silent=True) or {}
+    before = serving_ledger.get_cook(cook_id)
+    if before is None:
+        return jsonify({"error": "cook not found"}), 404
+    cook = serving_ledger.update_cook(cook_id, **data)
+    _regen_weeks(before["week"], cook["week"])
+    return jsonify(cook)
+
+
+@app.route('/api/cooks/<int:cook_id>', methods=['DELETE'])
+@require_token
+def api_cook_delete(cook_id):
+    from lib import serving_ledger
+    cook = serving_ledger.get_cook(cook_id)
+    if cook is None:
+        return jsonify({"error": "cook not found"}), 404
+    affected = [cook["week"]] + [_iso_week_of(p["date"])
+                                 for p in cook["placements"] if p.get("date")]
+    serving_ledger.delete_cook(cook_id)
+    _regen_weeks(*affected)
+    return jsonify({"status": "deleted"})
+
+
+@app.route('/api/placements', methods=['POST'])
+@require_token
+@_ledger_error
+def api_placement_create():
+    from lib import serving_ledger
+    data = request.get_json(force=True, silent=True) or {}
+    p = serving_ledger.add_placement(
+        cook_id=int(data.get('cook_id', 0)),
+        destination=data.get('destination'),
+        count=float(data.get('count', 0)),
+        date=data.get('date'), meal=data.get('meal'))
+    cook = serving_ledger.get_cook(p["cook_id"])
+    _regen_weeks(cook["week"], _iso_week_of(p["date"]) if p.get("date") else None)
+    return jsonify(p), 201
+
+
+@app.route('/api/placements/<int:pid>', methods=['PATCH'])
+@require_token
+@_ledger_error
+def api_placement_update(pid):
+    from lib import serving_ledger
+    data = request.get_json(force=True, silent=True) or {}
+    p = serving_ledger.update_placement(pid, **data)
+    cook = serving_ledger.get_cook(p["cook_id"])
+    _regen_weeks(cook["week"], _iso_week_of(p["date"]) if p.get("date") else None)
+    return jsonify(p)
+
+
+@app.route('/api/placements/<int:pid>', methods=['DELETE'])
+@require_token
+def api_placement_delete(pid):
+    from lib import serving_ledger, inventory_db
+    conn = inventory_db.connect()
+    try:
+        row = conn.execute("SELECT * FROM placements WHERE id = ?", (pid,)).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return jsonify({"error": "placement not found"}), 404
+    cook = serving_ledger.get_cook(row["cook_id"])
+    serving_ledger.delete_placement(pid)
+    _regen_weeks(cook["week"],
+                 _iso_week_of(row["date"]) if row["date"] else None)
+    return jsonify({"status": "deleted"})
+
+
+@app.route('/api/placements/<int:pid>/move', methods=['POST'])
+@require_token
+@_ledger_error
+def api_placement_move(pid):
+    from lib import serving_ledger
+    data = request.get_json(force=True, silent=True) or {}
+    result = serving_ledger.move_servings(
+        pid, count=float(data.get('count', 0)),
+        destination=data.get('destination'),
+        date=data.get('date'), meal=data.get('meal'))
+    cook = serving_ledger.get_cook(result["to"]["cook_id"])
+    weeks = [cook["week"]]
+    for part in (result.get("from"), result.get("to")):
+        if part and part.get("date"):
+            weeks.append(_iso_week_of(part["date"]))
+    _regen_weeks(*weeks)
+    return jsonify(result)
 
 
 @app.route('/api/suggest-meal', methods=['POST'])
