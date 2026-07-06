@@ -859,12 +859,6 @@
             padding: 8px 12px 12px;
         }
 
-        .unscheduled-tray.sortable-drag-over,
-        .unscheduled-tray:has(.sortable-ghost) {
-            outline: 2px dashed var(--accent);
-            outline-offset: -4px;
-        }
-
         .unscheduled-row-header {
             display: flex;
             justify-content: space-between;
@@ -2487,7 +2481,12 @@
             const freezerTray = document.getElementById('freezer-tray');
             if (freezerTray) chipSortables.push(Sortable.create(freezerTray, { ...commonOptions }));
             const unscheduledTray = document.getElementById('unscheduled-tray');
-            if (unscheduledTray) chipSortables.push(Sortable.create(unscheduledTray, { ...commonOptions }));
+            // Unscheduled chips are unanchored cooks, not placements: there is no
+            // API destination for "move a serving back to unscheduled", so this
+            // tray may only be a drag *source* (pull) — dropping something into
+            // it must be rejected by Sortable itself, not silently accepted and
+            // then discarded by handleChipDrop (which has no branch for it).
+            if (unscheduledTray) chipSortables.push(Sortable.create(unscheduledTray, { ...commonOptions, group: { name: 'servings', pull: true, put: false } }));
             const trashTarget = document.getElementById('trash-target');
             if (trashTarget) chipSortables.push(Sortable.create(trashTarget, { ...commonOptions }));
         }
