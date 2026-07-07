@@ -8,6 +8,7 @@ from typing import List, Optional
 import re
 
 from lib.units import VOLUME_ML, MASS_G, parse_amount_to_float
+from lib.ingredient_normalizer import normalize_name
 
 # Conversion factors derived from the canonical gram tables in ``lib/units.py``
 # so there is a single source of truth. Aggregation only needs *relative* ratios
@@ -32,10 +33,8 @@ COUNT_UNITS = {
 
 
 def normalize_item_name(item: str) -> str:
-    """Normalize item name for grouping."""
-    if not item:
-        return ""
-    return item.lower().strip()
+    """Normalize item name for grouping (strips descriptors + applies aliases)."""
+    return normalize_name(item)
 
 
 def get_unit_family(unit: str) -> str:
@@ -228,6 +227,8 @@ def aggregate_ingredients(all_ingredients: List[dict]) -> List[dict]:
     results = []
     for key, items in groups.items():
         combined = combine_ingredient_group(items)
+        for c in combined:
+            c["item"] = key  # canonical normalized name
         results.extend(combined)
 
     results.sort(key=lambda x: normalize_item_name(x.get('item', '')))
