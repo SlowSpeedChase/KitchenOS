@@ -320,7 +320,9 @@ Each planned meal becomes its own 30-min timed event (breakfast 8:00, lunch 12:0
 
 ## Batch Extract (LaunchAgent)
 
-Processes YouTube URLs from the "Recipies to Process" iOS Reminders list hourly (at :10 past each hour).
+Processes YouTube, Instagram, and web recipe URLs from the "Recipies to Process" iOS Reminders list hourly (at :10 past each hour).
+
+**Share-sheet reminders:** When a page is shared to Reminders via the iOS/macOS Share Sheet, the link is stored as a rich-link *attachment* — the reminder's title is just the page name, and EventKit/AppleScript both return `None` for the URL. `batch_extract` recovers it via `lib/reminders_url.py`, which reads the Reminders SQLite store directly (`ZREMCDREMINDER → ZREMCDBASELIST → ZREMCDOBJECT`, joined by `calendarItemIdentifier`). This requires the process to read `~/Library/Group Containers/group.com.apple.reminders/…` — grant the `.venv` python **Full Disk Access** (System Settings → Privacy & Security → Full Disk Access) for the hourly LaunchAgent to resolve these. Without it, the read fails silently and reminders fall back to their title (no crash). Reminders whose title is already a plain URL never needed this.
 
 ### Management
 
@@ -602,7 +604,7 @@ template → Obsidian
 | `extract_recipe.py` | **Main entry point** - orchestrates entire pipeline |
 | `main.py` | Video data fetcher (transcript, metadata, `--json` mode) |
 | `api_server.py` | Flask API for iOS Shortcut integration |
-| `batch_extract.py` | Batch processor - reads from iOS Reminders, extracts in bulk |
+| `batch_extract.py` | Batch processor - reads from iOS Reminders, extracts in bulk (YouTube/Instagram/web); recovers share-sheet URLs via `lib/reminders_url.py` |
 | `import_crouton.py` | Imports Crouton .crumb files into Obsidian vault |
 | `generate_meal_plan.py` | Creates weekly meal plan templates |
 | `shopping_list.py` | Generates shopping list from meal plans |
@@ -621,6 +623,7 @@ template → Obsidian
 | `lib/crouton_parser.py` | Parses Crouton .crumb JSON format |
 | `prompts/crouton_enrichment.py` | AI prompt for classifying imported recipes |
 | `lib/failure_logger.py` | Error classification and structured failure logging |
+| `lib/reminders_url.py` | Recovers share-sheet rich-link URLs from the Reminders SQLite store — EventKit/AppleScript can't read them. Maps `calendarItemIdentifier` → URL; read-only, degrades to `{}` on any schema mismatch |
 | `scripts/analyze_failures.sh` | Invokes Claude Code CLI to analyze failures and create fix PRs |
 | `sync_calendar.py` | Generates ICS calendar from meal plans |
 | `lib/meal_plan_parser.py` | Parses meal plan markdown files |
@@ -888,7 +891,6 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 | Feature | Priority | Notes |
 |---------|----------|-------|
 | Claude API fallback | Low | Use Claude when Ollama fails |
-| Non-YouTube recipe URLs in `batch_extract` | Medium | Route non-YouTube URLs in "Recipies to Process" through `scrape_recipe_from_url()` (Serious Eats, NYT Cooking, etc.). Currently `batch_extract.py:212` rejects anything without youtube.com/youtu.be. Decide handling for plain-text notes (skip vs flag). |
 | Auto-restock for low staples | Medium | Pantry subtraction from shopping lists now works via the unified inventory DB; remaining idea is a "Restock" pass that auto-adds low-stock staples. |
 | Serving size correction | Done | `servings: null` is now flagged (`needs_review` + `servings_inferred`) by the nutrition engine instead of silently emitting a whole-recipe "serving". |
 
