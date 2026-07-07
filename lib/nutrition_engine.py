@@ -26,10 +26,22 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from lib import food_db, food_resolver, inventory_db, units
+from lib.ingredient_text import apply_aliases, clean_for_matching
 from lib.nutrition import NutritionData
 
 # Below this line confidence, a recipe is flagged needs_review.
 REVIEW_CONFIDENCE = 0.5
+
+# Below this resolved-fraction, a recipe is flagged needs_review. Must match
+# lib.serving_ledger.COVERAGE_REVIEW_THRESHOLD.
+COVERAGE_REVIEW_THRESHOLD = 0.8
+# Per-serving calorie range outside of which a recipe is almost certainly a
+# parse/resolution error (e.g. a single-ingredient recipe resolving to an
+# implausible energy density).
+KCAL_SANITY_RANGE = (50, 2500)          # per serving
+# One ingredient line contributing more than this fraction of total recipe
+# grams is flagged for review (only when there is more than one resolved line).
+DOMINANT_LINE_FRACTION = 0.5            # one line > 50% of recipe grams
 
 # A single ingredient line over this many grams (~24 lb) is almost certainly a
 # parse error (e.g. a stray oven temperature parsed as an ingredient). Treat it
@@ -65,6 +77,9 @@ class RecipeNutritionResult:
     needs_review: bool
     confidence: float
     line_items: list = field(default_factory=list)
+    coverage: float = 1.0
+    unmatched: list = field(default_factory=list)
+    sanity_flags: list = field(default_factory=list)
 
     # --- backward-compat: old call sites use .nutrition and .source ---
     @property
@@ -100,6 +115,16 @@ def _deterministic_pick(item_norm: str, candidates: list) -> Optional[int]:
     return None
 
 
+def normalize_ingredient_key(item: str) -> str:
+    """Canonical normalization for an ingredient name used as a cache/lookup key.
+
+    Shared by ``_resolve_food`` and the nutrition-review API (pinning a human
+    match / recompute) so both sides of a resolution cache entry line up on
+    exactly the same key.
+    """
+    return units._normalize_item(apply_aliases(clean_for_matching(item)))
+
+
 def _resolve_food(item: str, *, use_cache: bool, resolution_provider: str):
     """Resolve an ingredient to a FoodRecord-like object + (confidence, resolver).
 
@@ -107,13 +132,19 @@ def _resolve_food(item: str, *, use_cache: bool, resolution_provider: str):
     record_dict has keys: source, source_id, description, per_100g(dict),
     portions(list), density_g_per_ml.
     """
-    norm = units._normalize_item(item)
+    norm = normalize_ingredient_key(item)
     if not norm:
         return None, 0.0, "unresolved"
 
     # 1. Resolution cache → cached food record.
     if use_cache:
         res = inventory_db.get_food_resolution(norm)
+        if res and res.get("resolver") == "human-negligible":
+            record = {"query_norm": norm, "source": "none", "source_id": "0",
+                      "description": "negligible (human)", "per_100g":
+                      {"calories": 0, "protein": 0, "carbs": 0, "fat": 0},
+                      "portions": [], "density_g_per_ml": None}
+            return record, 1.0, "human-negligible"
         if res and res.get("resolver") != "llm-portion":
             cached = inventory_db.get_food_cache(norm, res["source"])
             if cached:
@@ -260,6 +291,16 @@ def calculate_recipe_nutrition(
     confidences: list[float] = []
     any_resolved = False
 
+    # Coverage/sanity bookkeeping. "to taste" (and similarly negligible informal
+    # amounts) are excluded from the denominator — they legitimately carry no
+    # meaningful macro contribution, so failing to resolve them shouldn't ding
+    # coverage.
+    countable = 0
+    resolved_count = 0
+    resolved_confs: list[float] = []
+    unmatched: list[str] = []
+    grams_list: list[float] = []
+
     for ing in ingredients:
         item = (ing.get("item") or "").strip()
         amount = ing.get("amount", "1")
@@ -267,14 +308,42 @@ def calculate_recipe_nutrition(
         if not item:
             continue
 
+        is_negligible = (unit or "").strip().lower() == "to taste"
+        if not is_negligible:
+            countable += 1
+
         record, food_conf, resolver = _resolve_food(
             item, use_cache=use_cache, resolution_provider=resolution_provider)
+
+        if resolver == "human-negligible":
+            # A human explicitly pinned this line as contributing nothing (e.g.
+            # a joke/garnish ingredient with no meaningful macros). Treat it as
+            # fully resolved with a zero contribution rather than routing it
+            # through grams resolution, where a volume/count unit with no
+            # density/piece-weight would fall into "unresolved" and keep
+            # dragging coverage down even after a human confirmed it.
+            confidences.append(1.0)
+            line_items.append(IngredientNutrition(
+                item=item, amount=amount, unit=unit,
+                grams=0.0, grams_method="negligible",
+                food_source=record["source"], food_id=str(record["source_id"]),
+                per_100g=record["per_100g"], contribution=dict(_EMPTY_CONTRIB),
+                confidence=1.0, needs_review=False, note="human-confirmed negligible",
+            ))
+            any_resolved = True
+            if not is_negligible:
+                resolved_count += 1
+                resolved_confs.append(1.0)
+            continue
+
         if record is None:
             line_items.append(IngredientNutrition(
                 item, amount, unit, 0.0, "unresolved", "", "",
                 {}, dict(_EMPTY_CONTRIB), 0.0, True, note="food not found",
             ))
             confidences.append(0.0)
+            if not is_negligible:
+                unmatched.append(item)
             continue
 
         gr = _resolve_grams(amount, unit, item, record, use_cache=use_cache,
@@ -288,6 +357,8 @@ def calculate_recipe_nutrition(
                 note = f"implausible weight {gr.grams:.0f}g — skipped"
             else:
                 note = gr.note
+            if not is_negligible:
+                unmatched.append(item)
         else:
             factor = gr.grams / 100.0
             contribution = {k: float(per_100g.get(k, 0) or 0) * factor for k in _EMPTY_CONTRIB}
@@ -298,6 +369,10 @@ def calculate_recipe_nutrition(
             note = gr.note
             any_resolved = True
             sources.add(record["source"])
+            if not is_negligible:
+                resolved_count += 1
+                resolved_confs.append(line_conf)
+                grams_list.append(gr.grams)
 
         confidences.append(line_conf)
         line_items.append(IngredientNutrition(
@@ -335,11 +410,24 @@ def calculate_recipe_nutrition(
     )
 
     source = next(iter(sources)) if len(sources) == 1 else "mixed"
-    recipe_conf = round(min(confidences), 2) if confidences else 0.0
+    coverage = round(resolved_count / countable, 2) if countable else 0.0
+    confidence = round(sum(resolved_confs) / len(resolved_confs), 2) \
+        if resolved_confs else 0.0
+
+    sanity_flags: list[str] = []
+    lo, hi = KCAL_SANITY_RANGE
+    if not (lo <= per_serving.calories <= hi):
+        sanity_flags.append("kcal_out_of_range")
+    total_grams = sum(grams_list)
+    if total_grams and max(grams_list) / total_grams > DOMINANT_LINE_FRACTION \
+            and len(grams_list) > 1:
+        sanity_flags.append("dominant_line")
+
     needs_review = (
         servings_inferred
-        or any(li.needs_review for li in line_items)
-        or recipe_conf < REVIEW_CONFIDENCE
+        or coverage < COVERAGE_REVIEW_THRESHOLD
+        or bool(sanity_flags)
+        or confidence < REVIEW_CONFIDENCE
     )
 
     return RecipeNutritionResult(
@@ -349,6 +437,9 @@ def calculate_recipe_nutrition(
         servings_used=servings_used,
         servings_inferred=servings_inferred,
         needs_review=needs_review,
-        confidence=recipe_conf,
+        confidence=confidence,
         line_items=line_items,
+        coverage=coverage,
+        unmatched=unmatched,
+        sanity_flags=sanity_flags,
     )

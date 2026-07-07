@@ -122,6 +122,16 @@ class TestConfigLookups:
         assert lookup_density("nonexistent ingredient zzz") is None
         assert lookup_piece_weight("nonexistent ingredient zzz") is None
 
+    def test_beans_density_narrowed_to_dried_beans(self):
+        # "beans" used to be the config key, so substring matching (either
+        # direction) made it match ANY "*beans*" ingredient — including fresh
+        # green beans and canned baked beans, which have wildly different
+        # densities than dried beans. The key is now "dried beans" so only
+        # that (and closer variants) match.
+        assert lookup_density("dried beans") == pytest.approx(0.75)
+        assert lookup_density("green beans") is None
+        assert lookup_density("baked beans") is None
+
 
 class TestAggregatorRegression:
     """The aggregator now derives its tables from lib.units — ensure parity."""

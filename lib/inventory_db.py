@@ -81,6 +81,28 @@ CREATE TABLE IF NOT EXISTS food_resolution (
     resolver TEXT NOT NULL,
     resolved_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS cooks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    recipe TEXT NOT NULL,
+    week TEXT NOT NULL,
+    date TEXT,
+    meal TEXT,
+    scale REAL NOT NULL DEFAULT 1.0,
+    servings_produced REAL NOT NULL,
+    cooked_at TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS placements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cook_id INTEGER NOT NULL REFERENCES cooks(id) ON DELETE CASCADE,
+    destination TEXT NOT NULL CHECK (destination IN ('slot','freezer','trash')),
+    date TEXT,
+    meal TEXT,
+    count REAL NOT NULL DEFAULT 1.0
+);
+CREATE INDEX IF NOT EXISTS idx_cooks_week ON cooks(week);
+CREATE INDEX IF NOT EXISTS idx_placements_cook ON placements(cook_id);
 """
 
 _INVENTORY_COLS = (

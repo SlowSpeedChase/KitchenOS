@@ -6,6 +6,8 @@ Creates standard iCalendar format for Obsidian Full Calendar and Apple Calendar.
 from datetime import date, datetime, timedelta
 from icalendar import Calendar, Event
 
+from lib.meal_plan_parser import fmt_mult
+
 # Start time for each meal slot's timed calendar event, in slot order.
 # Events are 30 min and marked TRANSP:TRANSPARENT so they show as free, not busy.
 MEAL_TIMES = [
@@ -30,8 +32,8 @@ def _format_meal_display(meal) -> str:
         return '—'
     # Handle MealEntry (NamedTuple with name and servings)
     if hasattr(meal, 'name') and hasattr(meal, 'servings'):
-        if meal.servings > 1:
-            return f'{meal.name} x{meal.servings}'
+        if float(meal.servings) != 1:
+            return f'{meal.name} x{fmt_mult(meal.servings)}'
         return meal.name
     return str(meal)
 

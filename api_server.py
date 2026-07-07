@@ -2,13 +2,16 @@
 """Simple API server for iOS Shortcuts integration."""
 
 from flask import Flask, request, jsonify, send_file, redirect
+from markupsafe import escape
 from urllib.parse import quote
 from youtube_transcript_api import YouTubeTranscriptApi
 from googleapiclient.discovery import build
 import functools
 import os
 import re
+import sqlite3
 import subprocess
+import sys
 import time
 import warnings
 from datetime import date, timedelta
@@ -41,6 +44,7 @@ warnings.filterwarnings('ignore', message='urllib3 v2 only supports OpenSSL 1.1.
 
 YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')
 OBSIDIAN_RECIPES_PATH = paths.recipes_dir()
+_RECIPES_ENV_AT_IMPORT = os.environ.get("KITCHENOS_VAULT")
 MEAL_PLANS_PATH = paths.meal_plans_dir()
 VAULT_NAME = paths.vault_root().name
 
@@ -72,14 +76,18 @@ RECIPE_CACHE_TTL = 300  # 5 minutes
 
 
 def error_page(message: str) -> str:
-    """Generate simple HTML error page."""
+    """Generate simple HTML error page.
+
+    The message is escaped here (call sites pass raw text, often str(e));
+    escaping already-escaped Markup is a no-op.
+    """
     return f'''<!DOCTYPE html>
-<html><head><title>KitchenOS</title></head>
+<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>KitchenOS</title></head>
 <body style="font-family: system-ui; padding: 2rem; max-width: 600px; margin: 0 auto;">
 <div style="background: #fee; border: 1px solid #c00; padding: 1rem; border-radius: 8px;">
-<strong style="color: #c00;">Error</strong><br>{message}
+<strong style="color: #c00;">Error</strong><br>{escape(message)}
 </div>
-<p><a href="obsidian://open?vault={VAULT_NAME}">Return to Obsidian</a></p>
+<p><a href="obsidian://open?vault={VAULT_NAME}" style="display: inline-block; padding: 12px 20px; border: 1px solid #ccc; border-radius: 8px; text-decoration: none;">Return to Obsidian</a></p>
 </body></html>'''
 
 
@@ -88,12 +96,12 @@ def success_page(message: str, filename: str) -> str:
     from urllib.parse import quote
     encoded_filename = quote(filename, safe='')
     return f'''<!DOCTYPE html>
-<html><head><title>KitchenOS</title></head>
+<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>KitchenOS</title></head>
 <body style="font-family: system-ui; padding: 2rem; max-width: 600px; margin: 0 auto;">
 <div style="background: #efe; border: 1px solid #0a0; padding: 1rem; border-radius: 8px;">
 <strong style="color: #0a0;">Success</strong><br>{message}
 </div>
-<p><a href="obsidian://open?vault={VAULT_NAME}&file=Recipes/{encoded_filename}">Return to {filename}</a></p>
+<p><a href="obsidian://open?vault={VAULT_NAME}&file=Recipes/{encoded_filename}" style="display: inline-block; padding: 12px 20px; border: 1px solid #ccc; border-radius: 8px; text-decoration: none;">Return to {filename}</a></p>
 </body></html>'''
 
 
@@ -466,12 +474,36 @@ def api_recipe_import_text():
         return jsonify({"error": str(e)}), 500
 
 
+def _resolve_recipes_dir() -> Path:
+    """Resolve the recipes directory for the current request.
+
+    Older tests patch ``api_server.OBSIDIAN_RECIPES_PATH`` directly via
+    ``unittest.mock.patch`` (env var untouched). Newer tests use the
+    ``tmp_vault`` fixture, which monkeypatches the ``KITCHENOS_VAULT`` env
+    var instead — the module-level ``OBSIDIAN_RECIPES_PATH`` constant was
+    already captured at import time (from the repo's real .env-configured
+    vault) and won't see that change.
+
+    Compare the current env var against the value captured at import
+    (``_RECIPES_ENV_AT_IMPORT``): if it changed, a test has monkeypatched
+    ``KITCHENOS_VAULT``, so recompute fresh via ``paths.recipes_dir()`` to
+    pick it up. If unchanged, fall back to the module constant, which
+    respects a direct ``unittest.mock.patch`` of it. This differs from
+    ``lib.week_view.recipe_base_servings``, which always calls
+    ``paths.recipes_dir()`` fresh regardless of env state.
+    """
+    if os.environ.get("KITCHENOS_VAULT") != _RECIPES_ENV_AT_IMPORT:
+        return paths.recipes_dir()
+    return OBSIDIAN_RECIPES_PATH
+
+
 @app.route('/api/recipes/<name>', methods=['GET'])
 @require_token
 def api_recipe_detail(name):
     """Return full recipe details as JSON."""
-    filepath = (OBSIDIAN_RECIPES_PATH / f"{name}.md").resolve()
-    if not filepath.is_relative_to(OBSIDIAN_RECIPES_PATH.resolve()):
+    recipes_dir = _resolve_recipes_dir()
+    filepath = (recipes_dir / f"{name}.md").resolve()
+    if not filepath.is_relative_to(recipes_dir.resolve()):
         return jsonify({"error": "Invalid recipe name"}), 400
 
     if not filepath.exists():
@@ -482,6 +514,21 @@ def api_recipe_detail(name):
         parsed = parse_recipe_file(content)
         fm = parsed['frontmatter']
         body_data = parse_recipe_body(parsed['body'])
+
+        nutrition = None
+        if fm.get('nutrition_calories') is not None:
+            nutrition = {
+                "calories": fm.get('nutrition_calories'),
+                "protein": fm.get('nutrition_protein'),
+                "carbs": fm.get('nutrition_carbs'),
+                "fat": fm.get('nutrition_fat'),
+                "coverage": fm.get('nutrition_coverage'),
+                "confidence": fm.get('nutrition_confidence'),
+                "source": fm.get('nutrition_source'),
+            }
+
+        image_file = recipes_dir / "Images" / f"{name}.jpg"
+        image = f"{name}.jpg" if image_file.exists() else None
 
         return jsonify({
             "title": fm.get('title', name),
@@ -500,6 +547,8 @@ def api_recipe_detail(name):
             "nutrition_protein": fm.get('nutrition_protein'),
             "nutrition_carbs": fm.get('nutrition_carbs'),
             "nutrition_fat": fm.get('nutrition_fat'),
+            "nutrition": nutrition,
+            "image": image,
             "seasonal_ingredients": fm.get('seasonal_ingredients', []),
             "peak_months": fm.get('peak_months', []),
             "source_url": fm.get('source_url'),
@@ -508,9 +557,26 @@ def api_recipe_detail(name):
             "ingredients": body_data.get('ingredients', []),
             "instructions": body_data.get('instructions', []),
             "video_tips": body_data.get('video_tips', []),
+            "body_markdown": parsed['body'],
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/recipe/<name>', methods=['GET'])
+def recipe_detail_page(name):
+    """Serve the interactive recipe detail page with live ingredient scaling."""
+    recipes_dir = _resolve_recipes_dir()
+    filepath = (recipes_dir / f"{name}.md").resolve()
+    if not filepath.is_relative_to(recipes_dir.resolve()) or not filepath.exists():
+        # error_page() escapes the reflected name itself now; escaping here
+        # too would double-escape (the f-string demotes Markup to plain str,
+        # so the outer escape would re-escape the entities).
+        return error_page(f"Recipe not found: {name}"), 404
+
+    html = open('templates/recipe_detail.html').read()
+    html = html.replace('vault=KitchenOS', f'vault={VAULT_NAME}')
+    return html, 200, {'Content-Type': 'text/html'}
 
 
 @app.route('/images/<path:filename>', methods=['GET'])
@@ -884,6 +950,7 @@ def api_meal_plan_get(week):
         for meal in ("breakfast", "lunch", "snack", "dinner"):
             entry = day_data[meal]
             if entry is not None:
+                # servings is a float (fractional multipliers, e.g. 1.5); JSON numbers are JS-native
                 slot_json = {"name": entry.name, "servings": entry.servings, "kind": entry.kind}
                 if entry.kind == "meal":
                     meal_def = meal_loader.load_meal(entry.name)
@@ -906,6 +973,12 @@ def api_meal_plan_put(week):
     if not match:
         return jsonify({"error": "Invalid week format. Expected YYYY-WNN"}), 400
 
+    # Fail closed at the legacy/board boundary: this payload carries no
+    # scale/placement info and would clobber ledger-authored Markdown.
+    from lib import serving_ledger
+    if serving_ledger.cooks_for_week(week):
+        return jsonify({"error": "week is ledger-managed"}), 409
+
     data = request.get_json(force=True, silent=True)
     if not data or "days" not in data:
         return jsonify({"error": "Request body must include 'days' array"}), 400
@@ -919,6 +992,270 @@ def api_meal_plan_put(week):
     _recipe_cache["data"] = None
 
     return jsonify({"status": "saved", "week": week})
+
+
+# --- Serving ledger -----------------------------------------------------------
+
+def _ledger_error(fn):
+    """Map ledger exceptions to HTTP codes; regenerate affected week views."""
+    from functools import wraps
+    from lib.serving_ledger import OverplacementError
+
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except OverplacementError as e:
+            return jsonify({"error": str(e)}), 409
+        except sqlite3.OperationalError:
+            return jsonify({"error": "ledger busy, retry"}), 503
+        except (ValueError, TypeError) as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            # Residual failures surface as JSON 500s, not HTML tracebacks —
+            # board-mode JS reads resp.json() on every path.
+            print(f"Error in {fn.__name__}: {e}", file=sys.stderr)
+            return jsonify({"error": f"internal error: {e}"}), 500
+    return wrapper
+
+
+def _iso_week_of(date_str):
+    from datetime import date as _date
+    y, w, _ = _date.fromisoformat(date_str).isocalendar()
+    return f"{y}-W{w:02d}"
+
+
+def _regen_weeks(*weeks):
+    from lib import week_view
+    for wk in {w for w in weeks if w}:
+        try:
+            week_view.write_week_markdown(wk)
+        except Exception as e:
+            print(f"Warning: week view regen failed for {wk}: {e}", file=sys.stderr)
+
+
+@app.route('/api/week-board/<week>', methods=['GET'])
+@require_token
+@_ledger_error
+def api_week_board(week):
+    from lib import serving_ledger
+    if not re.match(r'^\d{4}-W\d{2}$', week):
+        return jsonify({"error": "Invalid week format. Expected YYYY-WNN"}), 400
+    return jsonify(serving_ledger.week_board(week, _resolve_recipes_dir()))
+
+
+def _import_legacy_if_first_write(*weeks):
+    """Pre-mutation hook: before the FIRST ledger cook lands in a week,
+    convert a hand-edited plan file's [[links]] into ledger cooks — backing
+    the file up first — so the post-mutation ``_regen_weeks`` renders the
+    converted week instead of clobbering it.
+
+    The backup is unconditional whenever the plan file exists, even a
+    linkless/notes-only file: any first ledger write into an existing plan
+    file is about to overwrite hand-authored content, whether or not that
+    content happens to contain a [[link]] worth importing.
+
+    Placements-only weeks (a foreign placement already dragged in from
+    another week's cook, but no cook of this week's own yet) now import
+    too — safe because ``lib.week_view.import_legacy_week`` strips
+    ``(leftover`` lines before parsing, so it can't double-count a
+    placement that's already backed by a cook elsewhere. The import guard
+    is therefore keyed on cooks only, not placements.
+
+    Must run BEFORE the mutation: afterwards the week has a cook row and
+    the no-cooks guard can never fire again.
+    """
+    from lib import serving_ledger, week_view, paths
+    for wk in {w for w in weeks if w}:
+        if not re.match(r'^\d{4}-W\d{2}$', wk):
+            continue
+        plan_file = paths.meal_plans_dir() / f"{wk}.md"
+        if not plan_file.exists():
+            continue
+        try:
+            create_backup(plan_file)
+        except Exception as e:
+            print(f"Warning: legacy backup failed for {wk}: {e}", file=sys.stderr)
+            continue
+        if "[[" not in plan_file.read_text(encoding="utf-8"):
+            continue
+        if serving_ledger.cooks_for_week(wk):
+            continue
+        try:
+            week_view.import_legacy_week(wk)
+        except Exception as e:
+            # The backup (taken first) preserves the hand-edited content
+            # even if conversion fails and the regen rewrites the file.
+            print(f"Warning: legacy import failed for {wk}: {e}", file=sys.stderr)
+
+
+@app.route('/api/week-board/<week>/import-legacy', methods=['POST'])
+@require_token
+@_ledger_error
+def api_week_board_import_legacy(week):
+    """One-time conversion of a hand-edited week to the serving ledger.
+
+    Thin wrapper over ``lib.week_view.import_legacy_week`` (the mutation
+    routes run the same conversion server-side before the first ledger
+    write into a legacy week). Guarded against re-import: 409 if the week
+    already has ledger rows (cooks or placements).
+    """
+    from lib import serving_ledger, week_view
+    if not re.match(r'^\d{4}-W\d{2}$', week):
+        return jsonify({"error": "Invalid week format. Expected YYYY-WNN"}), 400
+    if serving_ledger.cooks_for_week(week) or serving_ledger.placements_for_week(week):
+        return jsonify({"error": "week already has ledger rows"}), 409
+
+    imported = week_view.import_legacy_week(week)
+    _regen_weeks(week)
+    return jsonify({"imported": imported})
+
+
+@app.route('/api/cooks', methods=['POST'])
+@require_token
+@_ledger_error
+def api_cook_create():
+    from lib import serving_ledger
+    data = request.get_json(force=True, silent=True) or {}
+    # C1: a hand-edited legacy week must be converted (import + backup)
+    # BEFORE its first ledger row lands, or the regen below clobbers it.
+    _import_legacy_if_first_write(
+        data.get('week'),
+        _iso_week_of(data["date"]) if data.get("date") else None)
+    cook = serving_ledger.create_cook(
+        recipe=data.get('recipe'), week=data.get('week'),
+        scale=float(data.get('scale', 1.0)),
+        servings_produced=data.get('servings_produced'),
+        date=data.get('date'), meal=data.get('meal'),
+        initial_placement_count=float(data.get('initial_placement_count', 1.0)),
+        notes=data.get('notes'))
+    _regen_weeks(cook["week"], _iso_week_of(data["date"]) if data.get("date") else None)
+    return jsonify(cook), 201
+
+
+@app.route('/api/cooks/<int:cook_id>', methods=['PATCH'])
+@require_token
+@_ledger_error
+def api_cook_update(cook_id):
+    from lib import serving_ledger
+    data = request.get_json(force=True, silent=True) or {}
+    before = serving_ledger.get_cook(cook_id)
+    if before is None:
+        return jsonify({"error": "cook not found"}), 404
+    cook = serving_ledger.update_cook(cook_id, **data)
+    _regen_weeks(before["week"], cook["week"])
+    return jsonify(cook)
+
+
+@app.route('/api/cooks/<int:cook_id>', methods=['DELETE'])
+@require_token
+@_ledger_error
+def api_cook_delete(cook_id):
+    from lib import serving_ledger
+    cook = serving_ledger.get_cook(cook_id)
+    if cook is None:
+        return jsonify({"error": "cook not found"}), 404
+    affected = [cook["week"]] + [_iso_week_of(p["date"])
+                                 for p in cook["placements"] if p.get("date")]
+    serving_ledger.delete_cook(cook_id)
+    _regen_weeks(*affected)
+    return jsonify({"status": "deleted"})
+
+
+@app.route('/api/placements', methods=['POST'])
+@require_token
+@_ledger_error
+def api_placement_create():
+    from lib import serving_ledger
+    data = request.get_json(force=True, silent=True) or {}
+    cook_id = int(data.get('cook_id', 0))
+    if serving_ledger.get_cook(cook_id) is None:
+        return jsonify({"error": "cook not found"}), 404
+    # C1: dropping a serving into a hand-edited legacy week converts it first.
+    if data.get('date'):
+        _import_legacy_if_first_write(_iso_week_of(data['date']))
+    p = serving_ledger.add_placement(
+        cook_id=cook_id,
+        destination=data.get('destination'),
+        count=float(data.get('count', 0)),
+        date=data.get('date'), meal=data.get('meal'))
+    cook = serving_ledger.get_cook(p["cook_id"])
+    _regen_weeks(cook["week"], _iso_week_of(p["date"]) if p.get("date") else None)
+    return jsonify(p), 201
+
+
+@app.route('/api/placements/<int:pid>', methods=['PATCH'])
+@require_token
+@_ledger_error
+def api_placement_update(pid):
+    from lib import serving_ledger, inventory_db
+    data = request.get_json(force=True, silent=True) or {}
+    conn = inventory_db.connect()
+    try:
+        before = conn.execute("SELECT * FROM placements WHERE id = ?", (pid,)).fetchone()
+    finally:
+        conn.close()
+    if before is None:
+        return jsonify({"error": "placement not found"}), 404
+    # C1: patching a serving's date into a hand-edited legacy week converts
+    # it first (same wiring as create/move — this was the one mutating
+    # ledger route missing it).
+    if data.get('date'):
+        _import_legacy_if_first_write(_iso_week_of(data['date']))
+    p = serving_ledger.update_placement(pid, **data)
+    cook = serving_ledger.get_cook(p["cook_id"])
+    _regen_weeks(cook["week"],
+                 _iso_week_of(before["date"]) if before["date"] else None,
+                 _iso_week_of(p["date"]) if p.get("date") else None)
+    return jsonify(p)
+
+
+@app.route('/api/placements/<int:pid>', methods=['DELETE'])
+@require_token
+@_ledger_error
+def api_placement_delete(pid):
+    from lib import serving_ledger, inventory_db
+    conn = inventory_db.connect()
+    try:
+        row = conn.execute("SELECT * FROM placements WHERE id = ?", (pid,)).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return jsonify({"error": "placement not found"}), 404
+    cook = serving_ledger.get_cook(row["cook_id"])
+    serving_ledger.delete_placement(pid)
+    _regen_weeks(cook["week"],
+                 _iso_week_of(row["date"]) if row["date"] else None)
+    return jsonify({"status": "deleted"})
+
+
+@app.route('/api/placements/<int:pid>/move', methods=['POST'])
+@require_token
+@_ledger_error
+def api_placement_move(pid):
+    from lib import serving_ledger, inventory_db
+    data = request.get_json(force=True, silent=True) or {}
+    conn = inventory_db.connect()
+    try:
+        before = conn.execute("SELECT * FROM placements WHERE id = ?", (pid,)).fetchone()
+    finally:
+        conn.close()
+    if before is None:
+        return jsonify({"error": "placement not found"}), 404
+    # C1: moving a serving into a hand-edited legacy week converts it first.
+    if data.get('date'):
+        _import_legacy_if_first_write(_iso_week_of(data['date']))
+    result = serving_ledger.move_servings(
+        pid, count=float(data.get('count', 0)),
+        destination=data.get('destination'),
+        date=data.get('date'), meal=data.get('meal'))
+    cook = serving_ledger.get_cook(result["to"]["cook_id"])
+    weeks = [cook["week"]]
+    for part in (result.get("from"), result.get("to")):
+        if part and part.get("date"):
+            weeks.append(_iso_week_of(part["date"]))
+    _regen_weeks(*weeks)
+    return jsonify(result)
 
 
 @app.route('/api/suggest-meal', methods=['POST'])
@@ -1804,6 +2141,256 @@ def api_nutrition(week):
         return jsonify({"error": str(e)}), 500
 
 
+def _nutrition_review_norm(item: str) -> str:
+    """Normalize an ingredient item exactly like ``nutrition_engine._resolve_food``
+    so resolutions/cache entries pinned here line up with what the engine looks
+    up during recompute."""
+    from lib.nutrition_engine import normalize_ingredient_key
+    return normalize_ingredient_key(item)
+
+
+def _result_summary(result) -> dict:
+    """Shared JSON-able summary of a ``RecipeNutritionResult`` for the
+    nutrition-review ``/resolve`` and ``/recompute`` responses."""
+    return {
+        "per_serving": result.per_serving.to_dict(),
+        "coverage": result.coverage,
+        "confidence": result.confidence,
+        "unmatched": result.unmatched,
+        "needs_review": result.needs_review,
+        "sanity_flags": result.sanity_flags,
+    }
+
+
+@app.route('/api/nutrition-review/recipes', methods=['GET'])
+@require_token
+def api_nutrition_review_list():
+    """Ranked queue of recipes needing nutrition review, worst (lowest
+    coverage, then lowest confidence) first. Reads frontmatter only — fast,
+    no live recomputation."""
+    recipes_dir = paths.recipes_dir()
+    rows = []
+    for filepath in sorted(recipes_dir.glob("*.md")):
+        if filepath.name.startswith("."):
+            continue
+        try:
+            content = filepath.read_text(encoding="utf-8")
+            fm = parse_recipe_file(content)["frontmatter"]
+        except Exception:
+            continue
+        if fm.get("nutrition_calories") is None:
+            continue
+
+        coverage = fm.get("nutrition_coverage")
+        coverage = float(coverage) if isinstance(coverage, (int, float)) else 0.0
+        confidence = fm.get("nutrition_confidence")
+        confidence = float(confidence) if isinstance(confidence, (int, float)) else 0.0
+        unmatched_raw = fm.get("nutrition_unmatched") or ""
+        unmatched = [u.strip() for u in str(unmatched_raw).split(";") if u.strip()]
+
+        # Scoped nutrition verdict is the source of truth; fall back to the
+        # shared (escalate-only) flag for recipes backfilled before that key
+        # existed.
+        scoped_review = fm.get("nutrition_needs_review")
+        needs_review = scoped_review if scoped_review is not None else fm.get("needs_review", False)
+
+        rows.append({
+            "name": filepath.stem,
+            "coverage": coverage,
+            "confidence": confidence,
+            "calories": fm.get("nutrition_calories"),
+            "needs_review": bool(needs_review),
+            "unmatched": unmatched,
+            "flags": [],  # sanity_flags aren't persisted to frontmatter (Task 8)
+        })
+
+    rows.sort(key=lambda r: (r["coverage"], r["confidence"]))
+    return jsonify(rows)
+
+
+@app.route('/api/nutrition-review/recipe/<name>', methods=['GET'])
+@require_token
+def api_nutrition_review_detail(name):
+    """Recompute one recipe's nutrition live (deterministic — no LLM) and
+    return an audit-trail view with USDA candidates for any weak/unresolved
+    line, for the human review UI."""
+    import backfill_nutrition
+    from lib import food_db, inventory_db
+
+    recipes_dir = paths.recipes_dir()
+    filepath = (recipes_dir / f"{name}.md").resolve()
+    if not filepath.is_relative_to(recipes_dir.resolve()) or not filepath.exists():
+        return jsonify({"error": f"Recipe not found: {name}"}), 404
+
+    query = request.args.get("q")
+    if query:
+        # Free-text re-query: the human typed a better search term for a
+        # weak line's "Search…" box. Not tied to any particular ingredient
+        # line, so return candidates at the top level instead of per-line.
+        try:
+            candidates = [
+                {"source_id": c.source_id, "description": c.description}
+                for c in (food_db.usda_search(query) or [])[:10]
+            ]
+        except Exception:
+            candidates = []
+        return jsonify({"name": name, "query": query, "candidates": candidates})
+
+    content = filepath.read_text(encoding="utf-8")
+    parsed = parse_recipe_file(content)
+    ingredients = backfill_nutrition.extract_ingredients(parsed["body"])
+    result = calculate_recipe_nutrition(
+        ingredients, parsed["frontmatter"].get("servings"),
+        resolution_provider="none", portion_provider="none",
+    )
+    if result is None:
+        return jsonify({"error": "No ingredients could be resolved"}), 404
+
+    lines = []
+    for li in result.line_items:
+        weak = li.needs_review or li.confidence < 0.8
+        norm = _nutrition_review_norm(li.item)
+        candidates = []
+        if weak:
+            try:
+                candidates = [
+                    {"source_id": c.source_id, "description": c.description}
+                    for c in (food_db.usda_search(norm) or [])[:5]
+                ]
+            except Exception:
+                candidates = []
+        description = ""
+        if li.food_source:
+            cached = inventory_db.get_food_cache(norm, li.food_source)
+            if cached:
+                description = cached.get("description", "")
+        lines.append({
+            "item": li.item,
+            "amount": li.amount,
+            "unit": li.unit,
+            "grams": li.grams,
+            "grams_method": li.grams_method,
+            "food_source": li.food_source,
+            "food_description": description,
+            "confidence": li.confidence,
+            "needs_review": li.needs_review,
+            "candidates": candidates,
+        })
+
+    return jsonify({
+        "name": name,
+        "servings": result.servings_used,
+        "result": {
+            "per_serving": result.per_serving.to_dict(),
+            "coverage": result.coverage,
+            "confidence": result.confidence,
+            "unmatched": result.unmatched,
+            "sanity_flags": result.sanity_flags,
+        },
+        "lines": lines,
+    })
+
+
+def _recompute_and_write(recipe_name: str):
+    """Recompute one recipe file's nutrition and persist it.
+
+    Returns ``(result, error)`` — exactly one is set. ``error`` distinguishes
+    the two cheap-to-tell-apart failure modes: the recipe file doesn't exist,
+    or it exists but no ingredient line could be resolved at all.
+    """
+    import backfill_nutrition
+
+    recipes_dir = paths.recipes_dir()
+    filepath = (recipes_dir / f"{recipe_name}.md").resolve()
+    if not filepath.is_relative_to(recipes_dir.resolve()) or not filepath.exists():
+        return None, f"recipe not found: {recipe_name}"
+
+    content = filepath.read_text(encoding="utf-8")
+    parsed = parse_recipe_file(content)
+    ingredients = backfill_nutrition.extract_ingredients(parsed["body"])
+    result = calculate_recipe_nutrition(ingredients, parsed["frontmatter"].get("servings"))
+    if result is None:
+        return None, "no ingredients could be resolved"
+
+    create_backup(filepath)
+    backfill_nutrition.write_nutrition_to_file(filepath, result)
+    return result, None
+
+
+@app.route('/api/nutrition-review/resolve', methods=['POST'])
+@require_token
+def api_nutrition_review_resolve():
+    """Pin a human food match (or mark an item resolved-as-zero) so the
+    nutrition engine's cache picks it up on the next recompute. When
+    ``recipe`` is given, also recompute + persist that recipe's nutrition."""
+    from lib import food_db, inventory_db
+
+    data = request.get_json(force=True, silent=True) or {}
+    item = data.get("item")
+    if not item:
+        return jsonify({"error": "'item' is required"}), 400
+    norm = _nutrition_review_norm(item)
+    if not norm:
+        return jsonify({"error": f"'{item}' normalizes to empty"}), 400
+
+    if data.get("negligible"):
+        inventory_db.put_food_resolution(norm, "none", "0", 1.0, "human-negligible")
+    else:
+        source_id = data.get("source_id")
+        if not source_id:
+            return jsonify({"error": "'source_id' is required unless negligible"}), 400
+        detail = food_db.usda_food_detail(source_id)
+        if detail is None:
+            return jsonify({"error": f"USDA detail not found for {source_id}"}), 404
+        # A human just confirmed this is the right food. Real USDA detail
+        # lookups usually carry a usable density/portions; when the source
+        # doesn't (e.g. an item outside our curated staples), default to a
+        # water-like density rather than leaving a confirmed match stuck
+        # "unresolved" for grams forever.
+        density = detail.density_g_per_ml if detail.density_g_per_ml is not None else 1.0
+        record = {
+            "query_norm": norm,
+            "source": "usda",
+            "source_id": detail.source_id,
+            "description": detail.description,
+            "per_100g": detail.per_100g.to_dict(),
+            "portions": detail.portions,
+            "density_g_per_ml": density,
+        }
+        inventory_db.put_food_cache(record)
+        inventory_db.put_food_resolution(norm, "usda", source_id, 1.0, "human")
+
+    response = {"status": "ok"}
+    recipe = data.get("recipe")
+    if recipe:
+        result, error = _recompute_and_write(recipe)
+        if result is not None:
+            response["recipe_result"] = _result_summary(result)
+        else:
+            # The pin above still succeeded — surface the recompute failure
+            # separately so the UI can tell "pinned but couldn't recompute"
+            # from "everything worked".
+            response["recipe_error"] = error
+    return jsonify(response)
+
+
+@app.route('/api/nutrition-review/recompute', methods=['POST'])
+@require_token
+def api_nutrition_review_recompute():
+    """Rerun the nutrition engine for one recipe file and persist + return
+    the new summary."""
+    data = request.get_json(force=True, silent=True) or {}
+    recipe = data.get("recipe")
+    if not recipe:
+        return jsonify({"error": "'recipe' is required"}), 400
+
+    result, error = _recompute_and_write(recipe)
+    if result is None:
+        return jsonify({"error": error or f"Recipe not found or unresolvable: {recipe}"}), 404
+
+    return jsonify({"name": recipe, **_result_summary(result)})
+
+
 @app.route('/api/system-health', methods=['GET'])
 def api_system_health():
     """System health JSON: Ollama, vault, recent recipes, run/failure logs, Reminders queue."""
@@ -1815,6 +2402,13 @@ def api_system_health():
 def system_health_dashboard():
     """Interactive system health dashboard."""
     html = open('templates/system_health.html').read()
+    return html
+
+
+@app.route('/nutrition-review', methods=['GET'])
+def nutrition_review_page():
+    """Human review UI for weak/unresolved nutrition matches."""
+    html = open('templates/nutrition_review.html').read()
     return html
 
 

@@ -35,7 +35,7 @@ def parse_week_string(week_str: str) -> Path:
     return filepath
 
 
-def extract_recipe_links(meal_plan_path: Path) -> list[tuple[str, int]]:
+def extract_recipe_links(meal_plan_path: Path) -> list[tuple[str, float]]:
     """Extract recipe references from a meal plan, expanding any meals.
 
     Recognizes both `[[Recipe Name]]` and `[[Meal: Bundle Name]]` (the latter
@@ -44,14 +44,14 @@ def extract_recipe_links(meal_plan_path: Path) -> list[tuple[str, int]]:
     sub-recipe's own per-bundle servings override.
 
     Returns:
-        List of (recipe_name, servings) tuples. Unknown meals are emitted
-        as-is so the caller can surface a "Recipe not found" warning.
+        List of (recipe_name, multiplier: float) tuples. Unknown meals are
+        emitted as-is so the caller can surface a "Recipe not found" warning.
     """
     content = meal_plan_path.read_text(encoding='utf-8')
-    matches = re.findall(r'\[\[(Meal:\s*)?([^\]]+)\]\]\s*(?:x(\d+))?', content)
-    out: list[tuple[str, int]] = []
+    matches = re.findall(r'\[\[(Meal:\s*)?([^\]]+)\]\]\s*(?:x([\d.]+))?', content)
+    out: list[tuple[str, float]] = []
     for prefix, name, mult in matches:
-        servings = int(mult) if mult else 1
+        servings = float(mult) if mult else 1.0
         name = name.strip()
         if prefix:
             meal = meal_loader.load_meal(name)
@@ -88,7 +88,7 @@ def extract_ingredient_table(body: str) -> str:
     return match.group(1).strip() if match else ""
 
 
-def multiply_ingredients(ingredients: list[dict], multiplier: int) -> list[dict]:
+def multiply_ingredients(ingredients: list[dict], multiplier: float) -> list[dict]:
     """Scale ingredient amounts by a multiplier.
 
     Args:
@@ -237,24 +237,69 @@ def generate_shopping_list_from_path(meal_plan_path: Path, pantry: Optional[list
     }
 
 
+def _build_from_recipe_multipliers(pairs: list[tuple[str, float]],
+                                   pantry: Optional[list[dict]] = None) -> dict:
+    """Shared assembly: (recipe, multiplier) pairs → aggregated list dict."""
+    all_ingredients = []
+    loaded_recipes = []
+    warnings = []
+    for name, mult in pairs:
+        ingredients, warning = load_recipe_ingredients(name)
+        if warning:
+            warnings.append(warning)
+        if ingredients:
+            all_ingredients.extend(multiply_ingredients(ingredients, mult))
+            loaded_recipes.append(name)
+    if not all_ingredients:
+        return {"success": True, "items": [], "lines": [],
+                "recipes": loaded_recipes, "warnings": warnings}
+    aggregated = aggregate_ingredients(all_ingredients)
+    lines = compute_lines(aggregated, pantry=pantry)
+    if pantry is None:
+        formatted = [line["display"] for line in lines]
+    else:
+        formatted = []
+        for line in lines:
+            tb = line.get("to_buy")
+            if tb is None:
+                continue
+            formatted.append(format_ingredient(
+                {"amount": tb.get("amount", ""), "unit": tb.get("unit", ""),
+                 "item": line["item"]}))
+    return {"success": True, "items": sorted(formatted), "lines": lines,
+            "recipes": loaded_recipes, "warnings": warnings}
+
+
 def generate_shopping_list(week: str, pantry: Optional[list[dict]] = None) -> dict:
-    """Generate shopping list from a week's meal plan.
+    """Generate shopping list from a week — ledger cooks first, links fallback.
 
-    Args:
-        week: Week identifier like '2026-W04'
-        pantry: Optional pantry inventory (list of {item, amount, unit} dicts).
-            When supplied, each returned line is split into `from_pantry` and
-            `to_buy` portions and the top-level `items` reflects only what
-            still needs purchasing.
-
-    Returns:
-        Dict with keys: success, items, lines, recipes, warnings, error.
+    The ledger path activates when the week has any cooks or slot placements.
+    Only cooks anchored to the week contribute (ingredients × scale); meals
+    eaten from the freezer add nothing.
     """
+    from lib import serving_ledger
+
+    try:
+        cooks = serving_ledger.cooks_for_week(week)
+        placements = serving_ledger.placements_for_week(week)
+    except (ValueError, IndexError):
+        # Invalid week format — fall through to link-scan path
+        cooks = []
+        placements = []
+
+    if cooks or placements:
+        pairs = [(c["recipe"], float(c["scale"])) for c in cooks]
+        result = _build_from_recipe_multipliers(pairs, pantry=pantry)
+        result["source"] = "ledger"
+        return result
+
     try:
         meal_plan_path = parse_week_string(week)
     except ValueError as e:
         return {"success": False, "error": str(e)}
-    return generate_shopping_list_from_path(meal_plan_path, pantry=pantry)
+    result = generate_shopping_list_from_path(meal_plan_path, pantry=pantry)
+    result["source"] = "links"
+    return result
 
 
 def parse_shopping_list_file(week: str) -> dict:

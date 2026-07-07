@@ -137,6 +137,8 @@ iPad via Tailscale: http://chases-mac-mini.taila69703.ts.net:5001/meal-planner
 
 Drag-and-drop board for planning weekly meals. Recipe sidebar with search and filter chips. Reads/writes the same Obsidian markdown files.
 
+**Touch mode**: real touch devices are detected via `pointer: coarse` (an `html.touch` class gates all touch CSS/JS: 44px+ tap targets, compressed 7-column grid, tap-a-card action sheet replacing the tiny corner buttons, sidebar drawer up to 1080px). Append `?touch=1` to force touch mode in a desktop browser or Playwright for testing.
+
 ### Generate Meal Plan
 
 ```bash
