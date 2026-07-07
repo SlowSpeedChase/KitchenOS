@@ -1187,6 +1187,8 @@
         .prep-task { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; }
         .prep-task input[type=checkbox] { margin-top: 3px; transform: scale(1.2); }
         .prep-task .meta { font-size: 11px; color: var(--text-muted); }
+        .useitup-recipe-link { color: var(--accent); text-decoration: none; font-weight: 600; }
+        .useitup-recipe-link:hover, .useitup-recipe-link:active { text-decoration: underline; }
         .prep-task .badge {
             display: inline-block;
             font-size: 10px;
@@ -3273,8 +3275,9 @@
             }).join('');
             const cook = suggestions.length
                 ? suggestions.map(s => {
-                    const used = s.uses.map(u => u.name).join(', ');
-                    return `<div class="prep-task"><span>🍽️</span><span>${s.recipe}<span class="meta"> · uses ${used}</span></span></div>`;
+                    const used = escapeHtml(s.uses.map(u => u.name).join(', '));
+                    const href = `/recipe/${encodeURIComponent(s.recipe)}`;
+                    return `<div class="prep-task"><span>🍽️</span><span><a class="useitup-recipe-link" href="${href}">${escapeHtml(s.recipe)}</a><span class="meta"> · uses ${used}</span></span></div>`;
                   }).join('')
                 : '<div class="prep-task"><span class="meta">No recipes in your library use these — time to improvise.</span></div>';
             body.innerHTML =
