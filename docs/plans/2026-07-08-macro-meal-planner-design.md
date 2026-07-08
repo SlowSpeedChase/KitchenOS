@@ -1,9 +1,32 @@
 # Macro-Targeted Weekly Meal Planner (Servings-Ledger Model) Design
 
-**Status:** In Progress (Phase 1)
+**Status:** In Progress — Phase 1 PARKED (blocked on grams coverage)
 **Created:** 2026-07-08
 **Updated:** 2026-07-08
 **Branch:** `macro-planner-phase-1/servings-backfill`
+
+> ## Phase 1 finding (2026-07-08): servings are not reliably inferable
+>
+> Built the servings estimator (body-yield → grams heuristic → Claude Haiku) and a
+> `--calibrate` gate against the 123 recipes that already have `servings`. Results:
+> - LLM/heuristic calibration plateaus at **~50% within ±1** across three prompt/model
+>   iterations (mistral 43% → Claude Haiku 53% → +quantities 49%).
+> - Fable's deterministic alternative (raw→cooked grams via yield-class table, then a
+>   per-dish-type portion fitted from the labeled recipes) was tested with a `--fit` pass:
+>   **every dish type is NOISY** (IQR/median 0.85–1.87). Grams-per-serving is not a stable
+>   function of the food quantity.
+> - Root cause isolated: even restricting to recipes with grams **coverage ≥ 0.8**, the
+>   dispersion barely moves (IQR/median 1.22 vs 1.25). So the instability is **inherent
+>   label noise**, not a grams artifact — the vault's `servings` values are an arbitrary
+>   per-recipe judgment, giving no learnable target.
+> - Separately, grams **coverage is low (median 0.58)** — the deeper issue corrupting
+>   per-serving macros vault-wide.
+>
+> **Decision:** park servings backfill; fix grams coverage first
+> (`ingredient-data-cleaning`, branch `ingredient-grams-coverage`). Revisit the servings
+> model afterward (candidates: macro-anchored serving = total kcal ÷ anchor; or
+> Claude-estimate-plus-review). Estimator + `--fit`/`--calibrate` tooling is committed on
+> the `macro-planner-phase-1/servings-backfill` branch for resumption.
 
 ---
 

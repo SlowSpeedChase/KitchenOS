@@ -26,13 +26,14 @@ Templates: [`templates/DESIGN-DOC-TEMPLATE.md`](../../templates/DESIGN-DOC-TEMPL
 
 | Date | Doc | Notes |
 |---|---|---|
-| — | [ingredient-data-cleaning](ingredient-data-cleaning.md) | Upstream ingredient-row cleanup for nutrition accuracy. Status header unlabeled — treat as an ongoing/ready plan. |
+| — | — | (none) |
 
 ## In Progress
 
 | Date | Doc | Branch | Notes |
 |---|---|---|---|
-| 2026-07-08 | [macro-meal-planner — design](2026-07-08-macro-meal-planner-design.md) · [plan](2026-07-08-macro-meal-planner-plan.md) | `macro-planner-phase-1/servings-backfill` | 4-phase servings-ledger macro planner. Phase 1 (servings backfill) in progress; Phases 2–4 still Ready within the plan. |
+| 2026-07-08 | [ingredient-data-cleaning](ingredient-data-cleaning.md) | `ingredient-grams-coverage` | Lift nutrition-engine grams coverage (measured median **0.58**) — the real blocker under both per-serving macro accuracy and servings inference. Starting with unit/piece-weight/density table gaps (surgical, low-risk). |
+| 2026-07-08 | [macro-meal-planner — design](2026-07-08-macro-meal-planner-design.md) · [plan](2026-07-08-macro-meal-planner-plan.md) | `macro-planner-phase-1/servings-backfill` | **PARKED.** Phase 1 (servings backfill) blocked: servings labels are not reliably inferable (see design-doc "Phase 1 finding"). Tooling/estimator built & committed on the branch; resume after grams coverage improves. |
 
 ## Done
 

@@ -1,5 +1,20 @@
 # Ingredient Data Cleaning — Plan
 
+**Status:** In Progress
+**Branch:** `ingredient-grams-coverage`
+**Updated:** 2026-07-08
+
+> **2026-07-08 focus:** the immediate goal is lifting nutrition-engine **grams coverage**
+> (measured median **0.58** across the vault). Per-recipe inspection shows the losses are
+> mostly table gaps, tackled in this order (surgical, low-risk first):
+> 1. Informal units not recognized (`a sprinkle`, `spoonful`) — add to `INFORMAL_UNITS`
+>    (→negligible) or map to a real unit where they carry real macros (`spoonful`→`tbsp`).
+> 2. Missing piece weights (`garlic clove`, `garlic head`, `cilantro`).
+> 3. Missing densities (`heavy cream`, `red pepper flakes`).
+> 4. Food-not-found aliases (plurals/spellings: `jalapeños`→`jalapeno`).
+> Amount-leaked-into-item cases (Phase A2) come after these. Measured with a fixed-sample
+> coverage meter; full-vault `--force` only once coverage climbs.
+
 ## Context
 
 The gram-based nutrition engine is only as accurate as its input. A vault audit
