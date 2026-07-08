@@ -20,7 +20,7 @@ exempt. Gated routes are marked **🔒** in the table.
 
 ## 1. HTTP endpoints
 
-47 routes. Path | Method | Purpose.
+62 routes. Path | Method | Purpose.
 
 | Path | Method | Purpose |
 |------|--------|---------|
@@ -71,6 +71,21 @@ exempt. Gated routes are marked **🔒** in the table.
 | `/api/nutrition/<week>` 🔒 | GET | Structured nutrition dashboard for a week — JSON projection of `Nutrition Dashboard.md`. |
 | `/api/system-health` | GET | System health JSON: Ollama, vault, recent recipes, run/failure logs, Reminders queue. |
 | `/system-health` | GET | Interactive system health dashboard (HTML UI). |
+| `/recipe/<name>` | GET | Interactive recipe detail page with live ingredient scaling (HTML UI). |
+| `/nutrition-review` | GET | Human review UI for weak/unresolved nutrition matches (HTML). |
+| `/api/nutrition-review/recipes` 🔒 | GET | Ranked queue of recipes needing nutrition review, worst first (lowest coverage, then lowest confidence). Frontmatter-only — fast. |
+| `/api/nutrition-review/recipe/<name>` 🔒 | GET | Recompute one recipe's nutrition live (deterministic, no LLM) and return an audit-trail view with USDA candidates for weak/unresolved items. |
+| `/api/nutrition-review/resolve` 🔒 | POST | Pin a human food match (or mark an item resolved-as-zero) so the nutrition engine's cache uses it on the next recompute. |
+| `/api/nutrition-review/recompute` 🔒 | POST | Rerun the nutrition engine for one recipe file and persist + return the new summary. |
+| `/api/week-board/<week>` 🔒 | GET | Serving-ledger board view of a week (`serving_ledger.week_board`) — cooks and their placements. |
+| `/api/week-board/<week>/import-legacy` 🔒 | POST | One-time conversion of a hand-edited week into the serving ledger (`lib.week_view.import_legacy_week`). |
+| `/api/cooks` 🔒 | POST | Create a cook — one preparation of a recipe at a fractional scale (serving ledger). |
+| `/api/cooks/<int:cook_id>` 🔒 | PATCH | Update a cook (e.g. scale). |
+| `/api/cooks/<int:cook_id>` 🔒 | DELETE | Delete a cook and its placements. |
+| `/api/placements` 🔒 | POST | Create a placement — assign a cook's servings to a (destination, date, meal, count) slot. |
+| `/api/placements/<int:pid>` 🔒 | PATCH | Update a placement. |
+| `/api/placements/<int:pid>` 🔒 | DELETE | Delete a placement. |
+| `/api/placements/<int:pid>/move` 🔒 | POST | Move a placement to a new destination/date/meal. |
 
 ## 2. MCP tools
 

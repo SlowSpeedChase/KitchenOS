@@ -55,11 +55,14 @@ from an iOS Reminders list, not through the API.
 
 ## Web/API tier
 
-The API is a **synchronous Flask app** (`api_server.py`) — roughly 50
+The API is a **synchronous Flask app** (`api_server.py`) — roughly 60
 `@app.route` handlers spanning recipe CRUD/extraction, meal plans, shopping
-lists, inventory, receipts, and the meal planner UI, served synchronously
-with no async framework or job-orchestration layer in front of it. It runs
-as the `com.kitchenos.api` LaunchAgent on port 5001.
+lists, inventory, receipts, the meal planner UI, the serving-ledger board
+(`/api/cooks`, `/api/placements`, `/api/week-board/<week>`), the interactive
+recipe detail page (`/recipe/<name>`, live ingredient scaling), and the
+nutrition review UI (`/nutrition-review`, `/api/nutrition-review/*`), served
+synchronously with no async framework or job-orchestration layer in front of
+it. It runs as the `com.kitchenos.api` LaunchAgent on port 5001.
 `/extract` and `/reprocess` subprocess out to `extract_recipe.py` (see
 above) rather than running extraction in-process; most other routes read and
 write the vault and `data/kitchenos.db` directly.
@@ -98,13 +101,15 @@ Install/restart/log commands and full detail live in `docs/OPERATIONS.md`.
 `data/kitchenos.db` (SQLite, WAL mode; override with `KITCHENOS_DB`; accessed
 only through `lib/inventory_db.py`) is the **single source of truth** for
 inventory and price history. `config/pantry.json` is gone — it does not
-exist anymore. Three core tables:
+exist anymore. Core tables:
 
 | Table | Notes |
 |---|---|
 | `trips` | One row per receipt (email, photo, manual, CSA). `source_id` UNIQUE drives ingest dedup. |
 | `purchases` | Append-only price ledger, one row per line item, integer-cents money columns. `category='fee'` rows (tax, totes, tips) count toward spending but never touch inventory. |
 | `inventory` | Current on-hand stock. Merge key is `(name, unit, location)` — case-insensitive UNIQUE; duplicate adds merge by summing quantity. |
+| `cooks` | Serving-ledger (`lib/serving_ledger.py`): one *cook* = one preparation of a recipe at a fractional `scale`, producing `servings_produced` servings. |
+| `placements` | Where a cook's servings went — `(cook_id, destination, date, meal, count)` rows. Invariant: `SUM(placements.count) <= servings_produced`; the remainder is unplaced/leftover. |
 
 `Inventory.md`, `Price Tracker.md`, and `Use It Up.md` at the vault root are
 **generated, read-only views** rewritten from the DB on every relevant
@@ -226,3 +231,20 @@ in `docs/setup/`.
   meal-planner UI surfaces today's tasks plus a "Get ahead" section for
   upcoming do-ahead items, with `done` state stable across plan edits via
   hashed task IDs.
+- **Serving ledger & board mode** — `lib/serving_ledger.py` models a week as
+  *cooks* (one preparation of a recipe at a fractional scale) and *placements*
+  (where each cook's servings go: a date/meal slot, freezer, etc.), stored in
+  the `cooks`/`placements` tables. The ledger is authoritative; `lib/week_view.py`
+  regenerates the week's Markdown as a read-only Obsidian view after every
+  mutation (weeks the ledger has never owned are left alone so legacy
+  hand-edited plans still work). `import-legacy` converts a hand-edited week
+  into the ledger once. Exposed via `/api/cooks`, `/api/placements`, and
+  `/api/week-board/<week>`; driven by the planner board's serving chips,
+  scale stepper, and freezer/trash targets.
+- **Recipe detail page** — `/recipe/<name>` serves an interactive page with
+  live ingredient scaling; the planner and Use-It-Up suggestions link into it.
+- **Nutrition review** — `/nutrition-review` + `/api/nutrition-review/*` is a
+  human review UI for weak/unresolved nutrition matches: a ranked queue
+  (worst coverage/confidence first), live deterministic recompute with USDA
+  candidates, and human match pinning that the engine's cache honors on the
+  next recompute.
