@@ -2,7 +2,7 @@
 
 Spec: `docs/superpowers/specs/2026-06-23-apple-intelligence-subsystem-c-design.md`.
 Builds directly on C1 (`RecipeAI`, `RecipeQuery`, `KitchenOSClient.recipes(matching:)`).
-Worktree: `~/Dev/KitchenOS-siri` (branch `siri-app-intents`).
+Worktree: `~/Dev/KitchenOS` (branch `siri-app-intents`).
 
 ## Goal
 

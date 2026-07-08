@@ -1,7 +1,7 @@
 # KitchenOS — Siri Voice Access via App Intents (Design Spec)
 
 **Date:** 2026-06-21
-**Status:** Approved design, pending implementation plan
+**Status:** Implemented
 **Subsystem:** A — Siri / voice access (calorie tracking is a separate subsystem, deferred)
 
 ## Goal

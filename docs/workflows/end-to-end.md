@@ -6,6 +6,22 @@ Stages: **Capture → Plan → Shop → Prep → Cook → Review.**
 
 ---
 
+## Before you start: make sure the server is up
+
+Everything routes through the API server. Confirm it's alive:
+
+```bash
+curl http://localhost:5001/health
+```
+
+If it doesn't respond, restart it:
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist
+```
+
+---
+
 ## 0. The vault
 
 Everything is markdown in the Obsidian vault (`~/Dev/KitchenOS/vault/KitchenOS/`, set via `KITCHENOS_VAULT` in `.env`). Folders that matter:
@@ -18,7 +34,7 @@ Everything is markdown in the Obsidian vault (`~/Dev/KitchenOS/vault/KitchenOS/`
 | `Meal Plans/` | One file per ISO week (`2026-W18.md`) |
 | `Meal Plans/<week>.tasks.json` | Sidecar cache for the prep-task panel |
 | `Shopping Lists/` | One markdown checklist per week |
-| `Nutrition Dashboard/` | One per week |
+| `Nutrition Dashboard.md` | Single file at vault root, rewritten in place |
 | `Inventory.md` | Generated read-only view of the inventory DB (`data/kitchenos.db`) |
 | `meal_calendar.ics` | All weeks merged into one calendar feed |
 
@@ -31,17 +47,17 @@ Plus repo data/config:
 
 ## 1. Capture — getting recipes into the vault
 
-Four entry points, all converge on `extract_recipe.py` (or `import_crouton.py` for legacy imports). Output is always a recipe markdown file in `Recipes/`.
+Five entry points, all converge on `extract_recipe.py` (or `import_crouton.py` for legacy imports). Output is always a recipe markdown file in `Recipes/`.
 
 ### 1a. iOS Share Sheet → API
 - On iPhone, share a YouTube URL to the **KitchenOS Shortcut**.
 - Shortcut hits the API server at `http://chases-mac-mini.taila69703.ts.net:5001/extract` (Tailscale).
-- API spawns `extract_recipe.py` as a subprocess (5-min timeout) and returns `{status, recipe_name}`.
+- API spawns `extract_recipe.py` as a subprocess (5-min timeout) and returns `{status, recipe}` on success.
 - Shortcut shows a success card linking to the new recipe in Obsidian.
 
 ### 1b. iOS Reminders → batch extract (LaunchAgent)
 - Drop YouTube links into the **"Recipies to Process"** Reminders list (typo intentional — that's the actual list name).
-- `com.kitchenos.batch-extract` runs every hour at :10, polls Reminders, extracts each link, marks the reminder complete.
+- `com.kitchenos.batch-extract` runs every hour at :10, polls Reminders, extracts each link, and marks the reminder complete on success. An uncompleted reminder means the extraction failed — check `failures/` for details.
 - Failures land in `failures/YYYY-MM-DD-HHMMSS.json`; `scripts/analyze_failures.sh` triggers a Claude Code background analysis for non-transient errors.
 
 ### 1c. Claude Desktop / web → MCP
@@ -55,8 +71,13 @@ Four entry points, all converge on `extract_recipe.py` (or `import_crouton.py` f
 .venv/bin/python extract_recipe.py --dry-run "..."   # preview, no write
 ```
 
+### 1e. Native app (Siri / App Intents)
+- The native `KitchenOSSiri` app (iOS 26 / macOS 26 — `KitchenOSKit` + `KitchenOSSiri`) is a first-class capture *and* query surface, not just a Shortcut wrapper. Its own **Extraction** screens let you capture a recipe directly in-app, and its registered `AppShortcutsProvider` exposes Siri/App Intents for hands-free capture and lookup ("find recipes with chicken," "what's for dinner Tuesday," "add X to Thursday's dinner").
+- Every intent routes through the shared `KitchenOSClient` to the same Flask API (Tailscale hostname on iOS, localhost on macOS), with a bearer token attached automatically when `KITCHENOS_API_TOKEN` is configured. Write-capable intents require an explicit Siri confirmation before mutating the meal plan.
+- Full intent table and backing endpoints: `docs/API.md` § 3.
+
 ### What extraction actually does
-For each URL: fetch metadata + transcript + first comment → try recipe-link in description → try description-as-recipe → try comment → try creator's website → fall back to Ollama (`mistral:7b`) on the transcript. Then validate ingredients, match against the seasonal calendar, look up nutrition (Nutritionix → USDA → AI), download a hero image, render the template. The recipe markdown gets three Obsidian Buttons baked into the body: **Reprocess** (`/reprocess`), **Refresh template** (`/refresh`), and **Add to Meal Plan** (`/add-to-meal-plan` — see Stage 2c).
+For each URL: fetch metadata + transcript + first comment → try recipe-link in description → try description-as-recipe → try comment → try creator's website → fall back to Ollama (`mistral:7b`) on the transcript. Then validate ingredients, match against the seasonal calendar, look up nutrition (USDA FoodData Central, with Open Food Facts as a fallback for branded/packaged items), download a hero image, render the template. The recipe markdown gets three Obsidian Buttons baked into the body: **Reprocess** (`/reprocess`), **Refresh template** (`/refresh`), and **Add to Meal Plan** (`/add-to-meal-plan` — see Stage 2c).
 
 ---
 
@@ -156,7 +177,7 @@ Not part of the linear cook flow, but feeds back into Stage 3 eventually.
 
 ## 7. Review — nutrition dashboard
 
-- `com.kitchenos.dashboard-update` runs daily (6:15 AM) and writes `Nutrition Dashboard/<week>.md`: per-day calorie/macro totals from the recipes on that week's plan, weighted by servings multipliers and meal expansion.
+- `com.kitchenos.dashboard-update` runs daily (6:15 AM) and rewrites the single `Nutrition Dashboard.md` at the vault root: per-day calorie/macro totals from the recipes on that week's plan, weighted by servings multipliers and meal expansion.
 - Targets come from `My Macros.md` in the vault (parsed by `lib/macro_targets.py`).
 - Manual rebuild: `.venv/bin/python generate_nutrition_dashboard.py --week 2026-W18`.
 
@@ -168,12 +189,13 @@ All in `~/Library/LaunchAgents/` (copied from `ops/*.plist`).
 
 | LaunchAgent | Schedule | What it does |
 |---|---|---|
-| `com.kitchenos.api` | Always on | Flask server on port 5001 — every UI and Shortcut hits this |
+| `com.kitchenos.api` | Always on | Flask server on port 5001 — every UI, the Shortcut, and the native app's Siri/App Intents hit this |
 | `com.kitchenos.batch-extract` | Hourly at :10 | Pulls YouTube URLs from "Recipies to Process" Reminders list, extracts each |
 | `com.kitchenos.mealplan` | 06:00 daily | Creates the empty meal-plan template two weeks out |
 | `com.kitchenos.calendar-sync` | 06:05 daily | Regenerates `meal_calendar.ics` |
 | `com.kitchenos.dashboard-update` | 06:15 daily | Regenerates current week's nutrition dashboard |
-| `com.kitchenos.cleanup-icloud-old` | Monthly | iCloud housekeeping (low-importance) |
+| `com.kitchenos.receipt-ingest` | Hourly | Ingests HEB receipt emails into the inventory/price ledger |
+| `com.kitchenos.cleanup-icloud-old` | Yearly (May 2) | iCloud housekeeping (low-importance) |
 
 Logs: `~/Dev/KitchenOS/logs/<service>.log`. Reload all: `scripts/reload_launch_agents.sh`.
 
@@ -200,3 +222,4 @@ Logs: `~/Dev/KitchenOS/logs/<service>.log`. Reload all: `scripts/reload_launch_a
 | Shopping list missing items | Check `Meal Plans/<week>.md` parses cleanly via `lib/meal_plan_parser.py`; composite-meal expansion silent-fails on missing `Meals/<Name>.meal.md` |
 | Today's Prep empty | Sidecar might be stale — append `?force=1` to `/api/tasks/<week>` |
 | Reminders push did nothing | macOS Reminders permission for the API process; check `logs/server.log` |
+| Server not responding | `launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist` |

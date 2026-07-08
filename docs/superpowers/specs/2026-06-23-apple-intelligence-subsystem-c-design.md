@@ -1,7 +1,7 @@
 # KitchenOS — Subsystem C: Apple Intelligence (Design Spec)
 
 **Date:** 2026-06-23
-**Status:** Approved direction (all three avenues), pending per-phase plans
+**Status:** Implemented
 **Builds on:** the Siri App Intents app (`KitchenOSSiri` + `KitchenOSKit`) and Plan A backend.
 
 ## Goal
@@ -25,6 +25,10 @@ Siri/semantic integration. Target Apple-Intelligence-capable devices only.
   (successor to the `@AssistantIntent` macro — see Open Questions) and make
   `RecipeEntity` an **`IndexedEntity`** so Apple Intelligence can match recipes by
   meaning and answer questions over them. Largely independent of C1/C2.
+  > **Update:** the "App Schemas" approach explored here was superseded during
+  > implementation — the C3 plan (`docs/superpowers/plans/2026-06-23-siri-foundation-models-phase-c3.md`)
+  > settled on **`IndexedEntity`** (via `CSSearchableIndex`/`attributeSet`) as the sole
+  > mechanism for C3, not an `@AssistantIntent(schema:)`-based App Schemas domain.
 
 ## Constraints
 

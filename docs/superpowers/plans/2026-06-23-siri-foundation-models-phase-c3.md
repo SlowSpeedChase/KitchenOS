@@ -1,7 +1,7 @@
 # Subsystem C — Phase C3: Semantic recipe search via IndexedEntity (Plan)
 
 Spec: `docs/superpowers/specs/2026-06-23-apple-intelligence-subsystem-c-design.md`.
-Worktree: `~/Dev/KitchenOS-siri` (branch `siri-app-intents`).
+Worktree: `~/Dev/KitchenOS` (branch `siri-app-intents`).
 
 ## Scope finding (from SDK introspection)
 

@@ -13,7 +13,7 @@ Handles `kitchenos://` URLs from Obsidian buttons.
 5. Set "Pass input" to "as arguments"
 6. Add script content:
    ```bash
-   /Users/chaseeasterling/KitchenOS/scripts/kitchenos-uri-handler/handler.sh "$1"
+   /Users/chaseeasterling/Dev/KitchenOS/scripts/kitchenos-uri-handler/handler.sh "$1"
    ```
 7. Save as `KitchenOSHandler.app` in `/Applications/`
 8. Edit `Info.plist` inside app bundle to add URL scheme (see below)

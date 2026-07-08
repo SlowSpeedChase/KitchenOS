@@ -123,13 +123,13 @@ If you prefer the **Share Sheet** over Drafts, create a Shortcut instead:
 |---------|-------------|
 | `Title and content are required` (HTTP 400) | The body must contain both `title` and `content`. Check the JSON keys — `content`, not `text`. |
 | Action hangs or times out | Selene should reply instantly. A hang means Selene is unreachable: check Tailscale is connected on the device, and `curl http://localhost:5678/health` on the Mac. |
-| Send succeeds but no recipe appears | The background forward to KitchenOS may have failed. On the Mac: `tail -f ~/selene/logs/selene.log` and look for `module: recipe-route` / "KitchenOS import failed", and verify `curl http://localhost:5001/health`. |
+| Send succeeds but no recipe appears | The background forward to KitchenOS may have failed. On the Mac: `tail -f ~/Dev/selene/logs/selene.log` and look for `module: recipe-route` / "KitchenOS import failed", and verify `curl http://localhost:5001/health`. |
 | Recipe appears but fields look wrong | Normal for an occasional parse miss — fix in Obsidian or re-send a corrected paste (see "Fixing a bad parse"). |
 | `"status": "duplicate"` | You already sent this exact text. Change something or edit the existing recipe directly. |
 
 ## Related
 
 - KitchenOS endpoint: `api_server.py` → `/api/recipes/import-text`
-- Selene route: `~/selene/src/routes/recipe.ts` → `/webhook/api/recipe`
-- Selene feature guide: `~/selene/docs/guides/features/recipe-to-kitchenos.md`
+- Selene route: `~/Dev/selene/src/routes/recipe.ts` → `/webhook/api/recipe`
+- Selene feature guide: `~/Dev/selene/docs/guides/features/recipe-to-kitchenos.md`
 - iOS YouTube extraction (different flow): `docs/setup/iOS_SHORTCUT_SETUP.md`

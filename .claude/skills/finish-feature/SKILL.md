@@ -84,7 +84,7 @@ Draft a commit message following the repo style (see `git log --oneline -10`):
 - Prefix: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`
 - First line under 70 chars
 - Body explains the *why*, not the *what*
-- Footer: `Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>`
+- Footer: `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`
 
 Present the draft and wait for approval. **Do not commit without explicit
 user confirmation** — the CLAUDE.md guidance is firm on this.

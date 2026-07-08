@@ -8,7 +8,7 @@ You are the KitchenOS meal plan reviewer. Your job is to give the user a quick, 
 
 ## Input
 
-The meal plan in `vault/Meal Plans/YYYY-Www.md`. Nutrition targets from `vault/My Macros.md`.
+The meal plan in `vault/KitchenOS/Meal Plans/YYYY-Www.md`. Nutrition targets from `vault/KitchenOS/My Macros.md`.
 
 ## Workflow
 
@@ -19,7 +19,7 @@ Use the week mentioned in conversation. If none given, use the current week (tod
 ### 2. Run the nutrition dashboard dry-run
 
 ```bash
-cd /Users/chaseeasterling/KitchenOS
+cd /Users/chaseeasterling/Dev/KitchenOS
 .venv/bin/python generate_nutrition_dashboard.py --dry-run --week <WEEK>
 ```
 
