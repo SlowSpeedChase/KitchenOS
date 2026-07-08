@@ -33,7 +33,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from lib.ingredient_parser import normalize_unit, parse_amount
+from lib.ingredient_parser import (
+    normalize_unit,
+    parse_amount,
+    INFORMAL_UNITS as _PARSER_INFORMAL_UNITS,
+)
 
 # --- Canonical conversion tables (everything resolves to grams) ---------------
 
@@ -75,11 +79,13 @@ COUNT_UNITS = {
 }
 
 # Informal measures that contribute negligible macros (don't block a recipe).
+# Unioned with the parser's list so the two never drift apart again (the drift
+# had dropped "a sprinkle"/"a smidge" here, sending them to 'unresolved').
 INFORMAL_UNITS = {
     "pinch", "dash", "splash", "smidge", "sprinkle",
     "to taste", "as needed", "some", "a few", "a couple", "a pinch",
     "a dash", "a splash", "a handful",
-}
+} | set(_PARSER_INFORMAL_UNITS)
 
 CONFIDENCE = {
     "mass": 1.0,
