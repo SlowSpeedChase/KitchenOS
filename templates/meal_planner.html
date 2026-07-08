@@ -5,6 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>KitchenOS Meal Planner</title>
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
+    <script>
+        // Touch mode: real touch devices via pointer:coarse, or force with ?touch=1
+        // (lets desktop Playwright exercise the touch UI). Gates the html.touch
+        // CSS section and IS_TOUCH-conditional JS below.
+        window.IS_TOUCH = matchMedia('(pointer: coarse)').matches
+            || new URLSearchParams(location.search).has('touch');
+        if (window.IS_TOUCH) document.documentElement.classList.add('touch');
+    </script>
     <style>
         :root {
             --bg: #f5f5f7;
@@ -65,8 +73,25 @@
         .sidebar-header h2 {
             font-size: 17px;
             font-weight: 600;
-            margin-bottom: 12px;
             letter-spacing: -0.2px;
+        }
+
+        .sidebar-header-row {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .nav-link-review {
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-muted);
+            text-decoration: none;
+        }
+
+        .nav-link-review:hover {
+            color: var(--accent);
         }
 
         .search-input {
@@ -100,6 +125,7 @@
             height: 6px;
             flex-shrink: 0;
             cursor: row-resize;
+            touch-action: none; /* without this iOS cancels the pointer stream to scroll */
             background: var(--card-bg);
             border-bottom: 1px solid var(--border);
             display: flex;
@@ -183,6 +209,33 @@
             flex-direction: column;
             justify-content: center;
             transition: box-shadow 0.15s ease;
+            position: relative;
+        }
+
+        .recipe-card .recipe-info-link {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            width: 20px;
+            height: 20px;
+            line-height: 20px;
+            text-align: center;
+            font-size: 13px;
+            border-radius: 50%;
+            background: rgba(0, 0, 0, 0.06);
+            color: var(--text-muted);
+            text-decoration: none;
+            z-index: 2;
+        }
+
+        .recipe-card .recipe-info-link:hover {
+            background: rgba(0, 0, 0, 0.12);
+            color: var(--text);
+        }
+
+        .recipe-card.has-image .recipe-info-link {
+            background: rgba(0, 0, 0, 0.35);
+            color: #fff;
         }
 
         .recipe-card:active {
@@ -387,8 +440,36 @@
         .grid {
             display: grid;
             grid-template-columns: repeat(7, minmax(120px, 1fr));
+            grid-auto-rows: auto;
             gap: 8px;
             min-width: 840px;
+        }
+
+        .totals-cell {
+            text-align: center;
+            padding: 6px 4px;
+            border-top: 1px solid var(--border);
+        }
+
+        .totals-cell .totals-empty {
+            color: var(--text-muted);
+            font-size: 12px;
+        }
+
+        .totals-cell .totals-kcal {
+            font-weight: 600;
+            font-size: 13px;
+            color: var(--text);
+        }
+
+        .totals-cell .totals-macros {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 1px;
+        }
+
+        .totals-cell .totals-warn {
+            color: var(--danger);
         }
 
         .day-header {
@@ -610,6 +691,220 @@
             background: rgba(0, 113, 227, 0.7);
         }
 
+        /* --- Cook cards (serving-ledger board mode) --- */
+        .grid-card.cook-card {
+            min-height: auto;
+            padding-bottom: 30px;
+            gap: 6px;
+        }
+
+        .scale-stepper {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 2px;
+        }
+
+        .scale-btn {
+            width: 22px;
+            height: 22px;
+            flex-shrink: 0;
+            border: 1px solid var(--border);
+            background: var(--bg);
+            border-radius: 50%;
+            font-size: 14px;
+            line-height: 1;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text);
+        }
+
+        .scale-btn:active {
+            background: var(--accent);
+            color: #ffffff;
+            border-color: var(--accent);
+        }
+
+        .scale-value {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text);
+            min-width: 30px;
+            text-align: center;
+        }
+
+        .chip-tray {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-top: 4px;
+            min-height: 10px; /* keeps empty trays droppable even with no chips */
+        }
+
+        .serving-chip {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            cursor: grab;
+            user-select: none;
+            -webkit-user-select: none;
+            white-space: nowrap;
+        }
+
+        .serving-chip.unassigned-chip {
+            border-style: dashed;
+            color: var(--text-muted);
+        }
+
+        .serving-chip.sortable-ghost {
+            opacity: 0.4;
+        }
+
+        .serving-chip.sortable-drag {
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        /* --- Freezer tab --- */
+        .freezer-tray {
+            display: none;
+            flex-direction: column;
+            gap: 8px;
+            padding: 12px;
+            overflow-y: auto;
+            flex: 1;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .freezer-tray.active {
+            display: flex;
+        }
+
+        .freezer-tray.sortable-drag-over,
+        .freezer-tray:has(.sortable-ghost) {
+            outline: 2px dashed var(--accent);
+            outline-offset: -4px;
+        }
+
+        .freezer-chip {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 8px 10px;
+            cursor: grab;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        .freezer-chip-name {
+            display: block;
+            font-weight: 600;
+            font-size: 13px;
+            color: var(--text);
+        }
+
+        .freezer-chip-meta {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .freezer-empty {
+            padding: 24px 12px;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 13px;
+        }
+
+        /* --- Unscheduled section (top of Freezer tab): cooks with no
+           date/meal yet — e.g. "Add to this week" from the recipe detail
+           page. Without this, such cooks have no home cell and never
+           render anywhere on the board, so the feature looks like it
+           silently drops the recipe. --- */
+        .unscheduled-section {
+            display: none;
+            flex-direction: column;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+            max-height: 40%;
+            overflow-y: auto;
+        }
+
+        .unscheduled-section.active {
+            display: flex;
+        }
+
+        .unscheduled-section.empty {
+            display: none;
+        }
+
+        .unscheduled-title {
+            padding: 10px 12px 0;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+        }
+
+        .unscheduled-tray {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            padding: 8px 12px 12px;
+        }
+
+        .unscheduled-row-header {
+            display: flex;
+            justify-content: space-between;
+            gap: 6px;
+            font-size: 12px;
+        }
+
+        .unscheduled-row-name {
+            font-weight: 600;
+            color: var(--text);
+            overflow-wrap: anywhere;
+        }
+
+        .unscheduled-row-meta {
+            color: var(--text-muted);
+            white-space: nowrap;
+        }
+
+        /* --- Trash target (serving chips only) --- */
+        #trash-target {
+            position: fixed;
+            right: 24px;
+            bottom: 96px;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: var(--danger);
+            color: #ffffff;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            font-size: 26px;
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+            z-index: 200;
+        }
+
+        body.dragging-serving #trash-target {
+            display: flex;
+        }
+
+        #trash-target.sortable-drag-over,
+        #trash-target:has(.sortable-ghost) {
+            background: #b8291f;
+            transform: scale(1.12);
+        }
+
         .grid-card.new-idea {
             border-style: dashed;
             border-color: var(--accent);
@@ -732,8 +1027,11 @@
             z-index: 9;
         }
 
-        /* --- Responsive --- */
-        @media (max-width: 768px) {
+        /* --- Responsive ---
+           1080px so iPad portrait (810-834px) AND classic-iPad landscape (1024px)
+           both get the off-canvas drawer; iPad Air/Pro landscape keeps the docked
+           sidebar with room for the board. */
+        @media (max-width: 1080px) {
             .sidebar {
                 position: fixed;
                 left: 0;
@@ -757,9 +1055,16 @@
             .main {
                 width: 100vw;
             }
+
+            /* div.panel-dock: outrank the base .panel-dock rule, which is
+               declared later in the stylesheet and would win a class-only tie */
+            div.panel-dock {
+                bottom: 92px; /* clear the 56px sidebar FAB at bottom:24 */
+                right: 24px;
+            }
         }
 
-        @media (min-width: 769px) {
+        @media (min-width: 1081px) {
             .sidebar-toggle {
                 display: none;
             }
@@ -842,10 +1147,17 @@
         }
 
         /* --- Today's Prep panel --- */
-        .prep-panel {
+        .panel-dock {
             position: fixed;
             right: 16px;
             bottom: 16px;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 8px;
+            z-index: 50;
+        }
+        .prep-panel {
             width: 320px;
             max-height: 60dvh;
             background: #fff;
@@ -853,7 +1165,6 @@
             border-radius: 12px;
             box-shadow: 0 8px 24px rgba(0,0,0,0.12);
             overflow: auto;
-            z-index: 50;
             font-size: 13px;
         }
         .prep-panel header {
@@ -876,6 +1187,8 @@
         .prep-task { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; }
         .prep-task input[type=checkbox] { margin-top: 3px; transform: scale(1.2); }
         .prep-task .meta { font-size: 11px; color: var(--text-muted); }
+        .useitup-recipe-link { color: var(--accent); text-decoration: none; font-weight: 600; }
+        .useitup-recipe-link:hover, .useitup-recipe-link:active { text-decoration: underline; }
         .prep-task .badge {
             display: inline-block;
             font-size: 10px;
@@ -926,6 +1239,160 @@
         .sub-recipe-row select { flex: 1; }
         .sub-recipe-row input { width: 60px; }
         .sub-recipe-row button { padding: 4px 8px; }
+
+        /* --- Card action sheet (touch replacement for the tiny grid-card buttons) --- */
+        .sheet-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.4);
+            display: none;
+            align-items: flex-end;
+            justify-content: center;
+            z-index: 100;
+        }
+        .sheet-backdrop.visible { display: flex; }
+        .sheet {
+            background: var(--bg);
+            border-radius: 16px 16px 0 0;
+            width: 100%;
+            max-width: 480px;
+            padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+            max-height: 70dvh;
+            overflow: auto;
+        }
+        .sheet-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-align: center;
+            padding-bottom: 12px;
+        }
+        .sheet-actions { display: flex; flex-direction: column; gap: 8px; }
+        .sheet-actions button {
+            min-height: 52px;
+            font-size: 17px;
+            font-weight: 500;
+            border: none;
+            border-radius: 12px;
+            background: var(--card-bg);
+            color: var(--accent);
+            cursor: pointer;
+        }
+        .sheet-actions button.danger { color: var(--danger); }
+        .sheet-actions .segment { display: flex; gap: 8px; }
+        .sheet-actions .segment button { flex: 1; }
+        .sheet-actions .segment button.selected {
+            background: var(--accent);
+            color: #fff;
+        }
+        .sheet-cancel {
+            width: 100%;
+            min-height: 52px;
+            font-size: 17px;
+            font-weight: 600;
+            border: none;
+            border-radius: 12px;
+            background: var(--card-bg);
+            color: var(--text);
+            margin-top: 12px;
+            cursor: pointer;
+        }
+        .meal-edit-btn {
+            float: right;
+            border: 1px solid var(--border);
+            background: var(--bg);
+            border-radius: 8px;
+            padding: 2px 8px;
+            font-size: 13px;
+            color: var(--text-muted);
+            cursor: pointer;
+        }
+
+        /* --- Touch mode (html.touch set by the head script) ---
+           44px+ tap targets per Apple HIG; also reachable via ?touch=1 for testing. */
+        html.touch button,
+        html.touch .chip { touch-action: manipulation; }
+
+        html.touch .chip {
+            min-height: 44px;
+            padding: 8px 16px;
+            font-size: 14px;
+            border-radius: 22px;
+        }
+        html.touch .filter-chips {
+            gap: 8px;
+            height: 152px;
+        }
+        html.touch .resize-handle { height: 28px; }
+        html.touch .resize-handle::after {
+            width: 48px;
+            height: 5px;
+        }
+        html.touch .sidebar-tab { min-height: 48px; }
+        html.touch .new-meal-btn { min-height: 48px; }
+        html.touch .sidebar { --sidebar-width: 320px; }
+        html.touch .scale-btn { width: 32px; height: 32px; font-size: 16px; }
+        html.touch .serving-chip { min-height: 32px; padding: 4px 10px; }
+        html.touch .freezer-chip { min-height: 44px; }
+        html.touch #trash-target { width: 72px; height: 72px; font-size: 32px; }
+
+        html.touch .modal input[type=text],
+        html.touch .modal textarea,
+        html.touch .modal select {
+            min-height: 44px;
+            font-size: 16px; /* 16px stops Safari's focus zoom */
+        }
+        html.touch .modal-actions button {
+            min-height: 44px;
+            padding: 10px 20px;
+        }
+        html.touch .sub-recipe-row input { width: 76px; }
+        html.touch .sub-recipe-row button {
+            min-width: 44px;
+            min-height: 44px;
+        }
+        html.touch #add-sub-recipe {
+            min-height: 44px;
+            padding: 10px 16px !important;
+        }
+
+        html.touch .prep-panel header { cursor: pointer; }
+        html.touch .prep-toggle {
+            min-width: 44px;
+            min-height: 44px;
+        }
+        html.touch .prep-panel.collapsed { max-height: 48px; }
+        html.touch .prep-task {
+            min-height: 44px;
+            align-items: center;
+        }
+        html.touch .prep-task input[type=checkbox] { transform: scale(1.5); }
+        html.touch .meal-edit-btn {
+            min-width: 44px;
+            min-height: 44px;
+        }
+
+        /* Compressed 7-column board: no horizontal scroll on iPad portrait.
+           Viable because the corner buttons are hidden (action sheet replaces them). */
+        html.touch .grid {
+            min-width: 0;
+            grid-template-columns: repeat(7, minmax(0, 1fr));
+            gap: 6px;
+        }
+        html.touch .grid-card {
+            padding: 8px;
+            min-height: 56px;
+        }
+        html.touch .grid-card .grid-card-name {
+            font-size: 12px;
+            overflow-wrap: anywhere;
+        }
+        html.touch .grid-card .remove-btn,
+        html.touch .grid-card .servings-btn,
+        html.touch .grid-card .cooked-btn,
+        html.touch .grid-card .retry-btn {
+            display: none; /* kept in the DOM — the action sheet drives their handlers */
+        }
     </style>
 </head>
 <body>
@@ -933,12 +1400,16 @@
         <!-- Sidebar -->
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-header">
-                <h2 id="sidebar-title">Recipes</h2>
+                <div class="sidebar-header-row">
+                    <h2 id="sidebar-title">Recipes</h2>
+                    <a class="nav-link-review" href="/nutrition-review">Review</a>
+                </div>
                 <input type="text" class="search-input" id="search-input" placeholder="Search..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
             </div>
             <div class="sidebar-tabs">
                 <button class="sidebar-tab active" data-tab="recipes" id="tab-recipes">Recipes</button>
                 <button class="sidebar-tab" data-tab="meals" id="tab-meals">Meals</button>
+                <button class="sidebar-tab" data-tab="freezer" id="tab-freezer">Freezer</button>
             </div>
             <div class="filter-chips" id="filter-chips"></div>
             <div class="resize-handle" id="resize-handle"></div>
@@ -946,6 +1417,11 @@
             <div class="meals-list" id="meals-list">
                 <button class="new-meal-btn" id="new-meal-btn">+ New Meal</button>
             </div>
+            <div class="unscheduled-section" id="unscheduled-section">
+                <div class="unscheduled-title">Unscheduled</div>
+                <div class="unscheduled-tray" id="unscheduled-tray"></div>
+            </div>
+            <div class="freezer-tray" id="freezer-tray"></div>
             <div class="sidebar-count" id="sidebar-count"></div>
         </aside>
 
@@ -969,22 +1445,24 @@
     <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Toggle recipes">+</button>
     <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
 
-    <!-- Today's Prep panel -->
-    <aside class="prep-panel collapsed" id="prep-panel">
-        <header>
-            <span>Today's Prep</span>
-            <button class="prep-toggle" id="prep-toggle" aria-label="Toggle prep panel">▾</button>
-        </header>
-        <div id="prep-body"></div>
-    </aside>
+    <!-- Floating panels (stacked dock, bottom-right) -->
+    <div class="panel-dock">
+        <aside class="prep-panel collapsed" id="prep-panel">
+            <header>
+                <span>Today's Prep</span>
+                <button class="prep-toggle" id="prep-toggle" aria-label="Toggle prep panel">▾</button>
+            </header>
+            <div id="prep-body"></div>
+        </aside>
 
-    <aside class="prep-panel collapsed" id="useitup-panel">
-        <header>
-            <span>🥗 Use It Up</span>
-            <button class="prep-toggle" id="useitup-toggle" aria-label="Toggle Use It Up panel">▾</button>
-        </header>
-        <div id="useitup-body"></div>
-    </aside>
+        <aside class="prep-panel collapsed" id="useitup-panel">
+            <header>
+                <span>🥗 Use It Up</span>
+                <button class="prep-toggle" id="useitup-toggle" aria-label="Toggle Use It Up panel">▾</button>
+            </header>
+            <div id="useitup-body"></div>
+        </aside>
+    </div>
 
     <!-- Meal editor modal -->
     <div class="modal-backdrop" id="meal-modal">
@@ -1021,6 +1499,18 @@
         </div>
     </div>
 
+    <!-- Card action sheet (touch mode) -->
+    <div class="sheet-backdrop" id="card-sheet-backdrop">
+        <div class="sheet" id="card-sheet">
+            <div class="sheet-title" id="card-sheet-title"></div>
+            <div class="sheet-actions" id="card-sheet-actions"></div>
+            <button class="sheet-cancel" id="card-sheet-cancel">Cancel</button>
+        </div>
+    </div>
+
+    <!-- Trash target for serving chips (visible only mid-drag) -->
+    <div id="trash-target" aria-label="Drop here to discard serving">🗑</div>
+
     <!-- Toast -->
     <div class="toast" id="toast"></div>
 
@@ -1051,6 +1541,12 @@
         let mealsByName = {};           // lookup helper for slot rendering
         let weekTasks = null;           // { week, tasks: [...] } — populated by loadTasks()
         let pendingShoppingPreview = null;  // result of /api/shopping-list/preview during pantry modal flow
+        let weekBoard = null;           // { week, cooks, freezer, day_totals } from GET /api/week-board/<week>
+        let boardMode = false;          // true when weekBoard.cooks.length > 0 — board wins over legacy grid cards
+        let chipSortables = [];         // Sortable instances for the 'servings' chip-drag group
+        let ledgerBusy = false;         // true while a board mutation is in flight — serializes rapid taps
+        let boardLoadGen = 0;           // monotonically increasing — a stale loadWeekBoard response never renders over a newer one
+        let boardStateUnknown = false;  // true when the last loadWeekBoard failed — legacy writes (save/suggest) must fail closed until a load succeeds
 
         // --- Init ---
         document.addEventListener('DOMContentLoaded', init);
@@ -1067,6 +1563,8 @@
                     loadMeals(),
                     loadMealPlan(currentWeek)
                 ]);
+                // Board wins over the legacy grid rendered by loadMealPlan above.
+                await loadWeekBoard(currentWeek);
             } catch (err) {
                 showToast('Failed to load data', 'error');
                 console.error(err);
@@ -1206,6 +1704,15 @@
                     });
                 });
             });
+
+            // Daily totals row (populated by renderDayTotals)
+            DAYS.forEach(day => {
+                const cell = document.createElement('div');
+                cell.className = 'totals-cell';
+                cell.dataset.day = day;
+                cell.innerHTML = '<span class="totals-empty">—</span>';
+                grid.appendChild(cell);
+            });
         }
 
         // --- SortableJS Setup ---
@@ -1234,7 +1741,17 @@
                 delayOnTouchOnly: true,
                 touchStartThreshold: 5,
                 animation: 150,
-                filter: '.hidden, .new-meal-btn'
+                filter: '.hidden, .new-meal-btn, .meal-edit-btn, .recipe-info-link',
+                // Sortable preventDefaults filtered elements by default, which
+                // would swallow the edit button's click on touch.
+                preventOnFilter: false,
+                // Close the drawer as soon as a drag starts: the full-screen
+                // backdrop otherwise sits over the grid and swallows the drop
+                // (Sortable hit-tests with elementFromPoint). The drag clone
+                // lives on <body> (fallbackOnBody), so it survives the close.
+                onStart: function() {
+                    closeSidebar();
+                }
             };
 
             const recipeList = document.getElementById('recipe-list');
@@ -1261,25 +1778,53 @@
                 gridSortables.push(
                     Sortable.create(cell, {
                         group: { name: 'recipes', pull: true, put: true },
-                        draggable: '.grid-card',
+                        // Cook cards (board mode) must never be draggable through
+                        // the legacy grid Sortable — its onAdd falls through to
+                        // debounceSave()/saveMealPlan(), which PUTs scale-less
+                        // legacy meal-plan data over ledger-authored Markdown.
+                        // Cook cards move only via the ledger API (scale stepper,
+                        // remove button, chip drags).
+                        draggable: '.grid-card:not(.cook-card)',
                         ghostClass: 'sortable-ghost',
                         dragClass: 'sortable-drag',
                         forceFallback: true,
                         fallbackOnBody: true,
                         fallbackTolerance: 5,
-                        delay: 100,
+                        // Longer hold-to-drag on touch so quick taps reach the
+                        // card action sheet instead of starting a drag.
+                        delay: window.IS_TOUCH ? 200 : 100,
                         delayOnTouchOnly: true,
                         touchStartThreshold: 5,
                         animation: 150,
+                        onStart: function() {
+                            suppressCardTapUntil = Date.now() + 400;
+                        },
                         onAdd: function(evt) {
                             const cell = evt.to;
                             const item = evt.item;
-                            // Convert sidebar recipe-card to grid-card
+                            // Recipe drops always go through the serving ledger (createCook),
+                            // regardless of whether this week is board-backed yet — the first
+                            // drop on a legacy week converts it (see ensureLegacyImported).
                             if (item.classList.contains('recipe-card')) {
                                 const name = item.dataset.name;
-                                const gridCard = createGridCard(name, 1);
-                                item.replaceWith(gridCard);
-                            } else if (item.classList.contains('meal-card')) {
+                                const recipe = allRecipes.find(r => r.name === name);
+                                const baseServings = (recipe && recipe.servings) ? recipe.servings : 4;
+                                item.remove();  // placeholder; board re-render replaces it
+                                (async () => {
+                                    await ensureLegacyImported();
+                                    await createCook(name, cell.dataset.day, cell.dataset.meal, 1.0, baseServings);
+                                })();
+                                closeSidebar();
+                                return;
+                            }
+                            if (item.classList.contains('meal-card')) {
+                                if (boardMode) {
+                                    // Meal bundles aren't modeled as a single ledger cook yet.
+                                    item.remove();
+                                    showToast('Meal bundles aren\'t supported on the board yet — add individual recipes.', 'error');
+                                    closeSidebar();
+                                    return;
+                                }
                                 // Meals replace whatever was in the slot (per design)
                                 const name = item.dataset.name;
                                 cell.querySelectorAll('.grid-card').forEach(c => c.remove());
@@ -1304,6 +1849,7 @@
                             updateCellState(cell);
                         },
                         onEnd: function(evt) {
+                            suppressCardTapUntil = Date.now() + 400;
                             if (evt.from !== evt.to) {
                                 updateCellState(evt.from);
                                 updateCellState(evt.to);
@@ -1313,6 +1859,18 @@
                     })
                 );
             });
+        }
+
+        function setCardServings(card, s) {
+            card.dataset.servings = s;
+            const btn = card.querySelector('.servings-btn');
+            if (btn) btn.textContent = `×${s}`;
+            debounceSave();
+        }
+
+        function cycleCardServings(card) {
+            const s = parseFloat(card.dataset.servings) || 1;
+            setCardServings(card, s >= 3 ? 1 : Math.floor(s) + 1);
         }
 
         function createGridCard(name, servings) {
@@ -1355,11 +1913,7 @@
             servingsBtn.addEventListener('click', function(e) {
                 e.stopPropagation();
                 e.preventDefault();
-                let s = parseInt(card.dataset.servings) || 1;
-                s = s >= 3 ? 1 : s + 1;
-                card.dataset.servings = s;
-                servingsBtn.textContent = `\u00d7${s}`;
-                debounceSave();
+                cycleCardServings(card);
             });
 
             const cookedBtn = document.createElement('button');
@@ -1370,7 +1924,7 @@
             cookedBtn.addEventListener('click', function(e) {
                 e.stopPropagation();
                 e.preventDefault();
-                markCooked(name, parseInt(card.dataset.servings) || 1);
+                markCooked(name, parseFloat(card.dataset.servings) || 1);
             });
 
             card.appendChild(nameEl);
@@ -1407,7 +1961,13 @@
 
         function updateCellState(cell) {
             if (!cell) return;
-            const hasCard = cell.querySelector('.grid-card') !== null;
+            // A cell also counts as occupied when it holds a leftover chip
+            // (e.g. a foreign placement or the unassigned chip) even with no
+            // .grid-card of its own — otherwise the "Drop recipe" empty-label
+            // stays visible over the chip and taps on it still fire
+            // suggestMeal() instead of interacting with the chip.
+            const hasChip = cell.querySelector('.chip-tray .serving-chip') !== null;
+            const hasCard = cell.querySelector('.grid-card') !== null || hasChip;
             const emptyLabel = cell.querySelector('.empty-label');
 
             if (hasCard) {
@@ -1417,6 +1977,533 @@
                 cell.classList.remove('has-card');
                 if (emptyLabel) emptyLabel.style.display = '';
             }
+        }
+
+        // --- Serving ledger board (cooks, scale stepper, chips, freezer, trash) ---
+        //
+        // Board mode wins for any week whose ledger has cooks (boardMode =
+        // weekBoard.cooks.length > 0). All mutations for a board-backed week go
+        // through the ledger API below; saveMealPlan()/debounceSave() are never
+        // called for it — the server regenerates that week's Markdown itself.
+        // After every mutation (success OR failure) we reload the whole board
+        // and re-render from scratch: simple + correct beats optimistic DOM
+        // surgery on an iPad.
+
+        function fmtMult(x) {
+            x = parseFloat(x);
+            if (!isFinite(x)) return '0';
+            const rounded = Math.round(x * 100) / 100;
+            return (Math.abs(rounded - Math.round(rounded)) < 1e-6)
+                ? String(Math.round(rounded))
+                : String(rounded);
+        }
+
+        function findCell(dateIso, meal) {
+            const day = DAYS.find(d => dayDates[d] === dateIso);
+            if (!day) return null;
+            return document.querySelector(`.grid-cell[data-day="${day}"][data-meal="${meal}"]`);
+        }
+
+        function chipTrayFor(cell) {
+            let tray = cell.querySelector('.chip-tray');
+            if (!tray) {
+                tray = document.createElement('div');
+                tray.className = 'chip-tray';
+                cell.appendChild(tray);
+            }
+            return tray;
+        }
+
+        function makeServingChip(cookId, placementId, count, recipeNameIfForeign) {
+            const chip = document.createElement('div');
+            chip.className = 'serving-chip';
+            chip.dataset.cookId = cookId;
+            chip.dataset.placementId = placementId;
+            chip.dataset.count = count;
+            chip.textContent = recipeNameIfForeign
+                ? `🍽 ${recipeNameIfForeign} ×${fmtMult(count)}`
+                : `🍽×${fmtMult(count)}`;
+            return chip;
+        }
+
+        function makeUnassignedChip(cookId, unassigned) {
+            const chip = document.createElement('div');
+            chip.className = 'serving-chip unassigned-chip';
+            chip.dataset.cookId = cookId;
+            chip.dataset.count = unassigned;
+            chip.dataset.placementId = '';  // none yet — dropping this creates a new placement
+            chip.textContent = `+${fmtMult(unassigned)}`;
+            return chip;
+        }
+
+        function makeFreezerChip(entry) {
+            const chip = document.createElement('div');
+            chip.className = 'freezer-chip';
+            chip.dataset.cookId = entry.cook_id;
+            chip.dataset.placementId = entry.placement_id;
+            chip.dataset.count = entry.count;
+            const ageDays = Math.max(0, Math.round((Date.now() - Date.parse(entry.created_at)) / 86400000));
+            const nameEl = document.createElement('span');
+            nameEl.className = 'freezer-chip-name';
+            nameEl.textContent = entry.recipe;
+            const metaEl = document.createElement('span');
+            metaEl.className = 'freezer-chip-meta';
+            metaEl.textContent = `×${fmtMult(entry.count)} · ${ageDays}d`;
+            chip.appendChild(nameEl);
+            chip.appendChild(metaEl);
+            return chip;
+        }
+
+        function createCookCard(cook) {
+            const card = document.createElement('div');
+            card.className = 'grid-card cook-card';
+            card.dataset.cookId = cook.id;
+            card.dataset.name = cook.recipe;
+
+            const recipe = allRecipes.find(r => r.name === cook.recipe);
+            if (recipe && recipe.image) {
+                card.classList.add('has-image');
+                card.style.backgroundImage = `url(/images/${encodeURIComponent(recipe.image)})`;
+            }
+
+            const obsidianUrl = `obsidian://open?vault=KitchenOS&file=${encodeURIComponent('Recipes/' + cook.recipe)}`;
+            const nameEl = document.createElement('a');
+            nameEl.className = 'grid-card-name grid-card-name-link';
+            nameEl.href = obsidianUrl;
+            nameEl.textContent = cook.recipe;
+
+            const removeBtn = document.createElement('button');
+            removeBtn.className = 'remove-btn';
+            removeBtn.innerHTML = '&times;';
+            removeBtn.setAttribute('aria-label', 'Remove cook');
+            removeBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                deleteCook(cook.id);
+            });
+
+            const stepper = document.createElement('div');
+            stepper.className = 'scale-stepper';
+            const minusBtn = document.createElement('button');
+            minusBtn.className = 'scale-btn scale-minus';
+            minusBtn.textContent = '−';
+            minusBtn.setAttribute('aria-label', 'Decrease scale');
+            minusBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                adjustScale(cook, -0.5);
+            });
+            const valueEl = document.createElement('span');
+            valueEl.className = 'scale-value';
+            valueEl.textContent = `${fmtMult(cook.scale)}×`;
+            const plusBtn = document.createElement('button');
+            plusBtn.className = 'scale-btn scale-plus';
+            plusBtn.textContent = '+';
+            plusBtn.setAttribute('aria-label', 'Increase scale');
+            plusBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                adjustScale(cook, 0.5);
+            });
+            stepper.appendChild(minusBtn);
+            stepper.appendChild(valueEl);
+            stepper.appendChild(plusBtn);
+
+            const cookedBtn = document.createElement('button');
+            cookedBtn.className = 'cooked-btn';
+            cookedBtn.innerHTML = '🍳';
+            cookedBtn.title = 'Mark cooked — subtract ingredients from inventory';
+            cookedBtn.setAttribute('aria-label', 'Mark cooked');
+            cookedBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                markCookCooked(cook);
+            });
+
+            card.appendChild(nameEl);
+            card.appendChild(removeBtn);
+            card.appendChild(stepper);
+            card.appendChild(cookedBtn);
+
+            return card;
+        }
+
+        // --- Board render ---
+
+        function renderFreezerTab() {
+            renderUnscheduledSection();
+            const tray = document.getElementById('freezer-tray');
+            if (!tray) return;
+            tray.innerHTML = '';
+            const items = (weekBoard && weekBoard.freezer) || [];
+            if (!items.length) {
+                const empty = document.createElement('div');
+                empty.className = 'freezer-empty';
+                empty.textContent = 'Freezer is empty';
+                tray.appendChild(empty);
+                return;
+            }
+            items.forEach(entry => tray.appendChild(makeFreezerChip(entry)));
+        }
+
+        // Cooks with no date/meal yet (e.g. "Add to this week" from the
+        // recipe detail page) have no home cell, so the grid renderers
+        // (which gate on cook.date && cook.meal) never show them. Surface
+        // them here instead, at the top of the Freezer tab, with a
+        // draggable chip using the exact same pattern/dataset attributes
+        // as an anchored cook's unassigned chip (see makeUnassignedChip)
+        // so the existing chip-drop handler works unchanged.
+        function renderUnscheduledSection() {
+            const section = document.getElementById('unscheduled-section');
+            const tray = document.getElementById('unscheduled-tray');
+            if (!section || !tray) return;
+            tray.innerHTML = '';
+            const cooks = ((weekBoard && weekBoard.cooks) || [])
+                .filter(cook => !cook.date || !cook.meal);
+            section.classList.toggle('empty', cooks.length === 0);
+            cooks.forEach(cook => {
+                const header = document.createElement('div');
+                header.className = 'unscheduled-row-header';
+
+                const nameEl = document.createElement('span');
+                nameEl.className = 'unscheduled-row-name';
+                nameEl.textContent = cook.recipe;
+
+                const metaEl = document.createElement('span');
+                metaEl.className = 'unscheduled-row-meta';
+                metaEl.textContent = `${fmtMult(cook.scale)}× · ${fmtMult(cook.unassigned)} unassigned`;
+
+                header.appendChild(nameEl);
+                header.appendChild(metaEl);
+                tray.appendChild(header);
+
+                if (cook.unassigned > 1e-6) {
+                    tray.appendChild(makeUnassignedChip(cook.id, cook.unassigned));
+                }
+            });
+        }
+
+        function renderDayTotals() {
+            const totals = (weekBoard && weekBoard.day_totals) || {};
+            DAYS.forEach(day => {
+                const cell = document.querySelector(`.totals-cell[data-day="${day}"]`);
+                if (!cell) return;
+                const t = totals[dayDates[day]];
+                if (!t || (!t.calories && !t.protein && !t.carbs && !t.fat)) {
+                    cell.innerHTML = '<span class="totals-empty">—</span>';
+                    return;
+                }
+                const warn = t.incomplete
+                    ? ' <span class="totals-warn" title="Some recipes have missing or low-confidence nutrition data">⚠</span>'
+                    : '';
+                cell.innerHTML =
+                    `<div class="totals-kcal">${Math.round(t.calories)} kcal${warn}</div>` +
+                    `<div class="totals-macros">${Math.round(t.protein)}p · ${Math.round(t.carbs)}c · ${Math.round(t.fat)}f</div>`;
+            });
+        }
+
+        function renderBoardIfActive() {
+            boardMode = !!(weekBoard && weekBoard.cooks && weekBoard.cooks.length > 0);
+            document.body.classList.toggle('board-mode', boardMode);
+
+            // Chip trays are always rebuilt from scratch (both board and legacy
+            // weeks need a fresh, empty tray in every cell so frozen leftovers
+            // can still be dragged into a legacy week's slots).
+            document.querySelectorAll('.chip-tray').forEach(t => t.remove());
+
+            // Cook cards are cleared unconditionally — not just when boardMode
+            // is true. Otherwise deleting the last cook (boardMode flips back
+            // to false) leaves its stale .cook-card in the DOM forever, since
+            // nothing else ever re-renders that cell.
+            document.querySelectorAll('.cook-card').forEach(c => c.remove());
+
+            if (boardMode) {
+                // Also clear any legacy (non-cook) grid cards left over from
+                // the initial loadMealPlan() render before rebuilding from the
+                // ledger.
+                document.querySelectorAll('.grid-card').forEach(c => c.remove());
+
+                weekBoard.cooks.forEach(cook => {
+                    if (cook.date && cook.meal) {
+                        const homeCell = findCell(cook.date, cook.meal);
+                        if (homeCell) homeCell.appendChild(createCookCard(cook));
+                    }
+                    cook.placements.forEach(p => {
+                        if (p.destination !== 'slot') return;
+                        const cell = findCell(p.date, p.meal);
+                        if (!cell) return;
+                        const isHome = p.date === cook.date && p.meal === cook.meal;
+                        chipTrayFor(cell).appendChild(
+                            makeServingChip(cook.id, p.id, p.count, isHome ? null : cook.recipe));
+                    });
+                    if (cook.unassigned > 1e-6 && cook.date && cook.meal) {
+                        const homeCell = findCell(cook.date, cook.meal);
+                        if (homeCell) chipTrayFor(homeCell).appendChild(makeUnassignedChip(cook.id, cook.unassigned));
+                    }
+                });
+
+                initGridSortables();
+            }
+
+            document.querySelectorAll('.grid-cell').forEach(updateCellState);
+            wireChipSortables();
+        }
+
+        async function loadWeekBoard(week) {
+            const gen = ++boardLoadGen;
+            let loaded;
+            try {
+                const resp = await fetch(`/api/week-board/${week}`);
+                loaded = resp.ok ? await resp.json() : null;
+            } catch (err) {
+                console.error('Failed to load week board', err);
+                loaded = null;
+            }
+            // If a newer loadWeekBoard() started (and possibly already
+            // resolved) while this fetch was in flight, drop this stale
+            // response instead of rendering over the newer state.
+            if (gen !== boardLoadGen) return;
+            // Fail closed: if we couldn't learn whether this week is
+            // ledger-managed, legacy-path writes (saveMealPlan/suggestMeal)
+            // could clobber ledger-authored Markdown — block them until a
+            // load succeeds.
+            boardStateUnknown = (loaded === null);
+            weekBoard = loaded;
+            renderFreezerTab();
+            renderBoardIfActive();
+            renderDayTotals();
+        }
+
+        // --- Board mutations ---
+
+        async function ensureLegacyImported() {
+            // Cheap client-side check first: if the board already has cooks we
+            // never need to import (also protects against the server's own
+            // idempotence guard, which 409s on a week that already has cooks).
+            if (weekBoard && weekBoard.cooks && weekBoard.cooks.length > 0) return;
+            try {
+                const resp = await fetch(`/api/week-board/${currentWeek}/import-legacy`, { method: 'POST' });
+                if (!resp.ok && resp.status !== 409) {
+                    const err = await resp.json().catch(() => ({}));
+                    console.warn('legacy import failed', err.error || resp.status);
+                }
+            } catch (err) {
+                console.warn('legacy import request failed', err);
+            }
+        }
+
+        async function createCook(name, day, meal, scale, baseServings) {
+            // Guard against rapid double-drops (or a drop racing another
+            // mutation) reading/writing stale state — see adjustScale below
+            // for the fuller rationale.
+            if (ledgerBusy) return;
+            ledgerBusy = true;
+            try {
+                const resp = await fetch('/api/cooks', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        recipe: name, week: currentWeek, scale: scale,
+                        servings_produced: baseServings * scale,
+                        date: dayDates[day], meal: meal,
+                        initial_placement_count: 1
+                    })
+                });
+                if (!resp.ok) { showToast((await resp.json()).error || 'Failed to add recipe', 'error'); return; }
+                await loadWeekBoard(currentWeek);
+            } catch (err) { showToast('Failed to create cook', 'error'); }
+            finally { ledgerBusy = false; }
+        }
+
+        async function adjustScale(cook, delta) {
+            // Serialize board mutations: two rapid stepper taps both close
+            // over the same `cook` object (captured before either PATCH
+            // resolves), so without this guard the second click computes its
+            // new scale from the same stale `cook.scale` as the first,
+            // silently dropping one of the two increments. Blocking until the
+            // in-flight mutation's loadWeekBoard() has re-rendered (with a
+            // fresh `cook` reference for the next click) fixes it.
+            if (ledgerBusy) return;
+            ledgerBusy = true;
+            try {
+                const newScale = Math.min(4.0, Math.max(0.5, Math.round((cook.scale + delta) * 2) / 2));
+                if (Math.abs(newScale - cook.scale) < 1e-9) return;
+                const baseServings = cook.servings_produced / cook.scale;
+                const newServingsProduced = baseServings * newScale;
+                const resp = await fetch(`/api/cooks/${cook.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ scale: newScale, servings_produced: newServingsProduced })
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    showToast(err.error || 'Failed to update scale', 'error');
+                    return;
+                }
+                await loadWeekBoard(currentWeek);
+            } catch (err) {
+                showToast('Failed to update scale', 'error');
+            } finally {
+                ledgerBusy = false;
+            }
+        }
+
+        async function markCookCooked(cook) {
+            if (!confirm(`Mark "${cook.recipe}" cooked? This subtracts its ingredients from your inventory.`)) return;
+            if (ledgerBusy) return;
+            ledgerBusy = true;
+            try {
+                await fetch(`/api/cooks/${cook.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cooked_at: new Date().toISOString() })
+                });
+                const resp = await fetch('/api/cook', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ recipe: cook.recipe, servings: cook.scale })
+                });
+                const r = await resp.json();
+                if (r.error) {
+                    showToast(r.error, 'error');
+                } else {
+                    const consumed = r.consumed || [];
+                    if (!consumed.length) {
+                        showToast('Marked cooked — nothing tracked to decrement', 'success');
+                    } else {
+                        const parts = consumed.slice(0, 4).map(c =>
+                            c.depleted ? `${c.item} (used up)` : `${c.item}: ${c.after}${c.unit ? ' ' + c.unit : ''} left`);
+                        showToast(`Cooked — ${parts.join(', ')}`, 'success');
+                    }
+                    loadUseItUp().catch(() => {});
+                }
+            } catch (err) {
+                showToast('Failed to mark cooked', 'error');
+            } finally {
+                await loadWeekBoard(currentWeek);
+                ledgerBusy = false;
+            }
+        }
+
+        async function deleteCook(cookId) {
+            if (!confirm('Delete this cook and all its servings?')) return;
+            if (ledgerBusy) return;
+            ledgerBusy = true;
+            try {
+                const resp = await fetch(`/api/cooks/${cookId}`, { method: 'DELETE' });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    showToast(err.error || 'Failed to delete cook', 'error');
+                }
+            } catch (err) {
+                showToast('Failed to delete cook', 'error');
+            } finally {
+                await loadWeekBoard(currentWeek);
+                ledgerBusy = false;
+            }
+        }
+
+        // --- Chip drag wiring (group 'servings': grid cells, freezer tray, trash) ---
+
+        async function handleChipDrop(evt) {
+            const chip = evt.item;
+            const toEl = evt.to;
+            const count = Math.min(1, parseFloat(chip.dataset.count) || 0);
+            let destination, date = null, meal = null;
+
+            if (toEl.id === 'freezer-tray') {
+                destination = 'freezer';
+            } else if (toEl.id === 'trash-target') {
+                destination = 'trash';
+            } else {
+                const cell = toEl.closest('.grid-cell');
+                if (!cell) { chip.remove(); return; }
+                destination = 'slot';
+                date = dayDates[cell.dataset.day];
+                meal = cell.dataset.meal;
+            }
+
+            const placementId = chip.dataset.placementId;
+            const cookId = chip.dataset.cookId;
+
+            if (ledgerBusy) {
+                // Sortable already moved the chip node into the drop target;
+                // remove it so it can't linger there — the in-flight
+                // mutation's loadWeekBoard() re-render restores truth.
+                chip.remove();
+                showToast('Busy — try again', 'error');
+                return;
+            }
+            ledgerBusy = true;
+            try {
+                let resp;
+                if (placementId) {
+                    resp = await fetch(`/api/placements/${placementId}/move`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ count, destination, date, meal })
+                    });
+                } else {
+                    resp = await fetch('/api/placements', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ cook_id: Number(cookId), destination, count, date, meal })
+                    });
+                }
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    showToast(err.error || 'Failed to move serving', 'error');
+                }
+            } catch (err) {
+                showToast('Failed to move serving', 'error');
+            } finally {
+                // Remove the dragged chip node before reloading: a drop on
+                // #trash-target isn't a .chip-tray, so renderBoardIfActive()
+                // never clears it — without this the chip accumulates there
+                // forever across repeated trash drops.
+                chip.remove();
+                // Always reload — even on failure — so the DOM (which Sortable
+                // already moved the chip within) reflects server truth.
+                await loadWeekBoard(currentWeek);
+                ledgerBusy = false;
+            }
+        }
+
+        function wireChipSortables() {
+            chipSortables.forEach(s => s.destroy());
+            chipSortables = [];
+
+            const commonOptions = {
+                group: 'servings',
+                draggable: '.serving-chip, .freezer-chip',
+                ghostClass: 'sortable-ghost',
+                dragClass: 'sortable-drag',
+                forceFallback: true,
+                fallbackOnBody: true,
+                fallbackTolerance: 5,
+                delay: window.IS_TOUCH ? 200 : 100,
+                delayOnTouchOnly: true,
+                touchStartThreshold: 5,
+                animation: 150,
+                onStart: function() { document.body.classList.add('dragging-serving'); },
+                onEnd: function() { document.body.classList.remove('dragging-serving'); },
+                onAdd: handleChipDrop,
+            };
+
+            document.querySelectorAll('.grid-cell').forEach(cell => {
+                chipSortables.push(Sortable.create(chipTrayFor(cell), { ...commonOptions }));
+            });
+            const freezerTray = document.getElementById('freezer-tray');
+            if (freezerTray) chipSortables.push(Sortable.create(freezerTray, { ...commonOptions }));
+            const unscheduledTray = document.getElementById('unscheduled-tray');
+            // Unscheduled chips are unanchored cooks, not placements: there is no
+            // API destination for "move a serving back to unscheduled", so this
+            // tray may only be a drag *source* (pull) — dropping something into
+            // it must be rejected by Sortable itself, not silently accepted and
+            // then discarded by handleChipDrop (which has no branch for it).
+            if (unscheduledTray) chipSortables.push(Sortable.create(unscheduledTray, { ...commonOptions, group: { name: 'servings', pull: true, put: false } }));
+            const trashTarget = document.getElementById('trash-target');
+            if (trashTarget) chipSortables.push(Sortable.create(trashTarget, { ...commonOptions }));
         }
 
         // --- API Calls ---
@@ -1510,11 +2597,7 @@
             servingsBtn.addEventListener('click', function(e) {
                 e.stopPropagation();
                 e.preventDefault();
-                let s = parseInt(card.dataset.servings) || 1;
-                s = s >= 3 ? 1 : s + 1;
-                card.dataset.servings = s;
-                servingsBtn.textContent = `×${s}`;
-                debounceSave();
+                cycleCardServings(card);
             });
 
             card.appendChild(headerEl);
@@ -1530,6 +2613,25 @@
         }
 
         async function saveMealPlan() {
+            // Fail closed while the board state is unknown (last load
+            // failed): this week might be ledger-managed, and the legacy PUT
+            // would clobber it. The server 409s as backstop, but don't even
+            // try.
+            if (boardStateUnknown) {
+                console.warn('saveMealPlan() skipped — board state unknown (last week-board load failed)');
+                showToast('Not saved — board state unknown, reload the page', 'error');
+                return;
+            }
+            // Belt-and-suspenders guard: a board-backed week must never be
+            // written through the legacy PUT /api/meal-plan/<week> path — that
+            // payload has no scale/placement info and would clobber the
+            // ledger-authored Markdown. Compute the gate inline (rather than
+            // trusting the `boardMode` flag alone) in case this is ever called
+            // before a render has run.
+            if (weekBoard && weekBoard.cooks && weekBoard.cooks.length > 0) {
+                console.warn('saveMealPlan() skipped — week is board-backed (ledger owns this week\'s Markdown)');
+                return;
+            }
             const days = [];
             for (const dayName of DAYS) {
                 const dayData = {
@@ -1545,7 +2647,7 @@
                         const kind = card.dataset.kind || 'recipe';
                         dayData[meal] = {
                             name: card.dataset.name,
-                            servings: parseInt(card.dataset.servings) || 1,
+                            servings: parseFloat(card.dataset.servings) || 1,
                             kind: kind
                         };
                     } else {
@@ -1606,6 +2708,19 @@
                     <a href="${obsidianUrl}" class="recipe-name recipe-name-link">${escapeHtml(recipe.name)}</a>
                     ${metaParts.length ? `<div class="recipe-meta">${escapeHtml(metaParts.join(' \u00b7 '))}</div>` : ''}
                 `;
+
+                // Detail-page link \u2014 a real <a> (not innerHTML text) so we
+                // can attach a listener; stopPropagation keeps a tap from
+                // being swallowed/reinterpreted by SortableJS's drag
+                // handling on the card (it's also excluded via the `filter`
+                // option in initSidebarSortable below).
+                const infoLink = document.createElement('a');
+                infoLink.className = 'recipe-info-link';
+                infoLink.href = `/recipe/${encodeURIComponent(recipe.name)}`;
+                infoLink.textContent = '\u24d8';
+                infoLink.setAttribute('aria-label', `View details for ${recipe.name}`);
+                infoLink.addEventListener('click', (e) => e.stopPropagation());
+                card.appendChild(infoLink);
 
                 // Apply search filter
                 const matchesSearch = !searchTerm || recipe.name.toLowerCase().includes(searchTerm);
@@ -1755,6 +2870,95 @@
             document.getElementById('sidebar-backdrop').addEventListener('click', function() {
                 closeSidebar();
             });
+
+            // Touch: tap a grid card to open its action sheet (replaces the
+            // tiny corner buttons, which are display:none under html.touch).
+            // Capture phase so it wins over the card's Obsidian link.
+            document.getElementById('grid').addEventListener('click', function(e) {
+                if (!window.IS_TOUCH) return;
+                // The sheet's actions fire the hidden corner buttons via
+                // programmatic .click(), which bubbles through here — hijacking
+                // it would cancel the button's handler and re-open the sheet.
+                if (!e.isTrusted) return;
+                if (e.target.closest('.remove-btn, .servings-btn, .cooked-btn, .retry-btn, .scale-btn, .serving-chip, .unassigned-chip')) return;
+                const card = e.target.closest('.grid-card');
+                if (!card) return; // empty-cell taps fall through to suggest
+                e.preventDefault();
+                e.stopPropagation();
+                if (Date.now() < suppressCardTapUntil) return;
+                openCardSheet(card);
+            }, true);
+
+            document.getElementById('card-sheet-cancel').addEventListener('click', closeCardSheet);
+            document.getElementById('card-sheet-backdrop').addEventListener('click', function(e) {
+                if (e.target === this) closeCardSheet();
+            });
+        }
+
+        // --- Card action sheet (touch mode) ---
+
+        let suppressCardTapUntil = 0; // set around drags so a drop never opens the sheet
+
+        function closeCardSheet() {
+            document.getElementById('card-sheet-backdrop').classList.remove('visible');
+        }
+
+        function openCardSheet(card) {
+            const actions = document.getElementById('card-sheet-actions');
+            actions.innerHTML = '';
+            document.getElementById('card-sheet-title').textContent = card.dataset.name;
+
+            function addAction(label, fn, cssClass) {
+                const btn = document.createElement('button');
+                btn.textContent = label;
+                if (cssClass) btn.className = cssClass;
+                btn.addEventListener('click', () => { closeCardSheet(); fn(); });
+                actions.appendChild(btn);
+                return btn;
+            }
+
+            const link = card.querySelector('.grid-card-name-link');
+            if (link) {
+                addAction('Open recipe', () => { window.location.href = link.href; });
+            }
+
+            // Servings segment: ×1 / ×2 / ×3 — legacy grid cards only. Cook
+            // cards (board mode) carry their own scale stepper (± 0.5, visible
+            // inline, not display:none'd on touch) instead of this fixed menu.
+            if (!card.classList.contains('cook-card')) {
+                const segment = document.createElement('div');
+                segment.className = 'segment';
+                const current = parseFloat(card.dataset.servings) || 1;
+                [1, 2, 3].forEach(n => {
+                    const btn = document.createElement('button');
+                    btn.textContent = `×${n}`;
+                    if (n === current) btn.className = 'selected';
+                    btn.addEventListener('click', () => {
+                        closeCardSheet();
+                        if (n !== current) setCardServings(card, n);
+                    });
+                    segment.appendChild(btn);
+                });
+                actions.appendChild(segment);
+            }
+
+            if (card.dataset.kind === 'meal') {
+                addAction('Edit meal', () => openMealEditor(card.dataset.name));
+            }
+            const cookedBtn = card.querySelector('.cooked-btn');
+            if (cookedBtn) {
+                addAction('Mark cooked 🍳', () => cookedBtn.click());
+            }
+            const retryBtn = card.querySelector('.retry-btn');
+            if (retryBtn) {
+                addAction('Try another suggestion ↻', () => retryBtn.click());
+            }
+            const removeBtn = card.querySelector('.remove-btn');
+            if (removeBtn) {
+                addAction('Remove from plan', () => removeBtn.click(), 'danger');
+            }
+
+            document.getElementById('card-sheet-backdrop').classList.add('visible');
         }
 
         function initResizeHandle() {
@@ -1794,12 +2998,14 @@
         }
 
         async function navigateWeek(delta) {
+            closeCardSheet();
             showLoading();
             currentWeek = offsetWeek(currentWeek, delta);
             suggestionSkipIndex = {};
             updateURL(currentWeek);
             try {
                 await loadMealPlan(currentWeek);
+                await loadWeekBoard(currentWeek);
                 loadTasks(currentWeek).catch(err => console.error('tasks load failed', err));
             } catch (err) {
                 showToast('Failed to load meal plan', 'error');
@@ -1870,21 +3076,27 @@
             });
             const recipeList = document.getElementById('recipe-list');
             const mealsList = document.getElementById('meals-list');
+            const freezerTray = document.getElementById('freezer-tray');
+            const unscheduledSection = document.getElementById('unscheduled-section');
             const chips = document.getElementById('filter-chips');
             const title = document.getElementById('sidebar-title');
             const search = document.getElementById('search-input');
+
+            recipeList.classList.toggle('hidden-tab', tab !== 'recipes');
+            mealsList.classList.toggle('active', tab === 'meals');
+            if (freezerTray) freezerTray.classList.toggle('active', tab === 'freezer');
+            if (unscheduledSection) unscheduledSection.classList.toggle('active', tab === 'freezer');
+            chips.style.display = (tab === 'recipes') ? '' : 'none';
+            search.style.display = (tab === 'freezer') ? 'none' : '';
+
             if (tab === 'recipes') {
-                recipeList.classList.remove('hidden-tab');
-                mealsList.classList.remove('active');
-                chips.style.display = '';
                 title.textContent = 'Recipes';
                 search.placeholder = 'Search recipes...';
-            } else {
-                recipeList.classList.add('hidden-tab');
-                mealsList.classList.add('active');
-                chips.style.display = 'none';
+            } else if (tab === 'meals') {
                 title.textContent = 'Meals';
                 search.placeholder = 'Search meals...';
+            } else {
+                title.textContent = 'Freezer';
             }
         }
 
@@ -1921,6 +3133,16 @@
                     <div class="meal-card-meta">${sub} sub-recipe${sub === 1 ? '' : 's'}${meal.description ? ' · ' + escapeHtml(meal.description) : ''}</div>
                 `;
                 card.addEventListener('dblclick', () => openMealEditor(meal.name));
+                // Visible edit affordance — dblclick has no touch equivalent
+                const editBtn = document.createElement('button');
+                editBtn.className = 'meal-edit-btn';
+                editBtn.textContent = '✎';
+                editBtn.setAttribute('aria-label', `Edit ${meal.name}`);
+                editBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    openMealEditor(meal.name);
+                });
+                card.prepend(editBtn);
                 list.appendChild(card);
             });
             initSidebarSortable();
@@ -2053,8 +3275,9 @@
             }).join('');
             const cook = suggestions.length
                 ? suggestions.map(s => {
-                    const used = s.uses.map(u => u.name).join(', ');
-                    return `<div class="prep-task"><span>🍽️</span><span>${s.recipe}<span class="meta"> · uses ${used}</span></span></div>`;
+                    const used = escapeHtml(s.uses.map(u => u.name).join(', '));
+                    const href = `/recipe/${encodeURIComponent(s.recipe)}`;
+                    return `<div class="prep-task"><span>🍽️</span><span><a class="useitup-recipe-link" href="${href}">${escapeHtml(s.recipe)}</a><span class="meta"> · uses ${used}</span></span></div>`;
                   }).join('')
                 : '<div class="prep-task"><span class="meta">No recipes in your library use these — time to improvise.</span></div>';
             body.innerHTML =
@@ -2269,17 +3492,16 @@
             if (saveBtn) saveBtn.addEventListener('click', saveMealFromModal);
             const addSubBtn = document.getElementById('add-sub-recipe');
             if (addSubBtn) addSubBtn.addEventListener('click', () => addSubRecipeRow('', 1));
-            const prepToggle = document.getElementById('prep-toggle');
+            // Whole header toggles collapse (the ▾ button click bubbles here)
             const prepPanel = document.getElementById('prep-panel');
-            if (prepToggle && prepPanel) {
-                prepToggle.addEventListener('click', () => {
+            if (prepPanel) {
+                prepPanel.querySelector('header').addEventListener('click', () => {
                     prepPanel.classList.toggle('collapsed');
                 });
             }
-            const useToggle = document.getElementById('useitup-toggle');
             const usePanel = document.getElementById('useitup-panel');
-            if (useToggle && usePanel) {
-                useToggle.addEventListener('click', () => {
+            if (usePanel) {
+                usePanel.querySelector('header').addEventListener('click', () => {
                     usePanel.classList.toggle('collapsed');
                 });
             }
@@ -2302,6 +3524,13 @@
         // --- Suggestion ---
 
         async function suggestMeal(cell) {
+            // Fail closed while the board state is unknown — see saveMealPlan.
+            if (boardStateUnknown) return;
+            // Board weeks own their cells via the ledger (cook/chip cards);
+            // a legacy suggested card here would be cosmetic-only (its save
+            // is already blocked) but would still flash a phantom card.
+            if (weekBoard && weekBoard.cooks.length > 0) return;
+
             const day = cell.dataset.day;
             const meal = cell.dataset.meal;
             const cellKey = `${day}-${meal}`;

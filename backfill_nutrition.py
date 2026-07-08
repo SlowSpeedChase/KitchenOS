@@ -6,7 +6,10 @@ For each recipe with ``nutrition_calories: null`` (or all, with ``--force``):
   2. Compute per-serving macros with ``lib.nutrition_engine`` (USDA/OFF + grams,
      LLM only for unresolved portions).
   3. Write nutrition_* / nutrition_source / nutrition_confidence back to the
-     frontmatter, de-duplicating any keys a prior run left behind.
+     frontmatter, de-duplicating any keys a prior run left behind. The
+     nutrition verdict is recorded in its own ``nutrition_needs_review`` key;
+     the shared ``needs_review`` flag (also set by extraction/normalizer/
+     crouton_parser) is only ever escalated to "true" here, never cleared.
 
 Usage:
     .venv/bin/python backfill_nutrition.py [--dry-run] [--limit N] [--force]
@@ -34,7 +37,8 @@ from lib.recipe_parser import parse_recipe_file, parse_ingredient_table
 _MANAGED_KEYS = {
     "nutrition_calories", "nutrition_protein", "nutrition_carbs",
     "nutrition_fat", "nutrition_source", "nutrition_confidence",
-    "serving_size", "needs_review",
+    "serving_size", "needs_review", "nutrition_needs_review",
+    "nutrition_coverage", "nutrition_unmatched",
 }
 
 
@@ -114,10 +118,27 @@ def write_nutrition_to_file(filepath: Path, result) -> None:
         "nutrition_confidence": result.confidence,
         "serving_size": '"1 serving"',
     }
+    updates["nutrition_needs_review"] = "true" if result.needs_review else "false"
     if result.needs_review:
+        # Shared flag: escalate-only. It's also set by extraction inference,
+        # lib/normalizer.py, and lib/crouton_parser.py — never clear a human
+        # review flag those writers may have set for unrelated reasons.
         updates["needs_review"] = "true"
 
+    updates["nutrition_coverage"] = result.coverage
+    if result.unmatched:
+        joined = "; ".join(result.unmatched)
+        updates["nutrition_unmatched"] = f'"{joined}"'
+
     new_fm = rewrite_frontmatter(fm, updates)
+    if not result.unmatched:
+        # No unmatched items this run — drop any stale nutrition_unmatched line
+        # a previous (partial) backfill left behind.
+        new_fm = "\n".join(
+            l for l in new_fm.split("\n") if not l.startswith("nutrition_unmatched:")
+        )
+        if not new_fm.endswith("\n"):
+            new_fm += "\n"
     filepath.write_text(f"---{new_fm}---{rest}", encoding="utf-8")
 
 
@@ -143,11 +164,12 @@ def _print_audit(result) -> None:
             f" {li.food_source or '-':5} {cal:6.0f} kcal"
         )
     flag = " [needs review]" if result.needs_review else ""
+    sanity = f" [{', '.join(result.sanity_flags)}]" if result.sanity_flags else ""
     print(
         f"      → per serving: {result.nutrition.calories} kcal /"
         f" {result.nutrition.protein}p / {result.nutrition.carbs}c /"
         f" {result.nutrition.fat}f  (servings={result.servings_used},"
-        f" conf={result.confidence}){flag}"
+        f" coverage={result.coverage}, conf={result.confidence}){flag}{sanity}"
     )
 
 

@@ -17,7 +17,8 @@ def get_recipe_index(recipes_dir: Path, include_ingredients: bool = False) -> li
 
     Returns:
         List of dicts sorted by name, each with keys:
-            name, cuisine, protein, difficulty, meal_occasion, dish_type, peak_months
+            name, cuisine, protein, difficulty, meal_occasion, dish_type, peak_months,
+            servings (frontmatter servings count, or None)
             Optionally includes ingredient_items (list of item strings) when include_ingredients=True
     """
     recipes = []
@@ -37,6 +38,7 @@ def get_recipe_index(recipes_dir: Path, include_ingredients: bool = False) -> li
                 entry[field] = fm.get(field)
             for field in NUTRITION_FIELDS:
                 entry[field] = fm.get(field)
+            entry["servings"] = fm.get("servings") or None
             if include_ingredients:
                 body_data = parse_recipe_body(parsed["body"])
                 entry["ingredient_items"] = [ing["item"] for ing in body_data.get("ingredients", [])]
@@ -45,6 +47,7 @@ def get_recipe_index(recipes_dir: Path, include_ingredients: bool = False) -> li
                 entry.setdefault(field, None)
             for field in NUTRITION_FIELDS:
                 entry.setdefault(field, None)
+            entry.setdefault("servings", None)
             if include_ingredients:
                 entry["ingredient_items"] = []
 

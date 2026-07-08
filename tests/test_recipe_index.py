@@ -46,6 +46,22 @@ class TestGetRecipeIndex:
             assert result[0]["cuisine"] is None
             assert result[0]["protein"] is None
 
+    def test_extracts_servings(self):
+        """Should extract the frontmatter servings field (used by the planner
+        to compute a cook's default servings_produced)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = Path(tmpdir)
+            (recipes_dir / "Chili.md").write_text(
+                '---\ntitle: "Chili"\nservings: 6\n---\n\n# Chili'
+            )
+            (recipes_dir / "No Servings.md").write_text(
+                '---\ntitle: "No Servings"\nservings: null\n---\n\n# No Servings'
+            )
+            result = get_recipe_index(recipes_dir)
+            by_name = {r["name"]: r for r in result}
+            assert by_name["Chili"]["servings"] == 6
+            assert by_name["No Servings"]["servings"] is None
+
     def test_skips_non_md_files(self):
         """Should only index .md files."""
         with tempfile.TemporaryDirectory() as tmpdir:

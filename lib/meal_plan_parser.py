@@ -18,9 +18,15 @@ class MealEntry(NamedTuple):
     for meal entries.
     """
     name: str
-    servings: int = 1
+    servings: float = 1.0
     kind: str = "recipe"
     sub_recipes: tuple = ()
+
+
+def fmt_mult(x: float) -> str:
+    """Format a multiplier: whole numbers without a decimal point."""
+    x = float(x)
+    return str(int(x)) if x == int(x) else f"{x:g}"
 
 
 def get_week_start_date(year: int, week: int) -> date:
@@ -50,11 +56,11 @@ def extract_meals_for_day(section: str) -> dict:
         if match:
             content = match.group(1).strip()
             # Match either `[[Recipe]]` or `[[Meal: Bundle Name]]`, with optional xN
-            link_match = re.search(r'\[\[(Meal:\s*)?([^\]]+)\]\]\s*(?:x(\d+))?', content)
+            link_match = re.search(r'\[\[(Meal:\s*)?([^\]]+)\]\]\s*(?:x([\d.]+))?', content)
             if link_match:
                 kind = "meal" if link_match.group(1) else "recipe"
                 name = link_match.group(2).strip()
-                servings = int(link_match.group(3)) if link_match.group(3) else 1
+                servings = float(link_match.group(3)) if link_match.group(3) else 1.0
                 meals[meal_type] = MealEntry(name=name, servings=servings, kind=kind)
 
     return meals
@@ -228,8 +234,8 @@ def rebuild_meal_plan_markdown(week: str, days: list[dict]) -> str:
         servings = meal_data.get("servings", 1)
         kind = meal_data.get("kind", "recipe")
         link = f"[[Meal: {name}]]" if kind == "meal" else f"[[{name}]]"
-        if servings > 1:
-            return f"{link} x{servings}"
+        if float(servings) != 1:
+            return f"{link} x{fmt_mult(servings)}"
         return link
 
     lines = [

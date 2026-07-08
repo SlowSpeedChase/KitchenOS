@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KitchenOS Recipe</title>
+    <style>
+        :root {
+            --bg: #f5f5f7;
+            --card-bg: #ffffff;
+            --border: #e5e5e7;
+            --text: #1d1d1f;
+            --text-muted: #86868b;
+            --accent: #0071e3;
+            --success: #34c759;
+            --danger: #ff3b30;
+            --warning: #ff9f0a;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 24px;
+        }
+
+        .wrap { max-width: 760px; margin: 0 auto; }
+
+        header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        header h1 { font-size: 1.6rem; font-weight: 600; }
+
+        .subtitle {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        a.button, button {
+            font-family: inherit;
+            font-size: 0.85rem;
+            font-weight: 600;
+            padding: 8px 14px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--card-bg);
+            color: var(--text);
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        a.button:hover, button:hover { border-color: var(--accent); color: var(--accent); }
+        button:disabled { opacity: 0.5; cursor: default; }
+
+        button.primary, a.button.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #fff;
+        }
+
+        button.primary:hover, a.button.primary:hover { color: #fff; opacity: 0.9; }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+
+        .card h2 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+
+        .scale-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 12px;
+            font-size: 0.85rem;
+        }
+
+        .scale-row label { font-weight: 600; color: var(--text-muted); }
+
+        select#scale-select {
+            font-family: inherit;
+            font-size: 0.85rem;
+            padding: 6px 10px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--card-bg);
+            color: var(--text);
+        }
+
+        table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+
+        th {
+            text-align: left;
+            font-weight: 600;
+            color: var(--text-muted);
+            padding: 6px 8px 10px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        td {
+            padding: 8px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: middle;
+        }
+
+        ol#instructions-list {
+            list-style: decimal;
+            padding-left: 1.4rem;
+            font-size: 0.9rem;
+            line-height: 1.6;
+        }
+
+        ol#instructions-list li { margin-bottom: 8px; }
+
+        .macro-footer {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            margin-top: 12px;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 1px 8px;
+            border-radius: 10px;
+            font-size: 0.72rem;
+            font-weight: 600;
+            background: #fff3e0;
+            color: var(--warning);
+            margin-left: 6px;
+        }
+
+        .empty { color: var(--text-muted); font-size: 0.85rem; font-style: italic; padding: 12px 0; }
+
+        #add-week-status {
+            font-size: 0.85rem;
+            margin-top: 10px;
+        }
+
+        #add-week-status a { color: var(--accent); font-weight: 600; }
+
+        .body-markdown {
+            font-size: 0.85rem;
+            line-height: 1.6;
+            color: var(--text);
+            white-space: pre-wrap;
+        }
+
+        .body-markdown h2 { font-size: 0.95rem; margin: 14px 0 6px; }
+        .body-markdown ul { padding-left: 1.4rem; margin-bottom: 8px; }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <header>
+            <div>
+                <h1 id="recipe-title">Loading…</h1>
+                <div class="subtitle" id="recipe-subtitle"></div>
+            </div>
+            <div class="header-actions">
+                <a class="button" id="obsidian-link" href="#">Open in Obsidian</a>
+                <button class="primary" id="add-week-btn">Add to this week</button>
+            </div>
+        </header>
+
+        <div id="add-week-status"></div>
+
+        <div class="card">
+            <h2>Ingredients</h2>
+            <div class="scale-row">
+                <label for="scale-select">Scale</label>
+                <select id="scale-select">
+                    <option value="0.5">0.5x</option>
+                    <option value="1" selected>1x</option>
+                    <option value="1.5">1.5x</option>
+                    <option value="2">2x</option>
+                    <option value="2.5">2.5x</option>
+                    <option value="3">3x</option>
+                    <option value="3.5">3.5x</option>
+                    <option value="4">4x</option>
+                </select>
+                <span id="servings-produced-label"></span>
+            </div>
+            <table>
+                <thead>
+                    <tr><th>Amount</th><th>Unit</th><th>Ingredient</th></tr>
+                </thead>
+                <tbody id="ingredients-body"></tbody>
+            </table>
+        </div>
+
+        <div class="card">
+            <h2>Instructions</h2>
+            <ol id="instructions-list"></ol>
+        </div>
+
+        <div class="card" id="nutrition-card" style="display:none">
+            <h2>Nutrition <span id="coverage-badge"></span></h2>
+            <table>
+                <thead>
+                    <tr><th>Calories</th><th>Protein</th><th>Carbs</th><th>Fat</th></tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td id="macro-calories">—</td>
+                        <td id="macro-protein">—</td>
+                        <td id="macro-carbs">—</td>
+                        <td id="macro-fat">—</td>
+                    </tr>
+                </tbody>
+            </table>
+            <div class="macro-footer">
+                <span id="macro-coverage"></span>
+                <span id="macro-confidence"></span>
+                <span id="macro-source"></span>
+            </div>
+        </div>
+
+        <div class="card" id="notes-card" style="display:none">
+            <h2>Full Recipe</h2>
+            <div class="body-markdown" id="body-markdown"></div>
+        </div>
+    </div>
+
+    <script>
+        function escapeHtml(s) {
+            return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[c]));
+        }
+
+        // The recipe name comes from the URL path — decode it once here,
+        // then re-encode per fetch/link call below (never trust it raw).
+        const recipeName = decodeURIComponent(
+            window.location.pathname.replace(/^\/recipe\//, '')
+        );
+
+        let recipeData = null;
+
+        function scaleAmount(amountStr, scale) {
+            const n = parseFloat(amountStr);
+            if (isNaN(n)) return amountStr;
+            let scaled = Math.round(n * scale * 100) / 100;
+            // Trim trailing zeros ("2.00" -> "2", "1.50" -> "1.5").
+            let out = scaled.toFixed(2).replace(/\.?0+$/, '');
+            return out;
+        }
+
+        function currentScale() {
+            return parseFloat(document.getElementById('scale-select').value) || 1;
+        }
+
+        function renderIngredients() {
+            if (!recipeData) return;
+            const scale = currentScale();
+            const tbody = document.getElementById('ingredients-body');
+            const ingredients = recipeData.ingredients || [];
+            if (ingredients.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="3" class="empty">No ingredients listed</td></tr>';
+            } else {
+                tbody.innerHTML = ingredients.map(ing => `
+                    <tr>
+                        <td>${escapeHtml(scaleAmount(ing.amount, scale))}</td>
+                        <td>${escapeHtml(ing.unit || '')}</td>
+                        <td>${escapeHtml(ing.item || '')}</td>
+                    </tr>
+                `).join('');
+            }
+
+            const baseServings = parseFloat(recipeData.servings) || 4;
+            const produced = Math.round(baseServings * scale * 100) / 100;
+            document.getElementById('servings-produced-label').textContent =
+                `→ ${produced} serving${produced === 1 ? '' : 's'}`;
+        }
+
+        function renderInstructions() {
+            const list = document.getElementById('instructions-list');
+            const instructions = recipeData.instructions || [];
+            if (instructions.length === 0) {
+                list.innerHTML = '<li class="empty" style="list-style:none">No instructions listed</li>';
+                return;
+            }
+            list.innerHTML = instructions
+                .slice()
+                .sort((a, b) => (a.step || 0) - (b.step || 0))
+                .map(step => `<li>${escapeHtml(step.text || '')}</li>`)
+                .join('');
+        }
+
+        function renderNutrition() {
+            const nutrition = recipeData.nutrition;
+            const card = document.getElementById('nutrition-card');
+            if (!nutrition) {
+                card.style.display = 'none';
+                return;
+            }
+            card.style.display = '';
+            document.getElementById('macro-calories').textContent = nutrition.calories != null ? nutrition.calories : '—';
+            document.getElementById('macro-protein').textContent = nutrition.protein != null ? `${nutrition.protein}g` : '—';
+            document.getElementById('macro-carbs').textContent = nutrition.carbs != null ? `${nutrition.carbs}g` : '—';
+            document.getElementById('macro-fat').textContent = nutrition.fat != null ? `${nutrition.fat}g` : '—';
+
+            const coveragePct = nutrition.coverage != null ? Math.round(nutrition.coverage * 100) : null;
+            const confidencePct = nutrition.confidence != null ? Math.round(nutrition.confidence * 100) : null;
+            document.getElementById('macro-coverage').textContent = coveragePct != null ? `Coverage: ${coveragePct}%` : '';
+            document.getElementById('macro-confidence').textContent = confidencePct != null ? `Confidence: ${confidencePct}%` : '';
+            document.getElementById('macro-source').textContent = nutrition.source ? `Source: ${nutrition.source}` : '';
+
+            const badge = document.getElementById('coverage-badge');
+            if (nutrition.coverage != null && nutrition.coverage < 0.8) {
+                badge.textContent = '⚠ low coverage';
+                badge.className = 'badge';
+            } else {
+                badge.textContent = '';
+                badge.className = '';
+            }
+        }
+
+        function renderBodyMarkdown() {
+            const md = recipeData.body_markdown || '';
+            const notesCard = document.getElementById('notes-card');
+            if (!md.trim()) {
+                notesCard.style.display = 'none';
+                return;
+            }
+            notesCard.style.display = '';
+            // Minimal read-only markdown rendering — no JS markdown
+            // library dependency. Handles headers and simple "- " lists;
+            // everything else is escaped and left as plain text.
+            const lines = md.split('\n');
+            let html = '';
+            let inList = false;
+            for (const rawLine of lines) {
+                const line = rawLine.trimEnd();
+                const headerMatch = line.match(/^(#{1,6})\s+(.*)$/);
+                const listMatch = line.match(/^[-*]\s+(.*)$/);
+                if (headerMatch) {
+                    if (inList) { html += '</ul>'; inList = false; }
+                    html += `<h2>${escapeHtml(headerMatch[2])}</h2>`;
+                } else if (listMatch) {
+                    if (!inList) { html += '<ul>'; inList = true; }
+                    html += `<li>${escapeHtml(listMatch[1])}</li>`;
+                } else {
+                    if (inList) { html += '</ul>'; inList = false; }
+                    if (line.trim()) html += `${escapeHtml(line)}<br>`;
+                }
+            }
+            if (inList) html += '</ul>';
+            document.getElementById('body-markdown').innerHTML = html;
+        }
+
+        function dateToISOWeek(d) {
+            const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+            const dayNum = date.getUTCDay() || 7; // Mon=1, Sun=7
+            date.setUTCDate(date.getUTCDate() + 4 - dayNum); // nearest Thursday
+            const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+            const weekNo = Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
+            return `${date.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
+        }
+
+        function getCurrentISOWeek() {
+            return dateToISOWeek(new Date());
+        }
+
+        async function addToThisWeek() {
+            const btn = document.getElementById('add-week-btn');
+            const status = document.getElementById('add-week-status');
+            btn.disabled = true;
+            status.textContent = '';
+            try {
+                const scale = currentScale();
+                const baseServings = parseFloat(recipeData.servings) || 4;
+                const week = getCurrentISOWeek();
+                const resp = await fetch('/api/cooks', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        recipe: recipeName,
+                        week: week,
+                        scale: scale,
+                        servings_produced: Math.round(baseServings * scale * 100) / 100,
+                    }),
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    status.textContent = err.error || 'Failed to add recipe to this week.';
+                    return;
+                }
+                status.innerHTML = `Added — <a href="/meal-planner?week=${encodeURIComponent(week)}">view in Meal Planner</a>`;
+            } catch (err) {
+                status.textContent = 'Failed to add recipe to this week.';
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        async function loadRecipe() {
+            try {
+                const resp = await fetch(`/api/recipes/${encodeURIComponent(recipeName)}`);
+                if (!resp.ok) {
+                    document.getElementById('recipe-title').textContent = 'Recipe not found';
+                    return;
+                }
+                recipeData = await resp.json();
+
+                document.getElementById('recipe-title').textContent = recipeData.title || recipeName;
+                document.title = `KitchenOS – ${recipeData.title || recipeName}`;
+
+                const subtitleParts = [];
+                if (recipeData.servings) subtitleParts.push(`${recipeData.servings} servings`);
+                if (recipeData.cuisine) subtitleParts.push(recipeData.cuisine);
+                if (recipeData.total_time) subtitleParts.push(recipeData.total_time);
+                document.getElementById('recipe-subtitle').textContent = subtitleParts.join(' · ');
+
+                const obsidianUrl = `obsidian://open?vault=KitchenOS&file=${encodeURIComponent('Recipes/' + recipeName)}`;
+                document.getElementById('obsidian-link').setAttribute('href', obsidianUrl);
+
+                renderIngredients();
+                renderInstructions();
+                renderNutrition();
+                renderBodyMarkdown();
+            } catch (err) {
+                document.getElementById('recipe-title').textContent = 'Failed to load recipe';
+            }
+        }
+
+        document.getElementById('scale-select').addEventListener('change', renderIngredients);
+        document.getElementById('add-week-btn').addEventListener('click', addToThisWeek);
+
+        loadRecipe();
+    </script>
+</body>
+</html>
