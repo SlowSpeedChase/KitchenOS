@@ -121,6 +121,21 @@ curl -X POST http://localhost:5001/send-to-reminders \
 .venv/bin/python generate_price_dashboard.py --dry-run   # print markdown without saving
 ```
 
+### Generate web dashboard (tailnet launcher)
+
+Writes `Dashboards/KitchenOS Web.md` — a tap-anywhere launcher for the web app
+(Meal Planner, Nutrition Review, System Health, current plan/shopping list).
+Links point at `KITCHENOS_API_BASE` (default the Tailscale MagicDNS host
+`http://chases-mac-mini.taila69703.ts.net:5001`), so the note works from any
+device on the tailnet, not just localhost on the server. Re-run only when the
+web base URL changes.
+
+```bash
+.venv/bin/python scripts/generate_web_dashboard.py
+# point it at a different host first, if needed:
+KITCHENOS_API_BASE=http://other-host.taila69703.ts.net:5001 .venv/bin/python scripts/generate_web_dashboard.py
+```
+
 ### Migrations: one-time vs. re-runnable maintenance
 
 **Re-runnable maintenance / backfill** — `migrate_recipes.py` and
