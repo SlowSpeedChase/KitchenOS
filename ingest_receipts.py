@@ -178,6 +178,8 @@ def ingest(since_days: int = 14, dry_run: bool = False,
         try:
             from lib import use_it_up
             use_it_up.write_note()
+            from lib import cook_now
+            cook_now.write_note()
         except Exception as e:
             print(f"Warning: use-it-up refresh failed: {e}", file=sys.stderr)
 

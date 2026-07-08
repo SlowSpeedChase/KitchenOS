@@ -278,6 +278,11 @@ bash scripts/cleanup_old_icloud.sh
 Runs `scripts/update_dashboard_canvas.py` daily at 6:15am — after
 `mealplan` (6:00) and `calendar-sync` (6:05), so the dashboard canvas
 reflects the day's freshly generated plan and calendar. No `RunAtLoad`.
+This run is also the **reliable daily refresh for `Cook Now.md`** (the
+on-hand recipe-coverage view): it calls `cook_now.write_note()` every day,
+whereas `Cook Now.md` otherwise only refreshes on inventory mutations (via
+`inventory.write_inventory()`) and receipt ingest. Its sibling `Use It Up.md`
+refreshes on receipt ingest and the `mealplan` run.
 
 ```bash
 cp ops/com.kitchenos.dashboard-update.plist ~/Library/LaunchAgents/
