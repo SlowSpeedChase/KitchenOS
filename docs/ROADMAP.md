@@ -14,6 +14,14 @@ tier that shipped since and corrects two stale statuses.
 
 ## Done / Shipped
 
+**2026-07-08 — Web dashboard tailnet launcher** (PR #32). `lib/web_dashboard.py`
++ `scripts/generate_web_dashboard.py` regenerate `Dashboards/KitchenOS Web.md` — a
+tap-anywhere generated note whose links point at `KITCHENOS_API_BASE` (Tailscale
+MagicDNS host by default), so the web app (Meal Planner, current plan/shopping
+list, Nutrition Review, System Health) opens from any device on the tailnet, not
+just localhost on the server. Follows the generated-read-only-view pattern
+(`Inventory.md` / `Use It Up.md`); runbook entry in `docs/OPERATIONS.md`.
+
 The native tier — entirely undocumented here until now — is built and merged to
 `main` (both forked app branches, `siri-app-intents` and `ingredient-cleaning`,
 converged via `docs/superpowers/plans/2026-06-24-convergence-plan.md`; both
