@@ -248,6 +248,18 @@ def write_inventory(items: list[InventoryItem]) -> None:
     except OSError as e:
         print(f"⚠️  Inventory view write failed: {e}", file=sys.stderr)
 
+    # Cook Now.md ranks recipes by on-hand coverage, so it must track every
+    # inventory change too. Guarded broadly (it reads the DB + scans recipes,
+    # so it can fail in more ways than a plain file write) so a view-refresh
+    # failure never propagates past the already-committed DB mutation — that
+    # would 500 the API and a client retry would double-add quantities. Lazy
+    # import keeps cook_now off the hot path of a plain `import inventory`.
+    try:
+        from lib import cook_now
+        cook_now.write_note()
+    except Exception as e:
+        print(f"⚠️  Cook Now view write failed: {e}", file=sys.stderr)
+
 
 # Perishables this many days past their (estimated) expiry are assumed used or
 # tossed and dropped from inventory. Keeps the list self-cleaning so it never

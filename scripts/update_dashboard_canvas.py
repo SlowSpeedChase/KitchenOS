@@ -73,6 +73,17 @@ def update_canvas() -> bool:
     return True
 
 
+def refresh_cook_now() -> None:
+    """Regenerate Cook Now.md. This 6:15am cron is its reliable daily refresh —
+    the generate_meal_plan.py hook only fires when a new week file is created."""
+    try:
+        from lib import cook_now
+        cook_now.write_note()
+        print("Updated Cook Now.md")
+    except Exception as e:
+        print(f"Warning: Cook Now refresh failed: {e}", file=sys.stderr)
+
+
 if __name__ == "__main__":
     try:
         import setproctitle
@@ -80,3 +91,4 @@ if __name__ == "__main__":
     except ImportError:
         pass
     update_canvas()
+    refresh_cook_now()

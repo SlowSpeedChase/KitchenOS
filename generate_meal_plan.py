@@ -199,6 +199,9 @@ def main():
             print(f"Aged out {pruned} expired item(s) from inventory")
         use_it_up.write_note()
         print("Updated Use It Up.md")
+        from lib import cook_now
+        cook_now.write_note()
+        print("Updated Cook Now.md")
     except Exception as e:
         print(f"Warning: use-it-up refresh failed: {e}", file=sys.stderr)
 
