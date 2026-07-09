@@ -66,10 +66,22 @@ the aggregate coverage number smeared together:
    water` → "Pasta, dry" (219), `chocolate chips` → a cookie. Resolver ranking, cached bad.
    Biggest remaining accuracy risk; separate from portions/energy.
 
-RESIDUAL on #1: `usda_food_detail` still returns 0 energy for some Foundation entries
-(oils sid 748608/748278, almond flour 2261420) even with the Atwater fallback, while
-`usda_search` returns the right value. Fix: when detail energy is 0, fall back to the
-search candidate's per_100g (keep detail's portions). TODO.
+RESIDUAL on #1 (clarified 2026-07-09): the Atwater fallback works on detail too —
+almond flour detail returns 2047=622 and `usda_food_detail` now yields 622. The earlier
+"0" for almond flour was a **429 rate-limit** (transient None), not a parse gap.
+The genuine residual is narrower: a few USDA **Foundation** records (e.g. `Oil, olive,
+extra virgin` 748608, `Oil, canola` 748278) carry **no summary energy AND no summary
+fat** at all — only fatty-acid breakdowns — so no parser change recovers them. That is a
+**food-resolver quality** problem (pick a caloric sibling), NOT an energy-parse problem.
+
+Merged into problem class #3 (food-match quality) as the next scoped task:
+- Wrong semantic match: `apple`→"Strudel, apple", `reserved pasta water`→"Pasta, dry".
+- 0-nutrient Foundation pick: `olive oil`→748608 (0 kcal) when SR Legacy `Oil, olive,
+  salad or cooking` (171413) has 884.
+- **TRAP (do not ship a naive fix):** "prefer any caloric candidate" picks
+  `Anchovies, canned in olive oil` (206) for "olive oil" via word overlap. Needs real
+  ranking (semantic similarity / LLM resolver / description-mismatch penalty) + a clean
+  rate window to measure. Own effort, not a tail-of-session heuristic.
 
 ### Testing
 - [ ] Unit tests pass
