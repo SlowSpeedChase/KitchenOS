@@ -6,6 +6,7 @@ approximate spoon measures that carry real macros should map to real units.
 import pytest
 
 from lib.ingredient_parser import normalize_unit
+from lib.ingredient_text import clean_for_matching
 from lib.units import get_unit_family, to_grams
 
 
@@ -111,3 +112,26 @@ def test_red_pepper_flakes_teaspoon_is_small_but_nonzero():
     r = to_grams(1, "tsp", "red pepper flakes")
     assert r.method == "volume_density"
     assert 1 < r.grams < 6          # a tsp of flakes ~2-3 g
+
+
+# --- bucket #4: accent stripping for food matching ---------------------------
+
+@pytest.mark.parametrize("raw,expected", [
+    ("jalapeños", "jalapenos"),      # ñ broke the USDA match; jalapenos resolves
+    ("crème fraîche", "creme fraiche"),
+    ("café", "cafe"),
+    ("jalapeño", "jalapeno"),
+])
+def test_clean_for_matching_strips_accents(raw, expected):
+    assert clean_for_matching(raw) == expected
+
+
+def test_clean_for_matching_leaves_plain_ascii_untouched():
+    assert clean_for_matching("chicken breast") == "chicken breast"
+
+
+def test_piece_weight_matches_accented_item():
+    # accent-stripping must also apply on the units-table path, not just food match
+    r = to_grams(1, "whole", "jalapeños")
+    assert r.method == "piece_weight"
+    assert r.grams == pytest.approx(14, abs=1)

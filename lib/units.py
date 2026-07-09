@@ -38,6 +38,7 @@ from lib.ingredient_parser import (
     parse_amount,
     INFORMAL_UNITS as _PARSER_INFORMAL_UNITS,
 )
+from lib.ingredient_text import _strip_accents
 
 # --- Canonical conversion tables (everything resolves to grams) ---------------
 
@@ -180,7 +181,9 @@ def _load_json(path: Path) -> dict:
 
 
 def _normalize_item(item: str) -> str:
-    return (item or "").lower().strip().rstrip(",.;:")
+    # Strip accents so table lookups match the ASCII keys ('jalapeños' → jalapeno),
+    # mirroring the food-match path in lib.ingredient_text.clean_for_matching.
+    return _strip_accents(item or "").lower().strip().rstrip(",.;:")
 
 
 def _match_table(item: str, table: dict):
