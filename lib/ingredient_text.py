@@ -7,6 +7,7 @@ chat before word-overlap matching is the cheapest accuracy win available.
 from __future__ import annotations
 
 import re
+import unicodedata
 from pathlib import Path
 
 import yaml
@@ -48,8 +49,17 @@ def _strip_prep_tail(text: str) -> str:
     return ",".join(segments)
 
 
+def _strip_accents(text: str) -> str:
+    """Drop diacritics so accented food names match the ASCII USDA/OFF database
+    ('jalapeños' → 'jalapenos', 'crème' → 'creme'). Accents never carry food
+    identity for matching, and the DB descriptions are ASCII."""
+    return "".join(
+        c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c)
+    )
+
+
 def clean_for_matching(item: str) -> str:
-    text = item or ""
+    text = _strip_accents(item or "")
     text = re.sub(r"\*\(inferred\)\*", " ", text, flags=re.IGNORECASE)
     text = re.sub(r"\([^)]*\)", " ", text)          # parentheticals
     text = _strip_prep_tail(text)

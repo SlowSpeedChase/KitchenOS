@@ -6,7 +6,8 @@
     "bundle of green onions": "green onion",
     "persian cucumbers": "persian cucumber",
     "garlic": "garlic clove",
-    "cloves of garlic": "garlic clove"
+    "cloves of garlic": "garlic clove",
+    "cloves garlic": "garlic clove"
   },
   "egg": {"small": 38, "medium": 44, "large": 50, "extra large": 56, "default": 50},
   "egg white": 33,
@@ -46,5 +47,7 @@
   "bread": {"slice": 30, "default": 30},
   "tortilla": 50,
   "corn": {"ear": 100, "default": 100},
-  "ginger": {"knob": 15, "default": 15}
+  "ginger": {"knob": 15, "default": 15},
+  "cilantro": {"bunch": 25, "default": 25},
+  "parsley": {"bunch": 25, "default": 25}
 }

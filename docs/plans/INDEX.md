@@ -32,11 +32,11 @@ Templates: [`templates/DESIGN-DOC-TEMPLATE.md`](../../templates/DESIGN-DOC-TEMPL
 
 | Date | Doc | Branch | Notes |
 |---|---|---|---|
-| 2026-07-08 | [ingredient-data-cleaning](ingredient-data-cleaning.md) | `ingredient-grams-coverage` | Lift nutrition-engine grams coverage (measured median **0.58**) — the real blocker under both per-serving macro accuracy and servings inference. Starting with unit/piece-weight/density table gaps (surgical, low-risk). |
 | 2026-07-08 | [macro-meal-planner — design](2026-07-08-macro-meal-planner-design.md) · [plan](2026-07-08-macro-meal-planner-plan.md) | `macro-planner-phase-1/servings-backfill` | **PARKED.** Phase 1 (servings backfill) blocked: servings labels are not reliably inferable (see design-doc "Phase 1 finding"). Tooling/estimator built & committed on the branch; resume after grams coverage improves. |
 
 ## Done
 
 | Date | Doc | Completed | Notes |
 |---|---|---|---|
+| 2026-07-08 | [ingredient-data-cleaning](ingredient-data-cleaning.md) | 2026-07-09 | Phase A1 shipped: nutrition-engine grams coverage **0.563 → 0.647** (+8.4 pts, 30-recipe sample) via unit/piece-weight/density/accent table gaps. Full-vault `backfill_nutrition.py --force` applied (228 updated, 0 failed). Phase A2 (leaked amounts) + Phase B deferred, still tracked in the design doc. See [docs/completed/2026-07-09-ingredient-grams-coverage.md](../completed/2026-07-09-ingredient-grams-coverage.md). |
 | — | — | — | See [archive/INDEX.md](archive/INDEX.md) for pre-convention legacy plans. |

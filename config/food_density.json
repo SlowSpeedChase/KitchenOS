@@ -7,7 +7,12 @@
     "evoo": "olive oil",
     "scallions": "green onion",
     "parmigiano": "parmesan",
-    "parmesan cheese": "parmesan"
+    "parmesan cheese": "parmesan",
+    "heavy whipping cream": "heavy cream",
+    "whipping cream": "heavy cream",
+    "chili flakes": "red pepper flakes",
+    "crushed red pepper": "red pepper flakes",
+    "red chili flakes": "red pepper flakes"
   },
   "water": 1.0,
   "milk": 1.03,
@@ -71,5 +76,15 @@
   "baby spinach": 0.13,
   "spinach": 0.13,
   "lemon juice": 1.03,
-  "lime juice": 1.03
+  "lime juice": 1.03,
+  "red pepper flakes": 0.45,
+  "baking powder": 0.80,
+  "baking soda": 0.90,
+  "vanilla extract": 0.88,
+  "cream cheese": 1.0,
+  "ricotta": 1.0,
+  "salsa": 1.0,
+  "coconut milk": 1.0,
+  "almond milk": 1.0,
+  "oat milk": 1.0
 }

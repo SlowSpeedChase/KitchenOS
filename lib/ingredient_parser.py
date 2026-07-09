@@ -28,6 +28,11 @@ UNIT_ABBREVIATIONS = {
     "slice": "slice", "slices": "slice",
     "piece": "piece", "pieces": "piece",
     "can": "can", "cans": "can",
+    # Approximate spoon measures — carry real macros, so map to a real unit
+    # (a spoonful/dollop of peanut butter is ~90 kcal, not negligible).
+    "spoonful": "tbsp", "spoonfuls": "tbsp",
+    "dollop": "tbsp", "dollops": "tbsp",
+    "drizzle": "tsp", "drizzles": "tsp",
 }
 
 
