@@ -52,6 +52,25 @@ Phase 2 (gated LLM fallback) is a separate follow-up branch.
       re-backfill in a fresh window first, then assess the true residual.
 - [ ] All tests passing / no lint errors / LaunchAgent restarted post-merge
 
+### KEY FINDING (2026-07-09, from targeted 5-recipe inspection)
+Working real recipes line-by-line (not the vault) separated three distinct problems
+the aggregate coverage number smeared together:
+1. **Energy nutrient ID — FIXED (commit after 63e0b57).** USDA Foundation Foods report
+   energy under 2047/2048, not 1008; `_per_100g` read only 1008, so heavy cream / almond
+   flour / almond milk resolved with macros but **0 kcal** — the dominant calorie leak,
+   invisible to item/grams coverage. Verified end-to-end: heavy cream **0 → 807 kcal** in
+   Baked Mac & Cheese; milks 0 → 47. Refreshed the 5 affected cached foods for these recipes.
+2. **Grams/portion — partly fixed (Task 2).** Residue like `chia seeds 6 tbsp` still needs
+   a density entry.
+3. **Wrong food match — OPEN.** `apple` → "Strudel, apple" (493 kcal), `reserved pasta
+   water` → "Pasta, dry" (219), `chocolate chips` → a cookie. Resolver ranking, cached bad.
+   Biggest remaining accuracy risk; separate from portions/energy.
+
+RESIDUAL on #1: `usda_food_detail` still returns 0 energy for some Foundation entries
+(oils sid 748608/748278, almond flour 2261420) even with the Atwater fallback, while
+`usda_search` returns the right value. Fix: when detail energy is 0, fall back to the
+search candidate's per_100g (keep detail's portions). TODO.
+
 ### Testing
 - [ ] Unit tests pass
 - [ ] `backfill_nutrition.py --force` applied; coverage report before/after
