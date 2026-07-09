@@ -85,3 +85,29 @@ def test_unit_combine_does_not_invent_matches():
     # a count unit + an unknown food must stay unresolved, not match by accident
     r = to_grams(1, "clove", "dragonfruit zest")
     assert r.method == "unresolved"
+
+
+# --- bucket #3: densities ----------------------------------------------------
+
+@pytest.mark.parametrize("item", [
+    "heavy whipping cream",     # alias → heavy cream (had no substring match)
+    "red pepper flakes",
+    "baking powder",
+    "baking soda",
+    "vanilla extract",
+    "coconut milk",
+    "almond milk",
+    "cream cheese",
+    "ricotta",
+    "salsa",
+])
+def test_common_volume_items_resolve_to_grams(item):
+    r = to_grams(1, "cup", item)
+    assert r.method == "volume_density"
+    assert r.grams > 0
+
+
+def test_red_pepper_flakes_teaspoon_is_small_but_nonzero():
+    r = to_grams(1, "tsp", "red pepper flakes")
+    assert r.method == "volume_density"
+    assert 1 < r.grams < 6          # a tsp of flakes ~2-3 g
