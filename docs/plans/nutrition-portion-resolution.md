@@ -1,8 +1,32 @@
 # Nutrition Portion Resolution Design
 
-**Status:** Ready
+**Status:** Phase 1 shipped (2026-07-09) — follow-ups tracked below
 **Created:** 2026-07-09
 **Updated:** 2026-07-09
+
+## Shipped (branch `portion-resolution`, merged 2026-07-09)
+
+The investigation reframed the problem: the dominant calorie leak was **food-data
+quality**, not portions. Five fixes, all TDD, full suite green:
+
+1. **FDC household portions in the volume path** — `to_grams` ignored `usda_portions`
+   for volume units; +179 previously-dead lines (offline-measured).
+2. **USDA 429 backoff** — `usda_search`/`usda_food_detail` retried instead of swallowing
+   rate-limits into `[]` (which made real foods look "not found").
+3. **Energy nutrient-ID fix (dominant)** — Foundation foods report energy under 2047/2048,
+   not 1008; foods resolved with macros but **0 kcal**. Verified: heavy cream 0→807 in
+   Mac & Cheese; per-recipe totals +31–366% on 5 real recipes.
+4. **Offline (cache-only) resolution mode** + `calorie_coverage_report.py --offline` —
+   rate-limit-immune measurement.
+5. **Caloric-sanity guard** — rescue a 0-kcal Foundation pick with a caloric sibling
+   (Jaccard-ranked, avoids the "olive oil → anchovies" trap).
+
+**Follow-ups (not done — need a fresh USDA rate window and/or deeper work):**
+- Vault-wide re-backfill (`--force`) in a clean window to realize the fixes across all
+  recipes, then the true calorie-coverage number (baseline 0.47; blocked by rate limits).
+- Food-match depth: synonym normalization (`unsalted` vs `without salt`), semantic
+  mismatch (`apple`→"Strudel, apple"), plural/stemming. Own effort.
+- Spice-negligible-by-food (Task 1) and the food-not-found tail.
 
 > Supersedes the informal "Phase A2 = leaked-amount cleanup" as the next nutrition
 > priority. Diagnosis (2026-07-09) shows portion resolution, not text cleanup, is the

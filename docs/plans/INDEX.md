@@ -32,12 +32,12 @@ Templates: [`templates/DESIGN-DOC-TEMPLATE.md`](../../templates/DESIGN-DOC-TEMPL
 
 | Date | Doc | Branch | Notes |
 |---|---|---|---|
-| 2026-07-09 | [nutrition-portion-resolution](nutrition-portion-resolution.md) | `portion-resolution` | **Phase 1 (deterministic).** Make the existing FDC-portion/density machinery land for the 374 quantified/food-known lines. Baseline: calorie coverage ~0.47, fully-covered 7%. LLM fallback deferred to Phase 2. |
 | 2026-07-08 | [macro-meal-planner — design](2026-07-08-macro-meal-planner-design.md) · [plan](2026-07-08-macro-meal-planner-plan.md) | `macro-planner-phase-1/servings-backfill` | **PARKED.** Phase 1 (servings backfill) blocked: servings labels are not reliably inferable (see design-doc "Phase 1 finding"). Tooling/estimator built & committed on the branch; resume after grams coverage improves. |
 
 ## Done
 
 | Date | Doc | Completed | Notes |
 |---|---|---|---|
+| 2026-07-09 | [nutrition-portion-resolution](nutrition-portion-resolution.md) | 2026-07-09 | **Phase 1 shipped.** 5 fixes (FDC volume portions, 429 backoff, energy nutrient-ID, offline meter, caloric-sanity guard). Dominant bug was food-data quality, not portions: energy under Atwater IDs → 0-kcal foods. Verified +31–366% on 5 recipes. Follow-ups (vault re-backfill, food-match depth) tracked in the doc. See [docs/completed/2026-07-09-portion-resolution.md](../completed/2026-07-09-portion-resolution.md). |
 | 2026-07-08 | [ingredient-data-cleaning](ingredient-data-cleaning.md) | 2026-07-09 | Phase A1 shipped: nutrition-engine grams coverage **0.563 → 0.647** (+8.4 pts, 30-recipe sample) via unit/piece-weight/density/accent table gaps. Full-vault `backfill_nutrition.py --force` applied (228 updated, 0 failed). Phase A2 (leaked amounts) + Phase B deferred, still tracked in the design doc. See [docs/completed/2026-07-09-ingredient-grams-coverage.md](../completed/2026-07-09-ingredient-grams-coverage.md). |
 | — | — | — | See [archive/INDEX.md](archive/INDEX.md) for pre-convention legacy plans. |
