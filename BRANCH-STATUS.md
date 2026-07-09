@@ -83,6 +83,25 @@ Merged into problem class #3 (food-match quality) as the next scoped task:
   ranking (semantic similarity / LLM resolver / description-mismatch penalty) + a clean
   rate window to measure. Own effort, not a tail-of-session heuristic.
 
+### REMEASURE (2026-07-09, +1h, targeted per your "stop full-vault" note)
+Energy-ID fix validated on 5 real recipes (before = 0-kcal-bug state, after = fix +
+refreshed cache), cache-only measurement:
+- Almond Flour Pancakes 217 → **1012** (+366%; flour was the whole recipe at 0 kcal)
+- Cottage Cheese Cookie Dough 764 → 1353 (+77%)
+- Baked Mac & Cheese 2637 → 3445 (+31%; heavy cream 0→807)
+- Chia Pudding 594 → 642 (+8%); Chili Garlic Noodles 199 → 199 (no bugged foods)
+
+Scope of the bug: **46 / 411 cached usda foods (11%) have the signature** (0 kcal, macros
+> 0) — calorie-dense staples (flours, butter, cheeses, beans, oats, lentils, potatoes), so
+the vault-wide gain from 0.47 is expected to be large.
+
+OPERATIONAL FINDING: a clean vault-wide number is gated by USDA's borderline ~1k/hr limit
+— refreshing all 46 + the meter's live lookups in one burst keeps re-tipping it (the
+`STILL 0` false-negatives were throttles, not real zeros). Path forward: **paced**
+re-resolution (small batches) or an **offline cache-only meter** (Task R part 2), NOT
+another full-vault hammer. Still-visible wrong-match overcounts (apple→strudel 493, pasta
+water→pasta 219) remain the separate food-match-quality task.
+
 ### Testing
 - [ ] Unit tests pass
 - [ ] `backfill_nutrition.py --force` applied; coverage report before/after
