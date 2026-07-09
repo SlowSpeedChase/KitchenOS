@@ -54,6 +54,18 @@ reasons, **not** for lack of a feature:
 Portion *data availability* is **not** the bottleneck: **90% of cached food records
 (1636/1819) already carry FDC portions.** The gap is matching + density + fallback.
 
+4. **USDA rate-limiting silently corrupts backfill + measurement (found 2026-07-09).**
+   `food_db.usda_search` swallows any non-200 into `[]` — including HTTP 429
+   `OVER_RATE_LIMIT`. USDA FDC's keyed limit is ~1,000 req/hour; a full-vault backfill
+   (228 recipes × several foods each) plus repeated coverage runs blows through it, so
+   **resolvable foods return empty, never cache, and land in the "food-not-found"
+   bucket** — inflating it with transient failures, not real gaps. Two consequences:
+   (a) `usda_search`/`usda_food_detail` need **429 detection + backoff/retry** (and
+   should distinguish "no match" from "throttled"); (b) the coverage meter must run
+   **offline (cache-only)** so measurement never depends on the live API. Re-running the
+   backfill within a fresh rate window will recover an unknown slice of the 158
+   food-not-found lines for free.
+
 ---
 
 ## Solution
@@ -130,6 +142,13 @@ line (amount, unit, item)
 - **Phase 1 (deterministic, no LLM):** broaden `_match_portion`, add volume/density path,
   spice-negligible set, re-fetch detail for the 183 portion-less records. Measure. This is
   the safe, offline core and should recover a large share of the 374 on its own.
+  - **DONE (2026-07-09):** volume path now consults FDC household portions
+    (`to_grams` used density-only and ignored `usda_portions` for volume units).
+    Offline-measured: **+179 previously-dead volume lines** resolved from cache, no LLM,
+    no new data. Commit `33ee3fc`.
+  - **429 backoff** in `usda_search`/`usda_food_detail` + a cache-only mode for the meter
+    (see root cause #4). Do this before the next backfill so the rate limit stops
+    dropping real foods.
 - **Phase 2 (gated LLM):** enable `portion_provider="claude"` for quantified material
   residue; **first re-measure the "52% error" claim on the addressable quantified set** —
   if it's still high, keep LLM confined to count units where it's strongest and lean on

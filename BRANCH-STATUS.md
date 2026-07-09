@@ -27,23 +27,26 @@ Phase 2 (gated LLM fallback) is a separate follow-up branch.
 ## Stages
 
 ### Dev
-- [ ] **Tests written first** (superpowers:test-driven-development)
-- [ ] **Task 0 — baseline meter:** promote scratch validator → `scripts/calorie_coverage_report.py`
-      (item coverage, fully-covered %, est. calorie coverage, grams-failed-by-bucket).
-      Locks in the 0.47 / 374 baseline for before/after.
-- [ ] **Task 1 — spices → negligible-by-food:** food-keyed seasoning set (or shared
-      spice density ≈ 2.3 g/tsp). ~474 lines, ~0 kcal impact — correctness + de-noise.
-- [ ] **Task 2 — widen `_match_portion`:** unit synonyms (tbsp/tablespoon, tsp, cup,
-      piece/whole/each); ignore non-household labels (`RACC`, gram-only); match by unit family.
-- [ ] **Task 3 — volume→density path:** when unit family is volume and no household
-      portion matches, convert via `density_g_per_ml` (record) → `config/food_density.json`.
-      Extend density coverage for the common volume foods in the residue.
-- [ ] **Task 4 — re-fetch detail for portion-less records:** the ~183/1819 (10%) cached
-      records lacking portions (portions live on `usda_food_detail`, not search).
-- [ ] Core implementation complete
-- [ ] All tests passing
-- [ ] No linting/type errors
-- [ ] LaunchAgent restarted after lib/ edits (post-merge to main)
+- [x] **Task 0 — baseline meter:** `scripts/calorie_coverage_report.py` committed.
+      Baseline: item 0.632, calorie ~0.47, 374 portion failures, 7% fully-covered.
+- [x] **Task 2 — FDC portions in the volume path** (TDD, commit `33ee3fc`): `to_grams`
+      volume branch used density-only and ignored `usda_portions`. Now falls back to
+      `_match_portion`. **Offline-measured: +179 previously-dead volume lines resolved**
+      (of 536 volume-unresolved: 179 recovered, 93 record-but-no-portion, 264 no record).
+      4 new tests; full suite 1130 passed.
+- [ ] **Task R — USDA 429 backoff + offline meter** (NEW, found 2026-07-09): `usda_search`
+      swallows HTTP 429 into `[]`; repeated full-vault runs exhaust USDA's ~1k/hr limit,
+      so resolvable foods drop into "food-not-found". Add 429 detect+backoff; make the
+      meter cache-only. **Do before any re-backfill.** Blocks a clean live calorie number
+      until the rate window resets.
+- [ ] **Task 3 — volume→density path** for the 93 record-but-no-portion volume lines
+      (RACC-only / no household portion). Reuses the existing volume-density path.
+- [ ] **Task 1 — spices → negligible-by-food:** ~0 kcal; de-noise + Phase-2 LLM gating.
+      Lower priority (no calorie impact); curate conservatively (avoid `red pepper`
+      = bell pepper, `nutritional yeast` = real macros).
+- [ ] **Task 4 — food-not-found tail (264):** partly rate-limit casualties (see Task R);
+      re-backfill in a fresh window first, then assess the true residual.
+- [ ] All tests passing / no lint errors / LaunchAgent restarted post-merge
 
 ### Testing
 - [ ] Unit tests pass
