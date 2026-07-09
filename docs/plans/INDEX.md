@@ -26,7 +26,7 @@ Templates: [`templates/DESIGN-DOC-TEMPLATE.md`](../../templates/DESIGN-DOC-TEMPL
 
 | Date | Doc | Notes |
 |---|---|---|
-| — | — | (none) |
+| 2026-07-09 | [nutrition-batch-ledger](nutrition-batch-ledger.md) | **Phase 2** of nutrition accuracy (Fable reframe: batch, not runtime parsing). Calorie coverage stuck at 0.571 after Phase 1; the leak is portion conversion (322 grams-failed) + not-found (95). Plan: Atwater energy fallback → **bulk FNDDS into local SQLite** (kills runtime USDA + rate limits, supplies household portions) → **one-time LLM-drafted resolution ledger** (band-validated, Obsidian review queue) → calorie-weighted metric + recipe sanity checks. Target 0.571 → ≥0.90. Supersedes the deferred gated-LLM/hand-density approach. |
 
 ## In Progress
 
