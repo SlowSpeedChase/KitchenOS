@@ -125,7 +125,8 @@ def normalize_ingredient_key(item: str) -> str:
     return units._normalize_item(apply_aliases(clean_for_matching(item)))
 
 
-def _resolve_food(item: str, *, use_cache: bool, resolution_provider: str):
+def _resolve_food(item: str, *, use_cache: bool, resolution_provider: str,
+                  offline: bool = False):
     """Resolve an ingredient to a FoodRecord-like object + (confidence, resolver).
 
     Returns (record_dict, confidence, resolver) or (None, 0.0, "unresolved").
@@ -149,6 +150,11 @@ def _resolve_food(item: str, *, use_cache: bool, resolution_provider: str):
             cached = inventory_db.get_food_cache(norm, res["source"])
             if cached:
                 return cached, res["confidence"], "cache"
+
+    # Offline: never touch the network. A cache miss stays unresolved -- lets the
+    # coverage meter measure straight from cache without tipping USDA's rate limit.
+    if offline:
+        return None, 0.0, "unresolved"
 
     # 2. USDA candidates.
     candidates = food_db.usda_search(norm)
@@ -260,6 +266,7 @@ def calculate_recipe_nutrition(
     use_llm: bool = True,
     resolution_provider: Optional[str] = None,
     portion_provider: Optional[str] = None,
+    offline: bool = False,
 ) -> Optional[RecipeNutritionResult]:
     """Compute per-serving nutrition for a recipe, gram-based and auditable.
 
@@ -313,7 +320,8 @@ def calculate_recipe_nutrition(
             countable += 1
 
         record, food_conf, resolver = _resolve_food(
-            item, use_cache=use_cache, resolution_provider=resolution_provider)
+            item, use_cache=use_cache, resolution_provider=resolution_provider,
+            offline=offline)
 
         if resolver == "human-negligible":
             # A human explicitly pinned this line as contributing nothing (e.g.

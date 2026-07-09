@@ -12,7 +12,7 @@ def _stub_resolvers(monkeypatch, resolves: dict, confidences: dict = None):
     confidences: optional item -> food-resolution confidence override (default 0.8).
     """
     confidences = confidences or {}
-    def fake_resolve_food(item, *, use_cache, resolution_provider):
+    def fake_resolve_food(item, *, use_cache, resolution_provider, offline=False):
         per = resolves.get(item)
         if per is None:
             return None, 0.0, "unresolved"
@@ -98,7 +98,7 @@ def test_human_negligible_resolves_with_zero_contribution(monkeypatch, tmp_db):
     """A human-pinned negligible line must count as resolved (coverage 1.0,
     not left in ``unmatched``) even though it carries a volume unit with no
     density — it should never reach grams resolution at all."""
-    def fake_resolve_food(item, *, use_cache, resolution_provider):
+    def fake_resolve_food(item, *, use_cache, resolution_provider, offline=False):
         if item == "unicorn dust":
             record = {"query_norm": item, "source": "none", "source_id": "0",
                       "description": "negligible (human)",

@@ -104,7 +104,7 @@ def _contrib_cal(li):
     return (c.get("calories", 0) if isinstance(c, dict) else getattr(c, "calories", 0)) or 0
 
 
-def collect(recipes_dir, limit=None):
+def collect(recipes_dir, limit=None, offline=False):
     recs = []
     for md in collect_all_recipes(recipes_dir):
         parsed = parse_recipe_file(md.read_text(encoding="utf-8"))
@@ -113,7 +113,7 @@ def collect(recipes_dir, limit=None):
         ings = extract_ingredients(parsed["body"])
         if not ings:
             continue
-        res = calculate_recipe_nutrition(ings, 1)
+        res = calculate_recipe_nutrition(ings, 1, offline=offline)
         if res:
             recs.append((md.stem, res.line_items or []))
         if limit and len(recs) >= limit:
@@ -160,9 +160,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=None, help="first-N recipes (default: all)")
     ap.add_argument("--verbose", action="store_true")
+    ap.add_argument("--offline", action="store_true",
+                    help="cache-only: no live USDA/OFF lookups (rate-limit-immune)")
     args = ap.parse_args()
 
-    recs = collect(paths.recipes_dir(), args.limit)
+    recs = collect(paths.recipes_dir(), args.limit, offline=args.offline)
     if args.verbose:
         for name, items in recs:
             n = len(items)

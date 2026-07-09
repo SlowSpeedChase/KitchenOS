@@ -24,6 +24,31 @@ def _engine(ingredients, servings, **kw):
     return calculate_recipe_nutrition(ingredients, servings, **kw)
 
 
+class TestOfflineMode:
+    def test_offline_skips_network_on_cache_miss(self):
+        # offline=True must never hit the USDA/OFF network -- lets the coverage
+        # meter measure straight from cache without tipping USDA's rate limit.
+        with patch("lib.food_db.usda_search") as us, \
+             patch("lib.food_db.off_search") as offs:
+            rec, conf, resolver = _resolve_food(
+                "uncached food xyz", use_cache=True,
+                resolution_provider="none", offline=True)
+        us.assert_not_called()
+        offs.assert_not_called()
+        assert rec is None
+        assert resolver == "unresolved"
+
+    def test_calculate_recipe_nutrition_accepts_offline(self):
+        # Threaded through the public entry point; no network on cache miss.
+        with patch("lib.food_db.usda_search") as us, \
+             patch("lib.food_db.off_search") as offs:
+            calculate_recipe_nutrition(
+                [{"item": "uncached food xyz", "amount": "1", "unit": "cup"}],
+                1, use_cache=True, offline=True)
+        us.assert_not_called()
+        offs.assert_not_called()
+
+
 class TestScaling:
     def test_mass_scales_per_100g(self):
         # 200 g chicken breast @ 165 kcal/100g → 330 kcal.
