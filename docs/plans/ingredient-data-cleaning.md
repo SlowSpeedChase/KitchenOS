@@ -1,19 +1,22 @@
 # Ingredient Data Cleaning — Plan
 
-**Status:** In Progress
-**Branch:** `ingredient-grams-coverage`
-**Updated:** 2026-07-08
+**Status:** Phase A1 shipped; remainder deferred (lower priority)
+**Updated:** 2026-07-09
 
-> **2026-07-08 focus:** the immediate goal is lifting nutrition-engine **grams coverage**
-> (measured median **0.58** across the vault). Per-recipe inspection shows the losses are
-> mostly table gaps, tackled in this order (surgical, low-risk first):
-> 1. Informal units not recognized (`a sprinkle`, `spoonful`) — add to `INFORMAL_UNITS`
->    (→negligible) or map to a real unit where they carry real macros (`spoonful`→`tbsp`).
-> 2. Missing piece weights (`garlic clove`, `garlic head`, `cilantro`).
-> 3. Missing densities (`heavy cream`, `red pepper flakes`).
-> 4. Food-not-found aliases (plurals/spellings: `jalapeños`→`jalapeno`).
-> Amount-leaked-into-item cases (Phase A2) come after these. Measured with a fixed-sample
-> coverage meter; full-vault `--force` only once coverage climbs.
+> **2026-07-09 update — priority pivot.** Phase A1 (table gaps: informal units, piece
+> weights, densities, accents) **shipped** on the merged `ingredient-grams-coverage`
+> branch (item coverage 0.56→0.65; see `docs/completed/2026-07-09-ingredient-grams-coverage.md`).
+> A follow-up diagnosis then showed **this plan is not the load-bearing lever.** Measured
+> **calorie-weighted** coverage is only **~0.47**, and 374 of the material misses are
+> quantified, food-known lines that fail at *portion resolution* — a matching/density/
+> fallback gap, not a text-cleanup gap. That work now lives in
+> **[nutrition-portion-resolution.md](nutrition-portion-resolution.md)** and takes
+> priority. The Phase A2 (leaked-amount) / Phase B (item-name) cleanup below is real but
+> **secondary** — pursue it after portion resolution moves calorie coverage.
+>
+> **Original 2026-07-08 framing (for reference):** lift nutrition-engine grams coverage
+> (median 0.58) via table gaps in this order — informal units, piece weights, densities,
+> food-not-found aliases; amount-leaked-into-item (Phase A2) after.
 
 ## Context
 

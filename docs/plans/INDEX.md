@@ -26,7 +26,7 @@ Templates: [`templates/DESIGN-DOC-TEMPLATE.md`](../../templates/DESIGN-DOC-TEMPL
 
 | Date | Doc | Notes |
 |---|---|---|
-| — | — | (none) |
+| 2026-07-09 | [nutrition-portion-resolution](nutrition-portion-resolution.md) | The real lever under macro accuracy. Measured: calorie-weighted coverage **~0.47**, only **7%** of recipes fully covered. Root cause (verified) is portion resolution, not table gaps — 374 quantified, food-known lines fail because `_match_portion` is too narrow, volume units need a density path, and `portion_provider` defaults to `"none"` (no fallback). Supersedes the "leaked-amount" framing of Phase A2. |
 
 ## In Progress
 
