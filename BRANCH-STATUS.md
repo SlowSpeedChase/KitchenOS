@@ -31,17 +31,23 @@ coverage climbs meaningfully.
 ## Stages
 
 ### Dev
-- [ ] Tests written first (superpowers:test-driven-development)
-- [ ] Bucket 1: informal units
-- [ ] Bucket 2: piece weights
-- [ ] Bucket 3: densities
-- [ ] Bucket 4: food-not-found aliases
-- [ ] LaunchAgent restarted after lib/units.py edits (API holds it in memory)
+- [x] Tests written first (superpowers:test-driven-development) — 30 coverage tests
+- [x] Bucket 1: informal units (spoonful/dollop→tbsp; union INFORMAL_UNITS)
+- [x] Bucket 2: piece weights (unit-aware lookup; cilantro/parsley)
+- [x] Bucket 3: densities (cream/flakes/baking/vanilla/milks/etc.)
+- [x] Bucket 4: accents (jalapeños) — food match + units table
+- [ ] LaunchAgent restarted after lib/units.py edits (pending merge to main)
 
 ### Testing
-- [ ] Unit tests pass
-- [ ] Coverage meter shows a meaningful climb from 0.58 baseline
-- [ ] Spot-check macros on a sample after `backfill_nutrition.py --force`
+- [x] Unit tests pass — full suite 1127 passed
+- [x] Coverage meter: 0.563 → 0.647 (+8.4 pts) on a 30-recipe sample
+- [x] Spot-check macros after `--force`: Creamy Lentil 105→190 kcal (undercount
+      fixed); Garlic Toast unchanged (already clean). Backfill: 228 updated, 0 failed.
+
+### Not in this branch (deferred, tracked in the plan)
+- Phase A2: amount/unit leaked into item text ("(estimated) 1/2 cup parmesan",
+  "to taste dollop yogurt") — the biggest remaining coverage lever.
+- Phase B: `*(inferred)*` / doubled-word item cleanup; long-tail table entries.
 
 ### Docs
 - [ ] docs/plans/INDEX.md updated
