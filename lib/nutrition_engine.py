@@ -94,6 +94,38 @@ def _words(text: str) -> set:
     return set(re.findall(r"[a-z]+", (text or "").lower()))
 
 
+def _prefer_caloric_match(item_norm: str, chosen_idx: int, candidates: list) -> int:
+    """Rescue a 0-kcal pick by switching to a caloric candidate that still matches.
+
+    Some USDA Foundation records carry no summary energy (oils, butter, some
+    produce), so the best *name* match can resolve to 0 kcal -- a silent calorie
+    leak. When that happens, prefer a candidate with calories > 0, ranked by
+    Jaccard word similarity to the item. Jaccard (intersection / union), not raw
+    overlap, penalizes candidates padded with unrelated words -- so "olive oil"
+    prefers "Oil, olive, salad or cooking" over "Anchovies, canned in olive oil".
+    Only switches on a reasonably specific match (>= 0.3) so we never force a bad
+    match just to get a number.
+    """
+    if candidates[chosen_idx].per_100g.calories > 0:
+        return chosen_idx
+    item_words = _words(item_norm)
+    if not item_words:
+        return chosen_idx
+    best = None
+    for i, c in enumerate(candidates):
+        if c.per_100g.calories <= 0:
+            continue
+        cw = _words(c.description)
+        if not cw:
+            continue
+        jaccard = len(item_words & cw) / len(item_words | cw)
+        if best is None or jaccard > best[0]:
+            best = (jaccard, i)
+    if best and best[0] >= 0.3:
+        return best[1]
+    return chosen_idx
+
+
 def _deterministic_pick(item_norm: str, candidates: list) -> Optional[int]:
     """Pick the candidate with the most word overlap with the item.
 
@@ -171,6 +203,9 @@ def _resolve_food(item: str, *, use_cache: bool, resolution_provider: str,
                 chosen_idx, confidence, resolver = picked[0], picked[1], f"llm-{resolution_provider}"
         if chosen_idx is None:
             chosen_idx, confidence, resolver = 0, 0.4, "fallback"
+
+        # Rescue 0-kcal Foundation picks (oils/butter/etc.) with a caloric sibling.
+        chosen_idx = _prefer_caloric_match(norm, chosen_idx, candidates)
 
         fdc_id = candidates[chosen_idx].source_id
         detail = food_db.usda_food_detail(fdc_id)

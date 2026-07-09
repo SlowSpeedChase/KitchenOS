@@ -49,6 +49,11 @@ class _Rec:
 
 
 class _Per:
+    calories = 100.0
+    protein = 5.0
+    carbs = 10.0
+    fat = 2.0
+
     def to_dict(self):
         return {"calories": 100.0, "protein": 5.0, "carbs": 10.0, "fat": 2.0}
 

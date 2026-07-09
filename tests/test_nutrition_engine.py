@@ -24,6 +24,30 @@ def _engine(ingredients, servings, **kw):
     return calculate_recipe_nutrition(ingredients, servings, **kw)
 
 
+class TestPreferCaloricMatch:
+    def test_switches_off_zero_kcal_pick_to_caloric_sibling(self):
+        # Chosen candidate is a 0-kcal Foundation record; prefer a caloric one that
+        # still matches well.
+        from lib.nutrition_engine import _prefer_caloric_match
+        cands = [
+            _rec("Oil, olive, extra virgin", cal=0),            # chosen (Foundation, 0)
+            _rec("Oil, olive, salad or cooking", cal=884),      # caloric, good match
+            _rec("Anchovies, canned in olive oil, with salt", cal=210),  # caloric, poor match
+        ]
+        assert _prefer_caloric_match("olive oil", 0, cands) == 1  # not the anchovies
+
+    def test_does_not_switch_off_a_caloric_pick(self):
+        from lib.nutrition_engine import _prefer_caloric_match
+        cands = [_rec("Apple, raw", cal=52), _rec("Strudel, apple", cal=274)]
+        assert _prefer_caloric_match("apple", 0, cands) == 0
+
+    def test_keeps_pick_when_no_similar_caloric_candidate(self):
+        # Don't force a bad match just to get calories.
+        from lib.nutrition_engine import _prefer_caloric_match
+        cands = [_rec("Oil, flax", cal=0), _rec("Bread, white", cal=266)]
+        assert _prefer_caloric_match("flax oil", 0, cands) == 0
+
+
 class TestOfflineMode:
     def test_offline_skips_network_on_cache_miss(self):
         # offline=True must never hit the USDA/OFF network -- lets the coverage
