@@ -2,8 +2,8 @@
 
 **Created:** 2026-07-08
 **Design Doc:** docs/plans/ingredient-data-cleaning.md
-**Current Stage:** dev
-**Last Rebased:** 2026-07-08
+**Current Stage:** ready
+**Last Rebased:** 2026-07-09 (0 behind main)
 
 ## Overview
 
@@ -36,7 +36,7 @@ coverage climbs meaningfully.
 - [x] Bucket 2: piece weights (unit-aware lookup; cilantro/parsley)
 - [x] Bucket 3: densities (cream/flakes/baking/vanilla/milks/etc.)
 - [x] Bucket 4: accents (jalapeños) — food match + units table
-- [ ] LaunchAgent restarted after lib/units.py edits (pending merge to main)
+- [x] LaunchAgent restarted after lib/units.py edits (done post-merge to main)
 
 ### Testing
 - [x] Unit tests pass — full suite 1127 passed
@@ -50,11 +50,12 @@ coverage climbs meaningfully.
 - Phase B: `*(inferred)*` / doubled-word item cleanup; long-tail table entries.
 
 ### Docs
-- [ ] docs/plans/INDEX.md updated
-- [ ] CLAUDE.md / OPERATIONS.md if a new command/invariant is added
+- [x] docs/plans/INDEX.md updated — row moved to Done
+- [x] Archive summary: docs/completed/2026-07-09-ingredient-grams-coverage.md
+- [x] CLAUDE.md / OPERATIONS.md — no new command/invariant (grams_coverage_report.py is an ad-hoc measurement script, not an operational command)
 
 ### Ready
-- [ ] Rebased on main; final test pass; BRANCH-STATUS complete
+- [x] Rebased on main; final test pass (1127 passed); BRANCH-STATUS complete
 
 ---
 
