@@ -20,7 +20,7 @@ Templates: [`templates/DESIGN-DOC-TEMPLATE.md`](../../templates/DESIGN-DOC-TEMPL
 
 | Date | Doc | Notes |
 |---|---|---|
-| — | — | (none) |
+| 2026-07-09 | [purchase-based-nutrition](purchase-based-nutrition.md) | Use the user's actual purchases to override generic USDA with **branded** label nutrition (more personal + serving-gram data). Blocked: receipts carry no nutrition (only identify the product → still needs OFF/branded lookup) and `purchases`/`inventory` are currently 0 rows. Augments, doesn't replace, the USDA engine. Revisit once receipt ingest is flowing. |
 
 ## Ready
 
