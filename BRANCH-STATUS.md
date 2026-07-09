@@ -34,11 +34,15 @@ Phase 2 (gated LLM fallback) is a separate follow-up branch.
       `_match_portion`. **Offline-measured: +179 previously-dead volume lines resolved**
       (of 536 volume-unresolved: 179 recovered, 93 record-but-no-portion, 264 no record).
       4 new tests; full suite 1130 passed.
-- [ ] **Task R — USDA 429 backoff + offline meter** (NEW, found 2026-07-09): `usda_search`
-      swallows HTTP 429 into `[]`; repeated full-vault runs exhaust USDA's ~1k/hr limit,
-      so resolvable foods drop into "food-not-found". Add 429 detect+backoff; make the
-      meter cache-only. **Do before any re-backfill.** Blocks a clean live calorie number
-      until the rate window resets.
+- [x] **Task R (part 1) — USDA 429 backoff** (TDD): `usda_search`/`usda_food_detail`
+      now retry HTTP 429 with exponential backoff via `_get_json` instead of swallowing
+      it into `[]`. 3 new tests (retry-then-succeed, exhausted→[], non-429 not retried);
+      full suite 1132 passed. **Re-backfill in a fresh rate window will now stop dropping
+      real foods.**
+- [ ] **Task R (part 2) — offline/cache-only meter** so measurement never depends on the
+      live API (understates while the window is exhausted). Still pending.
+      NOTE: a clean live calorie number needs the ~1h USDA window to reset, then a
+      re-backfill (now safe with the backoff), then re-run the meter.
 - [ ] **Task 3 — volume→density path** for the 93 record-but-no-portion volume lines
       (RACC-only / no household portion). Reuses the existing volume-density path.
 - [ ] **Task 1 — spices → negligible-by-food:** ~0 kcal; de-noise + Phase-2 LLM gating.

@@ -17,6 +17,7 @@ error — nutrition is best-effort and must never crash extraction.
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -35,6 +36,34 @@ NUTRIENT_FAT = 1004
 NUTRIENT_CARBS = 1005
 
 _TIMEOUT = 10
+# USDA FDC rate-limits (~1k req/hr) return HTTP 429. A silent [] there makes a
+# throttled-but-resolvable food look "not found" and corrupts backfills, so retry
+# transient 429s with exponential backoff before giving up.
+_MAX_RETRIES = 3
+_BACKOFF_BASE = 0.5
+
+
+def _get_json(url: str, params: dict) -> Optional[dict]:
+    """GET returning parsed JSON, or None. Retries HTTP 429 with backoff.
+
+    Non-429 errors (4xx/5xx), request exceptions, and unparseable bodies return
+    None immediately (no retry) -- only rate-limits are transient enough to retry.
+    """
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            resp = requests.get(url, params=params, timeout=_TIMEOUT)
+        except requests.RequestException:
+            return None
+        if resp.status_code == 429 and attempt < _MAX_RETRIES:
+            time.sleep(_BACKOFF_BASE * (2 ** attempt))
+            continue
+        if resp.status_code != 200:
+            return None
+        try:
+            return resp.json()
+        except ValueError:
+            return None
+    return None
 
 
 @dataclass
@@ -108,13 +137,10 @@ def usda_search(query: str, page_size: int = 5) -> list[FoodRecord]:
         "dataType": ["Foundation", "SR Legacy"],
         "api_key": _usda_api_key(),
     }
-    try:
-        resp = requests.get(USDA_SEARCH_URL, params=params, timeout=_TIMEOUT)
-        if resp.status_code != 200:
-            return []
-        foods = resp.json().get("foods", [])
-    except (requests.RequestException, ValueError):
+    data = _get_json(USDA_SEARCH_URL, params)
+    if data is None:
         return []
+    foods = data.get("foods", [])
 
     records = []
     for food in foods:
@@ -131,16 +157,11 @@ def usda_food_detail(fdc_id: str) -> Optional[FoodRecord]:
     """Fetch full USDA detail (per-100g nutrients + foodPortions)."""
     if not fdc_id:
         return None
-    try:
-        resp = requests.get(
-            USDA_DETAIL_URL.format(fdc_id=fdc_id),
-            params={"api_key": _usda_api_key()},
-            timeout=_TIMEOUT,
-        )
-        if resp.status_code != 200:
-            return None
-        food = resp.json()
-    except (requests.RequestException, ValueError):
+    food = _get_json(
+        USDA_DETAIL_URL.format(fdc_id=fdc_id),
+        {"api_key": _usda_api_key()},
+    )
+    if food is None:
         return None
 
     return FoodRecord(
