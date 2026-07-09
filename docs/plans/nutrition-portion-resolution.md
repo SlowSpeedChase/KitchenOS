@@ -1,8 +1,32 @@
 # Nutrition Portion Resolution Design
 
-**Status:** Ready
+**Status:** Phase 1 shipped (2026-07-09) — follow-ups tracked below
 **Created:** 2026-07-09
 **Updated:** 2026-07-09
+
+## Shipped (branch `portion-resolution`, merged 2026-07-09)
+
+The investigation reframed the problem: the dominant calorie leak was **food-data
+quality**, not portions. Five fixes, all TDD, full suite green:
+
+1. **FDC household portions in the volume path** — `to_grams` ignored `usda_portions`
+   for volume units; +179 previously-dead lines (offline-measured).
+2. **USDA 429 backoff** — `usda_search`/`usda_food_detail` retried instead of swallowing
+   rate-limits into `[]` (which made real foods look "not found").
+3. **Energy nutrient-ID fix (dominant)** — Foundation foods report energy under 2047/2048,
+   not 1008; foods resolved with macros but **0 kcal**. Verified: heavy cream 0→807 in
+   Mac & Cheese; per-recipe totals +31–366% on 5 real recipes.
+4. **Offline (cache-only) resolution mode** + `calorie_coverage_report.py --offline` —
+   rate-limit-immune measurement.
+5. **Caloric-sanity guard** — rescue a 0-kcal Foundation pick with a caloric sibling
+   (Jaccard-ranked, avoids the "olive oil → anchovies" trap).
+
+**Follow-ups (not done — need a fresh USDA rate window and/or deeper work):**
+- Vault-wide re-backfill (`--force`) in a clean window to realize the fixes across all
+  recipes, then the true calorie-coverage number (baseline 0.47; blocked by rate limits).
+- Food-match depth: synonym normalization (`unsalted` vs `without salt`), semantic
+  mismatch (`apple`→"Strudel, apple"), plural/stemming. Own effort.
+- Spice-negligible-by-food (Task 1) and the food-not-found tail.
 
 > Supersedes the informal "Phase A2 = leaked-amount cleanup" as the next nutrition
 > priority. Diagnosis (2026-07-09) shows portion resolution, not text cleanup, is the
@@ -53,6 +77,18 @@ reasons, **not** for lack of a feature:
 
 Portion *data availability* is **not** the bottleneck: **90% of cached food records
 (1636/1819) already carry FDC portions.** The gap is matching + density + fallback.
+
+4. **USDA rate-limiting silently corrupts backfill + measurement (found 2026-07-09).**
+   `food_db.usda_search` swallows any non-200 into `[]` — including HTTP 429
+   `OVER_RATE_LIMIT`. USDA FDC's keyed limit is ~1,000 req/hour; a full-vault backfill
+   (228 recipes × several foods each) plus repeated coverage runs blows through it, so
+   **resolvable foods return empty, never cache, and land in the "food-not-found"
+   bucket** — inflating it with transient failures, not real gaps. Two consequences:
+   (a) `usda_search`/`usda_food_detail` need **429 detection + backoff/retry** (and
+   should distinguish "no match" from "throttled"); (b) the coverage meter must run
+   **offline (cache-only)** so measurement never depends on the live API. Re-running the
+   backfill within a fresh rate window will recover an unknown slice of the 158
+   food-not-found lines for free.
 
 ---
 
@@ -130,6 +166,13 @@ line (amount, unit, item)
 - **Phase 1 (deterministic, no LLM):** broaden `_match_portion`, add volume/density path,
   spice-negligible set, re-fetch detail for the 183 portion-less records. Measure. This is
   the safe, offline core and should recover a large share of the 374 on its own.
+  - **DONE (2026-07-09):** volume path now consults FDC household portions
+    (`to_grams` used density-only and ignored `usda_portions` for volume units).
+    Offline-measured: **+179 previously-dead volume lines** resolved from cache, no LLM,
+    no new data. Commit `33ee3fc`.
+  - **429 backoff** in `usda_search`/`usda_food_detail` + a cache-only mode for the meter
+    (see root cause #4). Do this before the next backfill so the rate limit stops
+    dropping real foods.
 - **Phase 2 (gated LLM):** enable `portion_provider="claude"` for quantified material
   residue; **first re-measure the "52% error" claim on the addressable quantified set** —
   if it's still high, keep LLM confined to count units where it's strongest and lean on

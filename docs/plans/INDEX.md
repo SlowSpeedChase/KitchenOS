@@ -20,13 +20,13 @@ Templates: [`templates/DESIGN-DOC-TEMPLATE.md`](../../templates/DESIGN-DOC-TEMPL
 
 | Date | Doc | Notes |
 |---|---|---|
-| — | — | (none) |
+| 2026-07-09 | [purchase-based-nutrition](purchase-based-nutrition.md) | Use the user's actual purchases to override generic USDA with **branded** label nutrition (more personal + serving-gram data). Blocked: receipts carry no nutrition (only identify the product → still needs OFF/branded lookup) and `purchases`/`inventory` are currently 0 rows. Augments, doesn't replace, the USDA engine. Revisit once receipt ingest is flowing. |
 
 ## Ready
 
 | Date | Doc | Notes |
 |---|---|---|
-| 2026-07-09 | [nutrition-portion-resolution](nutrition-portion-resolution.md) | The real lever under macro accuracy. Measured: calorie-weighted coverage **~0.47**, only **7%** of recipes fully covered. Root cause (verified) is portion resolution, not table gaps — 374 quantified, food-known lines fail because `_match_portion` is too narrow, volume units need a density path, and `portion_provider` defaults to `"none"` (no fallback). Supersedes the "leaked-amount" framing of Phase A2. |
+| — | — | (none) |
 
 ## In Progress
 
@@ -38,5 +38,6 @@ Templates: [`templates/DESIGN-DOC-TEMPLATE.md`](../../templates/DESIGN-DOC-TEMPL
 
 | Date | Doc | Completed | Notes |
 |---|---|---|---|
+| 2026-07-09 | [nutrition-portion-resolution](nutrition-portion-resolution.md) | 2026-07-09 | **Phase 1 shipped.** 5 fixes (FDC volume portions, 429 backoff, energy nutrient-ID, offline meter, caloric-sanity guard). Dominant bug was food-data quality, not portions: energy under Atwater IDs → 0-kcal foods. Verified +31–366% on 5 recipes. Follow-ups (vault re-backfill, food-match depth) tracked in the doc. See [docs/completed/2026-07-09-portion-resolution.md](../completed/2026-07-09-portion-resolution.md). |
 | 2026-07-08 | [ingredient-data-cleaning](ingredient-data-cleaning.md) | 2026-07-09 | Phase A1 shipped: nutrition-engine grams coverage **0.563 → 0.647** (+8.4 pts, 30-recipe sample) via unit/piece-weight/density/accent table gaps. Full-vault `backfill_nutrition.py --force` applied (228 updated, 0 failed). Phase A2 (leaked amounts) + Phase B deferred, still tracked in the design doc. See [docs/completed/2026-07-09-ingredient-grams-coverage.md](../completed/2026-07-09-ingredient-grams-coverage.md). |
 | — | — | — | See [archive/INDEX.md](archive/INDEX.md) for pre-convention legacy plans. |

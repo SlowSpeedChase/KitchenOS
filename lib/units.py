@@ -337,6 +337,11 @@ def to_grams(
         if density is not None and density > 0:
             grams = qty * VOLUME_ML[norm_unit] * density
             return GramResult(grams, "volume_density", CONFIDENCE["volume_density"], False)
+        # No density: FDC ships household portions ("1 cup = X g") for many foods.
+        # Use one whose label matches the requested volume unit before giving up.
+        portion = _match_portion(unit, item, usda_portions or [])
+        if portion is not None:
+            return GramResult(qty * portion, "usda_portion", CONFIDENCE["usda_portion"], False)
         return GramResult(
             0.0, "unresolved", CONFIDENCE["unresolved"], True,
             note=f"no density for '{item}' ({unit})",

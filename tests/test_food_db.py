@@ -30,10 +30,61 @@ class TestUsdaSearch:
         assert records[0].per_100g.calories == 364    # per-100g, not scaled
         assert records[0].per_100g.protein == 10.3
 
-    def test_empty_on_error(self):
+    def test_energy_from_atwater_when_1008_absent(self):
+        # USDA Foundation Foods report energy under 2047 (Atwater General), not
+        # 1008. Protein/fat/carb IDs are shared, so such a food otherwise looks
+        # fully resolved but with 0 kcal -- the calorie leak. Read the fallback.
+        mock = {"foods": [{"fdcId": 5, "description": "Cream, heavy",
+                           "foodNutrients": [
+                               {"nutrientId": 2047, "value": 340},   # energy, atwater
+                               {"nutrientId": 1003, "value": 2.0},   # protein
+                               {"nutrientId": 1004, "value": 36.0},  # fat
+                               {"nutrientId": 1005, "value": 3.0},   # carbs
+                           ]}]}
         with patch("lib.food_db.requests.get") as g:
+            g.return_value = Mock(status_code=200, json=lambda: mock)
+            records = usda_search("heavy cream")
+        assert records[0].per_100g.calories == 340
+
+    def test_energy_1008_preferred_over_atwater(self):
+        mock = {"foods": [{"fdcId": 6, "description": "Sugar",
+                           "foodNutrients": [
+                               {"nutrientId": 1008, "value": 387},
+                               {"nutrientId": 2047, "value": 999},
+                           ]}]}
+        with patch("lib.food_db.requests.get") as g:
+            g.return_value = Mock(status_code=200, json=lambda: mock)
+            records = usda_search("sugar")
+        assert records[0].per_100g.calories == 387
+
+    def test_retries_on_429_then_succeeds(self):
+        # A transient rate-limit must not drop a resolvable food. Retry with
+        # backoff, then return the successful result.
+        ok = {"foods": [{"fdcId": 9, "description": "Honey",
+                         "foodNutrients": [{"nutrientId": 1008, "value": 304}]}]}
+        with patch("lib.food_db.time.sleep"), patch("lib.food_db.requests.get") as g:
+            g.side_effect = [
+                Mock(status_code=429),
+                Mock(status_code=429),
+                Mock(status_code=200, json=lambda: ok),
+            ]
+            records = usda_search("honey")
+        assert g.call_count == 3
+        assert len(records) == 1
+        assert records[0].description == "Honey"
+
+    def test_empty_on_persistent_429(self):
+        # Exhausted retries on a persistent rate-limit still returns [].
+        with patch("lib.food_db.time.sleep"), patch("lib.food_db.requests.get") as g:
             g.return_value = Mock(status_code=429)
             assert usda_search("flour") == []
+        assert g.call_count > 1  # it retried, didn't give up on the first 429
+
+    def test_empty_on_non_429_error(self):
+        with patch("lib.food_db.requests.get") as g:
+            g.return_value = Mock(status_code=500)
+            assert usda_search("flour") == []
+        assert g.call_count == 1  # non-429 errors are not retried
 
 
 class TestUsdaDetail:

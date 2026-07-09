@@ -17,6 +17,7 @@ error — nutrition is best-effort and must never crash extraction.
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -29,12 +30,45 @@ USDA_DETAIL_URL = "https://api.nal.usda.gov/fdc/v1/food/{fdc_id}"
 OFF_SEARCH_URL = "https://world.openfoodfacts.org/cgi/search.pl"
 
 # USDA nutrient IDs (per 100 g for Foundation / SR Legacy data).
-NUTRIENT_CALORIES = 1008  # Energy, kcal
+NUTRIENT_CALORIES = 1008  # Energy, kcal (SR Legacy / classic)
+# Foundation Foods & Survey (FNDDS) report energy under Atwater IDs instead of
+# 1008, so a food otherwise fully populated (protein/fat/carbs share their IDs
+# across datasets) comes back with 0 kcal unless we read these fallbacks.
+NUTRIENT_ENERGY_ATWATER_GENERAL = 2047
+NUTRIENT_ENERGY_ATWATER_SPECIFIC = 2048
 NUTRIENT_PROTEIN = 1003
 NUTRIENT_FAT = 1004
 NUTRIENT_CARBS = 1005
 
 _TIMEOUT = 10
+# USDA FDC rate-limits (~1k req/hr) return HTTP 429. A silent [] there makes a
+# throttled-but-resolvable food look "not found" and corrupts backfills, so retry
+# transient 429s with exponential backoff before giving up.
+_MAX_RETRIES = 3
+_BACKOFF_BASE = 0.5
+
+
+def _get_json(url: str, params: dict) -> Optional[dict]:
+    """GET returning parsed JSON, or None. Retries HTTP 429 with backoff.
+
+    Non-429 errors (4xx/5xx), request exceptions, and unparseable bodies return
+    None immediately (no retry) -- only rate-limits are transient enough to retry.
+    """
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            resp = requests.get(url, params=params, timeout=_TIMEOUT)
+        except requests.RequestException:
+            return None
+        if resp.status_code == 429 and attempt < _MAX_RETRIES:
+            time.sleep(_BACKOFF_BASE * (2 ** attempt))
+            continue
+        if resp.status_code != 200:
+            return None
+        try:
+            return resp.json()
+        except ValueError:
+            return None
+    return None
 
 
 @dataclass
@@ -73,9 +107,23 @@ def _nutrient_map_from_detail(food: dict) -> dict:
     return out
 
 
+def _energy_kcal(nutrients: dict) -> float:
+    """Energy per 100 g, reading 1008 first then the Atwater fallbacks.
+
+    Prefer classic Energy (1008); fall back to Atwater General (2047) then
+    Specific (2048) for Foundation/Survey foods that omit 1008.
+    """
+    for nid in (NUTRIENT_CALORIES, NUTRIENT_ENERGY_ATWATER_GENERAL,
+                NUTRIENT_ENERGY_ATWATER_SPECIFIC):
+        val = nutrients.get(nid, 0) or 0
+        if val:
+            return val
+    return 0
+
+
 def _per_100g(nutrients: dict) -> NutritionData:
     return NutritionData(
-        calories=nutrients.get(NUTRIENT_CALORIES, 0),
+        calories=_energy_kcal(nutrients),
         protein=nutrients.get(NUTRIENT_PROTEIN, 0),
         carbs=nutrients.get(NUTRIENT_CARBS, 0),
         fat=nutrients.get(NUTRIENT_FAT, 0),
@@ -108,13 +156,10 @@ def usda_search(query: str, page_size: int = 5) -> list[FoodRecord]:
         "dataType": ["Foundation", "SR Legacy"],
         "api_key": _usda_api_key(),
     }
-    try:
-        resp = requests.get(USDA_SEARCH_URL, params=params, timeout=_TIMEOUT)
-        if resp.status_code != 200:
-            return []
-        foods = resp.json().get("foods", [])
-    except (requests.RequestException, ValueError):
+    data = _get_json(USDA_SEARCH_URL, params)
+    if data is None:
         return []
+    foods = data.get("foods", [])
 
     records = []
     for food in foods:
@@ -131,16 +176,11 @@ def usda_food_detail(fdc_id: str) -> Optional[FoodRecord]:
     """Fetch full USDA detail (per-100g nutrients + foodPortions)."""
     if not fdc_id:
         return None
-    try:
-        resp = requests.get(
-            USDA_DETAIL_URL.format(fdc_id=fdc_id),
-            params={"api_key": _usda_api_key()},
-            timeout=_TIMEOUT,
-        )
-        if resp.status_code != 200:
-            return None
-        food = resp.json()
-    except (requests.RequestException, ValueError):
+    food = _get_json(
+        USDA_DETAIL_URL.format(fdc_id=fdc_id),
+        {"api_key": _usda_api_key()},
+    )
+    if food is None:
         return None
 
     return FoodRecord(
