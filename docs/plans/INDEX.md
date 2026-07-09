@@ -26,12 +26,13 @@ Templates: [`templates/DESIGN-DOC-TEMPLATE.md`](../../templates/DESIGN-DOC-TEMPL
 
 | Date | Doc | Notes |
 |---|---|---|
-| 2026-07-09 | [nutrition-portion-resolution](nutrition-portion-resolution.md) | The real lever under macro accuracy. Measured: calorie-weighted coverage **~0.47**, only **7%** of recipes fully covered. Root cause (verified) is portion resolution, not table gaps — 374 quantified, food-known lines fail because `_match_portion` is too narrow, volume units need a density path, and `portion_provider` defaults to `"none"` (no fallback). Supersedes the "leaked-amount" framing of Phase A2. |
+| — | — | (none) |
 
 ## In Progress
 
 | Date | Doc | Branch | Notes |
 |---|---|---|---|
+| 2026-07-09 | [nutrition-portion-resolution](nutrition-portion-resolution.md) | `portion-resolution` | **Phase 1 (deterministic).** Make the existing FDC-portion/density machinery land for the 374 quantified/food-known lines. Baseline: calorie coverage ~0.47, fully-covered 7%. LLM fallback deferred to Phase 2. |
 | 2026-07-08 | [macro-meal-planner — design](2026-07-08-macro-meal-planner-design.md) · [plan](2026-07-08-macro-meal-planner-plan.md) | `macro-planner-phase-1/servings-backfill` | **PARKED.** Phase 1 (servings backfill) blocked: servings labels are not reliably inferable (see design-doc "Phase 1 finding"). Tooling/estimator built & committed on the branch; resume after grams coverage improves. |
 
 ## Done
