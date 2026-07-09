@@ -244,6 +244,40 @@ def lookup_piece_weight(item: str, size: Optional[str] = None) -> Optional[float
     return None
 
 
+# Count units that name a piece TYPE and so combine with a food name to
+# disambiguate its weight ("garlic" + "clove" → garlic clove; + "head" → head).
+_PIECE_TYPE_UNITS = {"clove", "head", "bunch", "sprig", "stalk", "stick",
+                     "leaf", "rib", "ear", "wedge"}
+
+
+def _first_food_word(item: str) -> str:
+    m = re.search(r"[a-zA-Z]+", item or "")
+    return m.group(0).lower() if m else ""
+
+
+def _resolve_piece_weight(item: str, unit: str) -> Optional[float]:
+    """Piece weight for a count item, using the unit to disambiguate.
+
+    Tries the item name alone first (current behaviour); if that misses and the
+    unit names a piece type (clove/head/bunch/…), retries with the food name and
+    that unit combined, so "cloves garlic" and "garlic, peeled" (head) resolve to
+    the right per-piece weight instead of falling through to unresolved.
+    """
+    pw = lookup_piece_weight(item)
+    if pw is not None:
+        return pw
+    nu = normalize_unit(unit).lower() if unit else ""
+    if nu in _PIECE_TYPE_UNITS:
+        first = _first_food_word(item)
+        for cand in (f"{item} {nu}", f"{nu} {item}", f"{first} {nu}" if first else ""):
+            if not cand:
+                continue
+            pw = lookup_piece_weight(cand)
+            if pw is not None:
+                return pw
+    return None
+
+
 def _match_portion(unit: str, item: str, portions: list) -> Optional[float]:
     """Find a USDA foodPortion gram weight matching this count unit/item.
 
@@ -306,7 +340,7 @@ def to_grams(
         )
 
     if family == "count":
-        pw = piece_weight_g if piece_weight_g is not None else lookup_piece_weight(item)
+        pw = piece_weight_g if piece_weight_g is not None else _resolve_piece_weight(item, unit)
         if pw is not None and pw > 0:
             return GramResult(qty * pw, "piece_weight", CONFIDENCE["piece_weight"], False)
         portion = _match_portion(unit, item, usda_portions or [])
