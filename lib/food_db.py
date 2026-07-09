@@ -30,7 +30,12 @@ USDA_DETAIL_URL = "https://api.nal.usda.gov/fdc/v1/food/{fdc_id}"
 OFF_SEARCH_URL = "https://world.openfoodfacts.org/cgi/search.pl"
 
 # USDA nutrient IDs (per 100 g for Foundation / SR Legacy data).
-NUTRIENT_CALORIES = 1008  # Energy, kcal
+NUTRIENT_CALORIES = 1008  # Energy, kcal (SR Legacy / classic)
+# Foundation Foods & Survey (FNDDS) report energy under Atwater IDs instead of
+# 1008, so a food otherwise fully populated (protein/fat/carbs share their IDs
+# across datasets) comes back with 0 kcal unless we read these fallbacks.
+NUTRIENT_ENERGY_ATWATER_GENERAL = 2047
+NUTRIENT_ENERGY_ATWATER_SPECIFIC = 2048
 NUTRIENT_PROTEIN = 1003
 NUTRIENT_FAT = 1004
 NUTRIENT_CARBS = 1005
@@ -102,9 +107,23 @@ def _nutrient_map_from_detail(food: dict) -> dict:
     return out
 
 
+def _energy_kcal(nutrients: dict) -> float:
+    """Energy per 100 g, reading 1008 first then the Atwater fallbacks.
+
+    Prefer classic Energy (1008); fall back to Atwater General (2047) then
+    Specific (2048) for Foundation/Survey foods that omit 1008.
+    """
+    for nid in (NUTRIENT_CALORIES, NUTRIENT_ENERGY_ATWATER_GENERAL,
+                NUTRIENT_ENERGY_ATWATER_SPECIFIC):
+        val = nutrients.get(nid, 0) or 0
+        if val:
+            return val
+    return 0
+
+
 def _per_100g(nutrients: dict) -> NutritionData:
     return NutritionData(
-        calories=nutrients.get(NUTRIENT_CALORIES, 0),
+        calories=_energy_kcal(nutrients),
         protein=nutrients.get(NUTRIENT_PROTEIN, 0),
         carbs=nutrients.get(NUTRIENT_CARBS, 0),
         fat=nutrients.get(NUTRIENT_FAT, 0),
