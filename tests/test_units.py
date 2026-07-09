@@ -75,6 +75,41 @@ class TestToGramsVolume:
         assert r.method == "unresolved"
         assert r.needs_review
 
+    def test_volume_uses_usda_portion_when_no_density(self):
+        # FDC ships "1 cup = 226 g" household portions. The volume path must use
+        # them when there is no density, instead of returning unresolved -- this is
+        # the cottage-cheese-class miss (portion data present but ignored).
+        r = to_grams(
+            "1", "cup", "mystery food zzz",
+            usda_portions=[{"label": "cup", "gram_weight": 226}],
+        )
+        assert r.grams == pytest.approx(226.0)
+        assert r.method == "usda_portion"
+        assert not r.needs_review
+
+    def test_volume_portion_scales_with_quantity(self):
+        r = to_grams(
+            "2", "cup", "mystery food zzz",
+            usda_portions=[{"label": "cup", "gram_weight": 226}],
+        )
+        assert r.grams == pytest.approx(452.0)
+
+    def test_volume_density_preferred_over_portion(self):
+        # When both exist, density is the more precise signal -- keep using it.
+        r = to_grams(
+            "1", "cup", "olive oil", density_g_per_ml=0.92,
+            usda_portions=[{"label": "cup", "gram_weight": 999}],
+        )
+        assert r.method == "volume_density"
+
+    def test_volume_portion_ignores_non_matching_label(self):
+        # A RACC-only portion (FDA regulatory unit) must NOT match a cup request.
+        r = to_grams(
+            "1", "cup", "mystery food zzz",
+            usda_portions=[{"label": "1.0 RACC", "gram_weight": 30}],
+        )
+        assert r.method == "unresolved"
+
 
 class TestToGramsCount:
     def test_clove_from_config(self):
