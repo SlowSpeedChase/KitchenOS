@@ -24,10 +24,14 @@ Phase 2 nutrition accuracy (Fable batch/ledger reframe). Move calorie coverage f
 ## Stages
 
 ### Dev
-- [ ] **Component A — Atwater energy fallback** (TDD): when a resolved food has macros but
-      0 summary energy (1008/2047/2048 all absent), compute `kcal/100g = 4·protein +
-      4·carbs + 9·fat` in `lib/food_db`. Fixes the 29 Foundation records (oils/butter) that
-      still read 0 kcal. ← current
+- [x] **Component A — Atwater energy fallback** (TDD, full suite 1142): compute
+      `kcal/100g = 4·P + 4·C + 9·F` in `lib/food_db._energy_kcal` when 1008/2047/2048 are
+      all absent. Verified against the real cache: **rescues 28 foods** — headline
+      **unsalted butter → 734** (in many recipes), apples, green onions. 88 still-0 lack
+      summary macros too (oils/water) → Component B/C. Note: Atwater over-counts high-fiber
+      foods (apple 106 vs ~52) — underlying record quality, not A's fault; Component D
+      recipe-sanity + B/C matching address it. Cached 0-kcal values realize on next
+      refresh+backfill (bundled with B/C).
 - [ ] Component B — bulk FNDDS loader + local food table
 - [ ] Component C — LLM resolution ledger
 - [ ] Component D — metric/guardrails

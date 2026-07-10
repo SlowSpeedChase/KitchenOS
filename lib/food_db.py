@@ -108,17 +108,23 @@ def _nutrient_map_from_detail(food: dict) -> dict:
 
 
 def _energy_kcal(nutrients: dict) -> float:
-    """Energy per 100 g, reading 1008 first then the Atwater fallbacks.
+    """Energy per 100 g, with a cascade of fallbacks.
 
-    Prefer classic Energy (1008); fall back to Atwater General (2047) then
-    Specific (2048) for Foundation/Survey foods that omit 1008.
+    Prefer a reported value — classic Energy (1008), then Atwater General (2047),
+    then Specific (2048) for Foundation/Survey foods that omit 1008. When a food
+    reports macros but no energy at all (some Foundation records: oils, butter —
+    fatty-acid rows only), derive it via Atwater factors: 4·protein + 4·carbs +
+    9·fat. Genuinely macro-less foods (water/salt) stay 0.
     """
     for nid in (NUTRIENT_CALORIES, NUTRIENT_ENERGY_ATWATER_GENERAL,
                 NUTRIENT_ENERGY_ATWATER_SPECIFIC):
         val = nutrients.get(nid, 0) or 0
         if val:
             return val
-    return 0
+    protein = nutrients.get(NUTRIENT_PROTEIN, 0) or 0
+    carbs = nutrients.get(NUTRIENT_CARBS, 0) or 0
+    fat = nutrients.get(NUTRIENT_FAT, 0) or 0
+    return 4 * protein + 4 * carbs + 9 * fat
 
 
 def _per_100g(nutrients: dict) -> NutritionData:
