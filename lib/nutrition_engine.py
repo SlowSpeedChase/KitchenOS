@@ -25,7 +25,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
-from lib import food_db, food_resolver, inventory_db, units
+from lib import fdc_local, food_db, food_resolver, inventory_db, units
 from lib.ingredient_text import apply_aliases, clean_for_matching
 from lib.nutrition import NutritionData
 
@@ -41,6 +41,7 @@ COVERAGE_REVIEW_THRESHOLD = 0.8
 KCAL_SANITY_RANGE = (50, 2500)          # per serving
 # One ingredient line contributing more than this fraction of total recipe
 # grams is flagged for review (only when there is more than one resolved line).
+CONFIDENCE_LEDGER = 0.6                 # portion-ledger grams estimate confidence
 DOMINANT_LINE_FRACTION = 0.5            # one line > 50% of recipe grams
 
 # A single ingredient line over this many grams (~24 lb) is almost certainly a
@@ -169,22 +170,37 @@ def _resolve_food(item: str, *, use_cache: bool, resolution_provider: str,
     if not norm:
         return None, 0.0, "unresolved"
 
-    # 1. Resolution cache → cached food record.
-    if use_cache:
-        res = inventory_db.get_food_resolution(norm)
-        if res and res.get("resolver") == "human-negligible":
-            record = {"query_norm": norm, "source": "none", "source_id": "0",
-                      "description": "negligible (human)", "per_100g":
-                      {"calories": 0, "protein": 0, "carbs": 0, "fat": 0},
-                      "portions": [], "density_g_per_ml": None}
-            return record, 1.0, "human-negligible"
-        if res and res.get("resolver") != "llm-portion":
-            cached = inventory_db.get_food_cache(norm, res["source"])
-            if cached:
-                return cached, res["confidence"], "cache"
+    # 1. Human overrides always win.
+    res = inventory_db.get_food_resolution(norm) if use_cache else None
+    if res and res.get("resolver") == "human-negligible":
+        record = {"query_norm": norm, "source": "none", "source_id": "0",
+                  "description": "negligible (human)", "per_100g":
+                  {"calories": 0, "protein": 0, "carbs": 0, "fat": 0},
+                  "portions": [], "density_g_per_ml": None}
+        return record, 1.0, "human-negligible"
+    if res and str(res.get("resolver", "")).startswith("human"):
+        cached = inventory_db.get_food_cache(norm, res["source"])
+        if cached:
+            return cached, res["confidence"], "cache-human"
 
-    # Offline: never touch the network. A cache miss stays unresolved -- lets the
-    # coverage meter measure straight from cache without tipping USDA's rate limit.
+    # 2. Local FDC store (Component B) — deterministic, no network, full provenance.
+    #    Primary resolver: overrides stale/mismatched legacy cache entries.
+    try:
+        conn = inventory_db.read_conn()
+        if fdc_local.has_data(conn):
+            local = fdc_local.resolve_local(conn, item)
+            if local:
+                return local, 0.85, "fdc-local"
+    except Exception:
+        pass  # never let the local store break resolution
+
+    # 3. Legacy cache (pre-FDC OFF/LLM resolutions) as fallback.
+    if res and res.get("resolver") != "llm-portion":
+        cached = inventory_db.get_food_cache(norm, res["source"])
+        if cached:
+            return cached, res["confidence"], "cache"
+
+    # Offline: never touch the network.
     if offline:
         return None, 0.0, "unresolved"
 
@@ -256,6 +272,19 @@ def _resolve_grams(amount, unit, item, record, *, use_cache: bool, portion_provi
     )
     if gr.method != "unresolved":
         return gr
+
+    # Portion ledger (Component C): band-validated, pre-built grams-per-unit
+    # estimates. Deterministic and provider-independent — used even with
+    # portion_provider="none" so no LLM runs at resolve time.
+    try:
+        conn = inventory_db.read_conn()
+        g_per = fdc_local.ledger_grams(conn, units._normalize_item(item), unit)
+        if g_per:
+            qty = units.parse_amount_to_float(amount) or 1.0
+            return units.GramResult(qty * g_per, "ledger", CONFIDENCE_LEDGER, True,
+                                    note="portion ledger")
+    except Exception:
+        pass
 
     # Deterministic conversion failed. If a portion provider is configured, try a
     # cached (provider-keyed) estimate, then a live one. With provider "none" we

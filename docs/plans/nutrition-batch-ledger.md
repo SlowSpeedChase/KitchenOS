@@ -1,8 +1,29 @@
 # Nutrition Batch Ledger (Phase 2) Design
 
-**Status:** Ready
+**Status:** Core shipped (A/B/C, 2026-07-10) — target met; Component D + polish follow-up
 **Created:** 2026-07-09
-**Updated:** 2026-07-09
+**Updated:** 2026-07-10
+
+## Shipped (branch `nutrition-batch-ledger`, 2026-07-10)
+
+Fable's batch/ledger reframe, executed. Offline calorie coverage **0.434 → 0.929**
+(item 0.503 → 0.972; fully-covered 11% → 75%; grams-failed 388 → 12) — **all headline
+acceptance criteria met**, and the engine now resolves entirely offline (no runtime USDA).
+
+- **A — Atwater energy fallback** (`food_db._energy_kcal`): macros-but-no-energy foods
+  derive kcal (4·P+4·C+9·F).
+- **B — bulk FDC → local SQLite** (`lib/fdc_local.py`, `scripts/load_fdc_bulk.py`):
+  13,694 foods / 36,763 portions (Foundation + SR Legacy + FNDDS). `resolve_local` = FTS
+  recall + legible Python ranking (fixes apple→"Apple, raw", olive oil→900). Primary
+  resolver; killed the runtime USDA path.
+- **C — LLM portion ledger** (`portion_ledger`, `scripts/build_portion_ledger.py`):
+  Ollama estimated grams for 581 grams-failed pairs → band-validated (563 written, 18 to
+  review) → engine reads deterministically (`method=ledger`, no LLM at resolve time).
+- **perf**: `inventory_db.read_conn()` thread-local cache (suite 226s → 14s).
+
+**Follow-ups (not done):** Component D (spices→negligible, recipe sanity flags); wire the
+review queue to an Obsidian note (currently printed); golden-set ±15% validation; a
+`--force` re-backfill to write the macros into recipe frontmatter; loader integration test.
 
 > Phase 2 of nutrition accuracy. Supersedes the deferred "gated LLM portion fallback +
 > hand density tables" approach in [nutrition-portion-resolution.md](nutrition-portion-resolution.md)
@@ -69,6 +90,52 @@ output is checked against sanity bands before it lands.
 When a resolved food has macros but 0 summary energy (the 29 oils/butter), compute
 `kcal/100g = 4·protein + 4·carbs + 9·fat` in `lib/food_db._per_100g` (after the 1008 →
 2047 → 2048 chain). Oils → ~884. Fully general, no new data, no network.
+
+### Component B — concrete build spec (from 2026-07-10 Fable schema consult)
+
+**Datasets** (skip Branded — that's the `purchase-based-nutrition` Vision layer). Sizes
+matter: FNDDS is 1.6G as CSV but **64M as JSON** — prefer JSON for FNDDS.
+
+| rank | dataset | unzipped | why |
+|---|---|---|---|
+| 0 | Foundation | CSV 29M / JSON 6.5M | highest-quality analytical whole foods |
+| 1 | SR Legacy | CSV 54M | the workhorse (~7,800 generic foods) |
+| 2 | FNDDS (Survey) | **JSON 64M** (CSV 1.6G) | the portion goldmine — fixes the 322 grams-failed |
+
+**Schema** (in `data/kitchenos.db`, via `inventory_db`) — denormalize, pre-compute macros
+at load, store provenance:
+- `fdc_foods(fdc_id PK, data_type, description, name_norm, kcal_100g, kcal_source, protein_100g,
+  carb_100g, fat_100g, brand_owner, dataset_rank, loaded_at)` + index on `name_norm`.
+  `kcal_source` ∈ {1008,2047,2048,atwater,none} for auditability.
+- `fdc_portions(fdc_id, portion_label, unit_norm, gram_weight, amount)` + index on `fdc_id`.
+- `fdc_foods_fts` — FTS5 (porter, remove_diacritics) shadow of description/name_norm.
+- `fdc_meta(dataset, release_date, loaded_at, row_count)` — versioning.
+
+**Macros at load:** reuse Component A's `_energy_kcal` cascade (1008→2047→2048→Atwater) —
+one source of truth. **kJ twin gotcha:** nutrient 2048 (and energy generally) can be
+reported in kJ; check `nutrient.csv` unit and only accept KCAL (convert kJ ÷4.184 or fall
+through to Atwater).
+
+**Name search** (replaces the USDA ranking API): FTS5 recall (LIMIT ~40) → rank in Python:
+`bm25 + dataset_rank_bonus + exact_norm_match + token_coverage − length_penalty −
+kcal_none_penalty`. The `length_penalty + token_coverage` is what kills `apple → "Strudel,
+apple"`. Hand top ~8 (with kcal + source) to the existing LLM picker + caloric-sanity guard.
+One shared `normalize_food_name()` used at BOTH load and query (mismatch here = #1 silent bug).
+
+**Loader** `scripts/load_fdc_bulk.py`: per-dataset zip → stream CSVs with stdlib `csv`
+(never read whole; keep only nutrient IDs 1008/2047/2048/1003/1004/1005), compute cascade,
+**delete-by-dataset + bulk insert in one transaction** (idempotent across USDA releases),
+rebuild FTS last. `--dataset` and `--with-branded` flags. `encoding='utf-8', errors='replace'`.
+
+**Coexistence / migration:** `food_resolution` becomes the ledger (`source='fdc',
+source_id=fdc_id`); engine resolves `query_norm → fdc_id` then reads macros/portions from
+`fdc_foods`/`fdc_portions`. `food_cache` kept only for non-FDC (OFF, LLM overrides). Migration
+is additive — no drops.
+
+**CSV gotchas:** fdc_id globally unique (same food in multiple datasets is fine — rank
+decides); Foundation has multiple nutrient rows per nutrient (pick one deterministically);
+`measure_unit.name` often `"undetermined"` (parse the modifier for the unit); drop portions
+with `gram_weight <= 0 or > 2000`.
 
 ### Component B — Bulk USDA → local SQLite (~1 day)
 

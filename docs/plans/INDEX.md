@@ -26,7 +26,7 @@ Templates: [`templates/DESIGN-DOC-TEMPLATE.md`](../../templates/DESIGN-DOC-TEMPL
 
 | Date | Doc | Notes |
 |---|---|---|
-| 2026-07-09 | [nutrition-batch-ledger](nutrition-batch-ledger.md) | **Phase 2** of nutrition accuracy (Fable reframe: batch, not runtime parsing). Calorie coverage stuck at 0.571 after Phase 1; the leak is portion conversion (322 grams-failed) + not-found (95). Plan: Atwater energy fallback → **bulk FNDDS into local SQLite** (kills runtime USDA + rate limits, supplies household portions) → **one-time LLM-drafted resolution ledger** (band-validated, Obsidian review queue) → calorie-weighted metric + recipe sanity checks. Target 0.571 → ≥0.90. Supersedes the deferred gated-LLM/hand-density approach. |
+| — | — | (none) |
 
 ## In Progress
 
@@ -38,6 +38,7 @@ Templates: [`templates/DESIGN-DOC-TEMPLATE.md`](../../templates/DESIGN-DOC-TEMPL
 
 | Date | Doc | Completed | Notes |
 |---|---|---|---|
+| 2026-07-10 | [nutrition-batch-ledger](nutrition-batch-ledger.md) | 2026-07-10 | **Phase 2 core shipped** (Fable batch/ledger reframe). Offline calorie coverage **0.434 → 0.929**, item 0.503 → 0.972, fully-covered 11% → 75%, grams-failed 388 → 12; engine now fully offline (no runtime USDA). A (Atwater) + B (bulk FDC local store, 13.7k foods) + C (LLM portion ledger, band-validated). Component D + review-queue-note + golden-set + vault re-backfill are follow-ups. See [docs/completed/2026-07-10-nutrition-batch-ledger.md](../completed/2026-07-10-nutrition-batch-ledger.md). |
 | 2026-07-09 | [nutrition-portion-resolution](nutrition-portion-resolution.md) | 2026-07-09 | **Phase 1 shipped.** 5 fixes (FDC volume portions, 429 backoff, energy nutrient-ID, offline meter, caloric-sanity guard). Dominant bug was food-data quality, not portions: energy under Atwater IDs → 0-kcal foods. Verified +31–366% on 5 recipes. Follow-ups (vault re-backfill, food-match depth) tracked in the doc. See [docs/completed/2026-07-09-portion-resolution.md](../completed/2026-07-09-portion-resolution.md). |
 | 2026-07-08 | [ingredient-data-cleaning](ingredient-data-cleaning.md) | 2026-07-09 | Phase A1 shipped: nutrition-engine grams coverage **0.563 → 0.647** (+8.4 pts, 30-recipe sample) via unit/piece-weight/density/accent table gaps. Full-vault `backfill_nutrition.py --force` applied (228 updated, 0 failed). Phase A2 (leaked amounts) + Phase B deferred, still tracked in the design doc. See [docs/completed/2026-07-09-ingredient-grams-coverage.md](../completed/2026-07-09-ingredient-grams-coverage.md). |
 | — | — | — | See [archive/INDEX.md](archive/INDEX.md) for pre-convention legacy plans. |

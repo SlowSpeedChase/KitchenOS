@@ -46,6 +46,44 @@ class TestUsdaSearch:
             records = usda_search("heavy cream")
         assert records[0].per_100g.calories == 340
 
+    def test_energy_computed_via_atwater_when_no_energy_nutrient(self):
+        # Some Foundation records carry macros but NO summary energy at all (oils,
+        # butter) -- only fatty-acid rows. Derive kcal from macros: 4P + 4C + 9F.
+        mock = {"foods": [{"fdcId": 7, "description": "Oil, olive, extra virgin",
+                           "foodNutrients": [
+                               {"nutrientId": 1003, "value": 0},     # protein
+                               {"nutrientId": 1004, "value": 100.0}, # fat
+                               {"nutrientId": 1005, "value": 0},     # carbs
+                           ]}]}
+        with patch("lib.food_db.requests.get") as g:
+            g.return_value = Mock(status_code=200, json=lambda: mock)
+            records = usda_search("olive oil")
+        assert records[0].per_100g.calories == 900   # 9 * 100
+
+    def test_reported_energy_preferred_over_atwater_estimate(self):
+        # When a real energy value exists, use it -- don't override with the 4/4/9
+        # estimate (which is an approximation).
+        mock = {"foods": [{"fdcId": 8, "description": "Almonds",
+                           "foodNutrients": [
+                               {"nutrientId": 1008, "value": 579},
+                               {"nutrientId": 1003, "value": 21.2},
+                               {"nutrientId": 1004, "value": 49.9},
+                               {"nutrientId": 1005, "value": 21.6},
+                           ]}]}
+        with patch("lib.food_db.requests.get") as g:
+            g.return_value = Mock(status_code=200, json=lambda: mock)
+            records = usda_search("almonds")
+        assert records[0].per_100g.calories == 579   # reported, not 4*21.2+4*21.6+9*49.9
+
+    def test_no_macros_no_energy_stays_zero(self):
+        # Water/salt: no macros, no energy -> 0, not a bogus estimate.
+        mock = {"foods": [{"fdcId": 9, "description": "Water, bottled",
+                           "foodNutrients": []}]}
+        with patch("lib.food_db.requests.get") as g:
+            g.return_value = Mock(status_code=200, json=lambda: mock)
+            records = usda_search("water")
+        assert records[0].per_100g.calories == 0
+
     def test_energy_1008_preferred_over_atwater(self):
         mock = {"foods": [{"fdcId": 6, "description": "Sugar",
                            "foodNutrients": [
