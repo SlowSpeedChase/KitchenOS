@@ -16,6 +16,7 @@ FNDDS ships far smaller as JSON (64M vs 1.6G CSV) — see load_fndds_json (TODO)
 """
 import argparse
 import csv
+import json
 import os
 import sys
 from datetime import datetime, timezone
@@ -174,18 +175,92 @@ def load_dataset(csv_dir, types, conn):
     return len(food_rows), len(portions)
 
 
+def _rebuild_fts_and_meta(conn, dataset, count, now):
+    conn.execute(
+        "INSERT OR REPLACE INTO fdc_meta (dataset,release_date,loaded_at,row_count) "
+        "VALUES (?,?,?,?)", (dataset, now[:10], now, count))
+    conn.execute("INSERT INTO fdc_foods_fts(fdc_foods_fts) VALUES('rebuild')")
+    conn.commit()
+
+
+def load_fndds_json(json_path, conn):
+    """Load FNDDS (Survey) foods from surveyDownload.json — 64M vs 1.6G as CSV.
+
+    Per-food: foodNutrients=[{nutrient:{id}, amount}], foodPortions=[{measureUnit:
+    {name}, modifier, gramWeight, portionDescription}] (the human unit text lives in
+    portionDescription). All rows are data_type 'survey_fndds_food'.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    with _open(json_path) as f:
+        data = json.load(f)
+    foods = data.get("SurveyFoods", [])
+    dt = "survey_fndds_food"
+    rank = fdc_local.DATASET_RANK[dt]
+    food_rows, portion_rows = [], []
+    for food in foods:
+        fid = food.get("fdcId")
+        desc = food.get("description")
+        if not fid or not desc:
+            continue
+        nut = {}
+        for fn in food.get("foodNutrients", []):
+            nid = (fn.get("nutrient") or {}).get("id")
+            amt = fn.get("amount")
+            if nid in WANTED_NUTRIENTS and amt is not None:
+                nut[nid] = amt
+        food_rows.append((
+            int(fid), dt, desc, fdc_local.normalize_food_name(desc),
+            _energy_kcal(nut) or None, _kcal_source(nut),
+            nut.get(NUTRIENT_PROTEIN), nut.get(NUTRIENT_CARBS), nut.get(NUTRIENT_FAT),
+            None, rank, now,
+        ))
+        for p in food.get("foodPortions", []):
+            gw = p.get("gramWeight")
+            if not isinstance(gw, (int, float)) or gw <= 0 or gw > 2000:
+                continue
+            uname = (p.get("measureUnit") or {}).get("name", "")
+            pdesc = p.get("portionDescription") or ""
+            label = pdesc or uname or "portion"
+            unit_norm = fdc_local.unit_from_portion(uname, pdesc)
+            amt = p.get("amount") or 1
+            portion_rows.append((int(fid), label, unit_norm, float(gw), float(amt)))
+
+    cur = conn.cursor()
+    cur.execute("BEGIN")
+    cur.execute("DELETE FROM fdc_portions WHERE fdc_id IN "
+                "(SELECT fdc_id FROM fdc_foods WHERE data_type=?)", (dt,))
+    cur.execute("DELETE FROM fdc_foods WHERE data_type=?", (dt,))
+    cur.executemany(
+        "INSERT OR REPLACE INTO fdc_foods (fdc_id,data_type,description,name_norm,"
+        "kcal_100g,kcal_source,protein_100g,carb_100g,fat_100g,brand_owner,"
+        "dataset_rank,loaded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", food_rows)
+    cur.executemany(
+        "INSERT INTO fdc_portions (fdc_id,portion_label,unit_norm,gram_weight,amount) "
+        "VALUES (?,?,?,?,?)", portion_rows)
+    conn.commit()
+    _rebuild_fts_and_meta(conn, dt, len(food_rows), now)
+    return len(food_rows), len(portion_rows)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--csv-dir", required=True, help="unzipped FDC dataset dir")
+    ap.add_argument("--csv-dir", help="unzipped FDC CSV dataset dir")
+    ap.add_argument("--json", help="FNDDS surveyDownload.json path")
     ap.add_argument("--types", default=None,
                     help="comma list of data_types (default: all real food types)")
     args = ap.parse_args()
-    types = set(args.types.split(",")) if args.types else REAL_FOOD_TYPES
 
     conn = inventory_db.connect()
     fdc_local.ensure_schema(conn)
-    nf, npn = load_dataset(args.csv_dir, types, conn)
-    print(f"loaded {nf} foods, {npn} portions from {os.path.basename(args.csv_dir)}")
+    if args.json:
+        nf, npn = load_fndds_json(args.json, conn)
+        print(f"loaded {nf} FNDDS foods, {npn} portions from {os.path.basename(args.json)}")
+    elif args.csv_dir:
+        types = set(args.types.split(",")) if args.types else REAL_FOOD_TYPES
+        nf, npn = load_dataset(args.csv_dir, types, conn)
+        print(f"loaded {nf} foods, {npn} portions from {os.path.basename(args.csv_dir)}")
+    else:
+        ap.error("provide --csv-dir or --json")
 
 
 if __name__ == "__main__":
