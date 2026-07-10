@@ -128,13 +128,82 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fdc_foods_fts USING fts5(
     content='fdc_foods', content_rowid='fdc_id',
     tokenize='porter unicode61 remove_diacritics 2'
 );
+
+CREATE TABLE IF NOT EXISTS portion_ledger (
+    item_norm      TEXT NOT NULL,
+    unit           TEXT NOT NULL,
+    grams_per_unit REAL NOT NULL,
+    confidence     REAL,
+    source         TEXT,
+    rationale      TEXT,
+    created_at     TEXT,
+    PRIMARY KEY (item_norm, unit)
+);
 """
+
+# Band-check inputs. Volume units → ml, for the implied-density check.
+_UNIT_ML = {"cup": 236.588, "tbsp": 14.79, "tsp": 4.93, "fl oz": 29.57,
+            "pint": 473.2, "quart": 946.4, "gallon": 3785.4}
+# Loose per-unit kcal ceilings — catch gross errors, not fine ones.
+_UNIT_KCAL_MAX = {"tsp": 90, "tbsp": 220, "cup": 1400, "fl oz": 120}
+_MAX_PORTION_GRAMS = 2000
 
 
 def ensure_schema(conn) -> None:
     """Create the local FDC tables if absent (idempotent)."""
     conn.executescript(SCHEMA)
     conn.commit()
+
+
+def validate_portion_grams(item: str, unit: str, grams_per_unit: float,
+                           per_100g: dict) -> tuple[bool, str]:
+    """Sanity-band an estimated grams-per-unit before it enters the ledger.
+
+    Catches gross LLM errors (a tbsp weighing 200 g, a tsp of oil at 500 kcal)
+    without pretending to be precise. Returns (ok, reason)."""
+    try:
+        g = float(grams_per_unit)
+    except (TypeError, ValueError):
+        return False, "non-numeric grams"
+    if g <= 0:
+        return False, "grams must be > 0"
+    if g > _MAX_PORTION_GRAMS:
+        return False, f"gram weight {g:.0f} implausibly large"
+    u = (unit or "").strip().lower()
+    ml = _UNIT_ML.get(u)
+    if ml:
+        density = g / ml
+        if density < 0.1 or density > 2.0:
+            return False, f"implied density {density:.1f} g/ml out of band"
+    kcal_100 = (per_100g or {}).get("calories", 0) or 0
+    ceiling = _UNIT_KCAL_MAX.get(u)
+    if ceiling and kcal_100 and (g * kcal_100 / 100.0) > ceiling:
+        return False, f"{g * kcal_100 / 100.0:.0f} kcal per {u} exceeds {ceiling}"
+    return True, "ok"
+
+
+def ledger_put(conn, item_norm: str, unit: str, grams_per_unit: float,
+               confidence: float, source: str, rationale: str = "") -> None:
+    """Upsert a portion estimate. Caller supplies a normalized item key."""
+    from datetime import datetime, timezone
+    conn.execute(
+        "INSERT OR REPLACE INTO portion_ledger "
+        "(item_norm,unit,grams_per_unit,confidence,source,rationale,created_at) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (item_norm, (unit or "").strip().lower(), float(grams_per_unit),
+         confidence, source, rationale, datetime.now(timezone.utc).isoformat()))
+    conn.commit()
+
+
+def ledger_grams(conn, item_norm: str, unit: str):
+    """Grams for one ``unit`` of ``item_norm`` from the ledger, or None."""
+    try:
+        row = conn.execute(
+            "SELECT grams_per_unit FROM portion_ledger WHERE item_norm=? AND unit=?",
+            (item_norm, (unit or "").strip().lower())).fetchone()
+    except Exception:
+        return None
+    return row[0] if row else None
 
 
 def has_data(conn) -> bool:

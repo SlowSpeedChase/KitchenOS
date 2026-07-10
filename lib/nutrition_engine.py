@@ -41,6 +41,7 @@ COVERAGE_REVIEW_THRESHOLD = 0.8
 KCAL_SANITY_RANGE = (50, 2500)          # per serving
 # One ingredient line contributing more than this fraction of total recipe
 # grams is flagged for review (only when there is more than one resolved line).
+CONFIDENCE_LEDGER = 0.6                 # portion-ledger grams estimate confidence
 DOMINANT_LINE_FRACTION = 0.5            # one line > 50% of recipe grams
 
 # A single ingredient line over this many grams (~24 lb) is almost certainly a
@@ -271,6 +272,19 @@ def _resolve_grams(amount, unit, item, record, *, use_cache: bool, portion_provi
     )
     if gr.method != "unresolved":
         return gr
+
+    # Portion ledger (Component C): band-validated, pre-built grams-per-unit
+    # estimates. Deterministic and provider-independent — used even with
+    # portion_provider="none" so no LLM runs at resolve time.
+    try:
+        conn = inventory_db.connect()
+        g_per = fdc_local.ledger_grams(conn, units._normalize_item(item), unit)
+        if g_per:
+            qty = units.parse_amount_to_float(amount) or 1.0
+            return units.GramResult(qty * g_per, "ledger", CONFIDENCE_LEDGER, True,
+                                    note="portion ledger")
+    except Exception:
+        pass
 
     # Deterministic conversion failed. If a portion provider is configured, try a
     # cached (provider-keyed) estimate, then a live one. With provider "none" we
