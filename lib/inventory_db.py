@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -136,6 +137,29 @@ def connect(path: Optional[Path] = None) -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout = 5000")
     conn.executescript(_SCHEMA)
     _migrate(conn)
+    return conn
+
+
+_read_tls = threading.local()
+
+
+def read_conn() -> sqlite3.Connection:
+    """A cached, thread-local connection for read-heavy hot paths (food/portion
+    resolution runs per ingredient line). Avoids re-running schema+migrate on
+    every call. Reconnects when the configured DB path changes so the per-test
+    ``KITCHENOS_DB`` swap still works. Read-only use only — writes still go through
+    ``connect()`` so they commit and are visible to all connections."""
+    path = str(db_path())
+    conn = getattr(_read_tls, "conn", None)
+    if conn is None or getattr(_read_tls, "path", None) != path:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        conn = connect()
+        _read_tls.conn = conn
+        _read_tls.path = path
     return conn
 
 

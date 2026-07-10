@@ -186,7 +186,7 @@ def _resolve_food(item: str, *, use_cache: bool, resolution_provider: str,
     # 2. Local FDC store (Component B) — deterministic, no network, full provenance.
     #    Primary resolver: overrides stale/mismatched legacy cache entries.
     try:
-        conn = inventory_db.connect()
+        conn = inventory_db.read_conn()
         if fdc_local.has_data(conn):
             local = fdc_local.resolve_local(conn, item)
             if local:
@@ -277,7 +277,7 @@ def _resolve_grams(amount, unit, item, record, *, use_cache: bool, portion_provi
     # estimates. Deterministic and provider-independent — used even with
     # portion_provider="none" so no LLM runs at resolve time.
     try:
-        conn = inventory_db.connect()
+        conn = inventory_db.read_conn()
         g_per = fdc_local.ledger_grams(conn, units._normalize_item(item), unit)
         if g_per:
             qty = units.parse_amount_to_float(amount) or 1.0
