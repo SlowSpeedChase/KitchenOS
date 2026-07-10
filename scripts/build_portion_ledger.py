@@ -12,6 +12,7 @@ Usage:
                                                       [--limit N] [--dry-run]
 """
 import argparse
+import json
 import os
 import sys
 
@@ -65,9 +66,22 @@ def main():
     ap.add_argument("--provider", default="ollama", choices=["ollama", "claude"])
     ap.add_argument("--limit", type=int, default=None, help="cap unique pairs (for a test batch)")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--pairs-cache", default=None,
+                    help="JSON file to cache/reuse the collected failing pairs "
+                         "(skips the slow re-collection on resume)")
     args = ap.parse_args()
 
-    failures = collect_failures(args.limit)
+    cache = args.pairs_cache
+    if cache and os.path.exists(cache):
+        with open(cache) as f:
+            failures = {tuple(k.split("\t")): v for k, v in json.load(f).items()}
+        print(f"reusing {len(failures)} cached pairs from {os.path.basename(cache)}",
+              flush=True)
+    else:
+        failures = collect_failures(args.limit)
+        if cache:
+            with open(cache, "w") as f:
+                json.dump({"\t".join(k): v for k, v in failures.items()}, f)
     print(f"{len(failures)} unique (item, unit) pairs need portion estimates "
           f"[provider={args.provider}]", flush=True)
 

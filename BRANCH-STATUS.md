@@ -58,7 +58,21 @@ food-known/grams-failed). More foods resolve now, but count units (whole/scoop) 
 without a clean volume portion still fail to_grams. That's the Component C lever (LLM
 portion ledger) + a portion-matching pass, always "the 0.57→0.9 move". `food_resolution`-
 as-ledger + write-back not yet done (local resolve is deterministic/cheap, re-runs each time).
-- [ ] Component C — LLM resolution ledger
+- [~] **Component C — LLM portion ledger** (in progress):
+    - [x] `portion_ledger` table + band validation (grams>0/<2000, volume implied-density
+          0.1–2 g/ml, per-unit kcal ceilings) + `ledger_get/put`. 9 tests.
+    - [x] `_resolve_grams` reads the ledger deterministically before any LLM (works with
+          `portion_provider=none`). Confidence `CONFIDENCE_LEDGER`.
+    - [x] `scripts/build_portion_ledger.py` — enumerate food-known/grams-failed (item,unit)
+          pairs → LLM estimate (Ollama/Claude) → band-validate → ledger or review queue.
+          Sample validated: oil tbsp=14g, protein scoop=30g, can beans=425g, spices tsp=4.2g,
+          0 rejected.
+    - [x] Full batch DONE (Ollama, 581 pairs → 563 written, 18 to review: bands caught
+          "pumpkin 3000g", low-confidence). **FINAL offline coverage: calorie 0.580→0.929,
+          item 0.710→0.972, fully-covered 11%→75%, grams-failed 388→12.** 🎯 Target met.
+    - [ ] Obsidian review-queue note for out-of-band/no-estimate (currently printed only).
+    - [ ] PERF: `_resolve_food`/`_resolve_grams` open an `inventory_db.connect()` per line
+          (suite 20s→226s). Cache the connection before merge / full backfill.
 - [ ] Component D — metric/guardrails
 - [ ] All tests passing / no lint errors / LaunchAgent restarted post-merge
 
