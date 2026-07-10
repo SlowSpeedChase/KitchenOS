@@ -184,15 +184,17 @@ def _resolve_food(item: str, *, use_cache: bool, resolution_provider: str,
             return cached, res["confidence"], "cache-human"
 
     # 2. Local FDC store (Component B) — deterministic, no network, full provenance.
-    #    Primary resolver: overrides stale/mismatched legacy cache entries.
-    try:
-        conn = inventory_db.read_conn()
-        if fdc_local.has_data(conn):
-            local = fdc_local.resolve_local(conn, item)
-            if local:
-                return local, 0.85, "fdc-local"
-    except Exception:
-        pass  # never let the local store break resolution
+    #    Primary resolver: overrides stale/mismatched legacy cache entries. Gated on
+    #    use_cache (it is persistent state; use_cache=False means resolve fresh).
+    if use_cache:
+        try:
+            conn = inventory_db.read_conn()
+            if fdc_local.has_data(conn):
+                local = fdc_local.resolve_local(conn, item)
+                if local:
+                    return local, 0.85, "fdc-local"
+        except Exception:
+            pass  # never let the local store break resolution
 
     # 3. Legacy cache (pre-FDC OFF/LLM resolutions) as fallback.
     if res and res.get("resolver") != "llm-portion":
@@ -275,16 +277,17 @@ def _resolve_grams(amount, unit, item, record, *, use_cache: bool, portion_provi
 
     # Portion ledger (Component C): band-validated, pre-built grams-per-unit
     # estimates. Deterministic and provider-independent — used even with
-    # portion_provider="none" so no LLM runs at resolve time.
-    try:
-        conn = inventory_db.read_conn()
-        g_per = fdc_local.ledger_grams(conn, units._normalize_item(item), unit)
-        if g_per:
-            qty = units.parse_amount_to_float(amount) or 1.0
-            return units.GramResult(qty * g_per, "ledger", CONFIDENCE_LEDGER, True,
-                                    note="portion ledger")
-    except Exception:
-        pass
+    # portion_provider="none" so no LLM runs at resolve time. Gated on use_cache.
+    if use_cache:
+        try:
+            conn = inventory_db.read_conn()
+            g_per = fdc_local.ledger_grams(conn, units._normalize_item(item), unit)
+            if g_per:
+                qty = units.parse_amount_to_float(amount) or 1.0
+                return units.GramResult(qty * g_per, "ledger", CONFIDENCE_LEDGER, True,
+                                        note="portion ledger")
+        except Exception:
+            pass
 
     # Deterministic conversion failed. If a portion provider is configured, try a
     # cached (provider-keyed) estimate, then a live one. With provider "none" we
