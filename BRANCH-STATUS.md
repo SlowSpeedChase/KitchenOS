@@ -41,10 +41,23 @@ Phase 2 nutrition accuracy (Fable batch/ledger reframe). Move calorie coverage f
           banding. **Verified on real Foundation (469 foods, 187 portions):** butter→733
           (atwater), milk cup=227g, salt tsp=6.1g; FTS search + rank works.
     - [ ] Load SR Legacy (CSV) + FNDDS (JSON path — 64M not 1.6G CSV) into main DB.
-    - [ ] Rewire resolver: FTS recall → Python rank (bm25 + dataset_rank + token_coverage −
-          length_penalty − kcal_none_penalty; kills apple→strudel) → local macros/portions.
-          `food_resolution` becomes the ledger (`source='fdc'`).
-    - [ ] Loader integration test (tiny synthetic CSV fixture).
+    - [x] Loaded into main DB: Foundation 469 + SR Legacy 7793 + FNDDS 5432 =
+          **13694 foods / 36763 portions**.
+    - [x] Rewired resolver: `fdc_local.resolve_local` (FTS recall + Python rank with
+          head-noun/length/coverage/dataset/kcal-none terms) is now the PRIMARY path in
+          `_resolve_food` (after human pins, before legacy cache + network). Ranking
+          verified: **apple→"Apple, raw" (not Strudel)**, **olive oil→900 (not 0-kcal)**,
+          flour/chocolate-chips/butter all fixed. 4 ranking tests. Full suite 1155.
+    - [x] **Measured (offline, apples-to-apples vs pre-B offline):** item 0.503→**0.710**,
+          calorie 0.434→**0.580**, food-not-found ~752→**27**. Component B restored
+          local-first (zero network) at coverage that previously needed the USDA API.
+    - [ ] Loader integration test (tiny synthetic CSV fixture) — TODO.
+
+FINDING: the bottleneck shifted from food-not-found to **portion conversion** (388
+food-known/grams-failed). More foods resolve now, but count units (whole/scoop) and foods
+without a clean volume portion still fail to_grams. That's the Component C lever (LLM
+portion ledger) + a portion-matching pass, always "the 0.57→0.9 move". `food_resolution`-
+as-ledger + write-back not yet done (local resolve is deterministic/cheap, re-runs each time).
 - [ ] Component C — LLM resolution ledger
 - [ ] Component D — metric/guardrails
 - [ ] All tests passing / no lint errors / LaunchAgent restarted post-merge

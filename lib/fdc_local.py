@@ -24,6 +24,8 @@ _STOPWORDS = {
     "raw", "fresh", "organic", "granulated", "prepared", "unprepared",
     "commercial", "commercially", "ns", "nfs", "variety", "types", "type",
     "all", "includes", "food",
+    # size words are portion modifiers, not food identity ("medium apple" → apple)
+    "small", "medium", "large",
 }
 
 # FDC measure-unit names (or modifier words) → the engine's canonical unit tokens.
@@ -133,3 +135,92 @@ def ensure_schema(conn) -> None:
     """Create the local FDC tables if absent (idempotent)."""
     conn.executescript(SCHEMA)
     conn.commit()
+
+
+def has_data(conn) -> bool:
+    try:
+        return conn.execute("SELECT 1 FROM fdc_foods LIMIT 1").fetchone() is not None
+    except Exception:
+        return False
+
+
+def _fts_escape(query_norm: str) -> str:
+    # OR the tokens for recall; quote each to avoid FTS operator parsing.
+    toks = [t for t in query_norm.split() if t]
+    return " OR ".join(f'"{t}"' for t in toks)
+
+
+def search_candidates(conn, item: str, limit: int = 40):
+    """FTS recall over the local store. Returns (query_norm, [candidate dicts])."""
+    qn = normalize_food_name(item)
+    if not qn:
+        return qn, []
+    match = _fts_escape(qn)
+    if not match:
+        return qn, []
+    rows = conn.execute(
+        """SELECT f.fdc_id, f.description, f.name_norm, f.kcal_100g, f.kcal_source,
+                  f.protein_100g, f.carb_100g, f.fat_100g, f.dataset_rank,
+                  bm25(fdc_foods_fts) AS bm
+           FROM fdc_foods_fts fts JOIN fdc_foods f ON f.fdc_id = fts.rowid
+           WHERE fdc_foods_fts MATCH ? ORDER BY bm LIMIT ?""",
+        (match, limit),
+    ).fetchall()
+    return qn, [dict(r) for r in rows]
+
+
+_RANK_BONUS = {0: 1.0, 1: 0.7, 2: 0.5}
+
+
+def score_candidate(query_norm: str, cand: dict) -> float:
+    """Legible ranking that replaces USDA's opaque one. Higher = better.
+
+    coverage rewards matching the query; length_penalty punishes padded records
+    ("Strudel, apple"); head-noun match is the strong signal that the query IS the
+    food (not a dish containing it); dataset_rank prefers Foundation/SR/FNDDS over
+    branded; kcal 'none' is deprioritized (don't strand a 0-kcal pick)."""
+    q = set(query_norm.split())
+    cw = set((cand.get("name_norm") or "").split())
+    if not q:
+        return 0.0
+    coverage = len(q & cw) / len(q)
+    length_penalty = max(0, len(cw) - len(q)) * 0.2
+    exact = 3.0 if cand.get("name_norm") == query_norm else 0.0
+    # Head noun: first token of the raw description (before the comma) is the food's
+    # head. If a query token is the head, this is the food itself, not a dish.
+    head = (cand.get("description") or "").split(",")[0].strip().lower()
+    head_tok = normalize_food_name(head)
+    head_bonus = 1.5 if head_tok and set(head_tok.split()) & q else 0.0
+    rank_bonus = _RANK_BONUS.get(cand.get("dataset_rank"), 0.0)
+    none_penalty = 1.5 if cand.get("kcal_source") == "none" else 0.0
+    bm_bonus = -(cand.get("bm") or 0) * 0.05  # bm25 is negative; better match → larger
+    return (coverage * 2 + exact + head_bonus + rank_bonus
+            - length_penalty - none_penalty + bm_bonus)
+
+
+def resolve_local(conn, item: str):
+    """Resolve an ingredient to a local FDC record dict, or None. Shape matches the
+    live engine's record: source/source_id/description/per_100g/portions/density."""
+    qn, cands = search_candidates(conn, item)
+    if not cands:
+        return None
+    best = max(cands, key=lambda c: score_candidate(qn, c))
+    ports = conn.execute(
+        "SELECT portion_label, gram_weight FROM fdc_portions WHERE fdc_id = ?",
+        (best["fdc_id"],),
+    ).fetchall()
+    return {
+        "query_norm": qn,
+        "source": "fdc",
+        "source_id": str(best["fdc_id"]),
+        "description": best["description"],
+        "per_100g": {
+            "calories": best["kcal_100g"] or 0,
+            "protein": best["protein_100g"] or 0,
+            "carbs": best["carb_100g"] or 0,
+            "fat": best["fat_100g"] or 0,
+        },
+        "portions": [{"label": p["portion_label"], "gram_weight": p["gram_weight"]}
+                     for p in ports],
+        "density_g_per_ml": None,
+    }
