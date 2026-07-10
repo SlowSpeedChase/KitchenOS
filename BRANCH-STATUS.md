@@ -32,7 +32,19 @@ Phase 2 nutrition accuracy (Fable batch/ledger reframe). Move calorie coverage f
       foods (apple 106 vs ~52) — underlying record quality, not A's fault; Component D
       recipe-sanity + B/C matching address it. Cached 0-kcal values realize on next
       refresh+backfill (bundled with B/C).
-- [ ] Component B — bulk FNDDS loader + local food table
+- [~] **Component B — bulk FDC → local SQLite** (in progress):
+    - [x] `lib/fdc_local.py`: shared `normalize_food_name` (order-independent, load+query),
+          `unit_from_portion`, and the `fdc_foods`/`fdc_portions`/`fdc_foods_fts`/`fdc_meta`
+          schema. 9 tests.
+    - [x] `scripts/load_fdc_bulk.py`: streaming CSV loader, energy cascade at load (reuses
+          `food_db._energy_kcal`), delete-by-data_type idempotent, FTS rebuild, gram-weight
+          banding. **Verified on real Foundation (469 foods, 187 portions):** butter→733
+          (atwater), milk cup=227g, salt tsp=6.1g; FTS search + rank works.
+    - [ ] Load SR Legacy (CSV) + FNDDS (JSON path — 64M not 1.6G CSV) into main DB.
+    - [ ] Rewire resolver: FTS recall → Python rank (bm25 + dataset_rank + token_coverage −
+          length_penalty − kcal_none_penalty; kills apple→strudel) → local macros/portions.
+          `food_resolution` becomes the ledger (`source='fdc'`).
+    - [ ] Loader integration test (tiny synthetic CSV fixture).
 - [ ] Component C — LLM resolution ledger
 - [ ] Component D — metric/guardrails
 - [ ] All tests passing / no lint errors / LaunchAgent restarted post-merge
