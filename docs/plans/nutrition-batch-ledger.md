@@ -1,8 +1,29 @@
 # Nutrition Batch Ledger (Phase 2) Design
 
-**Status:** Ready
+**Status:** Core shipped (A/B/C, 2026-07-10) — target met; Component D + polish follow-up
 **Created:** 2026-07-09
-**Updated:** 2026-07-09
+**Updated:** 2026-07-10
+
+## Shipped (branch `nutrition-batch-ledger`, 2026-07-10)
+
+Fable's batch/ledger reframe, executed. Offline calorie coverage **0.434 → 0.929**
+(item 0.503 → 0.972; fully-covered 11% → 75%; grams-failed 388 → 12) — **all headline
+acceptance criteria met**, and the engine now resolves entirely offline (no runtime USDA).
+
+- **A — Atwater energy fallback** (`food_db._energy_kcal`): macros-but-no-energy foods
+  derive kcal (4·P+4·C+9·F).
+- **B — bulk FDC → local SQLite** (`lib/fdc_local.py`, `scripts/load_fdc_bulk.py`):
+  13,694 foods / 36,763 portions (Foundation + SR Legacy + FNDDS). `resolve_local` = FTS
+  recall + legible Python ranking (fixes apple→"Apple, raw", olive oil→900). Primary
+  resolver; killed the runtime USDA path.
+- **C — LLM portion ledger** (`portion_ledger`, `scripts/build_portion_ledger.py`):
+  Ollama estimated grams for 581 grams-failed pairs → band-validated (563 written, 18 to
+  review) → engine reads deterministically (`method=ledger`, no LLM at resolve time).
+- **perf**: `inventory_db.read_conn()` thread-local cache (suite 226s → 14s).
+
+**Follow-ups (not done):** Component D (spices→negligible, recipe sanity flags); wire the
+review queue to an Obsidian note (currently printed); golden-set ±15% validation; a
+`--force` re-backfill to write the macros into recipe frontmatter; loader integration test.
 
 > Phase 2 of nutrition accuracy. Supersedes the deferred "gated LLM portion fallback +
 > hand density tables" approach in [nutrition-portion-resolution.md](nutrition-portion-resolution.md)
