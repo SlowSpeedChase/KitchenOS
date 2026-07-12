@@ -2063,6 +2063,46 @@ def api_inventory_paste():
     return jsonify({"status": "preview", **receipt_paster.preview(markdown)})
 
 
+@app.route('/api/receipt/paste', methods=['POST'])
+def api_receipt_paste():
+    """Ingest a photographed HEB receipt as pasted schema JSON (preview/commit).
+
+    Body: {json: str, commit?: bool}. The JSON is what the Claude iOS app emits
+    from a receipt photo (matching RECEIPT_SCHEMA). commit=false (default)
+    dry-runs and returns routed items + reconciliation for confirmation;
+    commit=true records the trip + priced purchases + non-fee inventory via the
+    shared ``receipt_ingest`` engine. Returns 400 on unparseable JSON.
+
+    The response carries two orthogonal fields: ``mode`` (preview|committed) and
+    ``status`` (ingested|needs_review|skipped) from the ingest engine.
+    """
+    from lib import receipt_ingest
+
+    data = request.get_json(force=True, silent=True) or {}
+    text = data.get('json') or data.get('text')
+    if not text or not str(text).strip():
+        return jsonify({"error": "'json' is required"}), 400
+
+    if data.get('commit'):
+        result = receipt_ingest.commit(text)
+        if "error" in result:
+            return jsonify(result), 400
+        return jsonify({"mode": "committed", **result})
+
+    result = receipt_ingest.preview(text)
+    if "error" in result:
+        return jsonify(result), 400
+    return jsonify({"mode": "preview", **result})
+
+
+@app.route('/api/receipt/prompt', methods=['GET'])
+def api_receipt_prompt():
+    """The prompt to paste (with a receipt photo) into the Claude iOS app."""
+    from prompts.receipt_extraction import build_receipt_photo_prompt
+
+    return build_receipt_photo_prompt(), 200, {'Content-Type': 'text/plain; charset=utf-8'}
+
+
 @app.route('/api/inventory/remove', methods=['POST'])
 def api_inventory_remove():
     """Remove an item. Body: {name, location?}."""
@@ -2409,6 +2449,13 @@ def system_health_dashboard():
 def nutrition_review_page():
     """Human review UI for weak/unresolved nutrition matches."""
     html = open('templates/nutrition_review.html').read()
+    return html
+
+
+@app.route('/receipt-paste', methods=['GET'])
+def receipt_paste_page():
+    """Paste a photographed-receipt JSON (from the Claude app), preview, ingest."""
+    html = open('templates/receipt_paste.html').read()
     return html
 
 

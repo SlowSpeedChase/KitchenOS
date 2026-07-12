@@ -114,6 +114,27 @@ curl -X POST http://localhost:5001/send-to-reminders \
 .venv/bin/python ingest_csa.py
 ```
 
+### Ingest a photographed receipt (Claude iOS app → paste)
+
+For paper / in-store / HEB-app receipts that never hit email. No server-side LLM
+call — the Claude app does the vision, KitchenOS just files the JSON.
+
+1. Open the **Paste a Receipt** page: `http://<tailnet-host>:5001/receipt-paste`
+   (also linked from `Dashboards/KitchenOS Web.md`).
+2. **Copy prompt** and save it once as a Claude project / saved prompt (or grab it
+   any time from `prompts/receipt_photo.md` / `GET /api/receipt/prompt`).
+3. In the Claude iOS app: attach a receipt photo + that prompt → copy the JSON it
+   returns.
+4. Paste into the page → **Preview** (routed items + total reconciliation; a
+   non-reconciling receipt is flagged `needs_review` but still filed) → **Confirm
+   & ingest**.
+
+Same DB back-end as email ingest (trip + priced purchases + non-fee inventory,
+meal-plan recipe assignment). Re-pasting the same receipt is a no-op — dedup is a
+content hash of `date + total + item names` on `trips.source_id` (source
+`photo_receipt`). The whole path is shared with the email pipeline via
+`lib/receipt_ingest.py:ingest_parsed`.
+
 ### Generate price dashboard
 
 ```bash

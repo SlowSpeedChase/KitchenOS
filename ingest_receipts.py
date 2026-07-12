@@ -27,17 +27,9 @@ load_dotenv()
 
 from lib.email_fetcher import extract_email_payload, fetch_receipt_emails  # noqa: E402
 from lib.failure_logger import classify_error, log_failures  # noqa: E402
-from lib.inventory import InventoryItem, add_items  # noqa: E402
-from lib.inventory_db import record_trip, trip_exists  # noqa: E402
-from lib.recipe_matcher import assign_recipes  # noqa: E402
-from lib.storage_locations import resolve_location  # noqa: E402
-from lib.receipt_parser import (  # noqa: E402
-    build_purchases,
-    email_to_text,
-    parse_receipt_text,
-    to_cents,
-    validate_receipt,
-)
+from lib.inventory_db import trip_exists  # noqa: E402
+from lib.receipt_ingest import ingest_parsed  # noqa: E402
+from lib.receipt_parser import email_to_text, parse_receipt_text  # noqa: E402
 
 
 def _source_for(parsed: dict) -> str:
@@ -60,57 +52,24 @@ def process_email(payload: dict, dry_run: bool = False) -> str:
 
     text = email_to_text(payload.get("html") or "")
     parsed = parse_receipt_text(text)
-    ok, problems = validate_receipt(parsed)
-    purchases = build_purchases(parsed)
-    # Tag each line with the meal-plan recipe it was bought for (this/next
-    # week); unmatched lines stay None and fall through to general inventory.
-    assign_recipes(purchases)
-
-    trip = {
-        "date": parsed.get("date") or "",
-        "store": parsed.get("store") or "HEB",
-        "source": _source_for(parsed),
-        "source_id": msg_id,
-        "total_cents": to_cents(parsed.get("total")),
-        "needs_review": not ok,
-        "raw_text": text if not ok else None,
-    }
+    result = ingest_parsed(
+        parsed, source=_source_for(parsed), source_id=msg_id,
+        raw_text=text, dry_run=dry_run,
+    )
 
     if dry_run:
-        status = "OK" if ok else f"NEEDS REVIEW ({'; '.join(problems)})"
-        print(f"[dry-run] {trip['date']} {trip['source']} "
-              f"total={trip['total_cents']} items={len(purchases)} — {status}")
-        for p in purchases:
-            loc = resolve_location(p["canonical_name"], p["category"])
-            recipe = p.get("for_recipe") or "-"
-            print(f"    {p['canonical_name']:30s} {p['quantity']} {p['unit']}"
-                  f"  {p['total_cents']}c  [{p['category']}/{loc}]  → {recipe}")
-        return "ingested" if ok else "needs_review"
+        status = "OK" if not result["problems"] else f"NEEDS REVIEW ({'; '.join(result['problems'])})"
+        print(f"[dry-run] {result['date']} {_source_for(parsed)} "
+              f"total={result['total_cents']} items={len(result['items'])} — {status}")
+        for it in result["items"]:
+            recipe = it.get("for_recipe") or "-"
+            print(f"    {it['canonical_name']:30s} {it['quantity']} {it['unit']}"
+                  f"  {it['total_cents']}c  [{it['category']}/{it['location']}]  → {recipe}")
+        return result["status"]
 
-    if record_trip(trip, purchases) is None:
-        return "skipped"
-
-    if not ok:
-        print(f"  ⚠️  needs review: {'; '.join(problems)}")
-        return "needs_review"
-
-    stock = [
-        InventoryItem(
-            name=p["canonical_name"],
-            quantity=float(p["quantity"] or 1),
-            unit=p["unit"],
-            category=p["category"],
-            location=resolve_location(p["canonical_name"], p["category"]),
-            purchased=trip["date"],
-            source="receipt",
-            for_recipe=p.get("for_recipe"),
-        )
-        for p in purchases
-        if p["category"] != "fee"
-    ]
-    if stock:
-        add_items(stock)
-    return "ingested"
+    if result["status"] == "needs_review":
+        print(f"  ⚠️  needs review: {'; '.join(result['problems'])}")
+    return result["status"]
 
 
 def ingest(since_days: int = 14, dry_run: bool = False,

@@ -44,6 +44,14 @@ SECTIONS = [
         ],
     ),
     (
+        "Stock",
+        [
+            ("📸", "Paste a Receipt", "/receipt-paste",
+             "photograph an HEB receipt in the Claude app, paste the JSON it "
+             "produces, preview, and file it into inventory"),
+        ],
+    ),
+    (
         "System",
         [
             ("📊", "System Health", "/system-health",

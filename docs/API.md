@@ -63,6 +63,8 @@ exempt. Gated routes are marked **🔒** in the table.
 | `/api/cook` | POST | Mark a recipe cooked: decrement its non-staple ingredients from inventory (true partial-package leftovers). Body `{recipe, servings?}` → consume summary. Optional/additive — inventory still self-cleans via expiry without it. Backs the `cook_recipe` MCP tool. |
 | `/api/inventory/add` | POST | Add items to inventory. Body `{items: [...], trip?}`. Accepts optional per-item `unit_price`/`line_total` and an optional `trip` block (`{date, store, total, source_id, source}`) to also record into the price ledger. See "Receipt → Inventory Workflow" in `CLAUDE.md`. |
 | `/api/inventory/paste` | POST | Bulk-add from a pasted markdown table. Body `{markdown, commit?}` — preview (default, no write) unless `commit: true`. |
+| `/api/receipt/paste` | POST | Ingest a photographed HEB receipt as pasted schema JSON (from the Claude iOS app). Body `{json, commit?}` — preview (default, no write) unless `commit: true`. Runs the full receipt pipeline via `lib/receipt_ingest.py` (trip + priced purchases + non-fee inventory, meal-plan recipe assignment); dedups on a content hash of the receipt. Response carries `mode` (`preview`/`committed`) and the engine `status` (`ingested`/`needs_review`/`skipped`). 400 on unparseable JSON. Un-gated (private tailnet, browser page sends no token) — matches `/api/inventory/paste`. |
+| `/api/receipt/prompt` | GET | Plain-text prompt to paste (with a receipt photo) into the Claude iOS app; derived from `RECEIPT_SCHEMA` so it can't drift. Backs the "Copy prompt" button on `/receipt-paste`. |
 | `/api/inventory/remove` | POST | Remove an item. Body `{name, location?}`. |
 | `/api/inventory/update` | POST | Adjust an item's quantity. Body `{name, quantity, location?}`. |
 | `/api/receipts/trips` 🔒 | GET | Recent shopping trips, newest first. |
@@ -73,6 +75,7 @@ exempt. Gated routes are marked **🔒** in the table.
 | `/system-health` | GET | Interactive system health dashboard (HTML UI). |
 | `/recipe/<name>` | GET | Interactive recipe detail page with live ingredient scaling (HTML UI). |
 | `/nutrition-review` | GET | Human review UI for weak/unresolved nutrition matches (HTML). |
+| `/receipt-paste` | GET | Phone-friendly HTML page: copy the Claude-app prompt, paste the receipt JSON it returns, preview (routed items + reconciliation), then confirm to ingest. Backed by `/api/receipt/paste`. |
 | `/api/nutrition-review/recipes` 🔒 | GET | Ranked queue of recipes needing nutrition review, worst first (lowest coverage, then lowest confidence). Frontmatter-only — fast. |
 | `/api/nutrition-review/recipe/<name>` 🔒 | GET | Recompute one recipe's nutrition live (deterministic, no LLM) and return an audit-trail view with USDA candidates for weak/unresolved items. |
 | `/api/nutrition-review/resolve` 🔒 | POST | Pin a human food match (or mark an item resolved-as-zero) so the nutrition engine's cache uses it on the next recompute. |
