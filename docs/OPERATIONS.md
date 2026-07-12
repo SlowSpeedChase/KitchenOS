@@ -129,6 +129,11 @@ call — the Claude app does the vision, KitchenOS just files the JSON.
    non-reconciling receipt is flagged `needs_review` but still filed) → **Confirm
    & ingest**.
 
+A receipt whose JSON has no legible date defaults to **today** (the preview
+returns `date_defaulted: true`); it no longer blocks the inventory update. The
+dedup hash is computed before defaulting, so re-pasting the same dateless receipt
+still de-duplicates.
+
 Same DB back-end as email ingest (trip + priced purchases + non-fee inventory,
 meal-plan recipe assignment). Re-pasting the same receipt is a no-op — dedup is a
 content hash of `date + total + item names` on `trips.source_id` (source

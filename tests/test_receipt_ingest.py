@@ -88,6 +88,32 @@ def test_parse_pasted_json_tolerates_code_fences():
     assert len(parsed["items"]) == 4
 
 
+def test_missing_date_defaults_to_today_and_ingests(tmp_vault, tmp_db, alias_tmp):
+    from datetime import date
+    no_date = {k: v for k, v in PARSED_OK.items() if k != "date"}
+    res = ri.commit(json.dumps(no_date))
+    assert res["status"] == "ingested"  # missing date no longer blocks inventory
+    assert res["date_defaulted"] is True
+    names = {it.name for it in read_inventory()}
+    assert "chicken breast" in names  # inventory actually populated
+    conn = idb.connect()
+    trip_date = conn.execute("SELECT date FROM trips").fetchone()[0]
+    conn.close()
+    assert trip_date == date.today().isoformat()
+
+
+def test_blank_date_defaults_but_present_date_untouched(tmp_vault, tmp_db, alias_tmp):
+    assert ri.preview(json.dumps(dict(PARSED_OK, date="")))["date_defaulted"] is True
+    assert ri.preview(json.dumps(PARSED_OK))["date_defaulted"] is False
+
+
+def test_dateless_receipt_dedups_regardless_of_paste_day(tmp_vault, tmp_db, alias_tmp):
+    no_date = {k: v for k, v in PARSED_OK.items() if k != "date"}
+    text = json.dumps(no_date)
+    assert ri.commit(text)["status"] == "ingested"
+    assert ri.commit(text)["status"] == "skipped"  # same content → same source_id
+
+
 def test_content_source_id_is_stable_and_content_derived():
     a = ri.content_source_id(PARSED_OK)
     b = ri.content_source_id(dict(PARSED_OK))

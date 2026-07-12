@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import date
 
 from lib.inventory import InventoryItem, add_items
 from lib.inventory_db import record_trip, trip_exists
@@ -128,10 +129,27 @@ def parse_pasted_json(text: str) -> dict:
 
 
 def content_source_id(parsed: dict) -> str:
-    """Stable dedup id from receipt content (date + total + item raw names)."""
+    """Stable dedup id from receipt content (date + total + item raw names).
+
+    Computed from the receipt as pasted — call it *before* ``default_missing_date``
+    so re-pasting the same (dateless) receipt on a different day still dedups.
+    """
     names = "|".join((it.get("raw_name") or "") for it in (parsed.get("items") or []))
     basis = f"{parsed.get('date')}|{parsed.get('total')}|{names}"
     return "photo-" + hashlib.sha1(basis.encode("utf-8")).hexdigest()[:16]
+
+
+def default_missing_date(parsed: dict) -> bool:
+    """Fill a missing/blank receipt date with today's date. Returns True if defaulted.
+
+    A photographed receipt often has no legible date, and a missing date is a weak
+    reason to withhold the whole inventory update — you're pasting it now, so today
+    is a sensible purchase date. Mutates ``parsed`` in place.
+    """
+    if not (parsed.get("date") or "").strip():
+        parsed["date"] = date.today().isoformat()
+        return True
+    return False
 
 
 def preview(text: str) -> dict:
@@ -144,10 +162,12 @@ def preview(text: str) -> dict:
         parsed = parse_pasted_json(text)
     except (json.JSONDecodeError, ValueError) as e:
         return {"error": f"Could not parse receipt JSON: {e}"}
-    source_id = content_source_id(parsed)
+    source_id = content_source_id(parsed)  # hash before defaulting the date
+    date_defaulted = default_missing_date(parsed)
     result = ingest_parsed(parsed, source=PHOTO_SOURCE, source_id=source_id, dry_run=True)
     result["count"] = len(result["items"])
     result["already_ingested"] = trip_exists(source_id)
+    result["date_defaulted"] = date_defaulted
     return result
 
 
@@ -160,10 +180,12 @@ def commit(text: str) -> dict:
         parsed = parse_pasted_json(text)
     except (json.JSONDecodeError, ValueError) as e:
         return {"error": f"Could not parse receipt JSON: {e}"}
-    source_id = content_source_id(parsed)
+    source_id = content_source_id(parsed)  # hash before defaulting the date
+    date_defaulted = default_missing_date(parsed)
     result = ingest_parsed(
         parsed, source=PHOTO_SOURCE, source_id=source_id,
         raw_text=text if isinstance(text, str) else None,
     )
     result["count"] = len(result["items"])
+    result["date_defaulted"] = date_defaulted
     return result
