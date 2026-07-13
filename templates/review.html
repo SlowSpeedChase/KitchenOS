@@ -137,7 +137,7 @@ document.getElementById('undo').onclick = async () => {
     body: JSON.stringify({ items: [ {
       name: it.name, quantity: it.quantity, unit: it.unit, category: it.category,
       location: it.location, purchased: it.purchased, expires: it.expires,
-      for_recipe: it.for_recipe } ] }) });
+      for_recipe: it.for_recipe, source: it.source, notes: it.notes } ] }) });
   load();
 };
 document.getElementById('refresh').onclick = load;
