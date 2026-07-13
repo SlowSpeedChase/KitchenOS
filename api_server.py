@@ -2478,6 +2478,12 @@ def nutrition_review_page():
     return html
 
 
+@app.route('/review')
+def review_page():
+    """Mobile inventory scan/review page: remove or extend expiry per item."""
+    return open('templates/review.html').read()
+
+
 @app.route('/receipt-paste', methods=['GET'])
 def receipt_paste_page():
     """Paste a photographed-receipt JSON (from the Claude app), preview, ingest."""

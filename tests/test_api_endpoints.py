@@ -91,3 +91,9 @@ def test_inventory_extend_success(client):
     # cleanup
     client.post('/api/inventory/remove',
                 json={'name': 'ExtendTestKale', 'location': 'fridge'})
+
+
+def test_review_page_served(client):
+    response = client.get('/review')
+    assert response.status_code == 200
+    assert b'Inventory Review' in response.data
