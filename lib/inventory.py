@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import asdict, dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -375,3 +375,34 @@ def update_quantity(
     if found:
         write_inventory(items)
     return found
+
+
+def extend_expiry(
+    name: str,
+    days: int,
+    location: Optional[str] = None,
+    today: Optional[date] = None,
+) -> Optional[InventoryItem]:
+    """Set a matched item's expiry to today + `days`. Works on no-expiry items.
+
+    Matches by lowercased name (+ optional location), like remove_item.
+    Returns the updated item, or None if no row matched.
+    """
+    items = read_inventory()
+    target = name.lower().strip()
+    target_loc = location.lower().strip() if location else None
+    base = today or date.today()
+    new_expires = (base + timedelta(days=days)).isoformat()
+
+    updated: Optional[InventoryItem] = None
+    for it in items:
+        if it.name.lower().strip() == target and (
+            target_loc is None or it.location == target_loc
+        ):
+            it.expires = new_expires
+            updated = it
+            break
+
+    if updated is not None:
+        write_inventory(items)
+    return updated
