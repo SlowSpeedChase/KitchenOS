@@ -9,6 +9,7 @@ Obsidian, but edits there are overwritten. Items with the same
 
 from __future__ import annotations
 
+import os
 import sys
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta
@@ -218,6 +219,9 @@ def render_inventory_md(items: list[InventoryItem]) -> str:
             it.notes.replace("|", "\\|"),
         ]
         rows.append("| " + " | ".join(cells) + " |")
+    base = os.environ.get(
+        "KITCHENOS_API_BASE", "http://chases-mac-mini.taila69703.ts.net:5001"
+    )
     return (
         "---\n"
         "type: inventory\n"
@@ -227,6 +231,7 @@ def render_inventory_md(items: list[InventoryItem]) -> str:
         "> ⚠️ This file is **generated** from the KitchenOS database. "
         "Do not edit here — changes will be overwritten. "
         "Update inventory via Claude (MCP tools) or the API.\n\n"
+        f"**▶ [Open Review]({base}/review)** — remove or add time, tap-to-act\n\n"
         + _expiry_warning_section(flagged)
         + "\n".join(rows)
         + "\n"

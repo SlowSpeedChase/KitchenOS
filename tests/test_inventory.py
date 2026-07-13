@@ -324,3 +324,11 @@ class TestExtendExpiry:
         assert item.quantity == 2
         assert item.unit == "ct"
         assert item.for_recipe == "Smoothie"
+
+
+class TestReviewLink:
+    def test_inventory_md_has_review_link(self):
+        from lib.inventory import render_inventory_md
+        md = render_inventory_md([])
+        assert "/review" in md
+        assert "Open Review" in md
