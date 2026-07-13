@@ -67,6 +67,7 @@ exempt. Gated routes are marked **🔒** in the table.
 | `/api/receipt/prompt` | GET | Plain-text prompt to paste (with a receipt photo) into the Claude iOS app; derived from `RECEIPT_SCHEMA` so it can't drift. Backs the "Copy prompt" button on `/receipt-paste`. |
 | `/api/inventory/remove` | POST | Remove an item. Body `{name, location?}`. |
 | `/api/inventory/update` | POST | Adjust an item's quantity. Body `{name, quantity, location?}`. |
+| `/api/inventory/extend` | POST | Extend an item's expiry date. Body `{name, days, location?}` → sets `expires = today + days` (works on items with no expiry too). Ungated. Returns `{status: "extended", item: {..., expiry_status}}` on success; `400` if name/days missing or days not int-coercible; `404` if no matching row. |
 | `/api/receipts/trips` 🔒 | GET | Recent shopping trips, newest first. |
 | `/api/receipts/trips/<int:trip_id>` 🔒 | GET | One trip plus its purchase line items. |
 | `/api/price/trends` 🔒 | GET | Structured price-tracker data (spending, by-category totals, item trends) — JSON projection of `Price Tracker.md`. |
@@ -75,6 +76,7 @@ exempt. Gated routes are marked **🔒** in the table.
 | `/system-health` | GET | Interactive system health dashboard (HTML UI). |
 | `/recipe/<name>` | GET | Interactive recipe detail page with live ingredient scaling (HTML UI). |
 | `/nutrition-review` | GET | Human review UI for weak/unresolved nutrition matches (HTML). |
+| `/review` | GET | Inventory scan/review UI — interactive list of items sorted soonest-expiring first, with in-place actions: Remove (with Undo), +3d, +7d quick-extend buttons, and Refresh. Linked from the top of `Inventory.md`. |
 | `/receipt-paste` | GET | Phone-friendly HTML page: copy the Claude-app prompt, paste the receipt JSON it returns, preview (routed items + reconciliation), then confirm to ingest. Backed by `/api/receipt/paste`. |
 | `/api/nutrition-review/recipes` 🔒 | GET | Ranked queue of recipes needing nutrition review, worst first (lowest coverage, then lowest confidence). Frontmatter-only — fast. |
 | `/api/nutrition-review/recipe/<name>` 🔒 | GET | Recompute one recipe's nutrition live (deterministic, no LLM) and return an audit-trail view with USDA candidates for weak/unresolved items. |
