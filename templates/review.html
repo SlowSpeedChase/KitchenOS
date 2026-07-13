@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Inventory Review</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.4 -apple-system, system-ui, sans-serif;
+         background: Canvas; color: CanvasText; padding: env(safe-area-inset-top) 0 4rem; }
+  header { position: sticky; top: 0; background: Canvas; padding: 12px 16px;
+           display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #8884; }
+  header h1 { font-size: 1.1rem; margin: 0; flex: 1; }
+  button { font: inherit; border: 1px solid #8886; border-radius: 10px;
+           padding: 8px 12px; background: #8882; color: inherit; cursor: pointer; }
+  button:active { background: #8884; }
+  #refresh { padding: 8px 10px; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { display: flex; align-items: center; gap: 10px; padding: 12px 16px;
+       border-bottom: 1px solid #8883; }
+  .emoji { font-size: 1.4rem; width: 1.6rem; text-align: center; }
+  .meta { flex: 1; min-width: 0; }
+  .name { font-weight: 600; }
+  .sub { font-size: 0.8rem; opacity: 0.7; }
+  .badge-expired { color: #d33; } .badge-soon { color: #e69500; }
+  .actions { display: flex; gap: 6px; }
+  .actions button { padding: 8px 10px; }
+  .rm { color: #d33; border-color: #d3355; }
+  .err { color: #d33; font-size: 0.8rem; }
+  #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+           background: #222d; color: #fff; padding: 10px 14px; border-radius: 12px;
+           display: none; align-items: center; gap: 12px; z-index: 10; }
+  #toast.show { display: flex; }
+  #toast button { background: #fff3; color: #fff; border-color: #fff5; }
+  #empty { padding: 3rem 1rem; text-align: center; opacity: 0.6; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Inventory Review</h1>
+  <button id="refresh" aria-label="Refresh">↻</button>
+</header>
+<ul id="list"></ul>
+<div id="empty" hidden>Nothing in inventory.</div>
+<div id="toast"><span id="toast-msg"></span><button id="undo">Undo</button></div>
+
+<script>
+const EMOJI = { produce:"🥬", dairy:"🥛", meat:"🥩", seafood:"🐟", pantry:"🥫",
+  frozen:"🧊", bakery:"🍞", beverages:"🧃", household:"🧽", other:"📦" };
+const RANK = { expired:0, soon:1, ok:2 };
+const list = document.getElementById('list');
+const empty = document.getElementById('empty');
+const toast = document.getElementById('toast');
+let lastRemoved = null, toastTimer = null;
+
+function rankOf(it){
+  const r = RANK[it.expiry_status]; return r === undefined ? 3 : r;
+}
+function sortItems(items){
+  return items.slice().sort((a,b)=>{
+    const dr = rankOf(a) - rankOf(b); if (dr) return dr;
+    const ax = a.expires || "9999", bx = b.expires || "9999";
+    if (ax !== bx) return ax < bx ? -1 : 1;
+    return (a.name||"").localeCompare(b.name||"");
+  });
+}
+function badge(it){
+  if (it.expiry_status === "expired") return ` <span class="badge-expired">🔴 expired</span>`;
+  if (it.expiry_status === "soon") return ` <span class="badge-soon">🟡 soon</span>`;
+  return "";
+}
+function subline(it){
+  const exp = it.expires ? "exp " + it.expires : "no expiry";
+  return exp + badge(it);
+}
+async function load(){
+  list.innerHTML = "";
+  let items;
+  try { items = await (await fetch('/api/inventory')).json(); }
+  catch(e){ empty.hidden = false; empty.textContent = "Couldn't load inventory. Tap ↻ to retry."; return; }
+  empty.hidden = items.length > 0;
+  for (const it of sortItems(items)) list.appendChild(row(it));
+}
+function row(it){
+  const li = document.createElement('li');
+  li.innerHTML =
+    `<span class="emoji">${EMOJI[it.category] || "📦"}</span>` +
+    `<span class="meta"><div class="name"></div><div class="sub">${subline(it)}</div></span>` +
+    `<span class="actions">` +
+    `<button class="rm">Remove</button>` +
+    `<button data-d="3">+3d</button><button data-d="7">+7d</button></span>`;
+  li.querySelector('.name').textContent = it.name;
+  li.querySelector('.rm').onclick = () => remove(it, li);
+  li.querySelectorAll('button[data-d]').forEach(b =>
+    b.onclick = () => extend(it, li, parseInt(b.dataset.d, 10)));
+  return li;
+}
+function rowError(li, msg){
+  let e = li.querySelector('.err');
+  if (!e){ e = document.createElement('div'); e.className = 'err';
+           li.querySelector('.meta').appendChild(e); }
+  e.textContent = msg;
+}
+async function remove(it, li){
+  try {
+    const r = await fetch('/api/inventory/remove', { method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ name: it.name, location: it.location }) });
+    if (!r.ok){ rowError(li, "Couldn't remove — tap ↻"); return; }
+    lastRemoved = it; li.remove(); showToast(`Removed ${it.name}`);
+  } catch(e){ rowError(li, "Network error — tap ↻"); }
+}
+async function extend(it, li, days){
+  try {
+    const r = await fetch('/api/inventory/extend', { method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ name: it.name, location: it.location, days }) });
+    if (!r.ok){ rowError(li, "Couldn't extend — tap ↻"); return; }
+    const { item } = await r.json();
+    it.expires = item.expires; it.expiry_status = item.expiry_status;
+    li.querySelector('.sub').innerHTML = subline(it);
+    const e = li.querySelector('.err'); if (e) e.remove();
+  } catch(e){ rowError(li, "Network error — tap ↻"); }
+}
+function showToast(msg){
+  document.getElementById('toast-msg').textContent = msg;
+  toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toast.classList.remove('show'); lastRemoved = null; }, 5000);
+}
+document.getElementById('undo').onclick = async () => {
+  if (!lastRemoved) return;
+  const it = lastRemoved; lastRemoved = null; toast.classList.remove('show');
+  await fetch('/api/inventory/add', { method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ items: [ {
+      name: it.name, quantity: it.quantity, unit: it.unit, category: it.category,
+      location: it.location, purchased: it.purchased, expires: it.expires,
+      for_recipe: it.for_recipe, source: it.source, notes: it.notes } ] }) });
+  load();
+};
+document.getElementById('refresh').onclick = load;
+load();
+</script>
+</body>
+</html>

@@ -3,6 +3,7 @@
 from lib.inventory import (
     InventoryItem,
     add_items,
+    extend_expiry,
     inventory_path,
     normalize_category,
     normalize_location,
@@ -287,3 +288,47 @@ class TestPruneExpired:
         add_items([InventoryItem(name="Milk", quantity=1, unit="gal", category="dairy",
                                  expires=(today + timedelta(days=5)).isoformat())])
         assert prune_expired(today=today) == 0
+
+
+class TestExtendExpiry:
+    def test_extends_from_today_not_old_date(self, tmp_vault, tmp_db):
+        from datetime import date
+        add_items([InventoryItem(name="Milk", quantity=1, unit="ct",
+                                 category="dairy", location="fridge",
+                                 expires="2026-07-15")])
+        item = extend_expiry("Milk", days=3, location="fridge",
+                             today=date(2026, 7, 12))
+        assert item is not None
+        assert item.expires == "2026-07-15"  # today(07-12) + 3 days
+
+    def test_sets_fresh_expiry_on_no_expiry_item(self, tmp_vault, tmp_db):
+        from datetime import date
+        add_items([InventoryItem(name="Rice", quantity=1, unit="lb",
+                                 category="pantry", location="pantry",
+                                 expires=None)])
+        item = extend_expiry("Rice", days=7, location="pantry",
+                             today=date(2026, 7, 12))
+        assert item is not None
+        assert item.expires == "2026-07-19"
+
+    def test_returns_none_when_not_found(self, tmp_vault, tmp_db):
+        assert extend_expiry("Nonexistent", days=3) is None
+
+    def test_preserves_other_fields(self, tmp_vault, tmp_db):
+        from datetime import date
+        add_items([InventoryItem(name="Yogurt", quantity=2, unit="ct",
+                                 category="dairy", location="fridge",
+                                 for_recipe="Smoothie", expires="2026-07-14")])
+        item = extend_expiry("Yogurt", days=5, location="fridge",
+                             today=date(2026, 7, 12))
+        assert item.quantity == 2
+        assert item.unit == "ct"
+        assert item.for_recipe == "Smoothie"
+
+
+class TestReviewLink:
+    def test_inventory_md_has_review_link(self):
+        from lib.inventory import render_inventory_md
+        md = render_inventory_md([])
+        assert "/review" in md
+        assert "Open Review" in md

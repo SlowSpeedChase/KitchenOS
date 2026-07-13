@@ -2137,6 +2137,32 @@ def api_inventory_update():
     return jsonify({"status": "updated"})
 
 
+@app.route('/api/inventory/extend', methods=['POST'])
+def api_inventory_extend():
+    """Add time to an item's expiry. Body: {name, days, location?}.
+
+    Sets expires = today + days (works on no-expiry items too). Ungated,
+    like the sibling add/remove/update routes.
+    """
+    from lib.inventory import extend_expiry
+    from lib.expiry import expiry_status
+
+    data = request.get_json(force=True, silent=True)
+    if not data or not data.get('name') or 'days' not in data:
+        return jsonify({"error": "'name' and 'days' are required"}), 400
+    try:
+        days = int(data['days'])
+    except (ValueError, TypeError):
+        return jsonify({"error": "'days' must be an integer"}), 400
+
+    item = extend_expiry(data['name'], days, data.get('location'))
+    if item is None:
+        return jsonify({"status": "not_found"}), 404
+    d = item.to_dict()
+    d["expiry_status"] = expiry_status(d.get("expires"))
+    return jsonify({"status": "extended", "item": d})
+
+
 @app.route('/api/receipts/trips', methods=['GET'])
 @require_token
 def api_receipt_trips():
@@ -2450,6 +2476,12 @@ def nutrition_review_page():
     """Human review UI for weak/unresolved nutrition matches."""
     html = open('templates/nutrition_review.html').read()
     return html
+
+
+@app.route('/review')
+def review_page():
+    """Mobile inventory scan/review page: remove or extend expiry per item."""
+    return open('templates/review.html').read()
 
 
 @app.route('/receipt-paste', methods=['GET'])
