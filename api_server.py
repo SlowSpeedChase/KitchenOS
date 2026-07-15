@@ -2163,6 +2163,31 @@ def api_inventory_extend():
     return jsonify({"status": "extended", "item": d})
 
 
+@app.route('/api/claude-notes', methods=['GET'])
+def api_claude_notes_get():
+    """Return the shared Claude Notes.md body. Ungated, same-origin widget calls this."""
+    from lib.claude_notes import read_notes
+    return jsonify({"notes": read_notes()})
+
+
+@app.route('/api/claude-notes', methods=['POST'])
+def api_claude_notes_post():
+    """Save the shared Claude Notes.md. Body: {notes: str}. Ungated.
+
+    Returns the normalized body actually stored so the widget can re-sync.
+    """
+    from lib.claude_notes import read_notes, write_notes
+
+    data = request.get_json(force=True, silent=True)
+    if not isinstance(data, dict) or 'notes' not in data:
+        return jsonify({"error": "'notes' is required"}), 400
+    if not isinstance(data['notes'], str):
+        return jsonify({"error": "'notes' must be a string"}), 400
+
+    write_notes(data['notes'])
+    return jsonify({"status": "saved", "notes": read_notes()})
+
+
 @app.route('/api/receipts/trips', methods=['GET'])
 @require_token
 def api_receipt_trips():

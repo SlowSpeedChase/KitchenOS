@@ -97,3 +97,71 @@ def test_review_page_served(client):
     response = client.get('/review')
     assert response.status_code == 200
     assert b'Inventory Review' in response.data
+
+
+def test_claude_notes_get_empty(client, tmp_vault):
+    """GET /api/claude-notes on a fresh vault returns empty notes."""
+    response = client.get('/api/claude-notes')
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data == {"notes": ""}
+
+
+def test_claude_notes_save_and_get(client, tmp_vault):
+    """POST /api/claude-notes saves, returns normalized body, then GET retrieves it."""
+    from lib.paths import claude_notes_path
+
+    # Save notes
+    response = client.post('/api/claude-notes', json={"notes": "buy milk"})
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["status"] == "saved"
+    assert data["notes"] == "buy milk\n"
+
+    # Verify file exists with correct content
+    assert claude_notes_path().exists()
+    assert claude_notes_path().read_text(encoding="utf-8") == "buy milk\n"
+
+    # Verify GET retrieves it
+    response = client.get('/api/claude-notes')
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["notes"] == "buy milk\n"
+
+
+def test_claude_notes_post_missing_key(client, tmp_vault):
+    """POST /api/claude-notes without 'notes' key returns 400."""
+    response = client.post('/api/claude-notes', json={})
+    assert response.status_code == 400
+    data = response.get_json()
+    assert "notes" in data.get("error", "").lower()
+
+
+def test_claude_notes_post_non_string(client, tmp_vault):
+    """POST /api/claude-notes with non-string 'notes' value returns 400."""
+    response = client.post('/api/claude-notes', json={"notes": 123})
+    assert response.status_code == 400
+    data = response.get_json()
+    assert "string" in data.get("error", "").lower()
+
+
+def test_claude_notes_post_empty_clears(client, tmp_vault):
+    """Saving empty string clears the notes."""
+    from lib.paths import claude_notes_path
+
+    # Save some notes
+    client.post('/api/claude-notes', json={"notes": "hello"})
+    assert claude_notes_path().read_text(encoding="utf-8") == "hello\n"
+
+    # Clear with empty string
+    response = client.post('/api/claude-notes', json={"notes": ""})
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["status"] == "saved"
+    assert data["notes"] == ""
+
+    # Verify it's cleared
+    response = client.get('/api/claude-notes')
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["notes"] == ""
