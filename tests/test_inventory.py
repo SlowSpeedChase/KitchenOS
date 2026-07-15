@@ -332,3 +332,19 @@ class TestReviewLink:
         md = render_inventory_md([])
         assert "/review" in md
         assert "Open Review" in md
+
+    def test_inventory_md_has_launch_claude_link(self):
+        from lib.inventory import render_inventory_md
+        md = render_inventory_md([])
+        assert "Launch Claude" in md
+        assert "ssh://chase@chases-mac-mini.taila69703.ts.net" in md
+        assert "[[Claude Notes]]" in md
+        # Regression: ensure Open Review is still there
+        assert "Open Review" in md
+
+    def test_launch_claude_link_respects_ssh_target_env(self, monkeypatch):
+        from lib.inventory import render_inventory_md
+        monkeypatch.setenv("KITCHENOS_SSH_TARGET", "u@h.ts.net")
+        md = render_inventory_md([])
+        assert "ssh://u@h.ts.net" in md
+        assert "Launch Claude" in md

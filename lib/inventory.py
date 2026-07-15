@@ -222,6 +222,9 @@ def render_inventory_md(items: list[InventoryItem]) -> str:
     base = os.environ.get(
         "KITCHENOS_API_BASE", "http://chases-mac-mini.taila69703.ts.net:5001"
     )
+    ssh_target = os.environ.get(
+        "KITCHENOS_SSH_TARGET", "chase@chases-mac-mini.taila69703.ts.net"
+    )
     return (
         "---\n"
         "type: inventory\n"
@@ -232,6 +235,8 @@ def render_inventory_md(items: list[InventoryItem]) -> str:
         "Do not edit here — changes will be overwritten. "
         "Update inventory via Claude (MCP tools) or the API.\n\n"
         f"**▶ [Open Review]({base}/review)** — remove or add time, tap-to-act\n\n"
+        f"**🤖 [Launch Claude](ssh://{ssh_target})** — start a Claude session seeded "
+        f"with your [[Claude Notes]]\n\n"
         + _expiry_warning_section(flagged)
         + "\n".join(rows)
         + "\n"
