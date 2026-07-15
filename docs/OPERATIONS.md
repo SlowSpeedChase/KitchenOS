@@ -526,7 +526,62 @@ Management → trust developer.
 
 ---
 
-## 9. Completing work
+## 9. Launch Claude from your phone (Termius + tmux)
+
+Every KitchenOS web page and the top of `Inventory.md` carry a **🤖 Launch Claude**
+button plus a **Notes** box. The button opens an `ssh://$KITCHENOS_SSH_TARGET` link
+(Termius on the phone), SSHes into the mini over Tailscale, and — via an SSH forced
+command — drops you into `claude` running inside a persistent tmux session
+(`ko-claude`), pre-seeded with whatever is in the shared `Claude Notes.md`.
+
+**Pieces (all in the main checkout):**
+
+- `scripts/kitchenos-claude-launch.sh` — forced-command entrypoint;
+  `tmux new-session -A -s ko-claude` (attach-or-create → survives disconnect).
+- `scripts/kitchenos-claude-run.sh` — runs inside tmux; resolves `Claude Notes.md`
+  via `lib.paths.claude_notes_path()` and `exec claude "$(cat notes)"` (or bare
+  `claude` when notes are empty).
+- `scripts/kitchenos-claude-reset.sh` — `tmux kill-session -t ko-claude`; run it
+  after editing notes so the **next** launch re-seeds from the new notes (an
+  attach-only re-launch keeps the old session, so edited notes don't take effect
+  until you reset).
+- Notes are edited in the web textarea (saved via `POST /api/claude-notes`) or
+  directly in Obsidian as `Claude Notes.md` at the vault root — byte-identical.
+
+```bash
+# Reset the session so the next launch picks up freshly-edited notes:
+/Users/chaseeasterling/Dev/KitchenOS/scripts/kitchenos-claude-reset.sh
+```
+
+### One-time setup
+
+On the mini:
+
+```bash
+brew install tmux
+chmod +x scripts/kitchenos-claude-*.sh   # already +x in git, but confirm
+ssh-keygen -t ed25519 -f ~/.ssh/kitchenos_claude   # dedicated key, no passphrase or one you'll store in Termius
+```
+
+Add the public key to `~/.ssh/authorized_keys` on the mini with a forced command so
+this key can ONLY launch Claude (never a plain shell):
+
+```
+command="/Users/chaseeasterling/Dev/KitchenOS/scripts/kitchenos-claude-launch.sh",no-port-forwarding,no-X11-forwarding ssh-ed25519 AAAA...your-kitchenos_claude.pub
+```
+
+On the phone (Termius): import the `kitchenos_claude` private key; create a host
+**"KitchenOS Claude"** = `chase@chases-mac-mini.taila69703.ts.net` presenting **only**
+that key (so the forced command always fires). Connect once to confirm you land in
+`claude` inside tmux. Set `KITCHENOS_SSH_TARGET` in `.env` if the `user@host` differs
+from the default, then restart the API LaunchAgent so pages emit the right link.
+
+**Caveats:** iOS routing of `ssh://` → Termius isn't guaranteed across versions — the
+saved Termius host is the reliable entry, the button is convenience. `claude` needs it
+on PATH under a non-login shell; `kitchenos-claude-run.sh` sources `~/.zprofile` and
+prepends Homebrew dirs. tmux/claude need a PTY (Termius interactive default).
+
+## 10. Completing work
 
 When finishing a feature or fix, follow this checklist before committing.
 

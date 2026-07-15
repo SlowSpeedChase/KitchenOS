@@ -68,6 +68,8 @@ exempt. Gated routes are marked **🔒** in the table.
 | `/api/inventory/remove` | POST | Remove an item. Body `{name, location?}`. |
 | `/api/inventory/update` | POST | Adjust an item's quantity. Body `{name, quantity, location?}`. |
 | `/api/inventory/extend` | POST | Extend an item's expiry date. Body `{name, days, location?}` → sets `expires = today + days` (works on items with no expiry too). Ungated. Returns `{status: "extended", item: {..., expiry_status}}` on success; `400` if name/days missing or days not int-coercible; `404` if no matching row. |
+| `/api/claude-notes` | GET | Read the shared `Claude Notes.md` (vault root) that seeds a `claude` launch. Returns `{notes: "<body>"}` (empty string if the file doesn't exist yet). Ungated — backs the notes textarea in the launch bar on every web page. |
+| `/api/claude-notes` | POST | Save the shared `Claude Notes.md`. Body `{notes: str}` → writes it atomically (trailing-newline normalized; empty/whitespace → empty file) and returns `{status: "saved", notes: "<normalized body>"}`. `400` if `notes` is missing or not a string. Ungated. **Security:** like the other ungated routes, anyone on the tailnet can set this text — and it becomes the opening prompt of a `claude` session that runs with your permissions on the mini. Same threat model as the ungated inventory/receipt routes (private Tailscale network). |
 | `/api/receipts/trips` 🔒 | GET | Recent shopping trips, newest first. |
 | `/api/receipts/trips/<int:trip_id>` 🔒 | GET | One trip plus its purchase line items. |
 | `/api/price/trends` 🔒 | GET | Structured price-tracker data (spending, by-category totals, item trends) — JSON projection of `Price Tracker.md`. |
