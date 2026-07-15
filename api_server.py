@@ -91,6 +91,83 @@ def error_page(message: str) -> str:
 </body></html>'''
 
 
+# ---- Claude launch bar (injected into every web page at serve time) ----
+
+_CLAUDE_BAR_TEMPLATE = """
+<div id="ko-claude-bar" style="position:sticky;top:0;left:0;right:0;z-index:2147483000;background:#1a1a2e;color:#e8e8f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;box-shadow:0 2px 8px rgba(0,0,0,0.3);">
+  <div style="display:flex;align-items:center;gap:12px;padding:8px 14px;">
+    <a id="ko-claude-launch" href="ssh://__SSH_TARGET__" style="background:#7c5cff;color:#fff;text-decoration:none;padding:7px 14px;border-radius:8px;font-weight:600;white-space:nowrap;">&#129302; Launch Claude</a>
+    <button id="ko-claude-toggle" type="button" style="background:transparent;color:#b8b8d0;border:1px solid #44445a;border-radius:8px;padding:7px 12px;cursor:pointer;font-size:14px;">&#128221; Notes</button>
+    <span id="ko-claude-status" style="color:#8a8aa5;font-size:12px;margin-left:auto;"></span>
+  </div>
+  <div id="ko-claude-notes-wrap" style="display:none;padding:0 14px 12px;">
+    <textarea id="ko-claude-notes" placeholder="Notes to yourself &amp; Claude — saved to Claude Notes.md, seeds the next Launch." style="width:100%;box-sizing:border-box;min-height:120px;background:#0f0f1e;color:#e8e8f0;border:1px solid #44445a;border-radius:8px;padding:10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;resize:vertical;"></textarea>
+    <div style="display:flex;gap:10px;align-items:center;margin-top:8px;">
+      <button id="ko-claude-save" type="button" style="background:#2ecc71;color:#08210f;border:none;border-radius:8px;padding:8px 16px;font-weight:700;cursor:pointer;">Save</button>
+      <span id="ko-claude-save-status" style="color:#8a8aa5;font-size:12px;"></span>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  var toggle=document.getElementById('ko-claude-toggle');
+  var wrap=document.getElementById('ko-claude-notes-wrap');
+  var ta=document.getElementById('ko-claude-notes');
+  var saveBtn=document.getElementById('ko-claude-save');
+  var saveStatus=document.getElementById('ko-claude-save-status');
+  var loaded=false;
+  function loadNotes(){
+    fetch('/api/claude-notes').then(function(r){return r.json();}).then(function(d){
+      ta.value=(d&&d.notes)||''; loaded=true;
+    }).catch(function(){ saveStatus.textContent='(offline)'; });
+  }
+  toggle.addEventListener('click',function(){
+    var open=wrap.style.display==='none';
+    wrap.style.display=open?'block':'none';
+    if(open&&!loaded){loadNotes();}
+  });
+  saveBtn.addEventListener('click',function(){
+    saveStatus.textContent='Saving…';
+    fetch('/api/claude-notes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notes:ta.value})})
+      .then(function(r){return r.json();}).then(function(d){
+        if(d&&d.status==='saved'){ta.value=d.notes;saveStatus.textContent='Saved ✓';}
+        else{saveStatus.textContent='Error';}
+      }).catch(function(){saveStatus.textContent='Save failed';});
+  });
+})();
+</script>
+"""
+
+
+def _claude_bar_html() -> str:
+    """The launch-bar widget with the current SSH target spliced in."""
+    target = os.environ.get('KITCHENOS_SSH_TARGET', 'chase@chases-mac-mini.taila69703.ts.net')
+    return _CLAUDE_BAR_TEMPLATE.replace('__SSH_TARGET__', target)
+
+
+def _inject_after_body(html: str, snippet: str) -> str:
+    """Splice snippet in immediately after the opening <body ...> tag.
+
+    String splice, not regex/replace — the snippet contains regex/format
+    metacharacters. Falls back to prepending if there is no <body> tag.
+    """
+    idx = html.lower().find('<body')
+    if idx == -1:
+        return snippet + html
+    close = html.find('>', idx)
+    if close == -1:
+        return snippet + html
+    return html[:close + 1] + snippet + html[close + 1:]
+
+
+def _serve_page_with_claude_bar(template_filename: str, extra_replacements=None) -> str:
+    """Read a template, apply page-specific replacements, inject the Claude bar."""
+    html = open(f'templates/{template_filename}').read()
+    for old, new in (extra_replacements or []):
+        html = html.replace(old, new)
+    return _inject_after_body(html, _claude_bar_html())
+
+
 def success_page(message: str, filename: str) -> str:
     """Generate simple HTML success page."""
     from urllib.parse import quote
@@ -574,8 +651,7 @@ def recipe_detail_page(name):
         # so the outer escape would re-escape the entities).
         return error_page(f"Recipe not found: {name}"), 404
 
-    html = open('templates/recipe_detail.html').read()
-    html = html.replace('vault=KitchenOS', f'vault={VAULT_NAME}')
+    html = _serve_page_with_claude_bar('recipe_detail.html', [('vault=KitchenOS', f'vault={VAULT_NAME}')])
     return html, 200, {'Content-Type': 'text/html'}
 
 
@@ -1666,8 +1742,7 @@ def add_to_meal_plan():
 @app.route('/meal-planner', methods=['GET'])
 def meal_planner():
     """Serve the interactive meal planner board."""
-    html = open('templates/meal_planner.html').read()
-    html = html.replace('vault=KitchenOS', f'vault={VAULT_NAME}')
+    html = _serve_page_with_claude_bar('meal_planner.html', [('vault=KitchenOS', f'vault={VAULT_NAME}')])
     return html, 200, {'Content-Type': 'text/html'}
 
 
@@ -2492,28 +2567,25 @@ def api_system_health():
 @app.route('/system-health', methods=['GET'])
 def system_health_dashboard():
     """Interactive system health dashboard."""
-    html = open('templates/system_health.html').read()
-    return html
+    return _serve_page_with_claude_bar('system_health.html')
 
 
 @app.route('/nutrition-review', methods=['GET'])
 def nutrition_review_page():
     """Human review UI for weak/unresolved nutrition matches."""
-    html = open('templates/nutrition_review.html').read()
-    return html
+    return _serve_page_with_claude_bar('nutrition_review.html')
 
 
 @app.route('/review')
 def review_page():
     """Mobile inventory scan/review page: remove or extend expiry per item."""
-    return open('templates/review.html').read()
+    return _serve_page_with_claude_bar('review.html')
 
 
 @app.route('/receipt-paste', methods=['GET'])
 def receipt_paste_page():
     """Paste a photographed-receipt JSON (from the Claude app), preview, ingest."""
-    html = open('templates/receipt_paste.html').read()
-    return html
+    return _serve_page_with_claude_bar('receipt_paste.html')
 
 
 if __name__ == '__main__':
