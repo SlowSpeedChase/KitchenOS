@@ -58,3 +58,8 @@ def archive_dir() -> Path:
 
 def calendar_ics_path() -> Path:
     return vault_root() / "meal_calendar.ics"
+
+
+def claude_notes_path() -> Path:
+    """Vault-root note that seeds `claude` on launch and is editable in Obsidian."""
+    return vault_root() / "Claude Notes.md"
