@@ -89,7 +89,13 @@ def get_seasonal_suggestions(recipes_dir: Path, year: int, week: int, limit: int
             score = calculate_season_score(seasonal, month=month)
             if score > 0:
                 scored.append({
-                    'name': fm.get('title', md_file.stem),
+                    # Link by FILENAME, not frontmatter title. Obsidian resolves
+                    # wikilinks against filenames, so a title that differs (a
+                    # missing " Recipe" suffix, a stripped "/", or a "|" — which
+                    # is Obsidian's own alias separator) produces a dangling
+                    # link, and clicking it silently creates an empty note at
+                    # the vault root.
+                    'name': md_file.stem,
                     'score': score,
                     'seasonal': [s for s in seasonal
                                  if config['ingredients'].get(s, {}).get('peak_months', [])
