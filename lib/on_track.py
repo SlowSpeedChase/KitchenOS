@@ -135,6 +135,40 @@ def library_gaps(recipes_dir: Optional[Path] = None) -> dict:
     }
 
 
+def _buffer_section() -> list[str]:
+    """What could win the four-second race right now, per craving lane.
+
+    Deliberately a *stock* question. Most of the buffer menu is an assembly of
+    things you have or don't, so counting buffer-capable recipes measures the
+    wrong thing — see lib/buffer_gaps.py.
+    """
+    try:
+        from lib import buffer_gaps, profile as profile_mod
+        prof = profile_mod.load_profile()
+        readiness = buffer_gaps.lane_readiness(prof)
+    except Exception:
+        return []
+    if not readiness:
+        return []
+
+    lines = ["## Buffer foods you could reach for tonight", ""]
+    for lane, r in readiness.items():
+        if r["ready"]:
+            lines.append(f"- **{lane}** — {'; '.join(r['ready'][:3])}")
+        else:
+            missing = r["missing"][0]["needs"] if r["missing"] else "—"
+            lines.append(f"- **{lane}** — ⚠️ nothing ready (nearest needs {missing})")
+
+    bare = buffer_gaps.bare_lanes(readiness)
+    if bare:
+        lines += ["",
+                  f"> {len(bare)} row{'s' if len(bare) > 1 else ''} bare. The note's "
+                  "rule is one per row stocked — a buffer food only works if it's "
+                  "already in the house when the urge hits."]
+    lines.append("")
+    return lines
+
+
 def render_markdown(summary: dict, gaps: dict, today: Optional[date] = None) -> str:
     today = today or date.today()
     lines = [
@@ -201,6 +235,8 @@ def render_markdown(summary: dict, gaps: dict, today: Optional[date] = None) -> 
             lines += ["### What you noticed", ""]
             lines += [f"- **{n['recipe']}** — {n['note']}" for n in summary["notes"]]
             lines.append("")
+
+    lines += _buffer_section()
 
     lines += [
         "## The library you're drawing from",

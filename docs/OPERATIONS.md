@@ -195,6 +195,35 @@ automatically whenever a cook or verdict is logged; run by hand after a
 .venv/bin/python scripts/generate_on_track.py
 ```
 
+### Buffer-food stock check
+
+Answers the question the Meal System note actually turns on: is something you
+like reachable with no prep *right now*, in each craving lane? Deliberately a
+**stock** check rather than a recipe check — most of the buffer menu is an
+assembly ("apple + nut butter", "handful of pistachios"), so acquiring more
+recipes cannot move it. Also lists building blocks that aren't stocked.
+
+```bash
+.venv/bin/python scripts/buffer_restock.py                 # report
+.venv/bin/python scripts/buffer_restock.py --to-reminders  # push the shortfall to Shopping
+```
+
+Only **bare** lanes contribute shopping targets; padding the list with things
+for already-covered lanes is how a shopping list stops being read. The same
+readiness summary appears in `Dashboards/On Track.md`.
+
+### The verdict nudge (daily cue)
+
+`com.kitchenos.verdict-nudge` runs `scripts/nudge_verdicts.py` at 20:15 and adds
+**one** Reminders item asking how a recent unjudged cook went — silent when
+nothing is pending, nothing older than 4 days, extra cooks as a count rather
+than a queue. Reminders rather than a macOS notification because the mini is
+headless and the answer happens on a phone.
+
+```bash
+.venv/bin/python scripts/nudge_verdicts.py --dry-run   # show without sending
+```
+
 ### Migrations: one-time vs. re-runnable maintenance
 
 **Re-runnable maintenance / backfill** — `migrate_recipes.py` and

@@ -45,11 +45,18 @@ _STOPWORDS = {
 }
 
 
+# Endings where the plural genuinely adds "es" rather than just "s".
+# Everything else ending in "-es" is a plain "+s" plural on a stem that already
+# ends in "e" (apple/apples), and stripping two characters there produces
+# "appl" — which then matches nothing.
+_ES_PLURAL_ENDINGS = ("ses", "xes", "zes", "ches", "shes", "oes")
+
+
 def _stem(word: str) -> str:
     """Cheap singularizer so "breasts"/"tomatoes" match "breast"/"tomato"."""
     if len(word) > 4 and word.endswith("ies"):
         return word[:-3] + "y"
-    if len(word) > 3 and word.endswith("es"):
+    if len(word) > 4 and word.endswith(_ES_PLURAL_ENDINGS):
         return word[:-2]
     if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
         return word[:-1]
