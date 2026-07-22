@@ -91,7 +91,7 @@ exempt. Gated routes are marked **🔒** in the table.
 | `/api/week-board/<week>` 🔒 | GET | Serving-ledger board view of a week (`serving_ledger.week_board`) — cooks and their placements. |
 | `/api/week-board/<week>/import-legacy` 🔒 | POST | One-time conversion of a hand-edited week into the serving ledger (`lib.week_view.import_legacy_week`). |
 | `/api/cooks` 🔒 | POST | Create a cook — one preparation of a recipe at a fractional scale (serving ledger). |
-| `/api/cooks/<int:cook_id>` 🔒 | PATCH | Update a cook (e.g. scale). |
+| `/api/cooks/<int:cook_id>` 🔒 | PATCH | Update a cook. Body accepts any of `scale`, `servings_produced`, `date`, `meal`, `notes`, `cooked_at`, plus the post-eating verdict: `make_again` (`true`/`false`/`null`) and `cook_note` (free text). `make_again` is strictly binary — anything other than a bool or null is a `400`, since a stray `4` would store as truthy. `null` means *not judged*, which is deliberately distinct from `false`. Writing a verdict or yield also refreshes `cook_count` / `observed_servings` / `make_again_count` / `verdict_count` / `last_cooked` on the recipe note (best-effort; a missing note never fails the write). |
 | `/api/cooks/<int:cook_id>` 🔒 | DELETE | Delete a cook and its placements. |
 | `/api/placements` 🔒 | POST | Create a placement — assign a cook's servings to a (destination, date, meal, count) slot. |
 | `/api/placements/<int:pid>` 🔒 | PATCH | Update a placement. |

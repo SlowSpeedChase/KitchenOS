@@ -129,6 +129,55 @@ def test_logged_cook_appears_on_the_week_board(live_server, page, page_errors):
     assert page_errors == [], f"planner raised: {page_errors}"
 
 
+def test_verdict_can_be_recorded_from_the_planner(live_server, page, page_errors):
+    """One tap on the cook card records "make again" — the whole point.
+
+    Driven through the UI rather than the API because the friction being tested
+    is human: if the verdict takes more than a tap while tired, it never gets
+    recorded and the ledger never learns what was liked.
+    """
+    week, when = unique_week(4)
+    cook = _log_cook(live_server, week=week, recipe="E2E Verdict Cook",
+                     produced=2, when=when)
+
+    page.goto(live_server.url(f"/meal-planner?week={week}"), wait_until="networkidle")
+    page.wait_for_selector(".cook-card", timeout=15_000)
+    # Open via the ⋮ button: the tap-to-open handler is gated on IS_TOUCH, so
+    # on a desktop browser this is the only route into the sheet.
+    page.locator(".cook-card .card-menu-btn").first.click()
+    page.get_by_role("button", name="Make again 👍").click()
+
+    # The toast is cosmetic; the ledger is the assertion.
+    page.wait_for_timeout(1500)
+    conn = sqlite3.connect(live_server.db)
+    verdict = conn.execute(
+        "SELECT make_again FROM cooks WHERE id = ?", (cook["id"],)
+    ).fetchone()[0]
+    conn.close()
+
+    assert verdict == 1, "tapping 'Make again' did not reach the ledger"
+    assert page_errors == [], f"planner raised: {page_errors}"
+
+
+def test_cook_verdict_reaches_the_recipe_note(live_server):
+    """Cooking must backfill the recipe's yield without anyone being asked.
+
+    This is the mechanism that closes the 46%-missing-`servings` gap through
+    use rather than through a chore.
+    """
+    week, when = unique_week(5)
+    recipe = "Creamy Garlic Tofu"  # a real note in the vault copy
+    _log_cook(live_server, week=week, recipe=recipe, produced=5, when=when)
+
+    note = live_server.vault / "Recipes" / f"{recipe}.md"
+    assert note.exists(), "fixture recipe missing from the vault copy"
+    body = note.read_text(encoding="utf-8")
+    assert "observed_servings: 5" in body, (
+        f"cook did not write observed yield back to the note:\n{body[:400]}"
+    )
+    assert "cook_count: 1" in body
+
+
 def test_shopping_list_generation_writes_a_vault_file(live_server):
     """Generating a shopping list must leave a real note behind.
 

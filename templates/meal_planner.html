@@ -625,6 +625,41 @@
             border-color: var(--accent);
         }
 
+        /* ⋮ — the desktop route into the action sheet. On touch the whole card
+           is tappable, so this is redundant there but harmless. */
+        .grid-card .card-menu-btn {
+            position: absolute;
+            bottom: 4px;
+            right: 4px;
+            padding: 2px 5px;
+            border: 1px solid var(--border);
+            background: var(--bg);
+            border-radius: 10px;
+            font-size: 12px;
+            line-height: 1;
+            color: var(--text-muted);
+            cursor: pointer;
+            min-height: 20px;
+            transition: all 0.15s ease;
+        }
+
+        .grid-card .card-menu-btn:hover,
+        .grid-card .card-menu-btn:active {
+            background: var(--accent);
+            color: #ffffff;
+            border-color: var(--accent);
+        }
+
+        /* Recorded verdict, shown top-right so a week reads at a glance. */
+        .grid-card .verdict-badge {
+            position: absolute;
+            top: 4px;
+            right: 22px;
+            font-size: 12px;
+            line-height: 1;
+            pointer-events: none;
+        }
+
         .grid-card.sortable-ghost {
             opacity: 0.4;
         }
@@ -2059,6 +2094,10 @@
             card.className = 'grid-card cook-card';
             card.dataset.cookId = cook.id;
             card.dataset.name = cook.recipe;
+            // '' when unjudged — distinct from 'false' (never again), so the
+            // sheet can show "not judged yet" rather than a default verdict.
+            card.dataset.makeAgain = cook.make_again === null || cook.make_again === undefined
+                ? '' : String(cook.make_again);
 
             const recipe = allRecipes.find(r => r.name === cook.recipe);
             if (recipe && recipe.image) {
@@ -2120,10 +2159,36 @@
                 markCookCooked(cook);
             });
 
+            // ⋮ opens the same action sheet a touch tap does. Without it the
+            // sheet — and so the verdict — is unreachable on desktop, since the
+            // tap-to-open handler is gated on window.IS_TOUCH.
+            const menuBtn = document.createElement('button');
+            menuBtn.className = 'card-menu-btn';
+            menuBtn.innerHTML = '⋮';
+            menuBtn.title = 'More actions';
+            menuBtn.setAttribute('aria-label', 'More actions');
+            menuBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                openCardSheet(card);
+            });
+
+            // A recorded verdict shows on the card itself, so the week reads as
+            // "these went well" at a glance rather than needing a tap each.
+            if (card.dataset.makeAgain) {
+                const badge = document.createElement('span');
+                badge.className = 'verdict-badge';
+                badge.textContent = card.dataset.makeAgain === 'true' ? '👍' : '👎';
+                badge.title = card.dataset.makeAgain === 'true'
+                    ? 'Make again' : 'Not again';
+                card.appendChild(badge);
+            }
+
             card.appendChild(nameEl);
             card.appendChild(removeBtn);
             card.appendChild(stepper);
             card.appendChild(cookedBtn);
+            card.appendChild(menuBtn);
 
             return card;
         }
@@ -2345,6 +2410,48 @@
                 showToast('Failed to update scale', 'error');
             } finally {
                 ledgerBusy = false;
+            }
+        }
+
+        // Verdict capture. Deliberately one tap and binary: this happens while
+        // tired and mid-cleanup, and a 1-5 scale asks for a judgement call at
+        // exactly the moment it is least wanted. The note is optional and
+        // skippable — over time the notes turn out to be the useful part.
+        async function setCookVerdict(cookId, makeAgain) {
+            try {
+                const resp = await fetch(`/api/cooks/${cookId}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ make_again: makeAgain })
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    showToast(err.error || 'Failed to save verdict', 'error');
+                    return;
+                }
+                showToast(makeAgain === null ? 'Verdict cleared'
+                          : makeAgain ? 'Noted — make again 👍' : 'Noted — skip next time');
+                await loadWeekBoard(currentWeek);
+            } catch (err) {
+                showToast('Failed to save verdict', 'error');
+            }
+        }
+
+        async function addCookNote(cook) {
+            const note = prompt(`Note about "${cook.recipe}" — what would you change?`,
+                                cook.cook_note || '');
+            if (note === null) return;  // cancelled, as opposed to cleared
+            try {
+                const resp = await fetch(`/api/cooks/${cook.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cook_note: note.trim() || null })
+                });
+                if (!resp.ok) { showToast('Failed to save note', 'error'); return; }
+                showToast('Note saved');
+                await loadWeekBoard(currentWeek);
+            } catch (err) {
+                showToast('Failed to save note', 'error');
             }
         }
 
@@ -2880,7 +2987,7 @@
                 // programmatic .click(), which bubbles through here — hijacking
                 // it would cancel the button's handler and re-open the sheet.
                 if (!e.isTrusted) return;
-                if (e.target.closest('.remove-btn, .servings-btn, .cooked-btn, .retry-btn, .scale-btn, .serving-chip, .unassigned-chip')) return;
+                if (e.target.closest('.remove-btn, .servings-btn, .cooked-btn, .retry-btn, .scale-btn, .serving-chip, .unassigned-chip, .card-menu-btn')) return;
                 const card = e.target.closest('.grid-card');
                 if (!card) return; // empty-cell taps fall through to suggest
                 e.preventDefault();
@@ -2948,6 +3055,36 @@
             const cookedBtn = card.querySelector('.cooked-btn');
             if (cookedBtn) {
                 addAction('Mark cooked 🍳', () => cookedBtn.click());
+            }
+
+            // Was it worth making? One tap, no scale — see setCookVerdict.
+            if (card.classList.contains('cook-card') && card.dataset.cookId) {
+                const cookId = card.dataset.cookId;
+                const cook = ((weekBoard && weekBoard.cooks) || [])
+                    .find(c => String(c.id) === String(cookId));
+                const current = card.dataset.makeAgain;  // '' | 'true' | 'false'
+
+                const verdict = document.createElement('div');
+                verdict.className = 'segment';
+                [['Make again 👍', 'true', true], ['Not again', 'false', false]].forEach(
+                    ([label, flag, value]) => {
+                        const btn = document.createElement('button');
+                        btn.textContent = label;
+                        if (current === flag) btn.className = 'selected';
+                        btn.addEventListener('click', () => {
+                            closeCardSheet();
+                            // Tapping the active verdict clears it, so a mis-tap
+                            // is undoable without a separate control.
+                            setCookVerdict(cookId, current === flag ? null : value);
+                        });
+                        verdict.appendChild(btn);
+                    });
+                actions.appendChild(verdict);
+
+                if (cook) {
+                    addAction(cook.cook_note ? '📝 Edit note' : '📝 Add a note',
+                              () => addCookNote(cook));
+                }
             }
             const retryBtn = card.querySelector('.retry-btn');
             if (retryBtn) {

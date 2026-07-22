@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotenv import load_dotenv
 load_dotenv()
 
-from lib import paths
+from lib import frontmatter, paths
 from lib.backup import create_backup
 from lib.nutrition_engine import calculate_recipe_nutrition
 from lib.recipe_parser import parse_recipe_file, parse_ingredient_table
@@ -53,53 +53,16 @@ def extract_ingredients(body: str) -> list[dict]:
 def rewrite_frontmatter(fm: str, updates: dict) -> str:
     """Rewrite frontmatter: de-duplicate managed scalar keys and apply updates.
 
-    Duplicate occurrences of a managed key are collapsed to a single line (the
-    last position wins, matching YAML "last key wins" semantics). Keys in
-    ``updates`` overwrite the kept line, or are appended once if absent. Passing
-    ``updates={}`` performs a pure de-duplication pass (``--fix-duplicates``).
-    Non-managed keys and list/continuation lines pass through untouched.
+    Thin wrapper binding this script's ``_MANAGED_KEYS`` to the shared
+    line-based editor in ``lib.frontmatter`` (which the cook-history sync also
+    uses, so the two cannot drift apart).
     """
-    lines = fm.split("\n")
-    out: list = []
-    last_idx: dict = {}
-
-    for line in lines:
-        m = re.match(r"^([A-Za-z_][\w]*):", line)
-        key = m.group(1) if (m and not line[:1].isspace()) else None
-        if key in _MANAGED_KEYS:
-            if key in last_idx:
-                out[last_idx[key]] = None  # drop the earlier duplicate
-            last_idx[key] = len(out)
-        out.append(line)
-
-    # Append new keys BEFORE any trailing blank lines, so the frontmatter text
-    # keeps its trailing newline and the closing "---" stays on its own line.
-    # (Appending at the very end glued "---" onto the last key — corrupting the file.)
-    for key, value in updates.items():
-        new_line = f"{key}: {value}"
-        if key in last_idx:
-            out[last_idx[key]] = new_line
-        else:
-            pos = len(out)
-            while pos > 0 and (out[pos - 1] is None or out[pos - 1] == ""):
-                pos -= 1
-            out.insert(pos, new_line)
-            last_idx[key] = pos
-
-    result = "\n".join(l for l in out if l is not None)
-    # Safety: the frontmatter text must end with a newline so reconstruction as
-    # f"---{result}---..." never glues the delimiter onto a key.
-    if not result.endswith("\n"):
-        result += "\n"
-    return result
+    return frontmatter.rewrite(fm, updates, _MANAGED_KEYS)
 
 
 def _split_frontmatter(content: str):
     """Return (frontmatter_text, rest) or (None, None) if no frontmatter."""
-    parts = content.split("---", 2)
-    if len(parts) < 3:
-        return None, None
-    return parts[1], parts[2]
+    return frontmatter.split_frontmatter(content)
 
 
 def write_nutrition_to_file(filepath: Path, result) -> None:

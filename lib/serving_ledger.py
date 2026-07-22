@@ -39,7 +39,8 @@ MEALS = ("breakfast", "lunch", "snack", "dinner")
 DESTINATIONS = ("slot", "freezer", "trash")
 _WEEK_RE = re.compile(r"^\d{4}-W\d{2}$")
 
-_COOK_FIELDS = ("scale", "servings_produced", "date", "meal", "notes", "cooked_at")
+_COOK_FIELDS = ("scale", "servings_produced", "date", "meal", "notes", "cooked_at",
+                "make_again", "cook_note")
 _EPS = 1e-6
 
 
@@ -67,6 +68,22 @@ def _write_txn(conn: sqlite3.Connection):
 
 def _row_to_dict(row) -> dict:
     return dict(row)
+
+
+def _coerce_verdict(value) -> Optional[int]:
+    """Normalize a make_again verdict to 1 / 0 / None.
+
+    Strict about the binary contract: a stray 4 (a habit from star ratings)
+    would otherwise store as truthy and silently read back as "make again".
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    raise ValueError(
+        f"make_again must be True, False, or None (got {value!r}) — "
+        "the verdict is binary by design, not a scale"
+    )
 
 
 def _validate_date(date_str: Optional[str]) -> None:
@@ -176,6 +193,10 @@ def get_cook(cook_id: int) -> Optional[dict]:
         if row is None:
             return None
         cook = _row_to_dict(row)
+        # SQLite has no bool: round-trip 0/1 back to True/False while keeping
+        # NULL as None, so "not judged yet" stays distinct from "never again".
+        if cook.get("make_again") is not None:
+            cook["make_again"] = bool(cook["make_again"])
         placements = [
             _row_to_dict(p) for p in conn.execute(
                 "SELECT * FROM placements WHERE cook_id = ? ORDER BY id", (cook_id,)
@@ -199,6 +220,8 @@ def update_cook(cook_id: int, **fields) -> dict:
         raise ValueError(f"meal must be one of {MEALS}")
     if "date" in fields:
         _validate_date(fields["date"])
+    if "make_again" in fields:
+        fields["make_again"] = _coerce_verdict(fields["make_again"])
     conn = inventory_db.connect()
     try:
         with _write_txn(conn):

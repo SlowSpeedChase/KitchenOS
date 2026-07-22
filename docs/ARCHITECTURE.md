@@ -108,7 +108,7 @@ exist anymore. Core tables:
 | `trips` | One row per receipt (email, photo, manual, CSA). `source_id` UNIQUE drives ingest dedup. |
 | `purchases` | Append-only price ledger, one row per line item, integer-cents money columns. `category='fee'` rows (tax, totes, tips) count toward spending but never touch inventory. |
 | `inventory` | Current on-hand stock. Merge key is `(name, unit, location)` — case-insensitive UNIQUE; duplicate adds merge by summing quantity. |
-| `cooks` | Serving-ledger (`lib/serving_ledger.py`): one *cook* = one preparation of a recipe at a fractional `scale`, producing `servings_produced` servings. |
+| `cooks` | Serving-ledger (`lib/serving_ledger.py`): one *cook* = one preparation of a recipe at a fractional `scale`, producing `servings_produced` servings. Also carries the post-eating verdict — `make_again` (NULL = not judged, distinct from 0 = never again) and `cook_note`. Verdicts attach to the cook, not the recipe: the same dish goes well one week and badly the next. |
 | `placements` | Where a cook's servings went — `(cook_id, destination, date, meal, count)` rows. Invariant: `SUM(placements.count) <= servings_produced`; the remainder is unplaced/leftover. |
 
 `Inventory.md`, `Price Tracker.md`, and `Use It Up.md` at the vault root are
@@ -172,6 +172,7 @@ is unset, but that default is not meaningful for this deployment; treat
 | `Meals/` | Composite meal definitions (`<Name>.meal.md`) |
 | `Meal Plans/` | Weekly plan files (`YYYY-Www.md`) + generated `Meal Plans Index.md` |
 | `My Macros.md` | User's nutrition targets, parsed by `lib/macro_targets.py` |
+| `My Meal System.md` | Personal food/habit profile — health drivers, craving lanes, buffer menu, building blocks. Parsed by `lib/profile.py`; the prose is also fed verbatim to LLM prompts so new sections need no code change. |
 | `Inventory.md` | Generated, read-only view of `data/kitchenos.db` inventory |
 | `Use It Up.md` | Generated, read-only waste-reduction suggestions |
 | `Price Tracker.md` | Generated, read-only spending/price-trend dashboard |

@@ -1110,6 +1110,22 @@ def _regen_weeks(*weeks):
             print(f"Warning: week view regen failed for {wk}: {e}", file=sys.stderr)
 
 
+def _sync_cook_history(*recipes):
+    """Refresh cook stats on the affected recipe notes.
+
+    Best-effort by design: this is bookkeeping that accrues over time, so a
+    missing or unwritable note must never fail the ledger write that triggered
+    it. The ledger is the source of truth; the frontmatter is a convenience
+    view that the next cook will refresh anyway.
+    """
+    from lib import cook_history
+    for recipe in {r for r in recipes if r}:
+        try:
+            cook_history.sync_recipe(recipe)
+        except Exception as e:
+            print(f"Warning: cook history sync failed for {recipe}: {e}", file=sys.stderr)
+
+
 @app.route('/api/week-board/<week>', methods=['GET'])
 @require_token
 @_ledger_error
@@ -1206,6 +1222,7 @@ def api_cook_create():
         initial_placement_count=float(data.get('initial_placement_count', 1.0)),
         notes=data.get('notes'))
     _regen_weeks(cook["week"], _iso_week_of(data["date"]) if data.get("date") else None)
+    _sync_cook_history(cook["recipe"])
     return jsonify(cook), 201
 
 
@@ -1220,6 +1237,8 @@ def api_cook_update(cook_id):
         return jsonify({"error": "cook not found"}), 404
     cook = serving_ledger.update_cook(cook_id, **data)
     _regen_weeks(before["week"], cook["week"])
+    # Both names: a recipe rename must refresh the note it left as well.
+    _sync_cook_history(before["recipe"], cook["recipe"])
     return jsonify(cook)
 
 
@@ -1235,6 +1254,7 @@ def api_cook_delete(cook_id):
                                  for p in cook["placements"] if p.get("date")]
     serving_ledger.delete_cook(cook_id)
     _regen_weeks(*affected)
+    _sync_cook_history(cook["recipe"])
     return jsonify({"status": "deleted"})
 
 

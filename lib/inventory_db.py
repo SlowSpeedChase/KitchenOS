@@ -92,6 +92,12 @@ CREATE TABLE IF NOT EXISTS cooks (
     servings_produced REAL NOT NULL,
     cooked_at TEXT,
     notes TEXT,
+    -- Verdict on this cook. NULL = not judged yet, which is distinct from 0
+    -- ("never again"): most cooks are never judged and that must not read as
+    -- a bad review. `notes` is the plan-time note; `cook_note` is written
+    -- after eating, so they are deliberately separate columns.
+    make_again INTEGER,
+    cook_note TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS placements (
@@ -116,6 +122,7 @@ _INVENTORY_COLS = (
 _MIGRATIONS = {
     "inventory": (("for_recipe", "TEXT"), ("expires", "TEXT")),
     "purchases": (("for_recipe", "TEXT"),),
+    "cooks": (("make_again", "INTEGER"), ("cook_note", "TEXT")),
 }
 
 
