@@ -1183,6 +1183,13 @@ def _import_legacy_if_first_write(*weeks):
             continue
         try:
             week_view.import_legacy_week(wk)
+            # The import creates cooks in bulk, bypassing the per-cook hook in
+            # api_cook_create — so without this the converted week's recipes
+            # never learn their yield, and the notes look untouched even though
+            # the ledger has rows. Reported as "I don't see this on the recipe
+            # page anywhere".
+            _sync_cook_history(*[c["recipe"]
+                                 for c in serving_ledger.cooks_for_week(wk)])
         except Exception as e:
             # The backup (taken first) preserves the hand-edited content
             # even if conversion fails and the regen rewrites the file.
@@ -1208,6 +1215,7 @@ def api_week_board_import_legacy(week):
 
     imported = week_view.import_legacy_week(week)
     _regen_weeks(week)
+    _sync_cook_history(*[c["recipe"] for c in serving_ledger.cooks_for_week(week)])
     return jsonify({"imported": imported})
 
 

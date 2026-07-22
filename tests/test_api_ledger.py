@@ -457,3 +457,33 @@ def test_meal_plan_put_409_when_ledger_owns_week(client, tmp_db, tmp_vault):
         "week": "2026-W28", "days": []})
     assert resp.status_code == 409
     assert resp.get_json()["error"] == "week is ledger-managed"
+
+
+def test_legacy_import_syncs_cook_history_to_the_recipe_note(client, tmp_db, tmp_vault):
+    """Converting a hand-edited week must backfill its recipes' yields.
+
+    The import creates cooks in bulk, bypassing the per-cook hook in
+    api_cook_create. Without an explicit sync the ledger has rows while the
+    recipe notes look untouched — reported from an iPad as "I don't see this on
+    the recipe page anywhere" right after marking a plan card cooked.
+    """
+    recipes = tmp_vault / "Recipes"
+    recipes.mkdir(parents=True, exist_ok=True)
+    (recipes / "Chili.md").write_text(
+        "---\ntitle: Chili\nservings: 4\n---\n\n# Chili\n", encoding="utf-8")
+
+    plans = tmp_vault / "Meal Plans"
+    plans.mkdir(parents=True, exist_ok=True)
+    (plans / "2026-W28.md").write_text(
+        "# Meal Plan - Week 28\n\n"
+        "## Monday (Jul 6)\n"
+        "### Breakfast\n### Lunch\n### Snack\n"
+        "### Dinner\n[[Chili]]\n### Notes\n\n",
+        encoding="utf-8")
+
+    assert client.post("/api/week-board/2026-W28/import-legacy").status_code == 200
+
+    body = (recipes / "Chili.md").read_text(encoding="utf-8")
+    assert "cook_count: 1" in body, (
+        f"legacy import left the recipe note unsynced:\n{body}")
+    assert "observed_servings:" in body
