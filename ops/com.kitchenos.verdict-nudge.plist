@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.kitchenos.verdict-nudge</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/chaseeasterling/Dev/KitchenOS/.venv/bin/python</string>
+        <string>/Users/chaseeasterling/Dev/KitchenOS/scripts/nudge_verdicts.py</string>
+    </array>
+    <!-- 20:15 — after dinner and after cleanup, while the meal is still
+         recallable, and before the late-evening window the Meal System note
+         identifies as the hard one. Once a day: this is a cue, not a stream. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>20</integer>
+        <key>Minute</key>
+        <integer>15</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/chaseeasterling/Dev/KitchenOS/logs/verdict_nudge.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/chaseeasterling/Dev/KitchenOS/logs/verdict_nudge.log</string>
+    <key>WorkingDirectory</key>
+    <string>/Users/chaseeasterling/Dev/KitchenOS</string>
+</dict>
+</plist>
