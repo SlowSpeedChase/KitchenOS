@@ -1959,7 +1959,7 @@
             cookedBtn.addEventListener('click', function(e) {
                 e.stopPropagation();
                 e.preventDefault();
-                markCooked(name, parseFloat(card.dataset.servings) || 1);
+                markCooked(name, parseFloat(card.dataset.servings) || 1, card);
             });
 
             card.appendChild(nameEl);
@@ -1970,7 +1970,7 @@
             return card;
         }
 
-        async function markCooked(recipe, servings) {
+        async function markCooked(recipe, servings, card) {
             if (!confirm(`Mark "${recipe}" cooked? This subtracts its ingredients from your inventory.`)) return;
             try {
                 const resp = await fetch('/api/cook', {
@@ -1989,8 +1989,36 @@
                     showToast(`Cooked — ${parts.join(', ')}`, 'success');
                 }
                 loadUseItUp().catch(() => {});  // refresh the waste panel
+
+                // Record it in the serving ledger too. Marking a plan card cooked
+                // IS the "I cooked this" event, but on a legacy (markdown-backed)
+                // week it previously only decremented inventory — leaving no cook
+                // row, so the recipe never learned its real yield, no verdict could
+                // be given, and On Track never saw it. Converting here is what puts
+                // the week on the board and makes those possible.
+                await recordCookInLedger(recipe, card);
             } catch (err) {
                 showToast('Failed to mark cooked', 'error');
+            }
+        }
+
+        async function recordCookInLedger(recipe, card) {
+            const cell = card && card.closest('.grid-cell');
+            if (!cell || !cell.dataset.day || !cell.dataset.meal) return;
+            // Board-backed cards already have their ledger row; only legacy
+            // markdown cards need converting.
+            if (card.classList.contains('cook-card')) return;
+            try {
+                const known = allRecipes.find(r => r.name === recipe);
+                const baseServings = (known && known.servings) ? known.servings : 4;
+                await ensureLegacyImported();
+                await createCook(recipe, cell.dataset.day, cell.dataset.meal,
+                                 1.0, baseServings);
+                showToast('Logged to the ledger — tap ⋮ to say if you\'d make it again');
+            } catch (err) {
+                // Inventory was already decremented and that is the user-visible
+                // effect; a ledger failure must not read as "cooking didn't count".
+                console.error('ledger record failed', err);
             }
         }
 

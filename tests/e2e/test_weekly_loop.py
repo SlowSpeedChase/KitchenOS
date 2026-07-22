@@ -227,3 +227,35 @@ def test_cold_planner_load_is_quick_enough_to_keep_a_habit(live_server, page):
                            timeout=30_000)
     elapsed = time.monotonic() - start
     assert elapsed < 4.0, f"planner took {elapsed:.1f}s to become usable"
+
+
+def test_marking_a_plan_card_cooked_creates_a_ledger_row(live_server, page, page_errors):
+    """The workflow actually in use: meals typed into the plan markdown.
+
+    Those render as *legacy* cards with no cook row behind them, so before this
+    the one action a person really takes — "I cooked this" — decremented
+    inventory and told the ledger nothing. No yield learned, no verdict
+    possible, invisible to On Track. Reported from an iPad as "I don't see the
+    make again button", and the button was right to be absent: there was no
+    cook to attach it to.
+    """
+    week = current_week()
+    plan = live_server.vault / "Meal Plans" / f"{week}.md"
+    assert plan.exists(), f"no plan for {week} in the vault copy"
+
+    page.goto(live_server.url(f"/meal-planner?week={week}"),
+              wait_until="domcontentloaded")
+    page.wait_for_selector("#grid", timeout=15_000)
+
+    legacy = page.locator(".grid-card:not(.cook-card)")
+    if legacy.count() == 0:
+        pytest.skip("current week has no legacy plan cards to exercise")
+
+    page.once("dialog", lambda d: d.accept())          # the "subtract ingredients?" confirm
+    legacy.first.locator(".cooked-btn").click(force=True)
+    page.wait_for_timeout(4000)
+
+    conn = sqlite3.connect(live_server.db)
+    cooks = conn.execute("SELECT COUNT(*) FROM cooks WHERE week = ?", (week,)).fetchone()[0]
+    conn.close()
+    assert cooks > 0, "marking a plan card cooked left no ledger row"

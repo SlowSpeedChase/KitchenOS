@@ -257,6 +257,15 @@ cssclasses:
 '''
 
 
+def _escape_link_label(text):
+    """Escape square brackets so a title can't open a wikilink in `[label](url)`.
+
+    Escaped rather than stripped: the brackets are part of how the channel
+    titled the video, and dropping them silently rewrites their content.
+    """
+    return str(text).replace("[", r"\[").replace("]", r"\]")
+
+
 def format_recipe_markdown(recipe_data, video_url, video_title, channel, date_added=None):
     """Format recipe data into markdown string"""
 
@@ -396,7 +405,11 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel, date_ad
         source_url=video_url,
         source_channel=channel or "Unknown",
         date_added=date_added or date.today().isoformat(),
-        video_title=video_title or "Unknown Video",
+        # Escaped because it is interpolated as a markdown link *label*. Korean
+        # and Japanese cooking channels routinely bracket their titles
+        # ("[감자치즈빵] …"), and an unescaped "[" turns the attribution into a
+        # wikilink to the bracketed fragment instead of a link to the video.
+        video_title=_escape_link_label(video_title or "Unknown Video"),
         recipe_source=recipe_source,
         tools_callout=tools_callout,
         prep_time=quote_or_null(prep),
