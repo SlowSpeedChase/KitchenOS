@@ -24,9 +24,26 @@
   .name { font-weight: 600; }
   .sub { font-size: 0.8rem; opacity: 0.7; }
   .badge-expired { color: #d33; } .badge-soon { color: #e69500; }
-  .actions { display: flex; gap: 6px; }
+  .actions { display: flex; gap: 6px; align-items: center; }
   .actions button { padding: 8px 10px; }
   .rm { color: #d33; border-color: #d3355; }
+  .kebab { font-size: 1.1rem; line-height: 1; padding: 6px 10px; }
+  #menu { position: fixed; z-index: 20; min-width: 190px; padding: 4px;
+          background: Canvas; color: CanvasText; border: 1px solid #8886;
+          border-radius: 12px; box-shadow: 0 8px 24px #0006; display: none; }
+  #menu.show { display: block; }
+  #menu .mi { display: flex; align-items: center; gap: 8px; width: 100%;
+              text-align: left; border: none; background: none; border-radius: 8px;
+              padding: 10px 12px; }
+  #menu .mi:active, #menu .mi:hover { background: #8882; }
+  #menu .mi.danger { color: #d33; }
+  #menu hr { border: none; border-top: 1px solid #8883; margin: 4px 6px; }
+  #menu .sub-label { font-size: 0.72rem; opacity: 0.55; padding: 6px 12px 2px;
+                     text-transform: uppercase; letter-spacing: 0.04em; }
+  #menu .chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 8px 6px; }
+  #menu .chips button { font-size: 0.8rem; padding: 5px 9px; border-radius: 8px; }
+  #menu input[type=date] { font: inherit; margin: 2px 8px 6px; padding: 6px;
+          border: 1px solid #8886; border-radius: 8px; background: Canvas; color: inherit; }
   .err { color: #d33; font-size: 0.8rem; }
   #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
            background: #222d; color: #fff; padding: 10px 14px; border-radius: 12px;
@@ -44,15 +61,21 @@
 <ul id="list"></ul>
 <div id="empty" hidden>Nothing in inventory.</div>
 <div id="toast"><span id="toast-msg"></span><button id="undo">Undo</button></div>
+<div id="menu"></div>
 
 <script>
 const EMOJI = { produce:"🥬", dairy:"🥛", meat:"🥩", seafood:"🐟", pantry:"🥫",
   frozen:"🧊", bakery:"🍞", beverages:"🧃", household:"🧽", other:"📦" };
+const CATEGORIES = ["produce","dairy","meat","seafood","pantry","frozen",
+  "bakery","beverages","household","other"];
+const LOCATIONS = ["fridge","freezer","pantry","counter","other"];
 const RANK = { expired:0, soon:1, ok:2 };
 const list = document.getElementById('list');
 const empty = document.getElementById('empty');
 const toast = document.getElementById('toast');
+const menu = document.getElementById('menu');
 let lastRemoved = null, toastTimer = null;
+let menuItem = null, menuLi = null;
 
 function rankOf(it){
   const r = RANK[it.expiry_status]; return r === undefined ? 3 : r;
@@ -89,11 +112,13 @@ function row(it){
     `<span class="meta"><div class="name"></div><div class="sub">${subline(it)}</div></span>` +
     `<span class="actions">` +
     `<button class="rm">Remove</button>` +
-    `<button data-d="3">+3d</button><button data-d="7">+7d</button></span>`;
+    `<button data-d="3">+3d</button><button data-d="7">+7d</button>` +
+    `<button class="kebab" aria-label="More actions">⋮</button></span>`;
   li.querySelector('.name').textContent = it.name;
   li.querySelector('.rm').onclick = () => remove(it, li);
   li.querySelectorAll('button[data-d]').forEach(b =>
     b.onclick = () => extend(it, li, parseInt(b.dataset.d, 10)));
+  li.querySelector('.kebab').onclick = (e) => openMenu(it, li, e.currentTarget);
   return li;
 }
 function rowError(li, msg){
@@ -123,6 +148,110 @@ async function extend(it, li, days){
     const e = li.querySelector('.err'); if (e) e.remove();
   } catch(e){ rowError(li, "Network error — tap ↻"); }
 }
+async function post(url, body, li, errLabel){
+  try {
+    const r = await fetch(url, { method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body) });
+    if (!r.ok){ rowError(li, `Couldn't ${errLabel} — tap ↻`); return null; }
+    const { item } = await r.json();
+    const e = li.querySelector('.err'); if (e) e.remove();
+    return item;
+  } catch(e){ rowError(li, "Network error — tap ↻"); return null; }
+}
+function applyUpdate(it, li, item){
+  if (!item) return;
+  Object.assign(it, item);
+  li.querySelector('.emoji').textContent = EMOJI[it.category] || "📦";
+  li.querySelector('.sub').innerHTML = subline(it);
+}
+function closeMenu(){
+  menu.classList.remove('show'); menuItem = null; menuLi = null;
+}
+function menuAction(label, fn, cls){
+  const b = document.createElement('button');
+  b.className = 'mi' + (cls ? ' ' + cls : '');
+  b.textContent = label;
+  b.onclick = async () => { const it = menuItem, li = menuLi; closeMenu(); await fn(it, li); };
+  return b;
+}
+function openMenu(it, li, anchor){
+  if (menuItem === it && menu.classList.contains('show')){ closeMenu(); return; }
+  menuItem = it; menuLi = li;
+  menu.innerHTML = '';
+
+  // Set expiration date — native picker
+  const dl = document.createElement('div'); dl.className = 'sub-label';
+  dl.textContent = 'Expiration'; menu.appendChild(dl);
+  const dp = document.createElement('input'); dp.type = 'date';
+  if (it.expires) dp.value = it.expires;
+  dp.onchange = async () => {
+    if (!dp.value) return;
+    const cur = menuLi; closeMenu();
+    applyUpdate(it, cur, await post('/api/inventory/set-expiry',
+      { name: it.name, location: it.location, expires: dp.value }, cur, "set date"));
+  };
+  menu.appendChild(dp);
+  menu.appendChild(menuAction('🚫 Remove expiration', async (it, li) =>
+    applyUpdate(it, li, await post('/api/inventory/set-expiry',
+      { name: it.name, location: it.location, expires: null }, li, "clear expiry"))));
+  menu.appendChild(menuAction('🧊 Mark as frozen', async (it, li) =>
+    applyUpdate(it, li, await post('/api/inventory/freeze',
+      { name: it.name, location: it.location }, li, "freeze"))));
+
+  menu.appendChild(document.createElement('hr'));
+
+  // Move to…
+  const ml = document.createElement('div'); ml.className = 'sub-label';
+  ml.textContent = 'Move to'; menu.appendChild(ml);
+  const mc = document.createElement('div'); mc.className = 'chips';
+  for (const loc of LOCATIONS){
+    if (loc === it.location) continue;
+    const b = document.createElement('button');
+    b.textContent = loc;
+    b.onclick = async () => {
+      const cur = menuLi; closeMenu();
+      applyUpdate(it, cur, await post('/api/inventory/move',
+        { name: it.name, location: it.location, to_location: loc }, cur, "move"));
+    };
+    mc.appendChild(b);
+  }
+  menu.appendChild(mc);
+
+  // Category…
+  const cl = document.createElement('div'); cl.className = 'sub-label';
+  cl.textContent = 'Category'; menu.appendChild(cl);
+  const cc = document.createElement('div'); cc.className = 'chips';
+  for (const cat of CATEGORIES){
+    if (cat === it.category) continue;
+    const b = document.createElement('button');
+    b.textContent = (EMOJI[cat] || "📦") + " " + cat;
+    b.onclick = async () => {
+      const cur = menuLi; closeMenu();
+      applyUpdate(it, cur, await post('/api/inventory/set-category',
+        { name: it.name, location: it.location, category: cat }, cur, "set category"));
+    };
+    cc.appendChild(b);
+  }
+  menu.appendChild(cc);
+
+  // Position anchored to the trigger, clamped to viewport.
+  menu.classList.add('show');
+  const r = anchor.getBoundingClientRect();
+  const mw = menu.offsetWidth, mh = menu.offsetHeight;
+  let left = Math.min(r.right - mw, window.innerWidth - mw - 8);
+  left = Math.max(8, left);
+  let top = r.bottom + 4;
+  if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
+  menu.style.left = left + 'px';
+  menu.style.top = top + 'px';
+}
+document.addEventListener('click', (e) => {
+  if (menu.classList.contains('show') &&
+      !menu.contains(e.target) && !e.target.classList.contains('kebab')) closeMenu();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
+window.addEventListener('scroll', closeMenu, true);
 function showToast(msg){
   document.getElementById('toast-msg').textContent = msg;
   toast.classList.add('show');

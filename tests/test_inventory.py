@@ -4,13 +4,17 @@ from lib.inventory import (
     InventoryItem,
     add_items,
     extend_expiry,
+    freeze_item,
     inventory_path,
+    move_item,
     normalize_category,
     normalize_location,
     normalize_source,
     parse_inventory_markdown,
     read_inventory,
     remove_item,
+    set_category,
+    set_expiry,
     update_quantity,
     write_inventory,
 )
@@ -324,6 +328,129 @@ class TestExtendExpiry:
         assert item.quantity == 2
         assert item.unit == "ct"
         assert item.for_recipe == "Smoothie"
+
+
+class TestSetExpiry:
+    def test_sets_absolute_date(self, tmp_vault, tmp_db):
+        add_items([InventoryItem(name="Milk", quantity=1, unit="gal",
+                                 category="dairy", location="fridge")])
+        item = set_expiry("Milk", "2026-08-01", location="fridge")
+        assert item is not None
+        assert item.expires == "2026-08-01"
+        assert read_inventory()[0].expires == "2026-08-01"
+
+    def test_clears_expiry_with_none(self, tmp_vault, tmp_db):
+        add_items([InventoryItem(name="Milk", quantity=1, unit="gal",
+                                 category="dairy", location="fridge",
+                                 expires="2026-08-01")])
+        item = set_expiry("Milk", None, location="fridge")
+        assert item is not None
+        assert item.expires is None
+        assert read_inventory()[0].expires is None
+
+    def test_returns_none_when_not_found(self, tmp_vault, tmp_db):
+        assert set_expiry("Nonexistent", "2026-08-01") is None
+
+    def test_preserves_other_fields(self, tmp_vault, tmp_db):
+        add_items([InventoryItem(name="Yogurt", quantity=2, unit="ct",
+                                 category="dairy", location="fridge",
+                                 for_recipe="Smoothie")])
+        item = set_expiry("Yogurt", "2026-08-01", location="fridge")
+        assert item.quantity == 2
+        assert item.for_recipe == "Smoothie"
+
+
+class TestSetCategory:
+    def test_changes_category(self, tmp_vault, tmp_db):
+        add_items([InventoryItem(name="Peas", quantity=1, unit="bag",
+                                 category="produce", location="freezer")])
+        item = set_category("Peas", "frozen", location="freezer")
+        assert item is not None
+        assert item.category == "frozen"
+        assert read_inventory()[0].category == "frozen"
+
+    def test_normalizes_unknown_category_to_other(self, tmp_vault, tmp_db):
+        add_items([InventoryItem(name="Peas", quantity=1, unit="bag")])
+        item = set_category("Peas", "widgets")
+        assert item.category == "other"
+
+    def test_returns_none_when_not_found(self, tmp_vault, tmp_db):
+        assert set_category("Nonexistent", "produce") is None
+
+
+class TestMoveItem:
+    def test_changes_location(self, tmp_vault, tmp_db):
+        add_items([InventoryItem(name="Bread", quantity=1, unit="loaf",
+                                 location="pantry")])
+        item = move_item("Bread", "freezer")
+        assert item is not None
+        assert item.location == "freezer"
+        items = read_inventory()
+        assert len(items) == 1
+        assert items[0].location == "freezer"
+
+    def test_normalizes_target_location(self, tmp_vault, tmp_db):
+        add_items([InventoryItem(name="Bread", quantity=1, unit="loaf",
+                                 location="pantry")])
+        item = move_item("Bread", "Freezer")
+        assert item.location == "freezer"
+
+    def test_merges_into_existing_row_at_target(self, tmp_vault, tmp_db):
+        add_items([
+            InventoryItem(name="Bread", quantity=1, unit="loaf", location="pantry"),
+            InventoryItem(name="Bread", quantity=2, unit="loaf", location="freezer"),
+        ])
+        item = move_item("Bread", "freezer", location="pantry")
+        assert item is not None
+        assert item.location == "freezer"
+        items = read_inventory()
+        assert len(items) == 1
+        assert items[0].quantity == 3.0
+        assert items[0].location == "freezer"
+
+    def test_move_to_same_location_is_noop(self, tmp_vault, tmp_db):
+        add_items([InventoryItem(name="Bread", quantity=1, unit="loaf",
+                                 location="pantry")])
+        item = move_item("Bread", "pantry", location="pantry")
+        assert item is not None
+        assert item.location == "pantry"
+        assert len(read_inventory()) == 1
+
+    def test_returns_none_when_not_found(self, tmp_vault, tmp_db):
+        assert move_item("Nonexistent", "freezer") is None
+
+
+class TestFreezeItem:
+    def test_sets_freezer_frozen_and_clears_expiry(self, tmp_vault, tmp_db):
+        add_items([InventoryItem(name="Chicken", quantity=1, unit="lb",
+                                 category="meat", location="fridge",
+                                 expires="2026-07-25")])
+        item = freeze_item("Chicken", location="fridge")
+        assert item is not None
+        assert item.location == "freezer"
+        assert item.category == "frozen"
+        assert item.expires is None
+        stored = read_inventory()[0]
+        assert stored.location == "freezer"
+        assert stored.category == "frozen"
+        assert stored.expires is None
+
+    def test_merges_into_existing_freezer_row(self, tmp_vault, tmp_db):
+        add_items([
+            InventoryItem(name="Peas", quantity=1, unit="bag", category="produce",
+                          location="fridge", expires="2026-07-25"),
+            InventoryItem(name="Peas", quantity=2, unit="bag", category="frozen",
+                          location="freezer"),
+        ])
+        item = freeze_item("Peas", location="fridge")
+        assert item is not None
+        items = read_inventory()
+        assert len(items) == 1
+        assert items[0].quantity == 3.0
+        assert items[0].location == "freezer"
+
+    def test_returns_none_when_not_found(self, tmp_vault, tmp_db):
+        assert freeze_item("Nonexistent") is None
 
 
 class TestReviewLink:

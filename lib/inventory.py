@@ -416,3 +416,123 @@ def extend_expiry(
     if updated is not None:
         write_inventory(items)
     return updated
+
+
+def _match(it: InventoryItem, target: str, target_loc: Optional[str]) -> bool:
+    """True when an item matches by lowercased name (+ optional location)."""
+    return it.name.lower().strip() == target and (
+        target_loc is None or it.location == target_loc
+    )
+
+
+def set_expiry(
+    name: str, expires: Optional[str], location: Optional[str] = None
+) -> Optional[InventoryItem]:
+    """Set a matched item's expiry to an absolute ISO date, or clear it (None).
+
+    Matches by lowercased name (+ optional location), like ``extend_expiry``.
+    Returns the updated item, or None if no row matched.
+    """
+    items = read_inventory()
+    target = name.lower().strip()
+    target_loc = location.lower().strip() if location else None
+
+    updated: Optional[InventoryItem] = None
+    for it in items:
+        if _match(it, target, target_loc):
+            it.expires = expires or None
+            updated = it
+            break
+
+    if updated is not None:
+        write_inventory(items)
+    return updated
+
+
+def set_category(
+    name: str, category: str, location: Optional[str] = None
+) -> Optional[InventoryItem]:
+    """Set a matched item's category (normalized against CATEGORIES).
+
+    Returns the updated item, or None if no row matched.
+    """
+    items = read_inventory()
+    target = name.lower().strip()
+    target_loc = location.lower().strip() if location else None
+
+    updated: Optional[InventoryItem] = None
+    for it in items:
+        if _match(it, target, target_loc):
+            it.category = normalize_category(category)
+            updated = it
+            break
+
+    if updated is not None:
+        write_inventory(items)
+    return updated
+
+
+def move_item(
+    name: str, to_location: str, location: Optional[str] = None
+) -> Optional[InventoryItem]:
+    """Move a matched item to ``to_location`` (normalized against LOCATIONS).
+
+    Because ``(name, unit, location)`` is the uniqueness key, moving can collide
+    with an existing row at the destination — in that case the quantities are
+    summed into the destination row and the source row is dropped. Returns the
+    resulting item at the destination, or None if no row matched.
+    """
+    dest = normalize_location(to_location)
+    items = read_inventory()
+    target = name.lower().strip()
+    target_loc = location.lower().strip() if location else None
+
+    source: Optional[InventoryItem] = None
+    for it in items:
+        if _match(it, target, target_loc):
+            source = it
+            break
+    if source is None:
+        return None
+
+    if source.location == dest:
+        return source
+
+    # Look for an existing destination row with the same (name, unit) to merge.
+    existing = next(
+        (
+            it
+            for it in items
+            if it is not source
+            and it.name.lower().strip() == source.name.lower().strip()
+            and it.unit.lower().strip() == source.unit.lower().strip()
+            and it.location == dest
+        ),
+        None,
+    )
+    if existing is not None:
+        existing.quantity += source.quantity
+        items.remove(source)
+        result = existing
+    else:
+        source.location = dest
+        result = source
+
+    write_inventory(items)
+    return result
+
+
+def freeze_item(
+    name: str, location: Optional[str] = None
+) -> Optional[InventoryItem]:
+    """Mark a matched item as frozen: move to the freezer, set category=frozen,
+    and clear its expiry (freezing stops the expiry clock).
+
+    Handles the destination-merge case via ``move_item``. Returns the resulting
+    freezer item, or None if no row matched.
+    """
+    moved = move_item(name, "freezer", location=location)
+    if moved is None:
+        return None
+    set_category(name, "frozen", location="freezer")
+    return set_expiry(name, None, location="freezer")

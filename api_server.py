@@ -2238,6 +2238,83 @@ def api_inventory_extend():
     return jsonify({"status": "extended", "item": d})
 
 
+def _item_response(item, status):
+    """Serialize an InventoryItem with computed expiry_status, or 404 if None."""
+    from lib.expiry import expiry_status
+
+    if item is None:
+        return jsonify({"status": "not_found"}), 404
+    d = item.to_dict()
+    d["expiry_status"] = expiry_status(d.get("expires"))
+    return jsonify({"status": status, "item": d})
+
+
+@app.route('/api/inventory/set-expiry', methods=['POST'])
+def api_inventory_set_expiry():
+    """Set an item's expiry to an absolute date, or clear it.
+
+    Body: {name, expires: "YYYY-MM-DD" | null, location?}. Ungated, like the
+    sibling add/remove/update/extend routes.
+    """
+    from lib.inventory import set_expiry
+
+    data = request.get_json(force=True, silent=True)
+    if not data or not data.get('name') or 'expires' not in data:
+        return jsonify({"error": "'name' and 'expires' are required"}), 400
+    expires = data['expires']
+    if expires is not None and not isinstance(expires, str):
+        return jsonify({"error": "'expires' must be an ISO date string or null"}), 400
+
+    item = set_expiry(data['name'], expires, data.get('location'))
+    return _item_response(item, "expiry_set")
+
+
+@app.route('/api/inventory/set-category', methods=['POST'])
+def api_inventory_set_category():
+    """Change an item's category. Body: {name, category, location?}. Ungated."""
+    from lib.inventory import set_category
+
+    data = request.get_json(force=True, silent=True)
+    if not data or not data.get('name') or not data.get('category'):
+        return jsonify({"error": "'name' and 'category' are required"}), 400
+
+    item = set_category(data['name'], data['category'], data.get('location'))
+    return _item_response(item, "category_set")
+
+
+@app.route('/api/inventory/move', methods=['POST'])
+def api_inventory_move():
+    """Move an item to a new location, merging on collision.
+
+    Body: {name, to_location, location?} where `location` is the current-row
+    match filter and `to_location` is the destination. Ungated.
+    """
+    from lib.inventory import move_item
+
+    data = request.get_json(force=True, silent=True)
+    if not data or not data.get('name') or not data.get('to_location'):
+        return jsonify({"error": "'name' and 'to_location' are required"}), 400
+
+    item = move_item(data['name'], data['to_location'], data.get('location'))
+    return _item_response(item, "moved")
+
+
+@app.route('/api/inventory/freeze', methods=['POST'])
+def api_inventory_freeze():
+    """Mark an item as frozen: move to freezer, category=frozen, clear expiry.
+
+    Body: {name, location?}. Ungated.
+    """
+    from lib.inventory import freeze_item
+
+    data = request.get_json(force=True, silent=True)
+    if not data or not data.get('name'):
+        return jsonify({"error": "'name' is required"}), 400
+
+    item = freeze_item(data['name'], data.get('location'))
+    return _item_response(item, "frozen")
+
+
 @app.route('/api/claude-notes', methods=['GET'])
 def api_claude_notes_get():
     """Return the shared Claude Notes.md body. Ungated, same-origin widget calls this."""
