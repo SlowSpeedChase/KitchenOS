@@ -1,0 +1,16 @@
+# Optional end-to-end browser tests — not needed to run KitchenOS.
+#
+# Drives the real web surfaces (meal planner, review, nutrition review) to catch
+# breakage that unit tests can't see: a route that 200s but renders an empty
+# week, a link pointing at a note that was never generated, a JS error that
+# silently kills a click handler.
+#
+# Kept out of the core requirements so the API server install stays lean.
+#     pip install -r requirements-e2e.txt
+#     python -m playwright install chromium   # one-time browser download
+#
+# Run with:  .venv/bin/python -m pytest tests/e2e -v
+# These tests are deselected by default (see the e2e marker in pytest.ini);
+# they need a live server and are slower than the unit suite.
+playwright>=1.40.0
+pytest-playwright>=0.4.0
