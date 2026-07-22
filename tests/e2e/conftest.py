@@ -52,12 +52,13 @@ def live_server(tmp_path_factory) -> LiveServer:
     """A KitchenOS API server backed by throwaway copies of the vault and DB."""
     root = tmp_path_factory.mktemp("kitchenos-e2e")
     vault = root / "KitchenOS"
-    # Skip Images/ (7.5 MB of blobs the tested flows never render) and the
-    # Obsidian config, which is machine state rather than content.
+    # Skip Images/ (7.5 MB of blobs the tested flows never render), the Obsidian
+    # config (machine state, not content), and .history/ (thousands of timestamped
+    # backups left by the backfill scripts — pure copy cost, never read).
     shutil.copytree(
         REPO / "vault" / "KitchenOS",
         vault,
-        ignore=shutil.ignore_patterns("Images", ".obsidian"),
+        ignore=shutil.ignore_patterns("Images", ".obsidian", ".history"),
     )
     db = root / "kitchenos.db"
     shutil.copy2(REPO / "data" / "kitchenos.db", db)

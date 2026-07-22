@@ -325,6 +325,37 @@ def _resolve_grams(amount, unit, item, record, *, use_cache: bool, portion_provi
     return gr  # still unresolved
 
 
+def _parse_servings(servings) -> int:
+    """Coerce a frontmatter ``servings`` value to a positive int, else 0.
+
+    Extraction frequently writes ranges ("6-8") or prose ("Serves 4", "about 2
+    servings") into this field. A bare ``int()`` rejected all of those and fell
+    back to 1, which silently published whole-recipe totals as per-serving
+    macros. Ranges collapse to their midpoint; prose yields its first integer.
+    Returns 0 when nothing numeric is present, so the caller flags the recipe.
+    """
+    if isinstance(servings, bool):  # bool is an int subclass — not a serving count
+        return 0
+    if isinstance(servings, (int, float)):
+        return int(servings) if servings >= 1 else 0
+    if not isinstance(servings, str):
+        return 0
+
+    # Range first ("6-8", "6 to 8") so we take the midpoint, not the low end.
+    rng = re.search(r"(\d+)\s*(?:-|–|—|to)\s*(\d+)", servings)
+    if rng:
+        lo, hi = int(rng.group(1)), int(rng.group(2))
+        if lo >= 1 and hi >= lo:
+            return round((lo + hi) / 2)
+
+    single = re.search(r"\d+", servings)
+    if single:
+        n = int(single.group())
+        if n >= 1:
+            return n
+    return 0
+
+
 def calculate_recipe_nutrition(
     ingredients: list[dict],
     servings,
@@ -461,12 +492,10 @@ def calculate_recipe_nutrition(
     if not any_resolved:
         return None
 
-    # Servings: None/0 → default 1 but flag (stops the 1639-cal "serving" bug).
+    # Servings: None/0/unparseable → default 1 but flag (stops the 1639-cal
+    # "serving" bug).
     servings_inferred = False
-    try:
-        servings_used = int(servings)
-    except (TypeError, ValueError):
-        servings_used = 0
+    servings_used = _parse_servings(servings)
     if servings_used < 1:
         servings_used = 1
         servings_inferred = True

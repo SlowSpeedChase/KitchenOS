@@ -46,10 +46,12 @@ def _planned_meals(plan_body: str) -> list[str]:
 
 
 @pytest.mark.xfail(
-    reason="Known: generate_meal_plan.py writes an empty template and nothing "
-           "fills the slots, so the current week arrives blank. This is why "
-           "auto-planning is deferred in the health-goals plan — and why "
-           "shopping lists stopped generating.",
+    reason="generate_meal_plan.py writes an empty template and nothing fills "
+           "the slots, so each week *arrives* blank and only gets meals if they "
+           "are added by hand. Non-strict because it legitimately oscillates: "
+           "XPASS means the week has been planned (good), xfail means it is "
+           "still the bare scaffold. Either way the signal is visible rather "
+           "than silent.",
     strict=False,
 )
 def test_current_week_plan_has_at_least_one_meal():

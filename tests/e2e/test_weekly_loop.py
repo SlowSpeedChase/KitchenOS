@@ -63,13 +63,14 @@ def test_surface_renders_without_js_errors(live_server, page, page_errors, route
     Catches what a curl check cannot: the page arrives, then a handler throws
     and the screen is quietly inert.
     """
-    page.goto(live_server.url(route), wait_until="networkidle")
+    page.goto(live_server.url(route), wait_until="domcontentloaded")
+    page.wait_for_timeout(2000)  # let deferred fetches settle and any handler throw
     assert page_errors == [], f"{route} raised: {page_errors}"
 
 
 def test_meal_planner_lists_recipes(live_server, page, page_errors):
     """The planner is useless if the recipe rail is empty — assert it populated."""
-    page.goto(live_server.url("/meal-planner"), wait_until="networkidle")
+    page.goto(live_server.url("/meal-planner"), wait_until="domcontentloaded")
     page.wait_for_selector("#recipe-list", timeout=15_000)
     cards = page.locator("#recipe-list li, #recipe-list .recipe-card")
     assert cards.count() > 0, "recipe rail rendered no recipes"
@@ -121,7 +122,7 @@ def test_logged_cook_appears_on_the_week_board(live_server, page, page_errors):
     _log_cook(live_server, week=week, recipe="E2E Visible Cook",
               produced=2, when=when)
 
-    page.goto(live_server.url(f"/meal-planner?week={week}"), wait_until="networkidle")
+    page.goto(live_server.url(f"/meal-planner?week={week}"), wait_until="domcontentloaded")
     page.wait_for_selector("#grid", timeout=15_000)
     assert page.get_by_text("E2E Visible Cook").count() > 0, (
         "cook was written to the ledger but never rendered on the week board"
@@ -140,7 +141,7 @@ def test_verdict_can_be_recorded_from_the_planner(live_server, page, page_errors
     cook = _log_cook(live_server, week=week, recipe="E2E Verdict Cook",
                      produced=2, when=when)
 
-    page.goto(live_server.url(f"/meal-planner?week={week}"), wait_until="networkidle")
+    page.goto(live_server.url(f"/meal-planner?week={week}"), wait_until="domcontentloaded")
     page.wait_for_selector(".cook-card", timeout=15_000)
     # Open via the ⋮ button: the tap-to-open handler is gated on IS_TOUCH, so
     # on a desktop browser this is the only route into the sheet.
@@ -198,3 +199,31 @@ def test_shopping_list_generation_writes_a_vault_file(live_server):
     listed = sorted(p.name for p in (live_server.vault / "Shopping Lists").glob("*.md"))
     assert written.exists(), f"no shopping list written for {week}; present: {listed}"
     assert written.read_text(encoding="utf-8").strip(), "shopping list written but empty"
+
+
+@pytest.mark.xfail(
+    reason="Timing-sensitive, so non-strict. /api/tasks/<week> rebuilds its "
+           "sidecar through Ollama on a cold week; measured at 9.7s when the "
+           "model had to load and well under 1s once mistral:7b is resident. "
+           "The cost is therefore Ollama's first-inference warm-up rather than "
+           "a per-load penalty — but it lands on whoever opens the planner "
+           "first after a reboot, and a 10s wait on a phone is a habit-killer.",
+    strict=False,
+)
+def test_cold_planner_load_is_quick_enough_to_keep_a_habit(live_server, page):
+    """A fresh week must become interactive fast enough to stay usable.
+
+    Budget is deliberately generous — this is not a micro-benchmark, it is the
+    difference between opening the planner and giving up on it.
+    """
+    import time
+    week = current_week()
+    start = time.monotonic()
+    page.goto(live_server.url(f"/meal-planner?week={week}"),
+              wait_until="domcontentloaded")
+    page.wait_for_selector("#grid", timeout=30_000)
+    page.wait_for_function("() => !document.getElementById('loading') "
+                           "|| document.getElementById('loading').offsetParent === null",
+                           timeout=30_000)
+    elapsed = time.monotonic() - start
+    assert elapsed < 4.0, f"planner took {elapsed:.1f}s to become usable"

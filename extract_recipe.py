@@ -220,7 +220,47 @@ def save_recipe_to_obsidian(recipe_data, video_url, video_title, channel, video_
     # Write file
     filepath.write_text(markdown, encoding='utf-8')
 
+    _tag_fit(filepath)
+
     return filepath
+
+
+def _tag_fit(filepath):
+    """Assess the new recipe against the personal food profile, if there is one.
+
+    Runs at extraction time so the library never drifts out of sync: a recipe
+    saved today is retrievable by craving and health fit today, rather than
+    waiting for someone to remember to re-run the backfill.
+
+    Best-effort throughout — no profile, no model, or a bad response all leave
+    the recipe simply untagged. A failed assessment must never lose an
+    extraction that already succeeded.
+    """
+    try:
+        from lib import frontmatter, profile as profile_mod, recipe_fit
+        import backfill_fit
+
+        profile = profile_mod.load_profile()
+        if profile is None:
+            return
+
+        content = filepath.read_text(encoding='utf-8')
+        from lib.recipe_parser import parse_recipe_file
+        ingredients = backfill_fit.extract_ingredients(
+            parse_recipe_file(content).get('body', ''))
+        if not ingredients:
+            return
+
+        tags = recipe_fit.assess(filepath.stem, ingredients, profile)
+        if tags is None:
+            return
+
+        updated = frontmatter.apply(content, recipe_fit.to_frontmatter(tags),
+                                    recipe_fit.MANAGED_KEYS)
+        if updated:
+            filepath.write_text(updated, encoding='utf-8')
+    except Exception as e:
+        print(f"Warning: fit tagging failed for {filepath.name}: {e}", file=sys.stderr)
 
 
 def extract_single_recipe(url: str, dry_run: bool = False, force: bool = False, on_status=None) -> dict:

@@ -427,3 +427,49 @@ class TestSuggestMealWaste:
             assert result is not None
             assert result["name"] == "Buttermilk Pancakes"
             assert "expiring buttermilk" in result["reason"]
+
+
+class TestProfileInjection:
+    """The personal food profile must actually reach the model.
+
+    This wiring is easy to break silently: the prompt still renders, the
+    suggestion still returns, and nothing fails — the model just never learns
+    the user is trying to lower LDL. Hence an explicit test.
+    """
+
+    def test_profile_block_is_empty_without_a_profile(self, tmp_vault):
+        from lib import meal_suggester
+        assert meal_suggester._profile_block() == ""
+
+    def test_profile_block_carries_the_prose(self, tmp_vault):
+        from lib import meal_suggester
+        (tmp_vault / "My Meal System.md").write_text(
+            "---\n---\n# My Meal System\n\nLowering LDL. Loves sweet food.\n",
+            encoding="utf-8")
+        block = meal_suggester._profile_block()
+        assert "Lowering LDL" in block
+        assert "personal profile" in block.lower()
+
+    def test_suggest_prompt_renders_with_the_profile(self, tmp_vault):
+        """Guards the format() contract — a missing key raises at call time."""
+        from prompts.meal_suggestion import SUGGEST_PROMPT
+        rendered = SUGGEST_PROMPT.format(
+            profile="## Their food system\nLowering LDL.\n",
+            planned_meals="- Mon dinner: Chili",
+            candidates="- Tacos",
+            day="Tuesday", meal="dinner")
+        assert "Lowering LDL" in rendered
+
+    def test_empty_week_prompt_renders_with_the_profile(self, tmp_vault):
+        from prompts.meal_suggestion import SUGGEST_EMPTY_WEEK_PROMPT
+        rendered = SUGGEST_EMPTY_WEEK_PROMPT.format(
+            profile="## Their food system\nLowering LDL.\n",
+            recipe_summaries="- Chili", day="Monday", meal="dinner")
+        assert "Lowering LDL" in rendered
+
+    def test_profile_block_survives_an_unreadable_vault(self, monkeypatch):
+        """A broken profile must never take down meal suggestions."""
+        from lib import meal_suggester, profile as profile_mod
+        monkeypatch.setattr(profile_mod, "load_profile",
+                            lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
+        assert meal_suggester._profile_block() == ""

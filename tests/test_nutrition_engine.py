@@ -123,6 +123,32 @@ class TestServings:
         assert res.needs_review
         assert res.per_serving.calories == 800  # whole recipe, but flagged
 
+    @pytest.mark.parametrize("raw,expected", [
+        ("6-8", 7),                                  # range → midpoint
+        ("6 to 8", 7),
+        ("4", 4),                                    # numeric string
+        ("6-8 as a side dish", 7),                   # range + trailing prose
+        ("Serves 4", 4),                             # leading prose
+        ("Not explicitly mentioned, estimated 4 servings", 4),
+        ("about 2 servings", 2),
+    ])
+    def test_parses_messy_servings_values(self, raw, expected):
+        # Extraction writes prose/ranges into `servings`; int() rejected these and
+        # silently fell back to 1, publishing whole-recipe totals as per-serving.
+        with patch("lib.food_db.usda_search", return_value=[_rec("Rice", 100, 0, 0, 0)]), \
+             patch("lib.food_db.usda_food_detail", return_value=None):
+            res = _engine([{"amount": "700", "unit": "g", "item": "rice"}], raw)
+        assert res.servings_used == expected
+        assert not res.servings_inferred
+
+    def test_unparseable_servings_still_flags_review(self):
+        with patch("lib.food_db.usda_search", return_value=[_rec("Rice", 100, 0, 0, 0)]), \
+             patch("lib.food_db.usda_food_detail", return_value=None):
+            res = _engine([{"amount": "700", "unit": "g", "item": "rice"}],
+                          "Variable, depending on the chosen system")
+        assert res.servings_used == 1
+        assert res.servings_inferred
+
 
 class TestSourcesAndResolution:
     def test_mixed_source_label(self):

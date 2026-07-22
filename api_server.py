@@ -1125,6 +1125,14 @@ def _sync_cook_history(*recipes):
         except Exception as e:
             print(f"Warning: cook history sync failed for {recipe}: {e}", file=sys.stderr)
 
+    # The On Track view reads from the ledger, so it goes stale the moment a
+    # cook or verdict lands. Same best-effort contract as above.
+    try:
+        from lib import on_track
+        on_track.write_note()
+    except Exception as e:
+        print(f"Warning: On Track regen failed: {e}", file=sys.stderr)
+
 
 @app.route('/api/week-board/<week>', methods=['GET'])
 @require_token

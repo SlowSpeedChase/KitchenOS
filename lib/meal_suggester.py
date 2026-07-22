@@ -41,6 +41,24 @@ PREP_WORDS = {
 }
 
 
+def _profile_block() -> str:
+    """The user's food system as a prompt section, or '' if they have none.
+
+    Always safe to interpolate: an absent profile yields an empty string, so
+    suggestions degrade to the previous behaviour rather than failing. Any
+    section the user adds to the note reaches the model here without a code
+    change — that is the point of passing prose rather than parsed fields.
+    """
+    try:
+        from lib import profile as profile_mod
+        p = profile_mod.load_profile()
+    except Exception:
+        return ""
+    if p is None:
+        return ""
+    return f"## Their food system (personal profile)\n{p.prompt_context()}\n"
+
+
 def load_pantry_staples() -> set[str]:
     """Load pantry staples from config file."""
     try:
@@ -255,6 +273,7 @@ def suggest_with_claude(
     )
 
     prompt = SUGGEST_PROMPT.format(
+        profile=_profile_block(),
         planned_meals=planned_text,
         candidates=candidate_text,
         day=day,
@@ -312,6 +331,7 @@ def suggest_for_empty_week(
     )
 
     prompt = SUGGEST_EMPTY_WEEK_PROMPT.format(
+        profile=_profile_block(),
         recipe_summaries=summaries_text,
         day=day,
         meal=meal,

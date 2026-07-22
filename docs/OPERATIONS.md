@@ -162,6 +162,39 @@ web base URL changes.
 KITCHENOS_API_BASE=http://other-host.taila69703.ts.net:5001 .venv/bin/python scripts/generate_web_dashboard.py
 ```
 
+### Tag recipes against the personal food profile
+
+Assesses each recipe against `My Meal System.md` (craving lane, buffer-food
+candidacy, dairy load, effort, and inferred heart/steady flags), writing
+`fit_*` frontmatter. Claude Haiku with an Ollama fallback; a recipe no model
+answers for is left **untagged rather than mistagged**.
+
+Every value is inference from an ingredient list, so each tagged recipe carries
+`fit_source` and `fit_needs_review: true`. Newly extracted recipes are tagged
+automatically (`extract_recipe.py`), so this is only needed for the initial
+pass or after editing the profile note.
+
+```bash
+.venv/bin/python backfill_fit.py --dry-run --limit 10   # preview, writes nothing
+.venv/bin/python backfill_fit.py                        # tag everything untagged
+.venv/bin/python backfill_fit.py --force                # re-assess the whole library
+```
+
+Skips already-tagged recipes unless `--force`, so it's cheap to re-run. Each
+rewritten note gets a timestamped `.history/` backup.
+
+### Generate the On Track view
+
+Writes `Dashboards/On Track.md` — what you actually cooked (from the serving
+ledger, never from meal plans), how it leaned heart/steady, the verdicts and
+notes you recorded, and where the recipe library is thin. Regenerates
+automatically whenever a cook or verdict is logged; run by hand after a
+`backfill_fit.py` pass so the library-gap counts refresh.
+
+```bash
+.venv/bin/python scripts/generate_on_track.py
+```
+
 ### Migrations: one-time vs. re-runnable maintenance
 
 **Re-runnable maintenance / backfill** — `migrate_recipes.py` and
