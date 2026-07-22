@@ -239,17 +239,27 @@ def test_marking_a_plan_card_cooked_creates_a_ledger_row(live_server, page, page
     make again button", and the button was right to be absent: there was no
     cook to attach it to.
     """
-    week = current_week()
+    # Author the legacy week rather than borrowing the current one: once a real
+    # week is marked cooked it converts to ledger cooks, so a test keyed on
+    # "today" silently skips itself the moment the feature it covers is used.
+    week = "2099-W07"
     plan = live_server.vault / "Meal Plans" / f"{week}.md"
-    assert plan.exists(), f"no plan for {week} in the vault copy"
+    plan.write_text(
+        "# Meal Plan - Week 7 (Feb 9 - Feb 15, 2099)\n\n"
+        "## Monday (Feb 9)\n"
+        "### Breakfast\n\n### Lunch\n\n### Snack\n\n"
+        # A recipe no other test cooks: two tests cooking the same one shift its
+        # median observed yield and break the other's assertion.
+        "### Dinner\n[[Okroshka]]\n\n### Notes\n\n",
+        encoding="utf-8",
+    )
 
     page.goto(live_server.url(f"/meal-planner?week={week}"),
               wait_until="domcontentloaded")
     page.wait_for_selector("#grid", timeout=15_000)
 
     legacy = page.locator(".grid-card:not(.cook-card)")
-    if legacy.count() == 0:
-        pytest.skip("current week has no legacy plan cards to exercise")
+    assert legacy.count() > 0, "authored plan rendered no legacy cards"
 
     page.once("dialog", lambda d: d.accept())          # the "subtract ingredients?" confirm
     legacy.first.locator(".cooked-btn").click(force=True)
