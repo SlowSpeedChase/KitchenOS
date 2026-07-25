@@ -57,12 +57,18 @@ working unchanged; the page is additive.
 ### Part 1 — Repair `dish_type`
 
 **1. Controlled vocabulary.** Add `VALID_DISH_TYPES` to `lib/normalizer.py`, beside the
-existing `VALID_MEAL_OCCASIONS`, with 12 values:
+existing `VALID_MEAL_OCCASIONS`, with 13 values:
 
 ```
-main  breakfast  side  salad  soup  sandwich
-bread  snack  appetizer  dessert  drink  sauce
+main  breakfast  side  salad  soup  sandwich  bread
+snack  appetizer  dip  dessert  drink  sauce
 ```
+
+These are exactly the values `DISH_TYPE_MAP` already treats as canonical (its
+left-hand-side identity entries), so the vocabulary describes the normalizer rather than
+competing with it. `dip` is included for that reason — it is already canonical and 2
+recipes use it; inventing a rule that folds it into `appetizer` would reclassify working
+data for no benefit.
 
 **2. Delete the biscuit rule.** Remove `"biscuit": "dessert"` (`lib/normalizer.py:196`).
 This is the root cause of the contaminated dessert bucket, and leaving it in place would
@@ -72,14 +78,24 @@ this deletion is a fix with a known expiry date.
 **3. `scripts/reclassify_dish_type.py`.**
 
 - Reads all recipes via `get_recipe_index(recipes_dir(), include_ingredients=True)`.
-- Submits **one Batches API job** (239 requests, 50% cost, one `custom_id` per recipe
-  name). Each request carries the recipe name, its ingredient list, and its current
-  `dish_type`.
+- Submits **one Batches API job** (239 requests, 50% cost). Each request carries the recipe
+  name, its ingredient list, and its current `dish_type`.
+
+  `custom_id` is the recipe's **index** (`r0`, `r1`, …), not its name: the field is
+  restricted to alphanumerics, underscores, and dashes, and this library has names like
+  `Arayes 🥙` and `Hardee's Biscuits` that cannot be used verbatim. The index maps back to
+  the name through the ordered recipe list.
 - Constrains output with `output_config.format` → `json_schema` whose `dish_type` property
-  is an **`enum` of the 12 values**. An out-of-vocabulary answer is structurally
+  is an **`enum` of the 13 values**. An out-of-vocabulary answer is structurally
   impossible, so no post-hoc validation branch can drift from the vocabulary.
 - Uses the `anthropic` SDK on `claude-opus-5`, matching the existing integration pattern
   in `lib/receipt_parser.py:31` / `lib/meal_suggester.py`.
+
+  Two model-specific details the request must respect: `claude-opus-5` **thinks by
+  default**, and `max_tokens` caps thinking *plus* response text together — so a
+  classification returning ~20 tokens still needs real headroom (`max_tokens=2000`) or it
+  truncates mid-thought. Effort is set to `low`; this is a one-field classification, not a
+  reasoning task.
 - **`--dry-run` is the default.** It prints a report grouped as `CHANGE` / `KEEP` /
   `UNRESOLVED` and writes nothing.
 - **`--apply`** writes the new `dish_type` into recipe frontmatter following the existing
@@ -109,14 +125,14 @@ recipe appears in exactly one of the three report sections, and the three counts
 an endpoint, and a template.
 
 **1. Chip groups.** A `DISH_TYPE_GROUPS` mapping (in `lib/cook_now.py`) collapses the
-12-value stored vocabulary into 6 UI groups:
+13-value stored vocabulary into 6 UI groups:
 
 | Chip | `dish_type` values |
 |---|---|
 | Mains | `main`, `sandwich`, `soup` |
 | Breakfast | `breakfast` |
 | Sides | `side`, `salad`, `bread`, `sauce` |
-| Snacks | `snack`, `appetizer` |
+| Snacks | `snack`, `appetizer`, `dip` |
 | Desserts | `dessert` |
 | Drinks | `drink` |
 
