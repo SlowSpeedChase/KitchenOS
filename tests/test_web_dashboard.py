@@ -58,6 +58,42 @@ class TestRenderMarkdown:
         assert "http://envhost.ts.net:5001/meal-planner" in md
 
 
+class TestRenderHtml:
+    def test_renders_every_section_and_page(self):
+        from html import escape
+        html = wd.render_html()
+        for section_title, items in wd.SECTIONS:
+            assert escape(section_title) in html
+            for _emoji, title, path, _desc in items:
+                assert escape(title) in html
+                assert f'href="{path}"' in html
+
+    def test_links_are_relative_by_default(self):
+        html = wd.render_html()
+        assert 'href="/review"' in html
+        assert "ts.net" not in html
+
+    def test_base_prefixes_links_when_given(self):
+        html = wd.render_html("http://box.tailnet.ts.net:5001")
+        assert 'href="http://box.tailnet.ts.net:5001/review"' in html
+
+    def test_is_a_fragment_not_a_document(self):
+        html = wd.render_html()
+        assert "<!doctype" not in html.lower()
+        assert "<body" not in html.lower()
+
+    def test_escapes_text_so_prose_cannot_inject_markup(self, monkeypatch):
+        monkeypatch.setattr(
+            wd, "SECTIONS",
+            [("S & T", [("x", "A<b>Title", "/p", 'desc "quoted" & <i>')])],
+        )
+        html = wd.render_html()
+        assert "A&lt;b&gt;Title" in html
+        assert "<b>" not in html
+        assert "<i>" not in html
+        assert "S &amp; T" in html
+
+
 class TestPageRegistryIsComplete:
     """SECTIONS must account for every browsable page api_server serves."""
 

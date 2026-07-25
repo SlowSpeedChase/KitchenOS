@@ -12,6 +12,7 @@ in one place (env) and regenerate.
 """
 
 import os
+from html import escape
 from typing import Optional
 
 # Same default as templates/recipe_template.py — a stable Tailscale MagicDNS
@@ -107,6 +108,29 @@ def render_markdown(base: Optional[str] = None) -> str:
         "change it.*",
     ]
     return "\n".join(lines) + "\n"
+
+
+def render_html(base: str = "") -> str:
+    """Render SECTIONS as an HTML fragment for the home page. Pure — no I/O.
+
+    ``base`` defaults to empty so the served page emits relative links and you
+    stay on whatever host you loaded it from. ``render_markdown`` needs absolute
+    tailnet URLs because the vault note is opened from other devices; a page
+    already being served over the tailnet does not.
+    """
+    base = base.rstrip("/")
+    out = []
+    for section_title, items in SECTIONS:
+        out.append(f"<section><h2>{escape(section_title)}</h2>")
+        for emoji, title, path, desc in items:
+            out.append(
+                f'<a class="card" href="{escape(base + path)}">'
+                f'<span class="emoji">{escape(emoji)}</span>'
+                f'<span class="text"><span class="title">{escape(title)}</span>'
+                f'<span class="desc">{escape(desc)}</span></span></a>'
+            )
+        out.append("</section>")
+    return "\n".join(out)
 
 
 def write_note() -> "object":
