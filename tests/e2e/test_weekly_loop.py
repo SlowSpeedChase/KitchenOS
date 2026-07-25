@@ -20,7 +20,7 @@ import requests
 
 pytestmark = pytest.mark.e2e
 
-SURFACES = ["/meal-planner", "/nutrition-review", "/system-health", "/review"]
+SURFACES = ["/", "/meal-planner", "/nutrition-review", "/system-health", "/review"]
 
 
 def current_week() -> str:

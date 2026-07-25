@@ -34,11 +34,20 @@ def test_bar_html_uses_env_target(monkeypatch):
     monkeypatch.setenv('KITCHENOS_SSH_TARGET', 'tester@example.ts.net')
     assert 'ssh://tester@example.ts.net' in _claude_bar_html()
 
+def test_bar_html_has_home_link():
+    bar = _claude_bar_html()
+    assert 'id="ko-home-link"' in bar
+    assert 'href="/"' in bar
+
 
 # --- route level: every simple page carries the bar ---
 
-@pytest.mark.parametrize('path', ['/review', '/system-health', '/nutrition-review',
-                                  '/meal-planner', '/receipt-paste'])
+# Every HTML page served through _serve_page_with_claude_bar.
+PAGES = ['/', '/review', '/system-health', '/nutrition-review',
+         '/meal-planner', '/receipt-paste']
+
+
+@pytest.mark.parametrize('path', PAGES)
 def test_page_has_claude_bar(client, path):
     r = client.get(path)
     assert r.status_code == 200
@@ -46,3 +55,9 @@ def test_page_has_claude_bar(client, path):
     assert 'id="ko-claude-bar"' in body
     assert 'ssh://' in body
     assert '/api/claude-notes' in body
+
+
+@pytest.mark.parametrize('path', PAGES)
+def test_every_page_links_home(client, path):
+    body = client.get(path).get_data(as_text=True)
+    assert 'id="ko-home-link"' in body

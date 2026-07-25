@@ -96,6 +96,7 @@ def error_page(message: str) -> str:
 _CLAUDE_BAR_TEMPLATE = """
 <div id="ko-claude-bar" style="position:sticky;top:0;left:0;right:0;z-index:2147483000;background:#1a1a2e;color:#e8e8f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;box-shadow:0 2px 8px rgba(0,0,0,0.3);">
   <div style="display:flex;align-items:center;gap:12px;padding:8px 14px;">
+    <a id="ko-home-link" href="/" title="KitchenOS home" style="color:#e8e8f0;text-decoration:none;padding:7px 10px;border:1px solid #44445a;border-radius:8px;white-space:nowrap;">&#127968;</a>
     <a id="ko-claude-launch" href="ssh://__SSH_TARGET__" style="background:#7c5cff;color:#fff;text-decoration:none;padding:7px 14px;border-radius:8px;font-weight:600;white-space:nowrap;">&#129302; Launch Claude</a>
     <button id="ko-claude-toggle" type="button" style="background:transparent;color:#b8b8d0;border:1px solid #44445a;border-radius:8px;padding:7px 12px;cursor:pointer;font-size:14px;">&#128221; Notes</button>
     <span id="ko-claude-status" style="color:#8a8aa5;font-size:12px;margin-left:auto;"></span>
