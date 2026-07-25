@@ -401,10 +401,15 @@ def add_items(new_items: list[InventoryItem]) -> dict:
             merged += 1
         else:
             # `purchased` doubles as "date added" — it is what the review page
-            # sorts by. Stamp it only when the row is genuinely new: doing it
-            # unconditionally would bump the date on every merge, so re-running
-            # an idempotent seed (pantry staples) would make long-held stock
-            # look like it had just arrived.
+            # sorts by. Stamp it only when the row is genuinely new. Doing it
+            # unconditionally would bump the date on every merge, so re-ingesting
+            # a receipt or restocking a long-held item would present it as
+            # freshly bought. An explicit `purchased` still wins on merge, which
+            # is what the receipt path relies on.
+            #
+            # Staples are unaffected either way: `seed_pantry_staples` writes
+            # through `write_inventory`, not here, so they keep a null date and
+            # sort last under "Added" — correct for perpetual stock.
             if new.purchased is None:
                 new.purchased = date.today().isoformat()
             by_key[key] = new
