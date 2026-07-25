@@ -50,6 +50,7 @@ Invariants — violating these causes real bugs, not just style drift:
 - **API restart caveat**: `com.kitchenos.api` LaunchAgent holds `lib/*` in memory. Editing any `lib/`, template, or prompt file requires a LaunchAgent restart (see below) or the server keeps serving stale code — this shows up as 500s / wrong behavior that looks like a data bug.
 - **Process lookup**: LaunchAgent python services self-rename via `setproctitle`. `pgrep -f <script>.py` will NOT match a running service — search `kitchenos-*` instead.
 - **`/extract` API endpoint shells out** to `extract_recipe.py` as a subprocess rather than importing the pipeline in-process; don't assume in-process state (env, caches) is shared between the API server and an extraction it triggers.
+- **A new browsable page must be registered and bookmarked.** Any new HTML page route (one served through `_serve_page_with_claude_bar`) goes in `SECTIONS` in `lib/web_dashboard.py` — the single registry feeding both the vault launcher note and Safari. Then propagate it: `scripts/generate_web_dashboard.py` and `scripts/sync_safari_bookmarks.py --apply`. **The sync quits and relaunches Safari — that is pre-authorized, do it without asking**; Safari restores its tabs, and it no-ops if Safari isn't running. Pages that can't be bookmarked (path params like `/recipe/<name>`, required query params like `/add-to-meal-plan?recipe=`) go in `NOT_BOOKMARKABLE` in `tests/test_web_dashboard.py` with a reason instead. Skipping both fails the test suite.
 
 ## Primary Commands
 

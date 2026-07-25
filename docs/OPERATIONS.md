@@ -150,17 +150,43 @@ content hash of `date + total + item names` on `trips.source_id` (source
 ### Generate web dashboard (tailnet launcher)
 
 Writes `Dashboards/KitchenOS Web.md` — a tap-anywhere launcher for the web app
-(Meal Planner, Nutrition Review, System Health, current plan/shopping list).
-Links point at `KITCHENOS_API_BASE` (default the Tailscale MagicDNS host
+(Meal Planner, Nutrition Review, Inventory Review, System Health, Paste a
+Receipt, current plan/shopping list). Links point at `KITCHENOS_API_BASE`
+(default the Tailscale MagicDNS host
 `http://chases-mac-mini.taila69703.ts.net:5001`), so the note works from any
-device on the tailnet, not just localhost on the server. Re-run only when the
-web base URL changes.
+device on the tailnet, not just localhost on the server. Re-run when the web
+base URL changes **or when `SECTIONS` in `lib/web_dashboard.py` changes**.
 
 ```bash
 .venv/bin/python scripts/generate_web_dashboard.py
 # point it at a different host first, if needed:
 KITCHENOS_API_BASE=http://other-host.taila69703.ts.net:5001 .venv/bin/python scripts/generate_web_dashboard.py
 ```
+
+### Sync Safari bookmarks
+
+Mirrors that same `SECTIONS` registry into the Safari **KitchenOS** bookmarks
+folder (first item in the Bookmarks Bar), so every page is one tap away and
+iCloud carries it to the iPad and iPhone. Additive and idempotent — matches on
+URL, never deletes or reorders, leaves hand-made bookmarks alone.
+
+```bash
+.venv/bin/python scripts/sync_safari_bookmarks.py           # report drift, touch nothing (exit 1 if stale)
+.venv/bin/python scripts/sync_safari_bookmarks.py --apply   # add the missing ones
+```
+
+`--apply` **quits and relaunches Safari**, because Safari caches
+`Bookmarks.plist` in memory and rewrites it on quit — a write made while it is
+running is silently discarded. Session restore brings the tabs back, and if
+Safari isn't running the quit/relaunch is skipped. Every apply backs the plist
+up to `~/Library/Safari/KitchenOS-bookmark-backups/` first, and verifies after
+the relaunch that the new entries actually survived; if they didn't, it prints
+the exact `cp` to restore. The folder itself must already exist — the script
+refuses to create a second one. On non-macOS (a cloud session) it exits cleanly
+without doing anything.
+
+See the page-registry invariant in `CLAUDE.md`: adding an HTML page route
+without registering it here fails `tests/test_web_dashboard.py`.
 
 ### Tag recipes against the personal food profile
 
@@ -674,6 +700,7 @@ architecture/API/CLI changes").
 |-------------|-------------|
 | Architecture change (pipeline flow, AI stack, new core component) | `docs/ARCHITECTURE.md` |
 | New HTTP route or MCP tool | `docs/API.md` |
+| New browsable HTML page | `SECTIONS` in `lib/web_dashboard.py`, then run `scripts/generate_web_dashboard.py` + `scripts/sync_safari_bookmarks.py --apply` |
 | New CLI command, LaunchAgent/service, or operational procedure | `docs/OPERATIONS.md` (this file) |
 | Roadmap / future-enhancement idea | `docs/ROADMAP.md` |
 | User-facing change (setup, usage, configuration) | `README.md` |

@@ -77,7 +77,24 @@ the server is up and surface the `/meal-planner` URL for manual iPad testing.
 State explicitly: "I cannot verify iPad drag-and-drop from here — please test
 on device before committing."
 
-### 6. Propose the commit
+### 6. Propagate a new web page
+
+If the change added an HTML page route to `api_server.py` (one served through
+`_serve_page_with_claude_bar`) or edited `SECTIONS` in `lib/web_dashboard.py`,
+push it out to both consumers of that registry:
+
+```bash
+.venv/bin/python scripts/generate_web_dashboard.py          # vault launcher note
+.venv/bin/python scripts/sync_safari_bookmarks.py --apply   # Safari bookmarks
+```
+
+The sync **quits and relaunches Safari** — pre-authorized in `CLAUDE.md`, so do
+it without asking. It no-ops if Safari isn't running and verifies the write
+survived. `tests/test_web_dashboard.py` in step 3 already fails if a new page
+was neither registered nor listed as unbookmarkable, so this step is about
+propagating, not deciding.
+
+### 7. Propose the commit
 
 Draft a commit message following the repo style (see `git log --oneline -10`):
 
@@ -91,6 +108,6 @@ user confirmation** — the CLAUDE.md guidance is firm on this.
 
 ## Skip conditions
 
-- Pure doc-only changes → skip step 2, 3, 5
-- Tests-only changes → skip step 4, 5
-- Config/plist changes → skip step 3, 5
+- Pure doc-only changes → skip step 2, 3, 5, 6
+- Tests-only changes → skip step 4, 5, 6
+- Config/plist changes → skip step 3, 5, 6

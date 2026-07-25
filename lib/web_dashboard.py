@@ -22,6 +22,12 @@ NOTE_FILENAME = "KitchenOS Web.md"
 NOTE_SUBDIR = "Dashboards"
 
 # (emoji, title, route path, one-line description). Grouped by section below.
+#
+# This is the registry of *browsable* KitchenOS pages, and it has two consumers:
+# the vault launcher note rendered below, and ``scripts/sync_safari_bookmarks.py``,
+# which mirrors it into the Safari "KitchenOS" bookmarks folder. Adding a new HTML
+# page route without adding it here fails ``tests/test_web_dashboard.py`` — pages
+# that genuinely can't be bookmarked go in that test's ``NOT_BOOKMARKABLE`` set.
 SECTIONS = [
     (
         "Plan & cook",
@@ -49,6 +55,9 @@ SECTIONS = [
             ("📸", "Paste a Receipt", "/receipt-paste",
              "photograph an HEB receipt in the Claude app, paste the JSON it "
              "produces, preview, and file it into inventory"),
+            ("🧊", "Inventory Review", "/review",
+             "what's on hand, soonest-expiring first; remove an item or push "
+             "its date out by 3 / 7 days"),
         ],
     ),
     (

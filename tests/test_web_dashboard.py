@@ -1,6 +1,24 @@
-"""Tests for the KitchenOS Web dashboard generator."""
+"""Tests for the KitchenOS Web dashboard generator.
+
+``TestPageRegistryIsComplete`` is the net under the "new page → new bookmark"
+rule in CLAUDE.md: a browsable page added to ``api_server.py`` fails the suite
+until it is either registered in ``SECTIONS`` or listed as unbookmarkable here.
+"""
 
 from lib import web_dashboard as wd
+
+# Routes that are GET, take no path arguments, and are not under /api/ — but are
+# not pages a human would ever bookmark. Every entry needs a reason; if you find
+# yourself adding a real page here, put it in SECTIONS instead.
+NOT_BOOKMARKABLE = {
+    "/health": "JSON liveness probe, not a page",
+    "/calendar.ics": "ICS feed — subscribed in Calendar, not bookmarked",
+    "/transcript": "needs ?url=; a tool endpoint, not a destination",
+    "/add-to-meal-plan": "needs ?recipe=; opened from a recipe note's button",
+    "/reprocess": "needs ?file=; opened from a recipe note's button",
+    "/refresh": "needs ?file=; opened from a recipe note's button",
+    "/refresh-nutrition": "needs ?week=; opened from the nutrition dashboard",
+}
 
 
 class TestBaseUrl:
@@ -38,6 +56,49 @@ class TestRenderMarkdown:
         monkeypatch.setenv("KITCHENOS_API_BASE", "http://envhost.ts.net:5001")
         md = wd.render_markdown()
         assert "http://envhost.ts.net:5001/meal-planner" in md
+
+
+class TestPageRegistryIsComplete:
+    """SECTIONS must account for every browsable page api_server serves."""
+
+    @staticmethod
+    def _candidate_routes():
+        # Imported lazily: pulling in api_server is slow and only this test needs it.
+        import api_server
+
+        return {
+            rule.rule
+            for rule in api_server.app.url_map.iter_rules()
+            # Parameterised routes (/recipe/<name>, /images/<path:filename>) can't
+            # be bookmarked as a fixed URL, so they're structurally exempt.
+            if "GET" in rule.methods
+            and not rule.arguments
+            and not rule.rule.startswith("/api/")
+            and not rule.rule.startswith("/static/")
+        }
+
+    def test_every_browsable_route_is_registered_or_exempt(self):
+        registered = {path for _s, items in wd.SECTIONS for _e, _t, path, _d in items}
+        unaccounted = self._candidate_routes() - registered - set(NOT_BOOKMARKABLE)
+        assert not unaccounted, (
+            f"new page route(s) {sorted(unaccounted)} are neither in "
+            "lib/web_dashboard.py SECTIONS nor in NOT_BOOKMARKABLE. Add a page to "
+            "SECTIONS (then run scripts/generate_web_dashboard.py and "
+            "scripts/sync_safari_bookmarks.py --apply), or list it as "
+            "unbookmarkable here with a reason."
+        )
+
+    def test_registry_has_no_dead_routes(self):
+        registered = {path for _s, items in wd.SECTIONS for _e, _t, path, _d in items}
+        assert not registered - self._candidate_routes(), (
+            "SECTIONS lists route(s) api_server no longer serves — the launcher "
+            "note and the Safari bookmarks would 404."
+        )
+
+    def test_exempt_list_has_no_dead_routes(self):
+        assert not set(NOT_BOOKMARKABLE) - self._candidate_routes(), (
+            "NOT_BOOKMARKABLE lists route(s) that no longer exist — drop them."
+        )
 
 
 class TestWriteNote:
