@@ -1,35 +1,30 @@
-# Branch Status: bulk-inventory-and-home
+# Branch Status: web-home-page
 
 **Created:** 2026-07-25
-**Design Doc:** docs/superpowers/specs/2026-07-25-bulk-inventory-and-web-home-design.md
+**Design Doc:** docs/superpowers/specs/2026-07-25-web-home-page-design.md
 **Current Stage:** planning
 **Last Rebased:** 2026-07-25 (branched from main at `5a2b994`)
 
 ## Overview
 
-Two changes to the KitchenOS web app:
+A KitchenOS web home page at `/`, rendered from the existing `SECTIONS` registry in
+`lib/web_dashboard.py`, plus a home link injected into `_CLAUDE_BAR_TEMPLATE` so every
+page KitchenOS serves links back to it with no per-template edits.
 
-1. **Bulk inventory editing** on `/review` — checkboxes + Select All, a sticky bottom bar
-   mirroring a row's own controls (`Remove | +3d | +7d | ⋮`), and a new
-   `POST /api/inventory/bulk` that applies one action to many items in a single
-   read-modify-write. Fixes `(name, location)` → `(name, unit, location)` addressing along
-   the way.
-2. **A web home page** at `/` rendered from the existing `SECTIONS` registry, plus a home
-   link in `_CLAUDE_BAR_TEMPLATE` so every page links back with no per-template edits.
+`SECTIONS` already feeds the vault launcher note and the Safari bookmark sync; this makes
+it feed a third consumer, so a page registered once appears in all three.
 
 ## Dependencies
 
-- Builds on `f87fa17` (per-item inventory actions) and `bd7d739` (page registry + Safari
-  bookmark sync), both merged to main on 2026-07-25.
+- Builds on `bd7d739` (page registry + Safari bookmark sync), merged to main 2026-07-25.
 - None outstanding.
 
 ## Conflict check (2026-07-25)
 
-- `.worktrees/inventory-scan-and-extend` (6 commits) touches the same four files, but is
-  **fully superseded by main** — its additions are main's older pre-Claude-bar and
-  pre-kebab-menu code, and its one real fix (`4efee5c`, restore `source`/`notes` on Undo)
-  is present at `templates/review.html:268`. Safe to prune; flagged to the user, not
-  deleted.
+- `.worktrees/inventory-scan-and-extend` (6 commits) — **fully superseded by main**; its
+  additions are main's older pre-Claude-bar and pre-kebab-menu code, and its one real fix
+  (`4efee5c`, restore `source`/`notes` on Undo) is present at `templates/review.html:268`.
+  Safe to prune; flagged to the user, not deleted. No overlap with this branch's files.
 - `.worktrees/macro-planner-phase-1` (6 commits) — PARKED, no file overlap.
 - `.claude/worktrees/recipe-accuracy-pass` — 0 commits ahead of main.
 
@@ -83,9 +78,14 @@ Two changes to the KitchenOS web app:
 - **New page → new bookmark invariant.** `/` must be accounted for in
   `tests/test_web_dashboard.py::TestPageRegistryIsComplete` via `wd.HOME` (not
   `NOT_BOOKMARKABLE`), then propagated with `scripts/generate_web_dashboard.py` and
-  `scripts/sync_safari_bookmarks.py --apply`.
+  `scripts/sync_safari_bookmarks.py --apply`. The Safari sync quits and relaunches
+  Safari — pre-authorized per CLAUDE.md.
 - **API restart caveat.** Any `lib/` or `templates/` edit needs a `com.kitchenos.api`
   LaunchAgent reload or the server serves stale code as 500s that look like data bugs.
+- **Bulk inventory editing was split out** of the original combined design and is *not*
+  built here. Its spec is
+  `docs/superpowers/specs/2026-07-25-bulk-inventory-editing-design.md`, sitting in "Ready"
+  with no branch yet.
 - Baseline on this branch at creation: **1386 passed, 15 deselected**.
 
 ---

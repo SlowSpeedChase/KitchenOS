@@ -1,48 +1,46 @@
-# Bulk inventory editing + a KitchenOS web home page
+# Bulk select and edit on the inventory review page
 
-**Status:** Ready for Implementation · **Branch:** `bulk-inventory-and-home` · **Date:** 2026-07-25
+**Status:** Ready for Implementation · **Branch:** _(not yet started)_ · **Date:** 2026-07-25
 
 ## Problem
 
-Two gaps in the KitchenOS web app, both hit during ordinary weekly use.
+`/review` (`templates/review.html`) gives each inventory row `Remove | +3d | +7d | ⋮`,
+where `⋮` opens a menu for set-expiry-date, clear-expiry, freeze, move-to-location, and
+set-category. That works well for a single item, but all four real workflows are plural:
 
-**1. Inventory editing is one item at a time.** `/review` (`templates/review.html`)
-gives each row `Remove | +3d | +7d | ⋮`, where `⋮` opens a menu for set-expiry-date,
-clear-expiry, freeze, move-to-location, and set-category. That works well for a single
-item, but all four real workflows are plural: fridge/pantry cleanout (bulk remove),
-post-receipt cleanup (30 items land with wrong categories and locations), freezer batch
-(move a group at once), and expiry sweep (fix a batch of missing or wrong dates). Each
-means N trips through the row menu today.
+- **fridge/pantry cleanout** — bulk remove
+- **post-receipt cleanup** — 30 items land with wrong categories and locations
+- **freezer batch** — move a group to the freezer at once
+- **expiry sweep** — fix a batch of missing or wrong dates
 
-**2. There is no web home page.** `api_server.py` serves no `/` route. The page list
-lives in `SECTIONS` in `lib/web_dashboard.py`, which renders the *vault note*
-`Dashboards/KitchenOS Web.md` and feeds `scripts/sync_safari_bookmarks.py`. From inside
-any page there is no way back to the others without leaving the browser.
+Each means N trips through the row menu today.
 
 ## Approach
 
-**Bulk = one action applied to many items, in one write.** Not a general-purpose
+**Bulk means one action applied to many items, in one write.** Not a general-purpose
 multi-edit form. The action set is exactly the one a row already has, so there is no new
-vocabulary — the selection bar mirrors a row's own controls, and `⋮` opens the *same*
-menu, applied to the selection.
+vocabulary to learn: the selection bar mirrors a row's own controls, and `⋮` opens the
+*same* menu, applied to the selection.
 
-Decisions taken during design, and what they ruled out:
+Decisions, and what they ruled out:
 
 | Decision | Rejected alternative |
 |---|---|
-| Plain checkboxes + one Select All | Filter chips, group-header checkboxes, tap-first/tap-last range select — all cut as unneeded |
-| Sticky bottom bar mirroring a row (`Remove +3d +7d ⋮`) | A separate bottom sheet listing every action flat; a single `Actions ▾` button putting Remove one level down |
-| Undo toast restoring all removed items | A confirm dialog before bulk remove (adds a tap to the most common action, and a wrong confirm is unrecoverable) |
-| One batch endpoint, one read-modify-write | Client looping the existing per-item endpoints |
-| Home page is a plain link list from `SECTIONS` | Live per-card counts; a "what's expiring / cooking today" dashboard panel |
+| Plain checkboxes + one Select All | Filter chips, group-header checkboxes, tap-first/tap-last range select |
+| Sticky bottom bar mirroring a row (`Remove +3d +7d ⋮`) | A bottom sheet listing every action flat; a single `Actions ▾` button putting Remove one level down |
+| Undo toast restoring all removed items | A confirm dialog before bulk remove — adds a tap to the most common action, and a wrong confirm is unrecoverable |
+| One batch endpoint, one read-modify-write | The client looping the existing per-item endpoints |
+
+The selection aids were cut on the user's call: plain checkboxes only, even for the
+30-item receipt case.
 
 **Why a batch endpoint and not a client loop.** Every mutation does `read_inventory()` →
 mutate → `write_inventory()`, and `write_inventory` (`lib/inventory.py:246`) replaces the
 whole inventory table, rewrites `Inventory.md`, *and* regenerates `Cook Now.md` (which
 scans the recipe library). 20 items via the existing routes = 20 table replacements and 40
 note regenerations. `freeze_item` (`lib/inventory.py:525`) is worse — it calls `move_item`
-→ `set_category` → `set_expiry`, each with its own read and write, so one freeze is already
-3 replacements and 6 regenerations with no atomicity between them. There is also a
+→ `set_category` → `set_expiry`, each with its own read and write, so a single freeze is
+already 3 replacements and 6 regenerations with no atomicity between them. There is also a
 correctness reason: `lib/inventory.py:308` carries a standing TODO that read-modify-write
 loses updates with concurrent writers (Flask threads + the ingest LaunchAgent), so a client
 firing bulk edits in parallel would actively drop them.
@@ -77,8 +75,8 @@ tests pin that behavior, and changing it is not in scope.
    A ref must carry all three fields; `unit` and `location` are required, not optional.
    That is the whole point of the addressing fix, and the client always has them because
    `/api/inventory` returns them. A ref missing either field is a 400, not a
-   fall-back-to-`(name, location)` match — silently widening the match is exactly the
-   bug being fixed. `items` carries the updated rows for every action except `remove`;
+   fall-back-to-`(name, location)` match — silently widening the match is exactly the bug
+   being fixed. `items` carries the updated rows for every action except `remove`;
    `removed` carries the full pre-delete rows for `remove` and is empty otherwise. Both
    keys are always present so the client never branches on their absence.
 
@@ -99,39 +97,21 @@ tests pin that behavior, and changing it is not in scope.
    keyed by the merge key (not DOM position, so it survives a re-render); Select All in the
    header with an indeterminate state; `#bulkbar` sticky at the bottom, hidden while the
    selection is empty, rendering `N selected ✕ | Remove | +3d | +7d | ⋮`.
-   `openMenu(it, li, anchor)` is generalized to take a target that is either one item or the
-   selection, rather than growing a second menu builder — with one behavior change, that a
-   heterogeneous selection has no single current value, so all locations and categories are
-   shown instead of skipping the item's own. Results patch into rows via the existing
-   `applyUpdate`; a non-empty `not_found` triggers a full `load()`. Undo POSTs the returned
-   `removed` rows to the existing `/api/inventory/add`, exactly as the single-item undo at
-   `templates/review.html:261-271` already does.
-
-6. **Home page** — `HOME = ("🏠", "KitchenOS Home", "/", …)` added to
-   `lib/web_dashboard.py` as the *root* of the registry rather than an entry inside
-   `SECTIONS` (otherwise the page links to itself), plus a pure `render_html()` beside the
-   existing `render_markdown()`. `GET /` serves `templates/home.html` through
-   `_serve_page_with_claude_bar` with `<!--SECTIONS-->` replaced, using the helper's
-   existing `extra_replacements` mechanism.
-
-7. **Link back from everywhere** — a home link added to `_CLAUDE_BAR_TEMPLATE`
-   (`api_server.py:96`). Every HTML page (`/review`, `/system-health`,
-   `/nutrition-review`, `/meal-planner`, `/receipt-paste`, `/recipe/<name>`) is served
-   through `_serve_page_with_claude_bar`, so this reaches all of them with no per-template
-   edits. `/current/meal-plan` and `/current/shopping-list` are `obsidian://` redirects,
-   not pages, so there is nothing to inject and no gap.
+   `openMenu(it, li, anchor)` is generalized to take a target that is either one item or
+   the selection, rather than growing a second menu builder — with one behavior change,
+   that a heterogeneous selection has no single current value, so all locations and
+   categories are shown instead of skipping the item's own. Results patch into rows via the
+   existing `applyUpdate`; a non-empty `not_found` triggers a full `load()`. Undo POSTs the
+   returned `removed` rows to the existing `/api/inventory/add`, exactly as the single-item
+   undo at `templates/review.html:261-271` already does.
 
 ## Testing
 
 `tests/test_inventory.py` — `bulk_apply` per action, two selected rows merging into one
 destination on bulk move, partial `not_found`, and single-item behavior unchanged.
-`tests/test_api_endpoints.py` — bulk route contract and validation.
-`tests/test_web_dashboard.py` — `render_html`, `HOME`, and registry accounting (the
-existing `TestPageRegistryIsComplete` will fail on the new `/` until it is accounted for;
-account for it via `wd.HOME`, not `NOT_BOOKMARKABLE` — `/` is the most useful bookmark on
-the phone, so calling it unbookmarkable would be a lie the Safari sync then works around).
-`tests/test_claude_bar.py` — extend the existing parametrized page test to assert the home
-link. `tests/e2e/test_weekly_loop.py` — add `/` to `SURFACES`.
+
+`tests/test_api_endpoints.py` — bulk route contract and validation, including the 400 on a
+ref missing `unit` or `location`.
 
 Manual, from a phone on the tailnet: bulk `+7d` on 3 items advances all three in one
 refresh; bulk move to freezer merges two same-name/same-unit rows with summed quantity;
@@ -149,4 +129,3 @@ location, and expiry, and `select count(*) from inventory` returns to its starti
   `INSERT … ON CONFLICT` inside one transaction.
 - Bulk quantity edit. Every other row action generalizes to a selection; setting one
   quantity across heterogeneous items does not.
-- Live counts or a today-panel on the home page.

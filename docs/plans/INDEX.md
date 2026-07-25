@@ -26,14 +26,14 @@ Templates: [`templates/DESIGN-DOC-TEMPLATE.md`](../../templates/DESIGN-DOC-TEMPL
 
 | Date | Doc | Notes |
 |---|---|---|
-| — | — | (none) |
+| 2026-07-25 | [bulk-inventory-editing](../superpowers/specs/2026-07-25-bulk-inventory-editing-design.md) | Mass select + edit on `/review`: checkboxes + Select All, a sticky bar mirroring a row's own `Remove / +3d / +7d / ⋮` controls, and one `POST /api/inventory/bulk` doing a single read-modify-write instead of N. Also fixes `(name, location)` → `(name, unit, location)` addressing, where `remove_item` deletes every match but `set_expiry` updates only the first. Split out of the original combined design; build after `web-home-page`. |
 
 ## In Progress
 
 | Date | Doc | Branch | Notes |
 |---|---|---|---|
 | 2026-07-08 | [macro-meal-planner — design](2026-07-08-macro-meal-planner-design.md) · [plan](2026-07-08-macro-meal-planner-plan.md) | `macro-planner-phase-1/servings-backfill` | **PARKED.** Phase 1 (servings backfill) blocked: servings labels are not reliably inferable (see design-doc "Phase 1 finding"). Tooling/estimator built & committed on the branch; resume after grams coverage improves. |
-| 2026-07-25 | [bulk-inventory-and-web-home](../superpowers/specs/2026-07-25-bulk-inventory-and-web-home-design.md) | `bulk-inventory-and-home` | Mass select + edit on `/review` (checkboxes, sticky bar mirroring a row, one `POST /api/inventory/bulk` per action instead of N writes), plus a web home page at `/` rendered from `SECTIONS` and a home link in the Claude bar so every page links back. Also fixes `(name, location)` → `(name, unit, location)` item addressing. |
+| 2026-07-25 | [web-home-page](../superpowers/specs/2026-07-25-web-home-page-design.md) | `web-home-page` | A web home page at `/` rendered from the existing `SECTIONS` registry, plus a home link in `_CLAUDE_BAR_TEMPLATE` so every page links back with no per-template edits. Makes `SECTIONS` feed a third consumer alongside the vault note and Safari bookmarks. |
 
 ## Done
 
