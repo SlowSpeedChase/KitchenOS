@@ -49,7 +49,7 @@ Deliverables (6 tasks):
 ### Dev
 - [x] Tests written first (superpowers:test-driven-development)
 - [x] Core implementation complete — tasks 1-5
-- [x] All tests passing — 1445 passed, 1 skipped (baseline on main was 1405)
+- [x] All tests passing — 1453 passed, 1 skipped (baseline on main was 1405)
 - [x] No linting/type errors
 - [x] Code follows project patterns
 - [ ] LaunchAgent restarted if lib/, templates/, or prompts/ changed — **deferred to
@@ -57,9 +57,9 @@ Deliverables (6 tasks):
       reloading it here would serve main's code, not this branch's
 
 ### Testing
-- [x] Unit tests pass — 1445 passed, 1 skipped
+- [x] Unit tests pass — 1453 passed, 1 skipped
 - [x] Integration tests pass (if applicable) — full e2e suite green:
-      18 passed, 2 xfailed, 2 xpassed (both xpasses pre-existing, real-vault state)
+      22 passed, 2 xfailed, 2 xpassed (both xpasses pre-existing, real-vault state)
 - [x] Manual testing completed — **automated instead.** All five steps of the Task 6
       phone script are now browser tests in `tests/e2e/test_bulk_inventory.py`; the
       plan's premise that the repo has no JS harness was wrong
@@ -100,6 +100,29 @@ Deliverables (6 tasks):
 - The concurrent-writer lost-update TODO at `lib/inventory.py:308` is narrowed by
   this work (one write instead of N) but **not closed**. Still needs
   `INSERT … ON CONFLICT` in one transaction.
+
+### Scope added after the plan (user-directed, 2026-07-25)
+
+Two changes landed on this branch beyond the original 6 tasks. Both were asked
+for directly after the bulk work was already review-ready.
+
+1. **`+3d` / `+7d` are now cumulative** (`fix:` commit). Reported as "the add
+   time buttons do nothing". They weren't broken — `_apply_extend` set
+   `expires = today + N` outright, so a second tap changed nothing and `+3d`
+   after `+7d` moved the date *backward*. On an inventory of mostly 2027 dates,
+   `+7d` also quietly pulled an item ten months closer. Now each row advances
+   from its own expiry, falling back to today only when the row has lapsed or
+   has no date — which keeps the guard the old behaviour existed for. The list
+   also re-sorts after an expiry change and flashes moved rows; a rescued item
+   previously stayed pinned in the expired block, which was most of why the tap
+   looked inert. This changes semantics for the **single-item** route too, not
+   just bulk — it is shared code.
+2. **Sort by date added** (`feat:` commit). `purchased` is treated as the
+   date-added stamp per the user's call, so no migration. `add_items` stamps it
+   on row creation but **not** on merge, so re-running the pantry-staples seed
+   can't make old stock look new. 166 of the 217 existing rows predate the
+   stamp; they sort last and read `added unknown` rather than being backfilled
+   with invented dates.
 
 ### Deviations from the plan (for the reviewer)
 
