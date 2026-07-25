@@ -62,6 +62,9 @@
   #bulkcount { flex: 1; font-weight: 600; }
   #bulkbar .err { flex-basis: 100%; }
   body.has-bulk #toast { bottom: 88px; }
+  @keyframes moved { from { background: #4a90d955; } to { background: transparent; } }
+  li.moved { animation: moved 1.4s ease-out; }
+  @media (prefers-reduced-motion: reduce) { li.moved { animation: none; } }
 </style>
 </head>
 <body>
@@ -236,9 +239,15 @@ async function runBulk(action, params, errLabel){
     selected.clear();
     await load();
   } else {
+    const touched = [];
     for (const item of body.items){
       const entry = rows.get(keyOf(item));
-      if (entry) applyUpdate(entry.it, entry.li, item);
+      if (entry){ applyUpdate(entry.it, entry.li, item); touched.push(entry.li); }
+    }
+    // Only expiry changes can reorder the list; set-category leaves it alone.
+    if (action === 'extend' || action === 'set-expiry'){
+      resort();
+      for (const li of touched) flash(li);
     }
     renderBulk();
   }
@@ -274,9 +283,9 @@ async function extend(it, li, days){
       body: JSON.stringify({ name: it.name, location: it.location, days }) });
     if (!r.ok){ rowError(li, "Couldn't extend — tap ↻"); return; }
     const { item } = await r.json();
-    it.expires = item.expires; it.expiry_status = item.expiry_status;
-    li.querySelector('.sub').innerHTML = subline(it);
+    applyUpdate(it, li, item);
     const e = li.querySelector('.err'); if (e) e.remove();
+    resort(); flash(li);
   } catch(e){ rowError(li, "Network error — tap ↻"); }
 }
 async function post(url, body, li, errLabel){
@@ -295,6 +304,20 @@ function applyUpdate(it, li, item){
   Object.assign(it, item);
   li.querySelector('.emoji').textContent = EMOJI[it.category] || "📦";
   li.querySelector('.sub').innerHTML = subline(it);
+}
+function resort(){
+  // Re-place rows in expiry order after an edit moved one between groups —
+  // otherwise a row you just rescued stays pinned in the expired block and the
+  // tap reads as having done nothing. Moves the existing <li> nodes instead of
+  // re-fetching, so checkbox selection and the scroll position survive.
+  for (const it of sortItems([...rows.values()].map(e => e.it)))
+    list.appendChild(rows.get(keyOf(it)).li);
+}
+function flash(li){
+  // Restart the animation even if the row is still mid-flash from a prior tap.
+  li.classList.remove('moved');
+  void li.offsetWidth;
+  li.classList.add('moved');
 }
 function rowTarget(it, li){
   const SINGLE = { 'set-expiry': '/api/inventory/set-expiry',

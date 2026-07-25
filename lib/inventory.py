@@ -450,10 +450,11 @@ def extend_expiry(
     location: Optional[str] = None,
     today: Optional[date] = None,
 ) -> Optional[InventoryItem]:
-    """Set the first ``(name, location)`` match's expiry to today + ``days``.
+    """Add ``days`` to the first ``(name, location)`` match's expiry.
 
-    Works on no-expiry items. Returns the updated item, or None if nothing
-    matched.
+    Cumulative: counted from the row's own expiry, or from today when that has
+    passed or is unset — see ``_apply_extend``. Works on no-expiry items.
+    Returns the updated item, or None if nothing matched.
     """
     items = read_inventory()
     matches = _match_by_name(items, name, location)[:1]
@@ -523,10 +524,28 @@ def _apply_extend(
     days: int,
     today: Optional[date] = None,
 ) -> list[InventoryItem]:
-    """Set every matched row's expiry to today + ``days``."""
-    new_expires = ((today or date.today()) + timedelta(days=days)).isoformat()
+    """Add ``days`` to every matched row's expiry.
+
+    Counted from the row's **own** expiry when that is still in the future, so
+    the ``+3d`` / ``+7d`` buttons mean what they say and repeated taps
+    accumulate. Counted from today when the row has no expiry or has already
+    lapsed — adding to a stale date would leave the item expired, which is the
+    whole reason someone is extending it.
+
+    Each row therefore computes its own date. A single shared date (the
+    previous behaviour) silently flattened a mixed selection onto one expiry.
+    """
+    base = today or date.today()
     for it in matches:
-        it.expires = new_expires
+        start = base
+        if it.expires:
+            try:
+                current = date.fromisoformat(it.expires)
+            except ValueError:
+                current = None      # unparseable: treat as having no expiry
+            if current and current > base:
+                start = current
+        it.expires = (start + timedelta(days=days)).isoformat()
     return list(matches)
 
 

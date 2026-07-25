@@ -87,27 +87,33 @@ def _select(page, name: str) -> int:
 
 
 def test_bulk_extend_advances_every_selected_row(live_server, page, page_errors):
-    """Plan step 1: select three, tap +7d, all three land on the same date."""
-    names = ["E2E Ext Kale", "E2E Ext Leek", "E2E Ext Lime"]
-    _seed(live_server, [
-        _item(n, expires=(date.today() + timedelta(days=2)).isoformat())
-        for n in names
-    ])
+    """Plan step 1: select three, tap +7d, every row advances a week.
+
+    The three start on different dates deliberately: extending is cumulative and
+    per-row, so a selection that began staggered must stay staggered. Collapsing
+    them onto one shared date would be the old behaviour.
+    """
+    starts = {
+        "E2E Ext Kale": date.today() + timedelta(days=2),
+        "E2E Ext Leek": date.today() + timedelta(days=10),
+        "E2E Ext Lime": date.today() + timedelta(days=45),
+    }
+    _seed(live_server, [_item(n, expires=d.isoformat())
+                        for n, d in starts.items()])
 
     _open_review(page, live_server)
-    for n in names:
+    for n in starts:
         _select(page, n)
     assert page.locator("#bulkcount").inner_text() == "3 selected"
 
     page.locator("#bulkbar button[data-bd='7']").click()
     page.wait_for_timeout(1500)
 
-    # _apply_extend sets today+days, it does not add to the existing expiry.
-    want = (date.today() + timedelta(days=7)).isoformat()
-    for n in names:
+    for n, start in starts.items():
         rows = _rows_named(live_server, n)
         assert len(rows) == 1, f"{n}: {rows}"
-        assert rows[0]["expires"] == want, f"{n}: {rows[0]['expires']}"
+        want = (start + timedelta(days=7)).isoformat()
+        assert rows[0]["expires"] == want, f"{n}: {rows[0]['expires']} != {want}"
     assert page_errors == [], page_errors
 
 
@@ -185,6 +191,78 @@ def test_bulk_remove_then_undo_restores_every_row(live_server, page, page_errors
             assert got[field] == s[field], (
                 f"{s['name']}.{field}: {got[field]!r} != {s[field]!r}"
             )
+    assert page_errors == [], page_errors
+
+
+def _row_index(page, name: str):
+    """Where a named row currently sits in the rendered list."""
+    return page.evaluate(
+        """(n) => {
+            const lis = [...document.querySelectorAll('#list li')];
+            return lis.findIndex(li => li.querySelector('.name')?.textContent === n);
+        }""",
+        name,
+    )
+
+
+def test_repeated_extend_taps_accumulate(live_server, page, page_errors):
+    """Tapping +7d twice adds two weeks, and says so on screen.
+
+    The old behaviour set `today + N` outright, so a second tap changed nothing
+    and the button read as broken.
+    """
+    name = "E2E Cumulative Miso"
+    start = date.today() + timedelta(days=20)
+    _seed(live_server, [_item(name, expires=start.isoformat())])
+
+    _open_review(page, live_server)
+    row = _row(page, name)
+    row.locator("button[data-d='7']").click()
+    page.wait_for_timeout(1500)
+    assert _rows_named(live_server, name)[0]["expires"] == (
+        start + timedelta(days=7)
+    ).isoformat()
+
+    row.locator("button[data-d='7']").click()
+    page.wait_for_timeout(1500)
+    assert _rows_named(live_server, name)[0]["expires"] == (
+        start + timedelta(days=14)
+    ).isoformat(), "second tap was a no-op"
+
+    assert row.locator(".sub").inner_text().startswith(
+        "exp " + (start + timedelta(days=14)).isoformat()
+    )
+    assert page_errors == [], page_errors
+
+
+def test_extending_a_lapsed_row_moves_it_out_of_the_expired_block(
+    live_server, page, page_errors
+):
+    """The rescued row must visibly leave the top, not sit there looking untouched."""
+    name = "E2E Resort Yogurt"
+    _seed(live_server, [
+        _item(name, expires=(date.today() - timedelta(days=2)).isoformat()),
+        # Two healthy rows to sort below/above, so position is meaningful.
+        _item("E2E Resort Filler A",
+              expires=(date.today() + timedelta(days=1)).isoformat()),
+        _item("E2E Resort Filler B",
+              expires=(date.today() + timedelta(days=90)).isoformat()),
+    ])
+
+    _open_review(page, live_server)
+    row = _row(page, name)
+    assert "expired" in row.locator(".sub").inner_text()
+    before = _row_index(page, name)
+    assert before == 0, f"expired row should start at the top, was {before}"
+
+    row.locator("button[data-d='7']").click()
+    page.wait_for_timeout(1500)
+
+    # today+7 is well past the 'soon' threshold, so it should sort below the
+    # row expiring tomorrow.
+    after = _row_index(page, name)
+    assert after > before, f"row did not move (still at index {after})"
+    assert "expired" not in row.locator(".sub").inner_text()
     assert page_errors == [], page_errors
 
 

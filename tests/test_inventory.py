@@ -380,7 +380,8 @@ class TestPruneExpired:
 
 
 class TestExtendExpiry:
-    def test_extends_from_today_not_old_date(self, tmp_vault, tmp_db):
+    def test_adds_days_to_a_future_expiry(self, tmp_vault, tmp_db):
+        """+3d on a row good until the 15th means the 18th, not 'three days from now'."""
         from datetime import date
         add_items([InventoryItem(name="Milk", quantity=1, unit="ct",
                                  category="dairy", location="fridge",
@@ -388,13 +389,48 @@ class TestExtendExpiry:
         item = extend_expiry("Milk", days=3, location="fridge",
                              today=date(2026, 7, 12))
         assert item is not None
-        assert item.expires == "2026-07-15"  # today(07-12) + 3 days
+        assert item.expires == "2026-07-18"  # 07-15 + 3 days
+
+    def test_extends_a_lapsed_row_from_today_not_its_old_date(
+        self, tmp_vault, tmp_db
+    ):
+        """An expired row must land in the future, or extending it does nothing."""
+        from datetime import date
+        add_items([InventoryItem(name="Kefir", quantity=1, unit="ct",
+                                 category="dairy", location="fridge",
+                                 expires="2026-07-01")])
+        item = extend_expiry("Kefir", days=3, location="fridge",
+                             today=date(2026, 7, 12))
+        assert item is not None
+        assert item.expires == "2026-07-15"  # today(07-12) + 3, not 07-04
+
+    def test_repeated_extends_accumulate(self, tmp_vault, tmp_db):
+        """Tapping +7d twice is not a no-op — that read as a broken button."""
+        from datetime import date
+        add_items([InventoryItem(name="Tofu", quantity=1, unit="ct",
+                                 category="pantry", location="fridge",
+                                 expires="2026-07-20")])
+        today = date(2026, 7, 12)
+        assert extend_expiry("Tofu", days=7, location="fridge",
+                             today=today).expires == "2026-07-27"
+        assert extend_expiry("Tofu", days=7, location="fridge",
+                             today=today).expires == "2026-08-03"
 
     def test_sets_fresh_expiry_on_no_expiry_item(self, tmp_vault, tmp_db):
+        """A row with a genuinely cleared expiry re-bases on today.
+
+        Note the `set_expiry(None)` step: passing `expires=None` to `add_items`
+        does *not* produce a no-expiry row, because add_items auto-fills one
+        from the shelf-life windows. Clearing it afterwards — what the UI's
+        "🚫 Remove expiration" does — is the only way to get a null.
+        """
         from datetime import date
+        from lib.inventory import set_expiry
         add_items([InventoryItem(name="Rice", quantity=1, unit="lb",
                                  category="pantry", location="pantry",
                                  expires=None)])
+        assert set_expiry("Rice", None, location="pantry").expires is None
+
         item = extend_expiry("Rice", days=7, location="pantry",
                              today=date(2026, 7, 12))
         assert item is not None
@@ -601,13 +637,25 @@ class TestPureMutators:
         assert items[0].name == "Bread" and items[0].location == "counter"
         assert [r.name for r in removed] == ["Bread", "Milk"]
 
-    def test_apply_extend_sets_expiry_from_today(self):
+    def test_apply_extend_adds_days_per_row(self):
+        """Each row extends from its own date, so a mixed selection stays mixed."""
         from datetime import date
         from lib.inventory import _apply_extend
         items = self._items()
-        out = _apply_extend(items, items[:2], 7, today=date(2026, 7, 25))
-        assert [i.expires for i in out] == ["2026-08-01", "2026-08-01"]
-        assert items[2].expires == "2026-09-15"  # untouched row keeps its own
+        # items[0] and [1] have no expiry; items[2] is good until 2026-09-15.
+        out = _apply_extend(items, [items[0], items[2]], 7,
+                            today=date(2026, 7, 25))
+        assert [i.expires for i in out] == ["2026-08-01", "2026-09-22"]
+        assert items[1].expires is None  # untouched row keeps its own
+
+    def test_apply_extend_ignores_an_unparseable_expiry(self):
+        """A junk date must not raise — treat it as no expiry and re-base on today."""
+        from datetime import date
+        from lib.inventory import _apply_extend
+        items = self._items()
+        items[0].expires = "not-a-date"
+        _apply_extend(items, [items[0]], 3, today=date(2026, 7, 25))
+        assert items[0].expires == "2026-07-28"
 
     def test_apply_set_expiry_sets_and_clears(self):
         from lib.inventory import _apply_set_expiry
@@ -685,21 +733,31 @@ class TestBulkApply:
         assert sorted(r.name for r in out["removed"]) == ["Kale", "Milk"]
         assert [i.name for i in read_inventory()] == ["Rice"]
 
-    def test_bulk_extend_sets_all_expiries_in_one_write(self, tmp_vault, tmp_db):
-        from datetime import date
+    def test_bulk_extend_adds_days_to_each_row_in_one_write(self, tmp_vault, tmp_db):
+        from datetime import date, timedelta
         from lib.inventory import bulk_apply
+        today = date(2026, 7, 25)
         self._seed()
+        before = {i.name: i.expires for i in read_inventory()}
+        # Both selected rows sit in the future (Rice's expiry is auto-filled by
+        # add_items), so both extend from their own date rather than from today.
+        assert date.fromisoformat(before["Kale"]) > today
+        assert date.fromisoformat(before["Rice"]) > today
+
         out = bulk_apply("extend", [
             self._ref("Kale", "bunch", "fridge"),
             self._ref("Rice", "lb", "pantry"),
-        ], days=7, today=date(2026, 7, 25))
+        ], days=7, today=today)
         assert out["applied"] == 2
         assert out["removed"] == []
-        assert {i.expires for i in out["items"]} == {"2026-08-01"}
+
         stored = {i.name: i.expires for i in read_inventory()}
-        assert stored["Kale"] == "2026-08-01"
-        assert stored["Rice"] == "2026-08-01"
-        assert stored["Milk"] == "2026-07-28"  # unselected row untouched
+        for name in ("Kale", "Rice"):
+            want = date.fromisoformat(before[name]) + timedelta(days=7)
+            assert stored[name] == want.isoformat(), name
+        # Rows that started apart stay apart — one shared date would flatten them.
+        assert stored["Kale"] != stored["Rice"]
+        assert stored["Milk"] == before["Milk"]  # unselected row untouched
 
     def test_bulk_set_expiry_clears(self, tmp_vault, tmp_db):
         from lib.inventory import bulk_apply
