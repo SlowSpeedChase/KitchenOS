@@ -193,7 +193,6 @@ DISH_TYPE_MAP = {
     "baked goods": "dessert",
     "dessert bars": "dessert",
     "frosting": "dessert",
-    "biscuit": "dessert",
     # More breakfast variants
     "muffins": "breakfast",
 }
@@ -232,6 +231,13 @@ VALID_MEAL_OCCASIONS = {
     "post-workout",
     "family-meal",
 }
+
+# The canonical dish_type values — exactly the right-hand side of DISH_TYPE_MAP.
+# Kept as a named set because scripts/reclassify_dish_type.py constrains the LLM
+# to these values via a JSON-schema enum, and lib/cook_now.py maps every one of
+# them to a UI chip group. A target that exists in the map but not here would be
+# a dish type no chip can show.
+VALID_DISH_TYPES = set(DISH_TYPE_MAP.values())
 
 # A protein *type* never starts with a digit, so any leading-number value is a
 # stray gram amount, not a category: "70g", "42G", "20 grams", "35", "50g (Whole Pizza)".
