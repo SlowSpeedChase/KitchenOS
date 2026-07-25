@@ -60,9 +60,10 @@ class SyncError(RuntimeError):
 
 
 def desired_bookmarks(base: str | None = None) -> list[tuple[str, str]]:
-    """[(title, url)] for every page in the registry, in section order."""
+    """[(title, url)] for the home page, then every page in the registry."""
     base = (base if base is not None else web_dashboard.base_url()).rstrip("/")
-    return [
+    home_title, home_path = web_dashboard.HOME[1], web_dashboard.HOME[2]
+    return [(home_title, f"{base}{home_path}")] + [
         (title, f"{base}{path}")
         for _section, items in web_dashboard.SECTIONS
         for _emoji, title, path, _desc in items

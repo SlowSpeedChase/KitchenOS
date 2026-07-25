@@ -58,6 +58,37 @@ class TestRenderMarkdown:
         assert "http://envhost.ts.net:5001/meal-planner" in md
 
 
+class TestHome:
+    def test_home_is_the_registry_root_not_a_section_entry(self):
+        assert wd.HOME[2] == "/"
+        registered = {path for _s, items in wd.SECTIONS for _e, _t, path, _d in items}
+        assert "/" not in registered, "HOME in SECTIONS would make the page list itself"
+
+    def test_markdown_note_links_home_first(self):
+        md = wd.render_markdown("http://box.tailnet.ts.net:5001")
+        assert "http://box.tailnet.ts.net:5001/" in md
+        assert md.index(wd.HOME[1]) < md.index("Meal Planner")
+
+
+class TestSafariBookmarks:
+    """desired_bookmarks() builds from SECTIONS, so HOME must be added explicitly."""
+
+    @staticmethod
+    def _wanted():
+        from scripts.sync_safari_bookmarks import desired_bookmarks
+        return desired_bookmarks("http://box.tailnet.ts.net:5001")
+
+    def test_home_is_bookmarked_first(self):
+        wanted = self._wanted()
+        assert wanted[0] == (wd.HOME[1], "http://box.tailnet.ts.net:5001/")
+
+    def test_every_section_page_still_bookmarked(self):
+        urls = {url for _title, url in self._wanted()}
+        for _s, items in wd.SECTIONS:
+            for _e, _t, path, _d in items:
+                assert f"http://box.tailnet.ts.net:5001{path}" in urls
+
+
 class TestRenderHtml:
     def test_renders_every_section_and_page(self):
         from html import escape

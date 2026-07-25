@@ -22,6 +22,11 @@ DEFAULT_API_BASE = "http://chases-mac-mini.taila69703.ts.net:5001"
 NOTE_FILENAME = "KitchenOS Web.md"
 NOTE_SUBDIR = "Dashboards"
 
+# The registry *root* — deliberately not a SECTIONS entry, because the home page
+# renders SECTIONS and would otherwise list itself. Anything that walks SECTIONS
+# to build a link list must add this explicitly (see scripts/sync_safari_bookmarks.py).
+HOME = ("🏠", "KitchenOS Home", "/", "every page, one tap away")
+
 # (emoji, title, route path, one-line description). Grouped by section below.
 #
 # This is the registry of *browsable* KitchenOS pages, and it has two consumers:
@@ -92,6 +97,8 @@ def render_markdown(base: Optional[str] = None) -> str:
         "`scripts/generate_web_dashboard.py`.",
         "",
     ]
+    emoji, title, path, desc = HOME
+    lines += [f"- {emoji} **[{title}]({base}{path})** — {desc}", ""]
     for section_title, items in SECTIONS:
         lines += [f"## {section_title}", ""]
         for emoji, title, path, desc in items:
