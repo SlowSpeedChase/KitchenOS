@@ -35,7 +35,13 @@ reliable set of links.
 1. **`HOME` constant** (`lib/web_dashboard.py`) —
    `("🏠", "KitchenOS Home", "/", "every page, one tap away")`, declared beside `SECTIONS`
    as the root of the registry rather than a member of it. `render_markdown()` emits it at
-   the top, so the vault note and the Safari bookmarks pick up the home link too.
+   the top of the vault note.
+
+   Keeping `HOME` out of `SECTIONS` has a cost that must be paid explicitly:
+   `desired_bookmarks()` (`scripts/sync_safari_bookmarks.py:62-69`) iterates
+   `web_dashboard.SECTIONS` and nothing else, so the home page would silently never reach
+   Safari. That function must be updated to prepend `HOME`, and a test must pin it —
+   otherwise the most useful bookmark on the phone is the one bookmark that goes missing.
 
 2. **`render_html()`** (`lib/web_dashboard.py`) — pure, no I/O, sitting next to the
    existing `render_markdown()`: same input, second output format. Renders each section as
@@ -46,10 +52,14 @@ reliable set of links.
    `_serve_page_with_claude_bar`, passing `[('<!--SECTIONS-->', web_dashboard.render_html())]`
    to its `extra_replacements` parameter. No new serving mechanism.
 
-4. **`templates/home.html`** — new and small, following the conventions the other pages
-   already share: `color-scheme: light dark`, `Canvas`/`CanvasText` colors, system font
-   stack, `viewport-fit=cover` with safe-area padding. Carries the `<!--SECTIONS-->`
-   placeholder.
+4. **`templates/home.html`** — new and small, matching the dashboard design system that
+   `system_health.html`, `nutrition_review.html`, and `receipt_paste.html` all share: the
+   `:root` CSS-variable block (`--bg: #f5f5f7`, `--card-bg: #ffffff`, `--border: #e5e5e7`,
+   `--text: #1d1d1f`, `--text-muted: #86868b`, `--accent: #0071e3`), the
+   `-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif` stack, and
+   `.card` at `border-radius: 14px`. Light-only, like all three — `review.html` is the
+   lone `Canvas`/`color-scheme: light dark` page and is the odd one out, not the pattern
+   to copy. Carries the `<!--SECTIONS-->` placeholder.
 
 5. **Link back from everywhere** — a home link added to `_CLAUDE_BAR_TEMPLATE`
    (`api_server.py:96`), next to **Launch Claude**. Every HTML page KitchenOS serves —
@@ -69,6 +79,12 @@ to work around.
 
 `tests/test_claude_bar.py` — extend the existing parametrized page test so every page is
 asserted to carry the home link, not just the bar.
+
+`tests/test_web_dashboard.py`, new `TestSafariBookmarks` — `desired_bookmarks()` includes
+the home page and lists it first. Without this the home bookmark can regress silently,
+since nothing else would notice `HOME` missing from a list built out of `SECTIONS`. The
+test file already reasons about the Safari sync, and `scripts/` is importable from tests
+via implicit namespace packages (`tests/test_dedupe_recipes.py:7` does the same).
 
 `tests/e2e/test_weekly_loop.py` — add `/` to `SURFACES`.
 
