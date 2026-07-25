@@ -292,8 +292,12 @@ and `test_registry_has_no_dead_routes`:
 
 Add to `tests/test_api_endpoints.py` (it already has a `client` fixture — reuse it, do not define a second):
 
+Note the `escape()` calls: `render_html` escapes its text, and real registry titles contain characters that change under escaping — `"Plan & cook"` becomes `Plan &amp; cook`, `"This week's meal plan"` becomes `This week&#x27;s meal plan`. Asserting the raw title would fail.
+
 ```python
 def test_home_page_lists_every_registered_page(client):
+    from html import escape
+
     from lib import web_dashboard as wd
 
     response = client.get('/')
@@ -301,7 +305,7 @@ def test_home_page_lists_every_registered_page(client):
     body = response.get_data(as_text=True)
     for _section, items in wd.SECTIONS:
         for _emoji, title, path, _desc in items:
-            assert title in body
+            assert escape(title) in body
             assert f'href="{path}"' in body
 
 
