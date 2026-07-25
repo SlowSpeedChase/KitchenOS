@@ -30,5 +30,6 @@
     "README.md",
     "LICENSE",
     ".worktrees/"
-  ]
+  ],
+  "propertiesInDocument": "source"
 }
