@@ -203,6 +203,11 @@ def _match_by_name(
 # Each takes the full item list plus the already-matched rows, mutates the list
 # in place, and does no I/O. The read/write cycle belongs to the caller, so one
 # selection of N items costs one write instead of N.
+#
+# All six share the (items, matches, *params) shape even though the three
+# field-setters don't need `items` — that uniformity is what lets bulk_apply
+# dispatch to any of them, and _apply_remove/_apply_move/_apply_freeze do need
+# the full list to drop and merge rows.
 
 
 def _apply_remove(
@@ -504,6 +509,16 @@ class TestBulkApply:
         with pytest.raises(ValueError, match="expires"):
             bulk_apply("set-expiry", [self._ref("Kale", "bunch", "fridge")])
 
+    def test_missing_parameter_raises_even_when_nothing_matches(
+        self, tmp_vault, tmp_db
+    ):
+        """Validation is about the request, not about what happens to match."""
+        import pytest
+        from lib.inventory import bulk_apply
+        self._seed()
+        with pytest.raises(ValueError, match="days"):
+            bulk_apply("extend", [self._ref("Ghost", "ct", "fridge")])
+
     def test_non_integer_days_raises(self, tmp_vault, tmp_db):
         import pytest
         from lib.inventory import bulk_apply
@@ -574,6 +589,23 @@ def bulk_apply(action: str, refs: list[dict], **params) -> dict:
 
     keys = [_resolve_ref(r) for r in refs]
 
+    # Validate action parameters before touching the DB, so a request that
+    # happens to match nothing still fails loudly on a malformed body rather
+    # than quietly reporting "applied: 0".
+    days = expires = category = to_location = None
+    if action == "extend":
+        raw = _require(params, "days")
+        try:
+            days = int(raw)
+        except (TypeError, ValueError):
+            raise ValueError("'days' must be an integer") from None
+    elif action == "set-expiry":
+        expires = _require(params, "expires")   # None is valid — it clears
+    elif action == "set-category":
+        category = _require(params, "category")
+    elif action == "move":
+        to_location = _require(params, "to_location")
+
     items = read_inventory()
     by_key: dict[tuple[str, str, str], InventoryItem] = {
         it.merge_key(): it for it in items
@@ -595,19 +627,13 @@ def bulk_apply(action: str, refs: list[dict], **params) -> dict:
         if action == "remove":
             removed = _apply_remove(items, matches)
         elif action == "extend":
-            try:
-                days = int(_require(params, "days"))
-            except (TypeError, ValueError):
-                raise ValueError("'days' must be an integer") from None
             updated = _apply_extend(items, matches, days, today=params.get("today"))
         elif action == "set-expiry":
-            updated = _apply_set_expiry(items, matches, _require(params, "expires"))
+            updated = _apply_set_expiry(items, matches, expires)
         elif action == "set-category":
-            updated = _apply_set_category(
-                items, matches, _require(params, "category")
-            )
+            updated = _apply_set_category(items, matches, category)
         elif action == "move":
-            updated = _apply_move(items, matches, _require(params, "to_location"))
+            updated = _apply_move(items, matches, to_location)
         elif action == "freeze":
             updated = _apply_freeze(items, matches)
 
@@ -621,12 +647,12 @@ def bulk_apply(action: str, refs: list[dict], **params) -> dict:
     }
 ```
 
-Note the parameter checks run *inside* `if matches:` for actions that need them — except that the tests in Step 1 seed real rows before asserting the `ValueError`, so every parameter case has a match and does reach the check.
+Note the ordering: action → refs → action parameters are all validated **before** `read_inventory()`. A malformed body must fail the same way whether or not its refs happen to match anything.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `.venv/bin/python -m pytest tests/test_inventory.py::TestBulkApply -v`
-Expected: PASS — 15 passed
+Expected: PASS — 16 passed
 
 - [ ] **Step 5: Commit**
 
