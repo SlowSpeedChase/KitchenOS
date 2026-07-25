@@ -65,8 +65,10 @@ class TestHome:
         assert "/" not in registered, "HOME in SECTIONS would make the page list itself"
 
     def test_markdown_note_links_home_first(self):
-        md = wd.render_markdown("http://box.tailnet.ts.net:5001")
-        assert "http://box.tailnet.ts.net:5001/" in md
+        base = "http://box.tailnet.ts.net:5001"
+        md = wd.render_markdown(base)
+        emoji, title, path, desc = wd.HOME
+        assert f"- {emoji} **[{title}]({base}{path})** — {desc}" in md
         assert md.index(wd.HOME[1]) < md.index("Meal Planner")
 
 
