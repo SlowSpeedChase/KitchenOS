@@ -11,8 +11,10 @@ from lib.inventory import (
     normalize_location,
     normalize_source,
     parse_inventory_markdown,
+    prune_expired,
     read_inventory,
     remove_item,
+    seed_pantry_staples,
     set_category,
     set_expiry,
     update_quantity,
@@ -188,6 +190,89 @@ class TestGeneratedView:
         inventory_path().write_text("| Item |...| Beer | 99 | ct |", encoding="utf-8")
         items = read_inventory()
         assert [it.name for it in items] == ["Milk"]
+
+
+class TestSeedPantryStaples:
+    """Staples live in inventory permanently instead of being an invisible
+    assumption layered on top of it — on hand, never expiring, never a chore."""
+
+    STAPLES = {"butter", "milk", "eggs", "olive oil", "salt"}
+
+    def test_seeds_missing_staples_as_perpetual_rows(self, tmp_vault, tmp_db):
+        seed_pantry_staples(self.STAPLES)
+        by_name = {it.name.lower(): it for it in read_inventory()}
+        assert "butter" in by_name
+        butter = by_name["butter"]
+        assert butter.source == "staple"
+        assert butter.expires is None  # never ages out
+
+    def test_is_idempotent(self, tmp_vault, tmp_db):
+        seed_pantry_staples(self.STAPLES)
+        first = {(it.name, it.quantity) for it in read_inventory()}
+        result = seed_pantry_staples(self.STAPLES)
+        assert result["added"] == []
+        assert {(it.name, it.quantity) for it in read_inventory()} == first
+
+    def test_does_not_duplicate_an_equivalent_item_already_stocked(self, tmp_vault,
+                                                                   tmp_db):
+        add_items([InventoryItem(name="Salted Butter", quantity=1, unit="ct",
+                                 category="dairy", location="fridge")])
+        seed_pantry_staples(self.STAPLES)
+        names = [it.name.lower() for it in read_inventory()]
+        assert "salted butter" in names
+        assert "butter" not in names  # the stocked one already covers it
+
+    def test_seeded_staples_survive_pruning(self, tmp_vault, tmp_db):
+        seed_pantry_staples(self.STAPLES)
+        prune_expired()
+        assert "butter" in {it.name.lower() for it in read_inventory()}
+
+    def test_skips_things_nobody_stocks(self, tmp_vault, tmp_db):
+        seed_pantry_staples({"water", "ice", "butter"})
+        names = {it.name.lower() for it in read_inventory()}
+        assert names == {"butter"}
+
+
+class TestViewFollowsDatabase:
+    """The generated view must render the *committed* DB state.
+
+    Regression: ``write_inventory`` rendered ``Inventory.md`` from the caller's
+    list while ``cook_now`` re-read the DB, so the two views could disagree.
+    In production this shipped an empty Inventory.md alongside a populated
+    Cook Now.md. The DB is the single source of truth for both.
+    """
+
+    def test_view_shows_committed_rows_not_caller_list(self, tmp_vault, tmp_db,
+                                                       monkeypatch):
+        from lib import inventory_db
+
+        real_replace = inventory_db.replace_inventory_rows
+
+        def commits_only_the_first(rows):
+            # Stand in for anything that makes the commit differ from the
+            # caller's list (constraint, normalization, concurrent writer).
+            real_replace(rows[:1])
+
+        monkeypatch.setattr(inventory_db, "replace_inventory_rows",
+                            commits_only_the_first)
+        write_inventory([
+            InventoryItem(name="Milk", quantity=1, unit="gal"),
+            InventoryItem(name="Ghost", quantity=1, unit="ct"),
+        ])
+
+        content = inventory_path().read_text(encoding="utf-8")
+        assert "Milk" in content
+        assert "Ghost" not in content
+
+    def test_view_matches_a_fresh_render_of_the_db(self, tmp_vault, tmp_db):
+        from lib.inventory import render_inventory_md
+
+        write_inventory([
+            InventoryItem(name="Okra", quantity=1, unit="ct", category="produce"),
+            InventoryItem(name="Bacon", quantity=1, unit="oz", category="meat"),
+        ])
+        assert (inventory_path().read_text(encoding="utf-8")
+                == render_inventory_md(read_inventory()))
 
 
 class TestParsing:
