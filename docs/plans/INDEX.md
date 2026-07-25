@@ -26,12 +26,13 @@ Templates: [`templates/DESIGN-DOC-TEMPLATE.md`](../../templates/DESIGN-DOC-TEMPL
 
 | Date | Doc | Notes |
 |---|---|---|
-| 2026-07-25 | [bulk-inventory-editing](../superpowers/specs/2026-07-25-bulk-inventory-editing-design.md) | Mass select + edit on `/review`: checkboxes + Select All, a sticky bar mirroring a row's own `Remove / +3d / +7d / ⋮` controls, and one `POST /api/inventory/bulk` doing a single read-modify-write instead of N. Also fixes `(name, location)` → `(name, unit, location)` addressing, where `remove_item` deletes every match but `set_expiry` updates only the first. Split out of the original combined design; build after `web-home-page`. |
+| — | — | Nothing queued. |
 
 ## In Progress
 
 | Date | Doc | Branch | Notes |
 |---|---|---|---|
+| 2026-07-25 | [bulk-inventory-editing — design](../superpowers/specs/2026-07-25-bulk-inventory-editing-design.md) · [plan](../superpowers/plans/2026-07-25-bulk-inventory-editing.md) | `bulk-inventory-editing` | Mass select + edit on `/review`: checkboxes + Select All, a sticky bar mirroring a row's own `Remove / +3d / +7d / ⋮` controls, and one `POST /api/inventory/bulk` doing a single read-modify-write instead of N. Also fixes `(name, location)` → `(name, unit, location)` addressing on the bulk path, where `remove_item` deletes every match but `set_expiry` updates only the first. 6 tasks, plan written 2026-07-25. |
 | 2026-07-08 | [macro-meal-planner — design](2026-07-08-macro-meal-planner-design.md) · [plan](2026-07-08-macro-meal-planner-plan.md) | `macro-planner-phase-1/servings-backfill` | **PARKED.** Phase 1 (servings backfill) blocked: servings labels are not reliably inferable (see design-doc "Phase 1 finding"). Tooling/estimator built & committed on the branch; resume after grams coverage improves. |
 
 ## Done
