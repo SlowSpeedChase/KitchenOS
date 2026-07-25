@@ -788,12 +788,23 @@ class TestBulkApply:
         assert out["not_found"] == [self._ref("Ghost", "ct", "fridge")]
         assert len(read_inventory()) == 2
 
-    def test_all_refs_missing_writes_nothing(self, tmp_vault, tmp_db):
+    def test_all_refs_missing_writes_nothing(self, tmp_vault, tmp_db, monkeypatch):
+        import lib.inventory as inventory_module
         from lib.inventory import bulk_apply
         self._seed()
+
+        calls = []
+        monkeypatch.setattr(
+            inventory_module, "write_inventory", lambda items: calls.append(items)
+        )
+
         out = bulk_apply("remove", [self._ref("Ghost", "ct", "fridge")])
         assert out["applied"] == 0
         assert len(out["not_found"]) == 1
+        # A round-tripped-but-unmutated write would leave the DB looking
+        # identical to a skipped write, so assert the skip directly rather
+        # than only inferring it from row count.
+        assert calls == []
         assert len(read_inventory()) == 3
 
     def test_matching_is_case_insensitive(self, tmp_vault, tmp_db):
