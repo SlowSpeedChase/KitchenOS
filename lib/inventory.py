@@ -626,6 +626,116 @@ def _apply_freeze(
     return moved
 
 
+BULK_ACTIONS = (
+    "remove", "extend", "set-expiry", "set-category", "move", "freeze",
+)
+
+
+def _resolve_ref(ref: dict) -> tuple[str, str, str]:
+    """A ``{name, unit, location}`` ref as a ``merge_key()``-comparable tuple.
+
+    All three fields are required. Falling back to ``(name, location)`` matching
+    when ``unit`` is absent would silently widen the match — that is exactly the
+    bug this path exists to fix — so a partial ref is an error, not a guess.
+    """
+    if not isinstance(ref, dict):
+        raise ValueError(f"each ref must be an object, got {type(ref).__name__}")
+    missing = [f for f in ("name", "unit", "location") if not ref.get(f)]
+    if missing:
+        raise ValueError(f"ref is missing required field(s): {', '.join(missing)}")
+    return (
+        str(ref["name"]).lower().strip(),
+        str(ref["unit"]).lower().strip(),
+        str(ref["location"]).lower().strip(),
+    )
+
+
+def _require(params: dict, key: str):
+    """Fetch a required action parameter, or raise ValueError naming it."""
+    if key not in params:
+        raise ValueError(f"action requires '{key}'")
+    return params[key]
+
+
+def bulk_apply(action: str, refs: list[dict], **params) -> dict:
+    """Apply one action to many items in a single read-modify-write cycle.
+
+    ``refs`` address rows by the real uniqueness key ``(name, unit, location)``,
+    unlike the single-item functions which match on ``(name, location)``.
+
+    Refs that match nothing land in ``not_found`` rather than aborting the call
+    — the client's list can be stale, and one dead ref must not discard a dozen
+    good edits. Nothing is written when no ref matches.
+
+    Returns ``{applied, items, removed, not_found}``. ``items`` carries the
+    resulting rows for every action except ``remove``; ``removed`` carries the
+    full pre-delete rows for ``remove``. Both keys are always present.
+    """
+    if action not in BULK_ACTIONS:
+        raise ValueError(
+            f"unknown action '{action}' (expected one of {', '.join(BULK_ACTIONS)})"
+        )
+
+    keys = [_resolve_ref(r) for r in refs]
+
+    # Validate action parameters before touching the DB, so a request that
+    # happens to match nothing still fails loudly on a malformed body rather
+    # than quietly reporting "applied: 0".
+    days = expires = category = to_location = None
+    if action == "extend":
+        raw = _require(params, "days")
+        try:
+            days = int(raw)
+        except (TypeError, ValueError):
+            raise ValueError("'days' must be an integer") from None
+    elif action == "set-expiry":
+        expires = _require(params, "expires")   # None is valid — it clears
+    elif action == "set-category":
+        category = _require(params, "category")
+    elif action == "move":
+        to_location = _require(params, "to_location")
+
+    items = read_inventory()
+    by_key: dict[tuple[str, str, str], InventoryItem] = {
+        it.merge_key(): it for it in items
+    }
+
+    matches: list[InventoryItem] = []
+    not_found: list[dict] = []
+    for ref, key in zip(refs, keys):
+        found = by_key.get(key)
+        if found is None:
+            not_found.append(ref)
+        else:
+            matches.append(found)
+
+    updated: list[InventoryItem] = []
+    removed: list[InventoryItem] = []
+
+    if matches:
+        if action == "remove":
+            removed = _apply_remove(items, matches)
+        elif action == "extend":
+            updated = _apply_extend(items, matches, days, today=params.get("today"))
+        elif action == "set-expiry":
+            updated = _apply_set_expiry(items, matches, expires)
+        elif action == "set-category":
+            updated = _apply_set_category(items, matches, category)
+        elif action == "move":
+            updated = _apply_move(items, matches, to_location)
+        elif action == "freeze":
+            updated = _apply_freeze(items, matches)
+
+        write_inventory(items)
+
+    return {
+        "applied": len(matches),
+        "items": updated,
+        "removed": removed,
+        "not_found": not_found,
+    }
+
+
 def set_expiry(
     name: str, expires: Optional[str], location: Optional[str] = None
 ) -> Optional[InventoryItem]:

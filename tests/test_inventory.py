@@ -655,3 +655,196 @@ class TestPureMutators:
         assert out[0].location == "freezer"
         assert out[0].category == "frozen"
         assert out[0].expires is None
+
+
+class TestBulkApply:
+    def _seed(self):
+        add_items([
+            InventoryItem(name="Kale", quantity=1, unit="bunch",
+                          category="produce", location="fridge",
+                          expires="2026-07-26"),
+            InventoryItem(name="Milk", quantity=1, unit="gal",
+                          category="dairy", location="fridge",
+                          expires="2026-07-28"),
+            InventoryItem(name="Rice", quantity=2, unit="lb",
+                          category="pantry", location="pantry"),
+        ])
+
+    def _ref(self, name, unit, location):
+        return {"name": name, "unit": unit, "location": location}
+
+    def test_bulk_remove_removes_all_and_returns_rows(self, tmp_vault, tmp_db):
+        from lib.inventory import bulk_apply
+        self._seed()
+        out = bulk_apply("remove", [
+            self._ref("Kale", "bunch", "fridge"),
+            self._ref("Milk", "gal", "fridge"),
+        ])
+        assert out["applied"] == 2
+        assert out["items"] == []
+        assert sorted(r.name for r in out["removed"]) == ["Kale", "Milk"]
+        assert [i.name for i in read_inventory()] == ["Rice"]
+
+    def test_bulk_extend_sets_all_expiries_in_one_write(self, tmp_vault, tmp_db):
+        from datetime import date
+        from lib.inventory import bulk_apply
+        self._seed()
+        out = bulk_apply("extend", [
+            self._ref("Kale", "bunch", "fridge"),
+            self._ref("Rice", "lb", "pantry"),
+        ], days=7, today=date(2026, 7, 25))
+        assert out["applied"] == 2
+        assert out["removed"] == []
+        assert {i.expires for i in out["items"]} == {"2026-08-01"}
+        stored = {i.name: i.expires for i in read_inventory()}
+        assert stored["Kale"] == "2026-08-01"
+        assert stored["Rice"] == "2026-08-01"
+        assert stored["Milk"] == "2026-07-28"  # unselected row untouched
+
+    def test_bulk_set_expiry_clears(self, tmp_vault, tmp_db):
+        from lib.inventory import bulk_apply
+        self._seed()
+        bulk_apply("set-expiry", [self._ref("Kale", "bunch", "fridge")],
+                   expires=None)
+        assert {i.name: i.expires for i in read_inventory()}["Kale"] is None
+
+    def test_bulk_set_category_normalizes(self, tmp_vault, tmp_db):
+        from lib.inventory import bulk_apply
+        self._seed()
+        bulk_apply("set-category", [self._ref("Rice", "lb", "pantry")],
+                   category="Produce")
+        assert {i.name: i.category for i in read_inventory()}["Rice"] == "produce"
+
+    def test_bulk_move_merges_two_selected_rows_into_one_destination(
+        self, tmp_vault, tmp_db
+    ):
+        from lib.inventory import bulk_apply
+        add_items([
+            InventoryItem(name="Peas", quantity=1, unit="bag", location="fridge"),
+            InventoryItem(name="Peas", quantity=2, unit="bag", location="pantry"),
+        ])
+        out = bulk_apply("move", [
+            self._ref("Peas", "bag", "fridge"),
+            self._ref("Peas", "bag", "pantry"),
+        ], to_location="freezer")
+        assert out["applied"] == 2
+        assert len(out["items"]) == 1
+        items = read_inventory()
+        assert len(items) == 1
+        assert items[0].quantity == 3.0
+        assert items[0].location == "freezer"
+
+    def test_bulk_move_merges_into_preexisting_unselected_row(
+        self, tmp_vault, tmp_db
+    ):
+        """The classic single-item collision case: only ONE row is selected,
+        but the destination already stocks the same (name, unit) — the most
+        common real bulk-move scenario (newly-received items moving into a
+        location that already has that product)."""
+        from lib.inventory import bulk_apply
+        add_items([
+            InventoryItem(name="Peas", quantity=1, unit="bag", location="fridge"),
+            InventoryItem(name="Peas", quantity=2, unit="bag", location="pantry"),
+        ])
+        out = bulk_apply("move", [
+            self._ref("Peas", "bag", "fridge"),
+        ], to_location="pantry")
+        assert out["applied"] == 1
+        assert len(out["items"]) == 1
+        items = read_inventory()
+        assert len(items) == 1
+        assert items[0].quantity == 3.0
+        assert items[0].location == "pantry"
+
+    def test_bulk_freeze_sets_category_and_clears_expiry(self, tmp_vault, tmp_db):
+        from lib.inventory import bulk_apply
+        self._seed()
+        out = bulk_apply("freeze", [self._ref("Kale", "bunch", "fridge")])
+        assert out["items"][0].location == "freezer"
+        assert out["items"][0].category == "frozen"
+        assert out["items"][0].expires is None
+
+    def test_unit_is_part_of_the_address(self, tmp_vault, tmp_db):
+        """The whole point of the fix: same name, different unit, different row."""
+        from lib.inventory import bulk_apply
+        add_items([
+            InventoryItem(name="Flour", quantity=1, unit="lb", location="pantry"),
+            InventoryItem(name="Flour", quantity=1, unit="bag", location="pantry"),
+        ])
+        out = bulk_apply("remove", [self._ref("Flour", "lb", "pantry")])
+        assert out["applied"] == 1
+        remaining = read_inventory()
+        assert len(remaining) == 1
+        assert remaining[0].unit == "bag"
+
+    def test_partial_not_found_still_applies_the_rest(self, tmp_vault, tmp_db):
+        from lib.inventory import bulk_apply
+        self._seed()
+        out = bulk_apply("remove", [
+            self._ref("Kale", "bunch", "fridge"),
+            self._ref("Ghost", "ct", "fridge"),
+        ])
+        assert out["applied"] == 1
+        assert out["not_found"] == [self._ref("Ghost", "ct", "fridge")]
+        assert len(read_inventory()) == 2
+
+    def test_all_refs_missing_writes_nothing(self, tmp_vault, tmp_db):
+        from lib.inventory import bulk_apply
+        self._seed()
+        out = bulk_apply("remove", [self._ref("Ghost", "ct", "fridge")])
+        assert out["applied"] == 0
+        assert len(out["not_found"]) == 1
+        assert len(read_inventory()) == 3
+
+    def test_matching_is_case_insensitive(self, tmp_vault, tmp_db):
+        from lib.inventory import bulk_apply
+        self._seed()
+        out = bulk_apply("remove", [self._ref("KALE", "Bunch", "Fridge")])
+        assert out["applied"] == 1
+
+    def test_unknown_action_raises(self, tmp_vault, tmp_db):
+        import pytest
+        from lib.inventory import bulk_apply
+        with pytest.raises(ValueError, match="unknown action"):
+            bulk_apply("explode", [self._ref("Kale", "bunch", "fridge")])
+
+    def test_ref_missing_unit_raises(self, tmp_vault, tmp_db):
+        import pytest
+        from lib.inventory import bulk_apply
+        with pytest.raises(ValueError, match="unit"):
+            bulk_apply("remove", [{"name": "Kale", "location": "fridge"}])
+
+    def test_ref_missing_location_raises(self, tmp_vault, tmp_db):
+        import pytest
+        from lib.inventory import bulk_apply
+        with pytest.raises(ValueError, match="location"):
+            bulk_apply("remove", [{"name": "Kale", "unit": "bunch"}])
+
+    def test_missing_action_parameter_raises(self, tmp_vault, tmp_db):
+        import pytest
+        from lib.inventory import bulk_apply
+        with pytest.raises(ValueError, match="days"):
+            bulk_apply("extend", [self._ref("Kale", "bunch", "fridge")])
+        with pytest.raises(ValueError, match="to_location"):
+            bulk_apply("move", [self._ref("Kale", "bunch", "fridge")])
+        with pytest.raises(ValueError, match="category"):
+            bulk_apply("set-category", [self._ref("Kale", "bunch", "fridge")])
+        with pytest.raises(ValueError, match="expires"):
+            bulk_apply("set-expiry", [self._ref("Kale", "bunch", "fridge")])
+
+    def test_missing_parameter_raises_even_when_nothing_matches(
+        self, tmp_vault, tmp_db
+    ):
+        """Validation is about the request, not about what happens to match."""
+        import pytest
+        from lib.inventory import bulk_apply
+        self._seed()
+        with pytest.raises(ValueError, match="days"):
+            bulk_apply("extend", [self._ref("Ghost", "ct", "fridge")])
+
+    def test_non_integer_days_raises(self, tmp_vault, tmp_db):
+        import pytest
+        from lib.inventory import bulk_apply
+        with pytest.raises(ValueError, match="days"):
+            bulk_apply("extend", [self._ref("Kale", "bunch", "fridge")],
+                       days="soon")
