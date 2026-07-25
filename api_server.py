@@ -2701,6 +2701,16 @@ def receipt_paste_page():
     return _serve_page_with_claude_bar('receipt_paste.html')
 
 
+@app.route('/', methods=['GET'])
+def home_page():
+    """The web home page: every browsable KitchenOS page, from the registry."""
+    from lib import web_dashboard
+
+    return _serve_page_with_claude_bar(
+        'home.html', [('<!--SECTIONS-->', web_dashboard.render_html())]
+    )
+
+
 if __name__ == '__main__':
     try:
         import setproctitle

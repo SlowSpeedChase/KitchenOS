@@ -146,6 +146,7 @@ class TestPageRegistryIsComplete:
 
     def test_every_browsable_route_is_registered_or_exempt(self):
         registered = {path for _s, items in wd.SECTIONS for _e, _t, path, _d in items}
+        registered.add(wd.HOME[2])  # the registry root, rendered by the page itself
         unaccounted = self._candidate_routes() - registered - set(NOT_BOOKMARKABLE)
         assert not unaccounted, (
             f"new page route(s) {sorted(unaccounted)} are neither in "
@@ -157,6 +158,7 @@ class TestPageRegistryIsComplete:
 
     def test_registry_has_no_dead_routes(self):
         registered = {path for _s, items in wd.SECTIONS for _e, _t, path, _d in items}
+        registered.add(wd.HOME[2])
         assert not registered - self._candidate_routes(), (
             "SECTIONS lists route(s) api_server no longer serves — the launcher "
             "note and the Safari bookmarks would 404."

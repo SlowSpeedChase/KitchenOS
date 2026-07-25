@@ -44,6 +44,25 @@ def test_suggest_meal_requires_fields(client):
     assert "error" in data
 
 
+def test_home_page_lists_every_registered_page(client):
+    from html import escape
+
+    from lib import web_dashboard as wd
+
+    response = client.get('/')
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    for _section, items in wd.SECTIONS:
+        for _emoji, title, path, _desc in items:
+            assert escape(title) in body
+            assert f'href="{path}"' in body
+
+
+def test_home_page_has_no_unsubstituted_placeholder(client):
+    body = client.get('/').get_data(as_text=True)
+    assert "<!--SECTIONS-->" not in body
+
+
 def test_suggest_meal_invalid_week(client):
     """Invalid week format returns 400."""
     response = client.post('/api/suggest-meal', json={
