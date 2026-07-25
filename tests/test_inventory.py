@@ -560,3 +560,98 @@ class TestReviewLink:
         md = render_inventory_md([])
         assert "ssh://u@h.ts.net" in md
         assert "Launch Claude" in md
+
+
+class TestPureMutators:
+    """The _apply_* helpers mutate in memory and do no I/O."""
+
+    def _items(self):
+        return [
+            InventoryItem(name="Bread", quantity=1, unit="loaf",
+                          category="bakery", location="pantry"),
+            InventoryItem(name="Bread", quantity=2, unit="loaf",
+                          category="bakery", location="counter"),
+            InventoryItem(name="Milk", quantity=1, unit="gal",
+                          category="dairy", location="fridge",
+                          expires="2026-09-15"),
+        ]
+
+    def test_drop_removes_by_identity_not_value(self):
+        from lib.inventory import _drop
+        a = InventoryItem(name="Egg", quantity=1, unit="ct", location="fridge")
+        b = InventoryItem(name="Egg", quantity=1, unit="ct", location="fridge")
+        items = [a, b]
+        assert a == b  # dataclass equality is by value
+        _drop(items, b)
+        assert len(items) == 1
+        assert items[0] is a
+
+    def test_match_by_name_returns_every_match(self):
+        from lib.inventory import _match_by_name
+        items = self._items()
+        assert len(_match_by_name(items, "Bread", None)) == 2
+        assert len(_match_by_name(items, "bread", "counter")) == 1
+        assert _match_by_name(items, "Nope", None) == []
+
+    def test_apply_remove_drops_all_matches_and_returns_them(self):
+        from lib.inventory import _apply_remove
+        items = self._items()
+        removed = _apply_remove(items, [items[0], items[2]])
+        assert len(items) == 1
+        assert items[0].name == "Bread" and items[0].location == "counter"
+        assert [r.name for r in removed] == ["Bread", "Milk"]
+
+    def test_apply_extend_sets_expiry_from_today(self):
+        from datetime import date
+        from lib.inventory import _apply_extend
+        items = self._items()
+        out = _apply_extend(items, items[:2], 7, today=date(2026, 7, 25))
+        assert [i.expires for i in out] == ["2026-08-01", "2026-08-01"]
+        assert items[2].expires == "2026-09-15"  # untouched row keeps its own
+
+    def test_apply_set_expiry_sets_and_clears(self):
+        from lib.inventory import _apply_set_expiry
+        items = self._items()
+        _apply_set_expiry(items, [items[0]], "2026-09-09")
+        assert items[0].expires == "2026-09-09"
+        _apply_set_expiry(items, [items[2]], None)
+        assert items[2].expires is None
+
+    def test_apply_set_category_normalizes(self):
+        from lib.inventory import _apply_set_category
+        items = self._items()
+        _apply_set_category(items, items[:2], "Produce")
+        assert [i.category for i in items[:2]] == ["produce", "produce"]
+        _apply_set_category(items, [items[2]], "widgets")
+        assert items[2].category == "other"
+
+    def test_apply_move_changes_location(self):
+        from lib.inventory import _apply_move
+        items = self._items()
+        out = _apply_move(items, [items[2]], "Freezer")
+        assert out[0].location == "freezer"
+        assert len(items) == 3
+
+    def test_apply_move_merges_two_selected_rows_into_one_destination(self):
+        from lib.inventory import _apply_move
+        items = self._items()
+        out = _apply_move(items, [items[0], items[1]], "freezer")
+        assert len(items) == 2          # the two Bread rows collapsed into one
+        assert len(out) == 1            # and the result is reported once
+        assert out[0].quantity == 3.0
+        assert out[0].location == "freezer"
+
+    def test_apply_move_to_same_location_is_a_noop(self):
+        from lib.inventory import _apply_move
+        items = self._items()
+        out = _apply_move(items, [items[0]], "pantry")
+        assert out == [items[0]]
+        assert len(items) == 3
+
+    def test_apply_freeze_moves_sets_category_and_clears_expiry(self):
+        from lib.inventory import _apply_freeze
+        items = self._items()
+        out = _apply_freeze(items, [items[2]])
+        assert out[0].location == "freezer"
+        assert out[0].category == "frozen"
+        assert out[0].expires is None

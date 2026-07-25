@@ -486,6 +486,146 @@ def _match(it: InventoryItem, target: str, target_loc: Optional[str]) -> bool:
     )
 
 
+def _drop(items: list[InventoryItem], victim: InventoryItem) -> None:
+    """Remove ``victim`` from ``items`` by identity.
+
+    ``InventoryItem`` is a plain dataclass, so ``list.remove`` would match by
+    value and could drop a different but equal row.
+    """
+    for i, it in enumerate(items):
+        if it is victim:
+            del items[i]
+            return
+
+
+def _match_by_name(
+    items: list[InventoryItem], name: str, location: Optional[str]
+) -> list[InventoryItem]:
+    """Every row matching by lowercased name (+ optional location), in order.
+
+    This is the legacy ``(name, location)`` addressing the single-item functions
+    use. The bulk path addresses by the real ``(name, unit, location)`` key
+    instead — see ``bulk_apply``.
+    """
+    target = name.lower().strip()
+    target_loc = location.lower().strip() if location else None
+    return [it for it in items if _match(it, target, target_loc)]
+
+
+# --- Pure mutators -----------------------------------------------------------
+# Each takes the full item list plus the already-matched rows, mutates the list
+# in place, and does no I/O. The read/write cycle belongs to the caller, so one
+# selection of N items costs one write instead of N.
+#
+# All six share the (items, matches, *params) shape even though the three
+# field-setters don't need `items` — that uniformity is what lets bulk_apply
+# dispatch to any of them, and _apply_remove/_apply_move/_apply_freeze do need
+# the full list to drop and merge rows.
+
+
+def _apply_remove(
+    items: list[InventoryItem], matches: list[InventoryItem]
+) -> list[InventoryItem]:
+    """Drop every matched row. Returns the removed rows (for undo)."""
+    for it in matches:
+        _drop(items, it)
+    return list(matches)
+
+
+def _apply_extend(
+    items: list[InventoryItem],
+    matches: list[InventoryItem],
+    days: int,
+    today: Optional[date] = None,
+) -> list[InventoryItem]:
+    """Set every matched row's expiry to today + ``days``."""
+    new_expires = ((today or date.today()) + timedelta(days=days)).isoformat()
+    for it in matches:
+        it.expires = new_expires
+    return list(matches)
+
+
+def _apply_set_expiry(
+    items: list[InventoryItem],
+    matches: list[InventoryItem],
+    expires: Optional[str],
+) -> list[InventoryItem]:
+    """Set every matched row's expiry to an absolute date, or clear it."""
+    for it in matches:
+        it.expires = expires or None
+    return list(matches)
+
+
+def _apply_set_category(
+    items: list[InventoryItem], matches: list[InventoryItem], category: str
+) -> list[InventoryItem]:
+    """Set every matched row's category (normalized against CATEGORIES)."""
+    cat = normalize_category(category)
+    for it in matches:
+        it.category = cat
+    return list(matches)
+
+
+def _apply_move(
+    items: list[InventoryItem], matches: list[InventoryItem], to_location: str
+) -> list[InventoryItem]:
+    """Move every matched row to ``to_location``, merging on collision.
+
+    Because ``(name, unit, location)`` is the uniqueness key, a move can collide
+    with an existing row at the destination — quantities sum into the
+    destination row and the source row is dropped. Matches are processed
+    sequentially against the shared list, so two *selected* rows moving to the
+    same destination also merge into one another. The returned list is
+    deduplicated, so a merged pair reports as the single surviving row.
+    """
+    dest = normalize_location(to_location)
+    results: list[InventoryItem] = []
+    for source in matches:
+        if source.location == dest:
+            results.append(source)
+            continue
+        existing = next(
+            (
+                it
+                for it in items
+                if it is not source
+                and it.name.lower().strip() == source.name.lower().strip()
+                and it.unit.lower().strip() == source.unit.lower().strip()
+                and it.location == dest
+            ),
+            None,
+        )
+        if existing is not None:
+            existing.quantity += source.quantity
+            _drop(items, source)
+            results.append(existing)
+        else:
+            source.location = dest
+            results.append(source)
+
+    seen: set[int] = set()
+    unique: list[InventoryItem] = []
+    for r in results:
+        if id(r) not in seen:
+            seen.add(id(r))
+            unique.append(r)
+    return unique
+
+
+def _apply_freeze(
+    items: list[InventoryItem], matches: list[InventoryItem]
+) -> list[InventoryItem]:
+    """Freeze every matched row: move to the freezer, category=frozen, no expiry.
+
+    Freezing stops the expiry clock, so the date is cleared rather than extended.
+    """
+    moved = _apply_move(items, matches, "freezer")
+    for it in moved:
+        it.category = "frozen"
+        it.expires = None
+    return moved
+
+
 def set_expiry(
     name: str, expires: Optional[str], location: Optional[str] = None
 ) -> Optional[InventoryItem]:
