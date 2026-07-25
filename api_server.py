@@ -2275,15 +2275,20 @@ def api_inventory_extend():
     return jsonify({"status": "extended", "item": d})
 
 
-def _item_response(item, status):
-    """Serialize an InventoryItem with computed expiry_status, or 404 if None."""
+def _serialize_item(item):
+    """An InventoryItem as a dict plus its computed expiry_status."""
     from lib.expiry import expiry_status
 
-    if item is None:
-        return jsonify({"status": "not_found"}), 404
     d = item.to_dict()
     d["expiry_status"] = expiry_status(d.get("expires"))
-    return jsonify({"status": status, "item": d})
+    return d
+
+
+def _item_response(item, status):
+    """Serialize an InventoryItem with computed expiry_status, or 404 if None."""
+    if item is None:
+        return jsonify({"status": "not_found"}), 404
+    return jsonify({"status": status, "item": _serialize_item(item)})
 
 
 @app.route('/api/inventory/set-expiry', methods=['POST'])
@@ -2350,6 +2355,44 @@ def api_inventory_freeze():
 
     item = freeze_item(data['name'], data.get('location'))
     return _item_response(item, "frozen")
+
+
+@app.route('/api/inventory/bulk', methods=['POST'])
+def api_inventory_bulk():
+    """Apply one action to many items in a single write.
+
+    Body: {action, refs, days?, expires?, category?, to_location?} where
+    `action` is one of remove | extend | set-expiry | set-category | move |
+    freeze, and each ref is {name, unit, location} — the real uniqueness key,
+    all three fields required. Ungated, like the sibling /api/inventory/* routes.
+
+    Refs matching nothing come back in `not_found` instead of 404-ing the call:
+    the client's list can be stale, and one dead ref must not discard the rest
+    of the edits.
+    """
+    from lib.inventory import bulk_apply
+
+    data = request.get_json(force=True, silent=True) or {}
+    if not data.get('action'):
+        return jsonify({"error": "'action' is required"}), 400
+    refs = data.get('refs')
+    if not isinstance(refs, list) or not refs:
+        return jsonify({"error": "'refs' must be a non-empty list"}), 400
+
+    params = {k: data[k] for k in ('days', 'expires', 'category', 'to_location')
+              if k in data}
+    try:
+        result = bulk_apply(data['action'], refs, **params)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    return jsonify({
+        "status": "applied",
+        "applied": result["applied"],
+        "items": [_serialize_item(i) for i in result["items"]],
+        "removed": [_serialize_item(i) for i in result["removed"]],
+        "not_found": result["not_found"],
+    })
 
 
 @app.route('/api/claude-notes', methods=['GET'])
