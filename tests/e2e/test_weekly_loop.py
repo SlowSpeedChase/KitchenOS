@@ -71,8 +71,12 @@ def test_surface_renders_without_js_errors(live_server, page, page_errors, route
 def test_meal_planner_lists_recipes(live_server, page, page_errors):
     """The planner is useless if the recipe rail is empty — assert it populated."""
     page.goto(live_server.url("/meal-planner"), wait_until="domcontentloaded")
-    page.wait_for_selector("#recipe-list", timeout=15_000)
+    # Wait for a *card*, not the rail. `#recipe-list` ships in the static HTML, so
+    # waiting on it returns instantly and the count below then races the fetch that
+    # fills it — the test passed or failed on how warm the caches were. A timeout
+    # here still means "the rail never populated", which is the bug being guarded.
     cards = page.locator("#recipe-list li, #recipe-list .recipe-card")
+    cards.first.wait_for(timeout=15_000)
     assert cards.count() > 0, "recipe rail rendered no recipes"
     assert page_errors == [], f"planner raised: {page_errors}"
 
