@@ -379,8 +379,46 @@ class TestPruneExpired:
         assert prune_expired(today=today) == 0
 
 
+class TestPurchasedIsDateAdded:
+    """`purchased` doubles as the date-added stamp the review page sorts by."""
+
+    def test_new_row_without_purchased_is_stamped_today(self, tmp_vault, tmp_db):
+        from datetime import date
+        add_items([InventoryItem(name="Farro", quantity=1, unit="lb",
+                                 category="pantry", location="pantry")])
+        assert read_inventory()[0].purchased == date.today().isoformat()
+
+    def test_explicit_purchased_is_preserved(self, tmp_vault, tmp_db):
+        add_items([InventoryItem(name="Farro", quantity=1, unit="lb",
+                                 category="pantry", location="pantry",
+                                 purchased="2026-01-04")])
+        assert read_inventory()[0].purchased == "2026-01-04"
+
+    def test_merging_does_not_bump_the_original_date(self, tmp_vault, tmp_db):
+        """Re-running an idempotent seed must not make old stock look new."""
+        add_items([InventoryItem(name="Farro", quantity=1, unit="lb",
+                                 category="pantry", location="pantry",
+                                 purchased="2026-01-04")])
+        add_items([InventoryItem(name="Farro", quantity=1, unit="lb",
+                                 category="pantry", location="pantry")])
+        rows = read_inventory()
+        assert len(rows) == 1
+        assert rows[0].quantity == 2          # the merge did happen
+        assert rows[0].purchased == "2026-01-04"
+
+    def test_an_explicit_restock_date_still_wins(self, tmp_vault, tmp_db):
+        add_items([InventoryItem(name="Farro", quantity=1, unit="lb",
+                                 category="pantry", location="pantry",
+                                 purchased="2026-01-04")])
+        add_items([InventoryItem(name="Farro", quantity=1, unit="lb",
+                                 category="pantry", location="pantry",
+                                 purchased="2026-07-20")])
+        assert read_inventory()[0].purchased == "2026-07-20"
+
+
 class TestExtendExpiry:
-    def test_extends_from_today_not_old_date(self, tmp_vault, tmp_db):
+    def test_adds_days_to_a_future_expiry(self, tmp_vault, tmp_db):
+        """+3d on a row good until the 15th means the 18th, not 'three days from now'."""
         from datetime import date
         add_items([InventoryItem(name="Milk", quantity=1, unit="ct",
                                  category="dairy", location="fridge",
@@ -388,13 +426,48 @@ class TestExtendExpiry:
         item = extend_expiry("Milk", days=3, location="fridge",
                              today=date(2026, 7, 12))
         assert item is not None
-        assert item.expires == "2026-07-15"  # today(07-12) + 3 days
+        assert item.expires == "2026-07-18"  # 07-15 + 3 days
+
+    def test_extends_a_lapsed_row_from_today_not_its_old_date(
+        self, tmp_vault, tmp_db
+    ):
+        """An expired row must land in the future, or extending it does nothing."""
+        from datetime import date
+        add_items([InventoryItem(name="Kefir", quantity=1, unit="ct",
+                                 category="dairy", location="fridge",
+                                 expires="2026-07-01")])
+        item = extend_expiry("Kefir", days=3, location="fridge",
+                             today=date(2026, 7, 12))
+        assert item is not None
+        assert item.expires == "2026-07-15"  # today(07-12) + 3, not 07-04
+
+    def test_repeated_extends_accumulate(self, tmp_vault, tmp_db):
+        """Tapping +7d twice is not a no-op — that read as a broken button."""
+        from datetime import date
+        add_items([InventoryItem(name="Tofu", quantity=1, unit="ct",
+                                 category="pantry", location="fridge",
+                                 expires="2026-07-20")])
+        today = date(2026, 7, 12)
+        assert extend_expiry("Tofu", days=7, location="fridge",
+                             today=today).expires == "2026-07-27"
+        assert extend_expiry("Tofu", days=7, location="fridge",
+                             today=today).expires == "2026-08-03"
 
     def test_sets_fresh_expiry_on_no_expiry_item(self, tmp_vault, tmp_db):
+        """A row with a genuinely cleared expiry re-bases on today.
+
+        Note the `set_expiry(None)` step: passing `expires=None` to `add_items`
+        does *not* produce a no-expiry row, because add_items auto-fills one
+        from the shelf-life windows. Clearing it afterwards — what the UI's
+        "🚫 Remove expiration" does — is the only way to get a null.
+        """
         from datetime import date
+        from lib.inventory import set_expiry
         add_items([InventoryItem(name="Rice", quantity=1, unit="lb",
                                  category="pantry", location="pantry",
                                  expires=None)])
+        assert set_expiry("Rice", None, location="pantry").expires is None
+
         item = extend_expiry("Rice", days=7, location="pantry",
                              today=date(2026, 7, 12))
         assert item is not None
@@ -560,3 +633,324 @@ class TestReviewLink:
         md = render_inventory_md([])
         assert "ssh://u@h.ts.net" in md
         assert "Launch Claude" in md
+
+
+class TestPureMutators:
+    """The _apply_* helpers mutate in memory and do no I/O."""
+
+    def _items(self):
+        return [
+            InventoryItem(name="Bread", quantity=1, unit="loaf",
+                          category="bakery", location="pantry"),
+            InventoryItem(name="Bread", quantity=2, unit="loaf",
+                          category="bakery", location="counter"),
+            InventoryItem(name="Milk", quantity=1, unit="gal",
+                          category="dairy", location="fridge",
+                          expires="2026-09-15"),
+        ]
+
+    def test_drop_removes_by_identity_not_value(self):
+        from lib.inventory import _drop
+        a = InventoryItem(name="Egg", quantity=1, unit="ct", location="fridge")
+        b = InventoryItem(name="Egg", quantity=1, unit="ct", location="fridge")
+        items = [a, b]
+        assert a == b  # dataclass equality is by value
+        _drop(items, b)
+        assert len(items) == 1
+        assert items[0] is a
+
+    def test_match_by_name_returns_every_match(self):
+        from lib.inventory import _match_by_name
+        items = self._items()
+        assert len(_match_by_name(items, "Bread", None)) == 2
+        assert len(_match_by_name(items, "bread", "counter")) == 1
+        assert _match_by_name(items, "Nope", None) == []
+
+    def test_apply_remove_drops_all_matches_and_returns_them(self):
+        from lib.inventory import _apply_remove
+        items = self._items()
+        removed = _apply_remove(items, [items[0], items[2]])
+        assert len(items) == 1
+        assert items[0].name == "Bread" and items[0].location == "counter"
+        assert [r.name for r in removed] == ["Bread", "Milk"]
+
+    def test_apply_extend_adds_days_per_row(self):
+        """Each row extends from its own date, so a mixed selection stays mixed."""
+        from datetime import date
+        from lib.inventory import _apply_extend
+        items = self._items()
+        # items[0] and [1] have no expiry; items[2] is good until 2026-09-15.
+        out = _apply_extend(items, [items[0], items[2]], 7,
+                            today=date(2026, 7, 25))
+        assert [i.expires for i in out] == ["2026-08-01", "2026-09-22"]
+        assert items[1].expires is None  # untouched row keeps its own
+
+    def test_apply_extend_ignores_an_unparseable_expiry(self):
+        """A junk date must not raise — treat it as no expiry and re-base on today."""
+        from datetime import date
+        from lib.inventory import _apply_extend
+        items = self._items()
+        items[0].expires = "not-a-date"
+        _apply_extend(items, [items[0]], 3, today=date(2026, 7, 25))
+        assert items[0].expires == "2026-07-28"
+
+    def test_apply_set_expiry_sets_and_clears(self):
+        from lib.inventory import _apply_set_expiry
+        items = self._items()
+        _apply_set_expiry(items, [items[0]], "2026-09-09")
+        assert items[0].expires == "2026-09-09"
+        _apply_set_expiry(items, [items[2]], None)
+        assert items[2].expires is None
+
+    def test_apply_set_category_normalizes(self):
+        from lib.inventory import _apply_set_category
+        items = self._items()
+        _apply_set_category(items, items[:2], "Produce")
+        assert [i.category for i in items[:2]] == ["produce", "produce"]
+        _apply_set_category(items, [items[2]], "widgets")
+        assert items[2].category == "other"
+
+    def test_apply_move_changes_location(self):
+        from lib.inventory import _apply_move
+        items = self._items()
+        out = _apply_move(items, [items[2]], "Freezer")
+        assert out[0].location == "freezer"
+        assert len(items) == 3
+
+    def test_apply_move_merges_two_selected_rows_into_one_destination(self):
+        from lib.inventory import _apply_move
+        items = self._items()
+        out = _apply_move(items, [items[0], items[1]], "freezer")
+        assert len(items) == 2          # the two Bread rows collapsed into one
+        assert len(out) == 1            # and the result is reported once
+        assert out[0].quantity == 3.0
+        assert out[0].location == "freezer"
+
+    def test_apply_move_to_same_location_is_a_noop(self):
+        from lib.inventory import _apply_move
+        items = self._items()
+        out = _apply_move(items, [items[0]], "pantry")
+        assert out == [items[0]]
+        assert len(items) == 3
+
+    def test_apply_freeze_moves_sets_category_and_clears_expiry(self):
+        from lib.inventory import _apply_freeze
+        items = self._items()
+        out = _apply_freeze(items, [items[2]])
+        assert out[0].location == "freezer"
+        assert out[0].category == "frozen"
+        assert out[0].expires is None
+
+
+class TestBulkApply:
+    def _seed(self):
+        add_items([
+            InventoryItem(name="Kale", quantity=1, unit="bunch",
+                          category="produce", location="fridge",
+                          expires="2026-07-26"),
+            InventoryItem(name="Milk", quantity=1, unit="gal",
+                          category="dairy", location="fridge",
+                          expires="2026-07-28"),
+            InventoryItem(name="Rice", quantity=2, unit="lb",
+                          category="pantry", location="pantry"),
+        ])
+
+    def _ref(self, name, unit, location):
+        return {"name": name, "unit": unit, "location": location}
+
+    def test_bulk_remove_removes_all_and_returns_rows(self, tmp_vault, tmp_db):
+        from lib.inventory import bulk_apply
+        self._seed()
+        out = bulk_apply("remove", [
+            self._ref("Kale", "bunch", "fridge"),
+            self._ref("Milk", "gal", "fridge"),
+        ])
+        assert out["applied"] == 2
+        assert out["items"] == []
+        assert sorted(r.name for r in out["removed"]) == ["Kale", "Milk"]
+        assert [i.name for i in read_inventory()] == ["Rice"]
+
+    def test_bulk_extend_adds_days_to_each_row_in_one_write(self, tmp_vault, tmp_db):
+        from datetime import date, timedelta
+        from lib.inventory import bulk_apply
+        today = date(2026, 7, 25)
+        self._seed()
+        before = {i.name: i.expires for i in read_inventory()}
+        # Both selected rows sit in the future (Rice's expiry is auto-filled by
+        # add_items), so both extend from their own date rather than from today.
+        assert date.fromisoformat(before["Kale"]) > today
+        assert date.fromisoformat(before["Rice"]) > today
+
+        out = bulk_apply("extend", [
+            self._ref("Kale", "bunch", "fridge"),
+            self._ref("Rice", "lb", "pantry"),
+        ], days=7, today=today)
+        assert out["applied"] == 2
+        assert out["removed"] == []
+
+        stored = {i.name: i.expires for i in read_inventory()}
+        for name in ("Kale", "Rice"):
+            want = date.fromisoformat(before[name]) + timedelta(days=7)
+            assert stored[name] == want.isoformat(), name
+        # Rows that started apart stay apart — one shared date would flatten them.
+        assert stored["Kale"] != stored["Rice"]
+        assert stored["Milk"] == before["Milk"]  # unselected row untouched
+
+    def test_bulk_set_expiry_clears(self, tmp_vault, tmp_db):
+        from lib.inventory import bulk_apply
+        self._seed()
+        bulk_apply("set-expiry", [self._ref("Kale", "bunch", "fridge")],
+                   expires=None)
+        assert {i.name: i.expires for i in read_inventory()}["Kale"] is None
+
+    def test_bulk_set_category_normalizes(self, tmp_vault, tmp_db):
+        from lib.inventory import bulk_apply
+        self._seed()
+        bulk_apply("set-category", [self._ref("Rice", "lb", "pantry")],
+                   category="Produce")
+        assert {i.name: i.category for i in read_inventory()}["Rice"] == "produce"
+
+    def test_bulk_move_merges_two_selected_rows_into_one_destination(
+        self, tmp_vault, tmp_db
+    ):
+        from lib.inventory import bulk_apply
+        add_items([
+            InventoryItem(name="Peas", quantity=1, unit="bag", location="fridge"),
+            InventoryItem(name="Peas", quantity=2, unit="bag", location="pantry"),
+        ])
+        out = bulk_apply("move", [
+            self._ref("Peas", "bag", "fridge"),
+            self._ref("Peas", "bag", "pantry"),
+        ], to_location="freezer")
+        assert out["applied"] == 2
+        assert len(out["items"]) == 1
+        items = read_inventory()
+        assert len(items) == 1
+        assert items[0].quantity == 3.0
+        assert items[0].location == "freezer"
+
+    def test_bulk_move_merges_into_preexisting_unselected_row(
+        self, tmp_vault, tmp_db
+    ):
+        """The classic single-item collision case: only ONE row is selected,
+        but the destination already stocks the same (name, unit) — the most
+        common real bulk-move scenario (newly-received items moving into a
+        location that already has that product)."""
+        from lib.inventory import bulk_apply
+        add_items([
+            InventoryItem(name="Peas", quantity=1, unit="bag", location="fridge"),
+            InventoryItem(name="Peas", quantity=2, unit="bag", location="pantry"),
+        ])
+        out = bulk_apply("move", [
+            self._ref("Peas", "bag", "fridge"),
+        ], to_location="pantry")
+        assert out["applied"] == 1
+        assert len(out["items"]) == 1
+        items = read_inventory()
+        assert len(items) == 1
+        assert items[0].quantity == 3.0
+        assert items[0].location == "pantry"
+
+    def test_bulk_freeze_sets_category_and_clears_expiry(self, tmp_vault, tmp_db):
+        from lib.inventory import bulk_apply
+        self._seed()
+        out = bulk_apply("freeze", [self._ref("Kale", "bunch", "fridge")])
+        assert out["items"][0].location == "freezer"
+        assert out["items"][0].category == "frozen"
+        assert out["items"][0].expires is None
+
+    def test_unit_is_part_of_the_address(self, tmp_vault, tmp_db):
+        """The whole point of the fix: same name, different unit, different row."""
+        from lib.inventory import bulk_apply
+        add_items([
+            InventoryItem(name="Flour", quantity=1, unit="lb", location="pantry"),
+            InventoryItem(name="Flour", quantity=1, unit="bag", location="pantry"),
+        ])
+        out = bulk_apply("remove", [self._ref("Flour", "lb", "pantry")])
+        assert out["applied"] == 1
+        remaining = read_inventory()
+        assert len(remaining) == 1
+        assert remaining[0].unit == "bag"
+
+    def test_partial_not_found_still_applies_the_rest(self, tmp_vault, tmp_db):
+        from lib.inventory import bulk_apply
+        self._seed()
+        out = bulk_apply("remove", [
+            self._ref("Kale", "bunch", "fridge"),
+            self._ref("Ghost", "ct", "fridge"),
+        ])
+        assert out["applied"] == 1
+        assert out["not_found"] == [self._ref("Ghost", "ct", "fridge")]
+        assert len(read_inventory()) == 2
+
+    def test_all_refs_missing_writes_nothing(self, tmp_vault, tmp_db, monkeypatch):
+        import lib.inventory as inventory_module
+        from lib.inventory import bulk_apply
+        self._seed()
+
+        calls = []
+        monkeypatch.setattr(
+            inventory_module, "write_inventory", lambda items: calls.append(items)
+        )
+
+        out = bulk_apply("remove", [self._ref("Ghost", "ct", "fridge")])
+        assert out["applied"] == 0
+        assert len(out["not_found"]) == 1
+        # A round-tripped-but-unmutated write would leave the DB looking
+        # identical to a skipped write, so assert the skip directly rather
+        # than only inferring it from row count.
+        assert calls == []
+        assert len(read_inventory()) == 3
+
+    def test_matching_is_case_insensitive(self, tmp_vault, tmp_db):
+        from lib.inventory import bulk_apply
+        self._seed()
+        out = bulk_apply("remove", [self._ref("KALE", "Bunch", "Fridge")])
+        assert out["applied"] == 1
+
+    def test_unknown_action_raises(self, tmp_vault, tmp_db):
+        import pytest
+        from lib.inventory import bulk_apply
+        with pytest.raises(ValueError, match="unknown action"):
+            bulk_apply("explode", [self._ref("Kale", "bunch", "fridge")])
+
+    def test_ref_missing_unit_raises(self, tmp_vault, tmp_db):
+        import pytest
+        from lib.inventory import bulk_apply
+        with pytest.raises(ValueError, match="unit"):
+            bulk_apply("remove", [{"name": "Kale", "location": "fridge"}])
+
+    def test_ref_missing_location_raises(self, tmp_vault, tmp_db):
+        import pytest
+        from lib.inventory import bulk_apply
+        with pytest.raises(ValueError, match="location"):
+            bulk_apply("remove", [{"name": "Kale", "unit": "bunch"}])
+
+    def test_missing_action_parameter_raises(self, tmp_vault, tmp_db):
+        import pytest
+        from lib.inventory import bulk_apply
+        with pytest.raises(ValueError, match="days"):
+            bulk_apply("extend", [self._ref("Kale", "bunch", "fridge")])
+        with pytest.raises(ValueError, match="to_location"):
+            bulk_apply("move", [self._ref("Kale", "bunch", "fridge")])
+        with pytest.raises(ValueError, match="category"):
+            bulk_apply("set-category", [self._ref("Kale", "bunch", "fridge")])
+        with pytest.raises(ValueError, match="expires"):
+            bulk_apply("set-expiry", [self._ref("Kale", "bunch", "fridge")])
+
+    def test_missing_parameter_raises_even_when_nothing_matches(
+        self, tmp_vault, tmp_db
+    ):
+        """Validation is about the request, not about what happens to match."""
+        import pytest
+        from lib.inventory import bulk_apply
+        self._seed()
+        with pytest.raises(ValueError, match="days"):
+            bulk_apply("extend", [self._ref("Ghost", "ct", "fridge")])
+
+    def test_non_integer_days_raises(self, tmp_vault, tmp_db):
+        import pytest
+        from lib.inventory import bulk_apply
+        with pytest.raises(ValueError, match="days"):
+            bulk_apply("extend", [self._ref("Kale", "bunch", "fridge")],
+                       days="soon")

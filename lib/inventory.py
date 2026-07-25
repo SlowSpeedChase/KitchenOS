@@ -400,6 +400,18 @@ def add_items(new_items: list[InventoryItem]) -> dict:
             cur.expires = _earliest_expiry(cur.expires, new.expires)
             merged += 1
         else:
+            # `purchased` doubles as "date added" — it is what the review page
+            # sorts by. Stamp it only when the row is genuinely new. Doing it
+            # unconditionally would bump the date on every merge, so re-ingesting
+            # a receipt or restocking a long-held item would present it as
+            # freshly bought. An explicit `purchased` still wins on merge, which
+            # is what the receipt path relies on.
+            #
+            # Staples are unaffected either way: `seed_pantry_staples` writes
+            # through `write_inventory`, not here, so they keep a null date and
+            # sort last under "Added" — correct for perpetual stock.
+            if new.purchased is None:
+                new.purchased = date.today().isoformat()
             by_key[key] = new
             added += 1
 
@@ -408,23 +420,19 @@ def add_items(new_items: list[InventoryItem]) -> dict:
 
 
 def remove_item(name: str, location: Optional[str] = None) -> bool:
+    """Remove every ``(name, location)`` match. Returns True if anything went.
+
+    Note the legacy addressing: this deletes *all* name+location matches
+    regardless of unit. ``bulk_apply("remove", ...)`` addresses by the real
+    ``(name, unit, location)`` key instead.
+    """
     items = read_inventory()
-    target = name.lower().strip()
-    target_loc = location.lower().strip() if location else None
-
-    keep: list[InventoryItem] = []
-    removed = False
-    for it in items:
-        if it.name.lower().strip() == target and (
-            target_loc is None or it.location == target_loc
-        ):
-            removed = True
-            continue
-        keep.append(it)
-
-    if removed:
-        write_inventory(keep)
-    return removed
+    matches = _match_by_name(items, name, location)
+    if not matches:
+        return False
+    _apply_remove(items, matches)
+    write_inventory(items)
+    return True
 
 
 def update_quantity(
@@ -454,29 +462,19 @@ def extend_expiry(
     location: Optional[str] = None,
     today: Optional[date] = None,
 ) -> Optional[InventoryItem]:
-    """Set a matched item's expiry to today + `days`. Works on no-expiry items.
+    """Add ``days`` to the first ``(name, location)`` match's expiry.
 
-    Matches by lowercased name (+ optional location), like remove_item.
-    Returns the updated item, or None if no row matched.
+    Cumulative: counted from the row's own expiry, or from today when that has
+    passed or is unset — see ``_apply_extend``. Works on no-expiry items.
+    Returns the updated item, or None if nothing matched.
     """
     items = read_inventory()
-    target = name.lower().strip()
-    target_loc = location.lower().strip() if location else None
-    base = today or date.today()
-    new_expires = (base + timedelta(days=days)).isoformat()
-
-    updated: Optional[InventoryItem] = None
-    for it in items:
-        if it.name.lower().strip() == target and (
-            target_loc is None or it.location == target_loc
-        ):
-            it.expires = new_expires
-            updated = it
-            break
-
-    if updated is not None:
-        write_inventory(items)
-    return updated
+    matches = _match_by_name(items, name, location)[:1]
+    if not matches:
+        return None
+    updated = _apply_extend(items, matches, days, today=today)
+    write_inventory(items)
+    return updated[0]
 
 
 def _match(it: InventoryItem, target: str, target_loc: Optional[str]) -> bool:
@@ -486,114 +484,343 @@ def _match(it: InventoryItem, target: str, target_loc: Optional[str]) -> bool:
     )
 
 
+def _drop(items: list[InventoryItem], victim: InventoryItem) -> None:
+    """Remove ``victim`` from ``items`` by identity.
+
+    ``InventoryItem`` is a plain dataclass, so ``list.remove`` would match by
+    value and could drop a different but equal row.
+    """
+    for i, it in enumerate(items):
+        if it is victim:
+            del items[i]
+            return
+
+
+def _match_by_name(
+    items: list[InventoryItem], name: str, location: Optional[str]
+) -> list[InventoryItem]:
+    """Every row matching by lowercased name (+ optional location), in order.
+
+    This is the legacy ``(name, location)`` addressing the single-item functions
+    use. The bulk path addresses by the real ``(name, unit, location)`` key
+    instead — see ``bulk_apply``.
+    """
+    target = name.lower().strip()
+    target_loc = location.lower().strip() if location else None
+    return [it for it in items if _match(it, target, target_loc)]
+
+
+# --- Pure mutators -----------------------------------------------------------
+# Each takes the full item list plus the already-matched rows, mutates the list
+# in place, and does no I/O. The read/write cycle belongs to the caller, so one
+# selection of N items costs one write instead of N.
+#
+# All six share the (items, matches, *params) shape even though the three
+# field-setters don't need `items` — that uniformity is what lets bulk_apply
+# dispatch to any of them, and _apply_remove/_apply_move/_apply_freeze do need
+# the full list to drop and merge rows.
+
+
+def _apply_remove(
+    items: list[InventoryItem], matches: list[InventoryItem]
+) -> list[InventoryItem]:
+    """Drop every matched row. Returns the removed rows (for undo)."""
+    for it in matches:
+        _drop(items, it)
+    return list(matches)
+
+
+def _apply_extend(
+    items: list[InventoryItem],
+    matches: list[InventoryItem],
+    days: int,
+    today: Optional[date] = None,
+) -> list[InventoryItem]:
+    """Add ``days`` to every matched row's expiry.
+
+    Counted from the row's **own** expiry when that is still in the future, so
+    the ``+3d`` / ``+7d`` buttons mean what they say and repeated taps
+    accumulate. Counted from today when the row has no expiry or has already
+    lapsed — adding to a stale date would leave the item expired, which is the
+    whole reason someone is extending it.
+
+    Each row therefore computes its own date. A single shared date (the
+    previous behaviour) silently flattened a mixed selection onto one expiry.
+    """
+    base = today or date.today()
+    for it in matches:
+        start = base
+        if it.expires:
+            try:
+                current = date.fromisoformat(it.expires)
+            except ValueError:
+                current = None      # unparseable: treat as having no expiry
+            if current and current > base:
+                start = current
+        it.expires = (start + timedelta(days=days)).isoformat()
+    return list(matches)
+
+
+def _apply_set_expiry(
+    items: list[InventoryItem],
+    matches: list[InventoryItem],
+    expires: Optional[str],
+) -> list[InventoryItem]:
+    """Set every matched row's expiry to an absolute date, or clear it."""
+    for it in matches:
+        it.expires = expires or None
+    return list(matches)
+
+
+def _apply_set_category(
+    items: list[InventoryItem], matches: list[InventoryItem], category: str
+) -> list[InventoryItem]:
+    """Set every matched row's category (normalized against CATEGORIES)."""
+    cat = normalize_category(category)
+    for it in matches:
+        it.category = cat
+    return list(matches)
+
+
+def _apply_move(
+    items: list[InventoryItem], matches: list[InventoryItem], to_location: str
+) -> list[InventoryItem]:
+    """Move every matched row to ``to_location``, merging on collision.
+
+    Because ``(name, unit, location)`` is the uniqueness key, a move can collide
+    with an existing row at the destination — quantities sum into the
+    destination row and the source row is dropped. Matches are processed
+    sequentially against the shared list, so two *selected* rows moving to the
+    same destination also merge into one another. The returned list is
+    deduplicated, so a merged pair reports as the single surviving row.
+    """
+    dest = normalize_location(to_location)
+    results: list[InventoryItem] = []
+    for source in matches:
+        if source.location == dest:
+            results.append(source)
+            continue
+        existing = next(
+            (
+                it
+                for it in items
+                if it is not source
+                and it.name.lower().strip() == source.name.lower().strip()
+                and it.unit.lower().strip() == source.unit.lower().strip()
+                and it.location == dest
+            ),
+            None,
+        )
+        if existing is not None:
+            existing.quantity += source.quantity
+            _drop(items, source)
+            results.append(existing)
+        else:
+            source.location = dest
+            results.append(source)
+
+    seen: set[int] = set()
+    unique: list[InventoryItem] = []
+    for r in results:
+        if id(r) not in seen:
+            seen.add(id(r))
+            unique.append(r)
+    return unique
+
+
+def _apply_freeze(
+    items: list[InventoryItem], matches: list[InventoryItem]
+) -> list[InventoryItem]:
+    """Freeze every matched row: move to the freezer, category=frozen, no expiry.
+
+    Freezing stops the expiry clock, so the date is cleared rather than extended.
+    """
+    moved = _apply_move(items, matches, "freezer")
+    for it in moved:
+        it.category = "frozen"
+        it.expires = None
+    return moved
+
+
+BULK_ACTIONS = (
+    "remove", "extend", "set-expiry", "set-category", "move", "freeze",
+)
+
+
+def _resolve_ref(ref: dict) -> tuple[str, str, str]:
+    """A ``{name, unit, location}`` ref as a ``merge_key()``-comparable tuple.
+
+    All three fields are required. Falling back to ``(name, location)`` matching
+    when ``unit`` is absent would silently widen the match — that is exactly the
+    bug this path exists to fix — so a partial ref is an error, not a guess.
+    """
+    if not isinstance(ref, dict):
+        raise ValueError(f"each ref must be an object, got {type(ref).__name__}")
+    missing = [f for f in ("name", "unit", "location") if not ref.get(f)]
+    if missing:
+        raise ValueError(f"ref is missing required field(s): {', '.join(missing)}")
+    return (
+        str(ref["name"]).lower().strip(),
+        str(ref["unit"]).lower().strip(),
+        str(ref["location"]).lower().strip(),
+    )
+
+
+def _require(params: dict, key: str):
+    """Fetch a required action parameter, or raise ValueError naming it."""
+    if key not in params:
+        raise ValueError(f"action requires '{key}'")
+    return params[key]
+
+
+def bulk_apply(action: str, refs: list[dict], **params) -> dict:
+    """Apply one action to many items in a single read-modify-write cycle.
+
+    ``refs`` address rows by the real uniqueness key ``(name, unit, location)``,
+    unlike the single-item functions which match on ``(name, location)``.
+
+    Refs that match nothing land in ``not_found`` rather than aborting the call
+    — the client's list can be stale, and one dead ref must not discard a dozen
+    good edits. Nothing is written when no ref matches.
+
+    Returns ``{applied, items, removed, not_found}``. ``items`` carries the
+    resulting rows for every action except ``remove``; ``removed`` carries the
+    full pre-delete rows for ``remove``. Both keys are always present.
+    """
+    if action not in BULK_ACTIONS:
+        raise ValueError(
+            f"unknown action '{action}' (expected one of {', '.join(BULK_ACTIONS)})"
+        )
+
+    keys = [_resolve_ref(r) for r in refs]
+
+    # Validate action parameters before touching the DB, so a request that
+    # happens to match nothing still fails loudly on a malformed body rather
+    # than quietly reporting "applied: 0".
+    days = expires = category = to_location = None
+    if action == "extend":
+        raw = _require(params, "days")
+        try:
+            days = int(raw)
+        except (TypeError, ValueError):
+            raise ValueError("'days' must be an integer") from None
+    elif action == "set-expiry":
+        expires = _require(params, "expires")   # None is valid — it clears
+    elif action == "set-category":
+        category = _require(params, "category")
+    elif action == "move":
+        to_location = _require(params, "to_location")
+
+    items = read_inventory()
+    by_key: dict[tuple[str, str, str], InventoryItem] = {
+        it.merge_key(): it for it in items
+    }
+
+    matches: list[InventoryItem] = []
+    not_found: list[dict] = []
+    for ref, key in zip(refs, keys):
+        found = by_key.get(key)
+        if found is None:
+            not_found.append(ref)
+        else:
+            matches.append(found)
+
+    updated: list[InventoryItem] = []
+    removed: list[InventoryItem] = []
+
+    if matches:
+        if action == "remove":
+            removed = _apply_remove(items, matches)
+        elif action == "extend":
+            updated = _apply_extend(items, matches, days, today=params.get("today"))
+        elif action == "set-expiry":
+            updated = _apply_set_expiry(items, matches, expires)
+        elif action == "set-category":
+            updated = _apply_set_category(items, matches, category)
+        elif action == "move":
+            updated = _apply_move(items, matches, to_location)
+        elif action == "freeze":
+            updated = _apply_freeze(items, matches)
+
+        write_inventory(items)
+
+    return {
+        "applied": len(matches),
+        "items": updated,
+        "removed": removed,
+        "not_found": not_found,
+    }
+
+
 def set_expiry(
     name: str, expires: Optional[str], location: Optional[str] = None
 ) -> Optional[InventoryItem]:
-    """Set a matched item's expiry to an absolute ISO date, or clear it (None).
+    """Set the first match's expiry to an absolute ISO date, or clear it (None).
 
-    Matches by lowercased name (+ optional location), like ``extend_expiry``.
     Returns the updated item, or None if no row matched.
     """
     items = read_inventory()
-    target = name.lower().strip()
-    target_loc = location.lower().strip() if location else None
-
-    updated: Optional[InventoryItem] = None
-    for it in items:
-        if _match(it, target, target_loc):
-            it.expires = expires or None
-            updated = it
-            break
-
-    if updated is not None:
-        write_inventory(items)
-    return updated
+    matches = _match_by_name(items, name, location)[:1]
+    if not matches:
+        return None
+    updated = _apply_set_expiry(items, matches, expires)
+    write_inventory(items)
+    return updated[0]
 
 
 def set_category(
     name: str, category: str, location: Optional[str] = None
 ) -> Optional[InventoryItem]:
-    """Set a matched item's category (normalized against CATEGORIES).
+    """Set the first match's category (normalized against CATEGORIES).
 
     Returns the updated item, or None if no row matched.
     """
     items = read_inventory()
-    target = name.lower().strip()
-    target_loc = location.lower().strip() if location else None
-
-    updated: Optional[InventoryItem] = None
-    for it in items:
-        if _match(it, target, target_loc):
-            it.category = normalize_category(category)
-            updated = it
-            break
-
-    if updated is not None:
-        write_inventory(items)
-    return updated
+    matches = _match_by_name(items, name, location)[:1]
+    if not matches:
+        return None
+    updated = _apply_set_category(items, matches, category)
+    write_inventory(items)
+    return updated[0]
 
 
 def move_item(
     name: str, to_location: str, location: Optional[str] = None
 ) -> Optional[InventoryItem]:
-    """Move a matched item to ``to_location`` (normalized against LOCATIONS).
+    """Move the first match to ``to_location``, merging on collision.
 
     Because ``(name, unit, location)`` is the uniqueness key, moving can collide
-    with an existing row at the destination — in that case the quantities are
-    summed into the destination row and the source row is dropped. Returns the
-    resulting item at the destination, or None if no row matched.
+    with an existing row at the destination — quantities sum into the
+    destination row and the source row is dropped. Returns the resulting item at
+    the destination, or None if no row matched.
     """
-    dest = normalize_location(to_location)
     items = read_inventory()
-    target = name.lower().strip()
-    target_loc = location.lower().strip() if location else None
-
-    source: Optional[InventoryItem] = None
-    for it in items:
-        if _match(it, target, target_loc):
-            source = it
-            break
-    if source is None:
+    matches = _match_by_name(items, name, location)[:1]
+    if not matches:
         return None
-
-    if source.location == dest:
-        return source
-
-    # Look for an existing destination row with the same (name, unit) to merge.
-    existing = next(
-        (
-            it
-            for it in items
-            if it is not source
-            and it.name.lower().strip() == source.name.lower().strip()
-            and it.unit.lower().strip() == source.unit.lower().strip()
-            and it.location == dest
-        ),
-        None,
-    )
-    if existing is not None:
-        existing.quantity += source.quantity
-        items.remove(source)
-        result = existing
-    else:
-        source.location = dest
-        result = source
-
+    # Already there: return without a write, so a no-op move doesn't churn the
+    # DB and regenerate Inventory.md / Cook Now.md for nothing.
+    if matches[0].location == normalize_location(to_location):
+        return matches[0]
+    result = _apply_move(items, matches, to_location)
     write_inventory(items)
-    return result
+    return result[0]
 
 
 def freeze_item(
     name: str, location: Optional[str] = None
 ) -> Optional[InventoryItem]:
-    """Mark a matched item as frozen: move to the freezer, set category=frozen,
-    and clear its expiry (freezing stops the expiry clock).
+    """Mark the first match as frozen: move to the freezer, category=frozen, and
+    clear its expiry (freezing stops the expiry clock).
 
-    Handles the destination-merge case via ``move_item``. Returns the resulting
-    freezer item, or None if no row matched.
+    Handles the destination-merge case. One write cycle — the previous
+    implementation chained move + set_category + set_expiry for three writes and
+    six view regenerations, with no atomicity between them.
     """
-    moved = move_item(name, "freezer", location=location)
-    if moved is None:
+    items = read_inventory()
+    matches = _match_by_name(items, name, location)[:1]
+    if not matches:
         return None
-    set_category(name, "frozen", location="freezer")
-    return set_expiry(name, None, location="freezer")
+    result = _apply_freeze(items, matches)
+    write_inventory(items)
+    return result[0]
