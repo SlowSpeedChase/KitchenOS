@@ -71,6 +71,10 @@
 <header>
   <input type="checkbox" id="selall" aria-label="Select all items">
   <h1>Inventory Review</h1>
+  <select id="sortby" aria-label="Sort by">
+    <option value="expiry">Expiry</option>
+    <option value="added">Added</option>
+  </select>
   <button id="refresh" aria-label="Refresh">↻</button>
 </header>
 <ul id="list"></ul>
@@ -122,13 +126,28 @@ function selectedEntries(){
 function rankOf(it){
   const r = RANK[it.expiry_status]; return r === undefined ? 3 : r;
 }
-function sortItems(items){
-  return items.slice().sort((a,b)=>{
+const SORTS = {
+  expiry(a, b){
     const dr = rankOf(a) - rankOf(b); if (dr) return dr;
     const ax = a.expires || "9999", bx = b.expires || "9999";
     if (ax !== bx) return ax < bx ? -1 : 1;
     return (a.name||"").localeCompare(b.name||"");
-  });
+  },
+  added(a, b){
+    // `purchased` is the date-added stamp. Newest first — the point of this
+    // order is "what did I just put away". Rows predating the stamp have no
+    // position here, so they sink to the bottom (an empty string loses every
+    // `>` comparison) rather than posing as the oldest stock.
+    const ax = a.purchased || "", bx = b.purchased || "";
+    if (ax !== bx) return ax > bx ? -1 : 1;
+    return (a.name||"").localeCompare(b.name||"");
+  },
+};
+let sortMode = "expiry";
+try { sortMode = localStorage.getItem('reviewSort') || "expiry"; } catch(e){}
+if (!SORTS[sortMode]) sortMode = "expiry";
+function sortItems(items){
+  return items.slice().sort(SORTS[sortMode]);
 }
 function badge(it){
   if (it.expiry_status === "expired") return ` <span class="badge-expired">🔴 expired</span>`;
@@ -137,7 +156,10 @@ function badge(it){
 }
 function subline(it){
   const exp = it.expires ? "exp " + it.expires : "no expiry";
-  return exp + badge(it);
+  // Show the date being sorted on, otherwise the "Added" order looks arbitrary.
+  const add = sortMode === "added"
+    ? " · added " + (it.purchased || "unknown") : "";
+  return exp + add + badge(it);
 }
 async function load(){
   list.innerHTML = "";
@@ -444,6 +466,17 @@ document.getElementById('undo').onclick = async () => {
       location: it.location, purchased: it.purchased, expires: it.expires,
       for_recipe: it.for_recipe, source: it.source, notes: it.notes })) }) });
   load();
+};
+const sortby = document.getElementById('sortby');
+sortby.value = sortMode;
+sortby.onchange = () => {
+  sortMode = SORTS[sortby.value] ? sortby.value : "expiry";
+  try { localStorage.setItem('reviewSort', sortMode); } catch(e){}
+  // Re-render sublines before re-placing rows: the "added" order shows a date
+  // the expiry order does not, so the two modes have different row text.
+  for (const { it, li } of rows.values())
+    li.querySelector('.sub').innerHTML = subline(it);
+  resort();
 };
 document.getElementById('refresh').onclick = load;
 load();

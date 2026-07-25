@@ -17,6 +17,7 @@ items and asserts only about its own.
 """
 from __future__ import annotations
 
+import sqlite3
 from datetime import date, timedelta
 
 import pytest
@@ -263,6 +264,62 @@ def test_extending_a_lapsed_row_moves_it_out_of_the_expired_block(
     after = _row_index(page, name)
     assert after > before, f"row did not move (still at index {after})"
     assert "expired" not in row.locator(".sub").inner_text()
+    assert page_errors == [], page_errors
+
+
+def test_sorting_by_added_orders_newest_first(live_server, page, page_errors):
+    """The Added order is newest-first and shows the date it sorted on."""
+    names = {
+        "E2E Added Oldest": "2026-01-04",
+        "E2E Added Middle": "2026-04-15",
+        "E2E Added Newest": "2026-07-20",
+    }
+    _seed(live_server, [_item(n, purchased=p) for n, p in names.items()])
+
+    _open_review(page, live_server)
+    page.locator("#sortby").select_option("added")
+    page.wait_for_timeout(500)
+
+    order = [_row_index(page, n) for n in
+             ("E2E Added Newest", "E2E Added Middle", "E2E Added Oldest")]
+    assert order == sorted(order), f"not newest-first: {order}"
+    assert "added 2026-07-20" in _row(page, "E2E Added Newest").locator(
+        ".sub").inner_text()
+
+    # Switching back restores expiry order and drops the added date again.
+    page.locator("#sortby").select_option("expiry")
+    page.wait_for_timeout(500)
+    assert "added " not in _row(page, "E2E Added Newest").locator(
+        ".sub").inner_text()
+    assert page_errors == [], page_errors
+
+
+def test_rows_without_an_added_date_sink_to_the_bottom(
+    live_server, page, page_errors
+):
+    """Pre-stamp rows have no position in this order — they must not pose as oldest."""
+    _seed(live_server, [
+        _item("E2E Sink Dated", purchased="2026-02-02"),
+        _item("E2E Sink Undated"),
+    ])
+    # add_items stamps every new row, and no route can clear the stamp, so go
+    # to the DB directly to recreate a row that predates the field.
+    conn = sqlite3.connect(live_server.db)
+    conn.execute("UPDATE inventory SET purchased = NULL WHERE name = ?",
+                 ("E2E Sink Undated",))
+    conn.commit()
+    conn.close()
+    assert _rows_named(live_server, "E2E Sink Undated")[0]["purchased"] is None
+
+    _open_review(page, live_server)
+    page.locator("#sortby").select_option("added")
+    page.wait_for_timeout(500)
+
+    dated = _row_index(page, "E2E Sink Dated")
+    undated = _row_index(page, "E2E Sink Undated")
+    assert undated > dated, f"undated={undated} should sink below dated={dated}"
+    assert "added unknown" in _row(page, "E2E Sink Undated").locator(
+        ".sub").inner_text()
     assert page_errors == [], page_errors
 
 

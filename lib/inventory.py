@@ -400,6 +400,13 @@ def add_items(new_items: list[InventoryItem]) -> dict:
             cur.expires = _earliest_expiry(cur.expires, new.expires)
             merged += 1
         else:
+            # `purchased` doubles as "date added" — it is what the review page
+            # sorts by. Stamp it only when the row is genuinely new: doing it
+            # unconditionally would bump the date on every merge, so re-running
+            # an idempotent seed (pantry staples) would make long-held stock
+            # look like it had just arrived.
+            if new.purchased is None:
+                new.purchased = date.today().isoformat()
             by_key[key] = new
             added += 1
 

@@ -396,3 +396,11 @@ def test_review_page_has_bulk_selection_ui(client):
     assert b'id="selall"' in html
     assert b'class="pick"' in html
     assert b'/api/inventory/bulk' in html
+
+
+def test_review_page_has_a_sort_control(client):
+    """Expiry/Added ordering ships in the page."""
+    html = client.get('/review').data
+    assert b'id="sortby"' in html
+    assert b'value="expiry"' in html
+    assert b'value="added"' in html

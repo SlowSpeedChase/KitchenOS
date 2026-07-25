@@ -379,6 +379,43 @@ class TestPruneExpired:
         assert prune_expired(today=today) == 0
 
 
+class TestPurchasedIsDateAdded:
+    """`purchased` doubles as the date-added stamp the review page sorts by."""
+
+    def test_new_row_without_purchased_is_stamped_today(self, tmp_vault, tmp_db):
+        from datetime import date
+        add_items([InventoryItem(name="Farro", quantity=1, unit="lb",
+                                 category="pantry", location="pantry")])
+        assert read_inventory()[0].purchased == date.today().isoformat()
+
+    def test_explicit_purchased_is_preserved(self, tmp_vault, tmp_db):
+        add_items([InventoryItem(name="Farro", quantity=1, unit="lb",
+                                 category="pantry", location="pantry",
+                                 purchased="2026-01-04")])
+        assert read_inventory()[0].purchased == "2026-01-04"
+
+    def test_merging_does_not_bump_the_original_date(self, tmp_vault, tmp_db):
+        """Re-running an idempotent seed must not make old stock look new."""
+        add_items([InventoryItem(name="Farro", quantity=1, unit="lb",
+                                 category="pantry", location="pantry",
+                                 purchased="2026-01-04")])
+        add_items([InventoryItem(name="Farro", quantity=1, unit="lb",
+                                 category="pantry", location="pantry")])
+        rows = read_inventory()
+        assert len(rows) == 1
+        assert rows[0].quantity == 2          # the merge did happen
+        assert rows[0].purchased == "2026-01-04"
+
+    def test_an_explicit_restock_date_still_wins(self, tmp_vault, tmp_db):
+        add_items([InventoryItem(name="Farro", quantity=1, unit="lb",
+                                 category="pantry", location="pantry",
+                                 purchased="2026-01-04")])
+        add_items([InventoryItem(name="Farro", quantity=1, unit="lb",
+                                 category="pantry", location="pantry",
+                                 purchased="2026-07-20")])
+        assert read_inventory()[0].purchased == "2026-07-20"
+
+
 class TestExtendExpiry:
     def test_adds_days_to_a_future_expiry(self, tmp_vault, tmp_db):
         """+3d on a row good until the 15th means the 18th, not 'three days from now'."""
