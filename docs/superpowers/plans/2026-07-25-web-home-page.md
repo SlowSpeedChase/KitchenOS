@@ -432,11 +432,15 @@ def test_bar_html_has_home_link():
     assert 'href="/"' in bar
 ```
 
-Replace the route-level test with:
+Replace the route-level test with the following. Note the shared `PAGES` constant — both tests cover the same set, and two literal copies would drift the moment a page is added:
 
 ```python
-@pytest.mark.parametrize('path', ['/', '/review', '/system-health', '/nutrition-review',
-                                  '/meal-planner', '/receipt-paste'])
+# Every HTML page served through _serve_page_with_claude_bar.
+PAGES = ['/', '/review', '/system-health', '/nutrition-review',
+         '/meal-planner', '/receipt-paste']
+
+
+@pytest.mark.parametrize('path', PAGES)
 def test_page_has_claude_bar(client, path):
     r = client.get(path)
     assert r.status_code == 200
@@ -446,8 +450,7 @@ def test_page_has_claude_bar(client, path):
     assert '/api/claude-notes' in body
 
 
-@pytest.mark.parametrize('path', ['/', '/review', '/system-health', '/nutrition-review',
-                                  '/meal-planner', '/receipt-paste'])
+@pytest.mark.parametrize('path', PAGES)
 def test_every_page_links_home(client, path):
     body = client.get(path).get_data(as_text=True)
     assert 'id="ko-home-link"' in body
