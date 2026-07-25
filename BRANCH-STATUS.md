@@ -3,7 +3,7 @@
 **Created:** 2026-07-25
 **Design Doc:** docs/superpowers/specs/2026-07-25-bulk-inventory-editing-design.md
 **Impl Plan:** docs/superpowers/plans/2026-07-25-bulk-inventory-editing.md
-**Current Stage:** planning
+**Current Stage:** review
 **Last Rebased:** 2026-07-25 (branched from main @ 51f0007)
 
 ## Overview
@@ -47,25 +47,31 @@ Deliverables (6 tasks):
 - [x] Implementation plan written (superpowers:writing-plans)
 
 ### Dev
-- [ ] Tests written first (superpowers:test-driven-development)
-- [ ] Core implementation complete
-- [ ] All tests passing
-- [ ] No linting/type errors
-- [ ] Code follows project patterns
-- [ ] LaunchAgent restarted if lib/, templates/, or prompts/ changed — required, both change
+- [x] Tests written first (superpowers:test-driven-development)
+- [x] Core implementation complete — tasks 1-5
+- [x] All tests passing — 1445 passed, 1 skipped (baseline on main was 1405)
+- [x] No linting/type errors
+- [x] Code follows project patterns
+- [ ] LaunchAgent restarted if lib/, templates/, or prompts/ changed — **deferred to
+      post-merge**, see Notes: the agent's `WorkingDirectory` is the main worktree, so
+      reloading it here would serve main's code, not this branch's
 
 ### Testing
-- [ ] Unit tests pass
-- [ ] Integration tests pass (if applicable)
-- [ ] Manual testing completed — the 5-step phone script in Task 6, Step 3
-- [ ] Edge cases verified
-- [ ] Verified with superpowers:verification-before-completion
+- [x] Unit tests pass — 1445 passed, 1 skipped
+- [x] Integration tests pass (if applicable) — full e2e suite green:
+      18 passed, 2 xfailed, 2 xpassed (both xpasses pre-existing, real-vault state)
+- [x] Manual testing completed — **automated instead.** All five steps of the Task 6
+      phone script are now browser tests in `tests/e2e/test_bulk_inventory.py`; the
+      plan's premise that the repo has no JS harness was wrong
+- [x] Edge cases verified — merge-on-move (two locations → one summed row),
+      5-row remove + undo round trip, heterogeneous selection offering every chip
+- [x] Verified with superpowers:verification-before-completion
 
 ### Docs
-- [ ] Doc obligations met per CLAUDE.md table — `docs/API.md` (new endpoint contract)
-- [ ] README updated (if interface changed)
-- [ ] docs/plans/INDEX.md updated
-- [ ] Code comments where needed
+- [x] Doc obligations met per CLAUDE.md table — `docs/API.md` (new endpoint contract)
+- [x] README updated (if interface changed) — n/a, no user-facing install/usage change
+- [x] docs/plans/INDEX.md updated
+- [x] Code comments where needed
 
 ### Review
 - [ ] Requested review (superpowers:requesting-code-review)
@@ -94,6 +100,38 @@ Deliverables (6 tasks):
 - The concurrent-writer lost-update TODO at `lib/inventory.py:308` is narrowed by
   this work (one write instead of N) but **not closed**. Still needs
   `INSERT … ON CONFLICT` in one transaction.
+
+### Deviations from the plan (for the reviewer)
+
+1. **Task 6 Step 2 (reload the LaunchAgent) was not run.** `com.kitchenos.api` has
+   `WorkingDirectory = ~/Dev/KitchenOS` — the *main* worktree — so reloading it serves
+   main, not this branch. The step is correct but belongs after the merge, not here.
+   Verification used the e2e harness's own isolated server instead.
+2. **Task 6 Step 3 (manual phone script) was automated.** The plan said "there is no JS
+   test harness in this repo"; `tests/e2e/` is exactly that — a Playwright harness
+   driving a real server against copies of the vault and DB. All five steps are now
+   tests, so they keep passing after the merge instead of being hand-checked once. The
+   217 lines of new page JS had never been executed in a browser before this.
+3. **Task 6 Step 4's `###` block did not match `docs/API.md`.** That file is a
+   one-row-per-route table, so the endpoint is documented as a table row carrying the
+   same contract. The `/review` row was updated too, and the section's stale "62 routes"
+   header corrected to 75 (verified against `app.url_map`, which the table already
+   matched row-for-row).
+
+### Found, not fixed — needs a scope call
+
+Undo cannot restore a **deliberately cleared** expiry. The page's undo replays removed
+rows through `POST /api/inventory/add`, and `add_items` auto-fills a shelf-life expiry
+whenever `expires is None` — so an item whose expiry was cleared via "🚫 Remove
+expiration" comes back dated (measured: a pantry item returned with an expiry a year
+out). `POST /api/inventory/bulk` is **not** at fault; its `removed` payload carries the
+null faithfully.
+
+Pre-existing on main — the single-row remove path replays identically — but bulk widens
+it from one row to a whole selection. Pinned as a **strict** xfail
+(`test_undo_restores_a_deliberately_cleared_expiry`) so it flips to a failure the day
+it's fixed rather than being forgotten. A real fix needs a way to add a row with an
+explicitly null expiry, which is a contract decision beyond this branch.
 
 ---
 

@@ -1,5 +1,14 @@
 # Bulk Inventory Editing Implementation Plan
 
+> **STATUS — all 6 tasks implemented; branch is at `review` (2026-07-25).** The
+> per-step checkboxes below were not back-ticked; `BRANCH-STATUS.md` is the
+> authoritative tracker and records the outcome of each stage. Three steps were
+> executed differently than written — Task 6 Steps 2, 3 and 4 — and the reasons are
+> in that file's "Deviations from the plan" section. Most relevant here: Task 5's
+> claim that the repo has **no JS test harness is wrong** (`tests/e2e/` is a
+> Playwright harness), so Task 6's manual phone script became
+> `tests/e2e/test_bulk_inventory.py` instead of a one-time hand check.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let the `/review` page apply one action (remove, extend, set-expiry, set-category, move, freeze) to many selected inventory items in a single server write, and fix the `(name, location)` vs `(name, unit, location)` addressing mismatch on the bulk path.
