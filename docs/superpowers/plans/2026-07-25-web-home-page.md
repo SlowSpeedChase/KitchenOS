@@ -500,51 +500,18 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 ---
 
-### Task 5: Propagate the new page, and document it
+### Task 5: Document the route
 
 **Files:**
 - Modify: `docs/API.md` (page-route table)
-- Regenerate: the vault note and the Safari bookmarks (no source edits)
 
 **Interfaces:**
-- Consumes: everything from Tasks 1-4.
-- Produces: nothing other tasks depend on. This is the CLAUDE.md "new page → new bookmark" obligation.
+- Consumes: the `/` route from Task 3.
+- Produces: nothing other tasks depend on.
 
-- [ ] **Step 1: Restart the API so the running server stops serving stale code**
+**Why this task no longer does the propagation.** It originally also restarted the API LaunchAgent and verified `/` over curl. That cannot work from this branch: `com.kitchenos.api.plist` runs `/Users/chaseeasterling/Dev/KitchenOS/api_server.py` with `WorkingDirectory` set to the **main** repo, not this worktree. Restarting it reloads main's code, which has no `/` route — verified during execution, `GET /` returns 404 against the live service while `/health` returns 200. Deployment therefore moves to the post-merge section below, where it actually applies.
 
-`com.kitchenos.api` holds `lib/*` and templates in memory, so every change from Tasks 1-4 is invisible to the live server until it reloads.
-
-```bash
-launchctl unload ~/Library/LaunchAgents/com.kitchenos.api.plist
-launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist
-sleep 2
-curl -s http://localhost:5001/health
-```
-
-Expected: a JSON health payload, not a connection error.
-
-- [ ] **Step 2: Verify the live page**
-
-```bash
-curl -s http://localhost:5001/ | grep -c 'class="card"'
-curl -s http://localhost:5001/ | grep -c 'ko-home-link'
-curl -s http://localhost:5001/review | grep -c 'ko-home-link'
-```
-
-Expected: the first prints the number of pages in `SECTIONS` (6 at time of writing), the other two print `1` each.
-
-- [ ] **Step 3: Regenerate the vault note and sync Safari**
-
-The Safari sync quits and relaunches Safari — pre-authorized per CLAUDE.md; it restores tabs and no-ops if Safari isn't running.
-
-```bash
-.venv/bin/python scripts/generate_web_dashboard.py
-.venv/bin/python scripts/sync_safari_bookmarks.py --apply
-```
-
-Expected: the generator prints the written note path and base URL; the sync reports the home bookmark added.
-
-- [ ] **Step 4: Document the route**
+- [ ] **Step 1: Document the route**
 
 In `docs/API.md`, the HTML page routes sit together in the main routes table at lines 82-86 (`/system-health`, `/nutrition-review`, `/review`, `/receipt-paste`), whose columns are `| Route | Method | Purpose |`. Add this row directly after the `/receipt-paste` row:
 
@@ -554,7 +521,12 @@ In `docs/API.md`, the HTML page routes sit together in the main routes table at 
 
 Unrelated staleness worth noting but **not** fixing in this branch: the `/review` row still describes only "Remove (with Undo), +3d, +7d quick-extend buttons, and Refresh", predating the per-item kebab menu added in `f87fa17`. Leave it — it belongs to the bulk-inventory work.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 2: Verify the docs render and nothing else changed**
+
+Run: `git diff --stat`
+Expected: `docs/API.md` only, one line added.
+
+- [ ] **Step 3: Commit**
 
 ```bash
 git add docs/API.md
@@ -562,6 +534,43 @@ git commit -m "docs: document the / home page route
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
+
+---
+
+## Post-merge deployment
+
+**These steps run against `main` after the branch merges — not on the branch.** The API LaunchAgent serves the main checkout, so the new page does not exist to the running service until then.
+
+- [ ] Restart the API so it stops serving pre-merge code. `com.kitchenos.api` holds `lib/*` and templates in memory.
+
+  ```bash
+  cd /Users/chaseeasterling/Dev/KitchenOS
+  launchctl unload ~/Library/LaunchAgents/com.kitchenos.api.plist
+  launchctl load ~/Library/LaunchAgents/com.kitchenos.api.plist
+  sleep 2
+  curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5001/health
+  ```
+
+  Expected: `200`.
+
+- [ ] Verify the live page.
+
+  ```bash
+  curl -s http://localhost:5001/ | grep -c 'class="card"'
+  curl -s http://localhost:5001/ | grep -c 'ko-home-link'
+  curl -s http://localhost:5001/review | grep -c 'ko-home-link'
+  ```
+
+  Expected: the first prints the number of pages in `SECTIONS` (6 at time of writing), the other two print `1` each.
+
+- [ ] Regenerate the vault note and sync Safari — the CLAUDE.md "new page → new bookmark" obligation. The Safari sync quits and relaunches Safari; that is pre-authorized per CLAUDE.md, it restores tabs, and it no-ops if Safari isn't running.
+
+  ```bash
+  .venv/bin/python scripts/generate_web_dashboard.py
+  .venv/bin/python scripts/sync_safari_bookmarks.py --apply
+  ```
+
+  Expected: the generator prints the written note path and base URL; the sync reports the home bookmark added.
 
 ---
 
