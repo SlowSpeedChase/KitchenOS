@@ -13,11 +13,11 @@ rank by leftover *quantity*, not just expiry.
 from __future__ import annotations
 
 from datetime import date
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from lib.expiry import SOON_THRESHOLD_DAYS
 from lib.inventory import _format_quantity
-from lib.recipe_matcher import _content_tokens
+from lib.recipe_matcher import _content_tokens, _head_token
 
 # Expired items are twice as urgent as expiring-soon ones when ranking recipes.
 _STATUS_RANK = {"expired": 0, "soon": 1}
@@ -30,17 +30,83 @@ _STATUS_WEIGHT = {"expired": 2, "soon": 1}
 _EXPIRED_GRACE_DAYS = 2
 
 
-def _staple_token_sets(staples: Optional[set] = None) -> list[frozenset]:
-    """Token sets for the pantry staples the user 'always has' and self-manages."""
+# Compound foods whose head noun lies about what they are: peanut butter is not
+# butter, coconut milk is not milk. Head-noun matching would happily equate them
+# with the bare staple, so these only ever match themselves (exact token set).
+_ATOMIC_FOODS: tuple[frozenset, ...] = tuple(
+    _content_tokens(name) for name in (
+        "peanut butter", "almond butter", "cashew butter", "apple butter",
+        "cocoa butter", "coconut milk", "almond milk", "oat milk", "soy milk",
+        "coconut cream", "butter beans", "cream of tartar",
+    )
+)
+
+
+class Phrase(NamedTuple):
+    """A food name reduced for matching: its content tokens plus its head noun.
+
+    ``strict`` marks a *clean* name — an inventory row or a configured staple,
+    written as just the food. Recipe ingredient text is not clean ("unsalted
+    butter, softened", "flour spooned and leveled, see notes"), so its trailing
+    word is unreliable as a head noun and it is parsed non-strict.
+    """
+    tokens: frozenset
+    head: Optional[str]
+    strict: bool = True
+
+
+def _phrase(text: str, strict: bool = True) -> Phrase:
+    """Reduce a clean food name (inventory row, staple) to matchable form."""
+    return Phrase(_content_tokens(text), _head_token(text), strict)
+
+
+def _ingredient_phrase(text: str) -> Phrase:
+    """Reduce free-text recipe ingredient text to matchable form."""
+    return _phrase(text, strict=False)
+
+
+def _covers(a: Phrase, b: Phrase) -> bool:
+    """True if ``a`` and ``b`` name the same food.
+
+    Token containment in either direction is necessary. When the *containing*
+    phrase is a clean name, containment must also reach its head noun, so a
+    modifier-only overlap ("egg" inside "Lo mein egg noodles") is rejected.
+    When the containing phrase is noisy ingredient text, plain containment
+    stands — its extra words are preparation notes ("butter, softened"), not a
+    different food. Compound foods in ``_ATOMIC_FOODS`` demand an exact match.
+    """
+    if not a.tokens or not b.tokens:
+        return False
+    if a.tokens == b.tokens:
+        return True
+    if a.tokens <= b.tokens:
+        shorter, longer = a, b
+    elif b.tokens <= a.tokens:
+        shorter, longer = b, a
+    else:
+        return False
+    # A compound food only matches something that names the whole compound:
+    # "peanut butter" is not "butter", but it is still "creamy peanut butter,
+    # softened". Blanket-rejecting anything atomic would break the latter.
+    core = next((c for c in _ATOMIC_FOODS if c <= longer.tokens), None)
+    if core is not None and not core <= shorter.tokens:
+        return False
+    if not longer.strict:
+        return True
+    return longer.head is not None and longer.head in shorter.tokens
+
+
+def _staple_phrases(staples: Optional[set] = None) -> list[Phrase]:
+    """Phrases for the pantry staples the user 'always has' and self-manages."""
     if staples is None:
         from lib.meal_suggester import load_pantry_staples
         staples = load_pantry_staples()
-    return [t for t in (_content_tokens(s) for s in staples) if t]
+    return [p for p in (_phrase(s) for s in staples) if p.tokens]
 
 
-def _is_staple(item_tokens: frozenset, staple_sets: list[frozenset]) -> bool:
+def _is_staple(item: Phrase, staple_phrases: list[Phrase]) -> bool:
     """True if the item is a known staple (e.g. 'salted butter' matches 'butter')."""
-    return any(st <= item_tokens for st in staple_sets)
+    return any(_covers(st, item) for st in staple_phrases)
 
 
 def _days_to_expiry(expires: Optional[str], today: date) -> Optional[int]:
@@ -65,14 +131,14 @@ def at_risk_items(items: list, today: Optional[date] = None,
     """
     today = today or date.today()
     if staple_sets is None:
-        staple_sets = _staple_token_sets()
+        staple_sets = _staple_phrases()
 
     flagged = []
     for it in items:
         delta = _days_to_expiry(getattr(it, "expires", None), today)
         if delta is None or delta > soon_days or delta < -expired_grace_days:
             continue
-        if _is_staple(_content_tokens(it.name), staple_sets):
+        if _is_staple(_phrase(it.name), staple_sets):
             continue
         status = "expired" if delta < 0 else "soon"
         flagged.append((status, it))
@@ -80,14 +146,9 @@ def at_risk_items(items: list, today: Optional[date] = None,
     return flagged
 
 
-def _matches(item_tokens: frozenset, ingredient_token_sets: list[frozenset]) -> bool:
-    """True if the item shares a token-subset with any recipe ingredient."""
-    if not item_tokens:
-        return False
-    for ing in ingredient_token_sets:
-        if ing and (item_tokens <= ing or ing <= item_tokens):
-            return True
-    return False
+def _matches(item: Phrase, ingredient_phrases: list[Phrase]) -> bool:
+    """True if the item names the same food as any recipe ingredient."""
+    return any(_covers(item, ing) for ing in ingredient_phrases)
 
 
 def suggest(items: list, recipe_index: list[dict], today: Optional[date] = None,
@@ -101,7 +162,7 @@ def suggest(items: list, recipe_index: list[dict], today: Optional[date] = None,
     butter + the expiring item still surfaces.
     """
     today = today or date.today()
-    flagged = at_risk_items(items, today, _staple_token_sets(staples))
+    flagged = at_risk_items(items, today, _staple_phrases(staples))
 
     at_risk = [
         {
@@ -117,16 +178,16 @@ def suggest(items: list, recipe_index: list[dict], today: Optional[date] = None,
     if not flagged:
         return {"at_risk": [], "suggestions": []}
 
-    tokened = [(status, it, _content_tokens(it.name)) for status, it in flagged]
+    tokened = [(status, it, _phrase(it.name)) for status, it in flagged]
 
     suggestions = []
     for recipe in recipe_index:
-        ing_sets = [_content_tokens(s) for s in recipe.get("ingredient_items", [])]
+        ing_sets = [_ingredient_phrase(s) for s in recipe.get("ingredient_items", [])]
         if not ing_sets:
             continue
         uses, urgency = [], 0
-        for status, it, item_tokens in tokened:
-            if _matches(item_tokens, ing_sets):
+        for status, it, item_phrase in tokened:
+            if _matches(item_phrase, ing_sets):
                 uses.append({"name": it.name, "status": status, "expires": it.expires})
                 urgency += _STATUS_WEIGHT[status]
         if uses:

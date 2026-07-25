@@ -22,7 +22,9 @@ from lib.recipe_matcher import _content_tokens
 from lib.use_it_up import (
     _is_staple,
     _matches,
-    _staple_token_sets,
+    _ingredient_phrase,
+    _phrase,
+    _staple_phrases,
     at_risk_items,
 )
 
@@ -46,10 +48,10 @@ def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
         from lib.recipe_index import get_recipe_index
         recipe_index = get_recipe_index(paths.recipes_dir(), include_ingredients=True)
 
-    staple_sets = _staple_token_sets()
-    inv_token_sets = [_content_tokens(it.name) for it in items]
+    staple_sets = _staple_phrases()
+    inv_phrases = [_phrase(it.name) for it in items]
     at_risk_sets = [
-        _content_tokens(it.name)
+        _phrase(it.name)
         for _, it in at_risk_items(items, today, staple_sets)
     ]
 
@@ -62,11 +64,12 @@ def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
         missing = []
         at_risk = False
         for ing in ingredients:
-            ing_tokens = _content_tokens(ing)
-            on_hand = _is_staple(ing_tokens, staple_sets) or _matches(ing_tokens, inv_token_sets)
+            ing_phrase = _ingredient_phrase(ing)
+            on_hand = (_is_staple(ing_phrase, staple_sets)
+                       or _matches(ing_phrase, inv_phrases))
             if not on_hand:
                 missing.append(ing)
-            if _matches(ing_tokens, at_risk_sets):
+            if _matches(ing_phrase, at_risk_sets):
                 at_risk = True
 
         total = len(ingredients)

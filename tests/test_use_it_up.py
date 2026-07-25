@@ -80,6 +80,100 @@ class TestSuggest:
         assert result == {"at_risk": [], "suggestions": []}
 
 
+class TestMatchPrecision:
+    """Token containment must not let a generic ingredient swallow a compound food.
+
+    ``_matches``/``_is_staple`` used a bare bidirectional subset test, so any
+    single-token ingredient matched every longer inventory name containing that
+    word — "eggs" matched "Lo mein egg noodles", "butter" matched "Peanut
+    butter". Containment into a *clean* name (inventory row, staple) now has to
+    reach that name's head noun. Free-text ingredient strings stay on plain
+    containment, since their trailing words are prep notes rather than food.
+    """
+
+    def _matches_name(self, item, ingredient):
+        return use_it_up._matches(use_it_up._phrase(item),
+                                  [use_it_up._ingredient_phrase(ingredient)])
+
+    def _is_staple_name(self, item, staple):
+        """`item` is a clean inventory name."""
+        return use_it_up._is_staple(use_it_up._phrase(item),
+                                    use_it_up._staple_phrases({staple}))
+
+    def _ingredient_is_staple(self, text, staple):
+        """`text` is free-form recipe ingredient text."""
+        return use_it_up._is_staple(use_it_up._ingredient_phrase(text),
+                                    use_it_up._staple_phrases({staple}))
+
+    # --- false positives that must now be rejected ---
+
+    def test_egg_does_not_match_egg_noodles(self):
+        assert not self._matches_name("Lo mein egg noodles", "eggs")
+
+    def test_corn_does_not_match_corn_tortilla_chips(self):
+        assert not self._matches_name("yellow corn tortilla chips", "corn")
+
+    def test_egg_noodles_are_not_an_egg_staple(self):
+        assert not self._is_staple_name("Lo mein egg noodles", "egg")
+
+    def test_peanut_butter_is_not_a_butter_staple(self):
+        # Head noun is "butter", but peanut butter is its own food.
+        assert not self._is_staple_name("Peanut butter", "butter")
+
+    def test_coconut_milk_is_not_a_milk_staple(self):
+        assert not self._is_staple_name("Canned coconut milk", "milk")
+
+    # --- true positives that must keep working ---
+
+    def test_descriptor_prefix_still_matches(self):
+        assert self._matches_name("fresh strawberries", "strawberries")
+
+    def test_salted_butter_is_still_a_butter_staple(self):
+        assert self._is_staple_name("Salted Butter", "butter")
+
+    def test_variant_still_matches_on_shared_head(self):
+        assert self._matches_name("large curd cottage cheese", "cottage cheese")
+
+    def test_exact_name_matches(self):
+        assert self._matches_name("Okra", "okra")
+
+    def test_cut_still_matches_its_animal(self):
+        # "breast"/"thigh" name a cut, not a different food — the head noun to
+        # match on is the protein itself.
+        assert self._matches_name("Chicken", "boneless skinless chicken breasts")
+        assert self._matches_name("Pork", "pork shoulder")
+
+    def test_preparation_notes_in_ingredient_text_do_not_block_a_match(self):
+        # Ingredient text is free-form; its trailing words are prep notes, not
+        # a different food. These regressed when the head test was applied to
+        # the noisy side as well as the clean one.
+        assert self._ingredient_is_staple("unsalted butter, softened (112 g)", "butter")
+        assert self._ingredient_is_staple("butter (melted)", "butter")
+        assert self._ingredient_is_staple("egg yolks, at room temperature", "egg")
+        assert self._matches_name("Beef broth",
+                                  "beef broth  i use unsalted (or beef stock)")
+
+    def test_ground_form_still_matches_the_spice(self):
+        # "powder"/"weed" name the form, not a different food.
+        assert self._matches_name("Coriander powder", "ground coriander")
+        assert self._matches_name("Dried dill weed", "fresh dill")
+
+    def test_a_compound_keeps_its_identity_through_a_form_word(self):
+        # ...but stripping the form word must not expose "peanut butter powder"
+        # as plain butter.
+        assert not self._is_staple_name("peanut butter powder", "butter")
+
+    def test_an_atomic_food_still_matches_itself_through_prep_notes(self):
+        # Being atomic blocks the *base* staple, not the food's own variants.
+        assert self._matches_name("Peanut butter",
+                                  "creamy peanut butter jif or similar (128 g)")
+        assert self._matches_name("Canned coconut milk", "coconut milk (chilled)")
+
+    def test_ingredient_text_is_parsed_non_strict(self):
+        assert use_it_up._ingredient_phrase("butter (melted)").strict is False
+        assert use_it_up._phrase("Salted Butter").strict is True
+
+
 class TestRender:
     def test_markdown_lists_at_risk_and_recipes(self):
         items = [_item("Strawberries", SOON)]
