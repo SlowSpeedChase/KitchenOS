@@ -1,7 +1,7 @@
 # KitchenOS Operations Runbook
 
 The canonical home for running, deploying, and operating KitchenOS: one-off
-CLI commands, the 7 LaunchAgents (install/logs/restart), operational
+CLI commands, the 8 LaunchAgents (install/logs/restart), operational
 caveats, health checks, the failure-analysis agent, QuickAdd setup, the test
 suite, the native app build/sign/deploy procedure, and the completing-work
 checklist. For "what exists and why" see `docs/ARCHITECTURE.md`; for the
@@ -285,9 +285,9 @@ it replayed.
 
 ---
 
-## 2. LaunchAgents (all 7)
+## 2. LaunchAgents (all 8)
 
-All 7 agents run as `~/Library/LaunchAgents/com.kitchenos.<name>.plist`, with
+All 8 agents run as `~/Library/LaunchAgents/com.kitchenos.<name>.plist`, with
 `ops/com.kitchenos.<name>.plist` in the repo as the canonical source —
 **edit the repo copy, then re-copy it to `~/Library/LaunchAgents/` and
 reload**, don't hand-edit the installed copy. General pattern:
@@ -451,6 +451,35 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.receipt-ingest.plist
 
 .venv/bin/python ingest_receipts.py
 ```
+
+### com.kitchenos.verdict-nudge
+
+The one recurring cue in the system: asks "how did that go?" about a recent
+cook that has no verdict yet. Runs `scripts/nudge_verdicts.py` daily at
+**20:15** — after dinner and cleanup, while the meal is still recallable, and
+before the late-evening window `My Meal System.md` identifies as the hard one.
+No `RunAtLoad`. **Stays silent unless there is something to answer** — see
+`lib/verdict_nudge.py` for why that restraint is load-bearing.
+
+```bash
+cp ops/com.kitchenos.verdict-nudge.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.kitchenos.verdict-nudge.plist
+
+tail -f logs/verdict_nudge.log
+
+launchctl unload ~/Library/LaunchAgents/com.kitchenos.verdict-nudge.plist
+launchctl load ~/Library/LaunchAgents/com.kitchenos.verdict-nudge.plist
+
+.venv/bin/python scripts/nudge_verdicts.py --dry-run   # show, send nothing
+```
+
+### Reload them all at once
+
+`scripts/reload_launch_agents.sh` boots out and re-bootstraps every installed
+`com.kitchenos.*` agent, discovering them from `~/Library/LaunchAgents/` rather
+than a hardcoded list. **Run it from a Terminal in your GUI session** — user
+agents live in the `gui/<uid>` domain and can't be managed from an SSH session
+or Claude Code's Bash tool.
 
 ---
 
