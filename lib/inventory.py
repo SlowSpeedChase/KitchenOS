@@ -24,7 +24,7 @@ CATEGORIES = (
     "frozen", "bakery", "beverages", "household", "other",
 )
 LOCATIONS = ("fridge", "freezer", "pantry", "counter", "other")
-SOURCES = ("receipt", "manual", "claude", "csa")
+SOURCES = ("receipt", "manual", "claude", "csa", "staple")
 
 HEADER = "| Item | Quantity | Unit | Category | Location | For Recipe | Purchased | Expires | Source | Notes |"
 SEPARATOR = "|------|----------|------|----------|----------|------------|-----------|---------|--------|-------|"
@@ -251,10 +251,15 @@ def write_inventory(items: list[InventoryItem]) -> None:
     # The DB (source of truth) has already committed at this point. A failed
     # view write must not propagate: raising would make the API return 500,
     # and a client retry would double-add quantities.
+    #
+    # Render from the committed rows, never from `items`. Cook Now (below) re-reads
+    # the DB, so rendering this view off the caller's list gave the two notes two
+    # different sources and let them disagree — a stale or empty caller list once
+    # shipped an empty Inventory.md next to a populated Cook Now.md.
     try:
         path = inventory_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(render_inventory_md(items), encoding="utf-8")
+        path.write_text(render_inventory_md(read_inventory()), encoding="utf-8")
     except OSError as e:
         print(f"⚠️  Inventory view write failed: {e}", file=sys.stderr)
 
@@ -277,6 +282,62 @@ def write_inventory(items: list[InventoryItem]) -> None:
 # with no manual "I used this" step. A few days' grace past expiry stays so the
 # Use-It-Up nudge still catches just-expired items.
 PRUNE_GRACE_DAYS = 3
+
+# Staples you always keep but nobody "stocks" as a countable pantry item.
+_UNSTOCKABLE_STAPLES = frozenset({"water", "ice"})
+
+
+def seed_pantry_staples(staples: Optional[set] = None) -> dict:
+    """Add any pantry staple that isn't already stocked as a perpetual row.
+
+    Staples were previously an invisible assumption: ``cook_now`` credited them
+    as on-hand without them existing in inventory, so a recipe could read 100%
+    while the fridge said otherwise. Materializing them makes the assumption
+    visible and auditable in ``Inventory.md``.
+
+    Rows are written with no ``expires``, so ``prune_expired`` never touches
+    them and ``at_risk_items`` never nags — they persist until explicitly
+    removed. Idempotent: a staple already covered by something stocked (a
+    seeded "butter", or a receipt's "Salted Butter") is skipped rather than
+    duplicated. Returns ``{"added": [...], "skipped": [...]}``.
+    """
+    from lib.use_it_up import _covers, _is_staple, _phrase
+
+    if staples is None:
+        from lib.meal_suggester import load_pantry_staples
+        staples = load_pantry_staples()
+
+    candidates = [
+        (name, _phrase(name)) for name in sorted(staples)
+        if name.lower() not in _UNSTOCKABLE_STAPLES
+    ]
+    # Generic before specific ("pepper" before "black pepper") so the broader
+    # name is the one seeded and the narrower duplicate collapses into it.
+    candidates.sort(key=lambda c: len(c[1].tokens))
+
+    existing = read_inventory()
+    stocked = [_phrase(it.name) for it in existing]
+    added, skipped = [], []
+
+    for name, phrase in candidates:
+        if not phrase.tokens or _is_staple(phrase, stocked):
+            skipped.append(name)
+            continue
+        if any(_covers(phrase, chosen) for chosen in
+               (_phrase(a) for a in added)):
+            skipped.append(name)
+            continue
+        added.append(name)
+        stocked.append(phrase)
+
+    if added:
+        write_inventory(existing + [
+            InventoryItem(name=name, quantity=1, unit="ct", category="pantry",
+                          location="pantry", source="staple",
+                          notes="always on hand")
+            for name in added
+        ])
+    return {"added": added, "skipped": skipped}
 
 
 def prune_expired(today: Optional[date] = None,

@@ -26,7 +26,7 @@ from lib.pantry import (
 )
 from lib.recipe_matcher import _content_tokens
 from lib.recipe_parser import parse_recipe_body, parse_recipe_file
-from lib.use_it_up import _is_staple, _staple_token_sets
+from lib.use_it_up import _ingredient_phrase, _is_staple, _staple_phrases
 
 
 def recipe_ingredients(recipe_name: str) -> Optional[list[dict]]:
@@ -54,7 +54,7 @@ def consume_recipe(recipe_name: str, servings: float = 1.0,
                 "consumed": [], "skipped_staples": [], "not_tracked": [],
                 "unconvertible": []}
 
-    staple_sets = _staple_token_sets(staples)
+    staple_sets = _staple_phrases(staples)
     pantry = load_pantry()
     before = {e["item"]: parse_amount_to_float(e["amount"]) or 0.0 for e in pantry}
     units = {e["item"]: e.get("unit") for e in pantry}
@@ -64,7 +64,7 @@ def consume_recipe(recipe_name: str, servings: float = 1.0,
         item = (ing.get("item") or "").strip()
         if not item:
             continue
-        if _is_staple(_content_tokens(item), staple_sets):
+        if _is_staple(_ingredient_phrase(item), staple_sets):
             skipped_staples.append(item)
             continue
         match = find_match(item, pantry)

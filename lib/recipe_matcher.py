@@ -63,10 +63,51 @@ def _stem(word: str) -> str:
     return word
 
 
+def _content_words(text: str) -> list[str]:
+    """Ordered identity words: stopwords dropped, singularized. Order matters
+    for head-noun detection, so this is the ordered counterpart to
+    ``_content_tokens``."""
+    words = re.findall(r"[a-z]+", (text or "").lower())
+    return [_stem(w) for w in words if w not in _STOPWORDS]
+
+
 def _content_tokens(text: str) -> frozenset[str]:
     """Lowercase identity tokens: words minus stopwords, singularized."""
-    words = re.findall(r"[a-z]+", (text or "").lower())
-    return frozenset(_stem(w) for w in words if w not in _STOPWORDS)
+    return frozenset(_content_words(text))
+
+
+# Cuts and forms, not foods in their own right. "chicken breast" is still
+# chicken, so these are skipped when looking for a phrase's head noun.
+_PART_WORDS = frozenset({
+    "breast", "thigh", "wing", "drumstick", "shoulder", "loin", "tenderloin",
+    "chop", "cutlet", "shank", "rib", "fillet", "filet", "leg", "steak",
+    "roast", "mince", "strip", "tender", "chunk", "cube", "half", "quarter",
+    "kernel", "floret", "clove", "juice", "zest",
+    # forms a food is sold in — "coriander powder" is still coriander, and
+    # "dill weed" is still dill
+    "powder", "weed",
+})
+
+
+def _head_token(text: str) -> Optional[str]:
+    """The head noun of a food phrase — its last content word.
+
+    English food names are head-final ("salted *butter*", "lo mein egg
+    *noodles*"), so the last surviving word is what the phrase fundamentally
+    *is*. Matching on the head keeps "salted butter" ≡ butter while rejecting
+    "egg noodles" ≡ egg.
+
+    Trailing cut/form words are skipped: "chicken breasts" is a cut of chicken,
+    so its head is "chicken", not "breast". A phrase that is *only* cut words
+    keeps its last word — there is nothing more specific to fall back to.
+    """
+    words = _content_words(text)
+    if not words:
+        return None
+    for word in reversed(words):
+        if word not in _PART_WORDS:
+            return word
+    return words[-1]
 
 
 def current_week_window() -> list[str]:
