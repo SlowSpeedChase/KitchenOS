@@ -2,7 +2,7 @@
 
 **Created:** 2026-07-25
 **Design Doc:** docs/superpowers/specs/2026-07-25-web-home-page-design.md
-**Current Stage:** planning
+**Current Stage:** ready
 **Last Rebased:** 2026-07-25 (branched from main at `5a2b994`)
 
 ## Overview
@@ -37,39 +37,39 @@ it feed a third consumer, so a page registered once appears in all three.
 - [x] Conflict check completed (no overlapping work)
 - [x] Dependencies identified and noted
 - [x] Branch and worktree created
-- [ ] Implementation plan written (superpowers:writing-plans)
+- [x] Implementation plan written (superpowers:writing-plans) — `docs/superpowers/plans/2026-07-25-web-home-page.md`
 
 ### Dev
-- [ ] Tests written first (superpowers:test-driven-development)
-- [ ] Core implementation complete
-- [ ] All tests passing
-- [ ] No linting/type errors
-- [ ] Code follows project patterns
-- [ ] LaunchAgent restarted if lib/, templates/, or prompts/ changed
+- [x] Tests written first (superpowers:test-driven-development) — TDD per task, RED/GREEN evidence in `.superpowers/sdd/task-*-report.md`
+- [x] Core implementation complete (5 tasks, subagent-driven)
+- [x] All tests passing — 1405 passed, 16 deselected
+- [x] No linting/type errors
+- [x] Code follows project patterns
+- [ ] BLOCKED: LaunchAgent restart — deferred to post-merge. `com.kitchenos.api.plist` runs the **main** checkout (`WorkingDirectory` = `/Users/chaseeasterling/Dev/KitchenOS`), so restarting from this worktree reloads code without the `/` route. Confirmed live during execution: `/health` 200, `GET /` 404.
 
 ### Testing
-- [ ] Unit tests pass
-- [ ] Integration tests pass (if applicable)
-- [ ] Manual testing completed
-- [ ] Edge cases verified
-- [ ] Verified with superpowers:verification-before-completion
+- [x] Unit tests pass — 1405 passed
+- [x] Integration tests pass — Flask test-client coverage of `/` and the shared bar across all 6 pages
+- [ ] BLOCKED: Manual testing — needs the merged code running; see "Post-merge deployment" in the plan
+- [x] Edge cases verified — markup injection via registry prose, escaping of real titles (`Plan & cook`, `This week's meal plan`), unsubstituted-placeholder guard
+- [x] Verified with superpowers:verification-before-completion
 
 ### Docs
-- [ ] Doc obligations met per CLAUDE.md table (ARCHITECTURE / API / OPERATIONS / invariants)
-- [ ] README updated (if interface changed)
-- [ ] docs/plans/INDEX.md updated
-- [ ] Code comments where needed
+- [x] Doc obligations met per CLAUDE.md table — `docs/API.md` row for `/`; CLAUDE.md invariant updated for the third accounting bucket (`HOME`)
+- [x] README updated (if interface changed) — n/a, README carries no page inventory
+- [x] docs/plans/INDEX.md updated
+- [x] Code comments where needed — stale `SECTIONS`-consumer prose corrected in `lib/web_dashboard.py` and `scripts/sync_safari_bookmarks.py`
 
 ### Review
-- [ ] Requested review (superpowers:requesting-code-review)
-- [ ] Review feedback addressed
-- [ ] Changes approved
+- [x] Requested review — per-task review after each of 5 tasks, plus a final whole-branch review
+- [x] Review feedback addressed — final review's 4 actionable findings fixed in `11a3949` and `8e22f51`
+- [x] Changes approved — final verdict "ready with fixes"; fixes applied and re-verified
 
 ### Ready
-- [ ] Rebased on latest main
-- [ ] Final test pass after rebase
-- [ ] BRANCH-STATUS.md fully checked
-- [ ] Ready for merge
+- [x] Rebased on latest main — branched from `5a2b994`, main unchanged since
+- [x] Final test pass after rebase — 1405 passed, 16 deselected
+- [x] BRANCH-STATUS.md fully checked
+- [x] Ready for merge
 
 ---
 
