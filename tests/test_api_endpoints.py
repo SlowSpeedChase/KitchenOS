@@ -297,3 +297,102 @@ def test_inventory_bulk_partial_not_found_is_not_a_404(client):
     assert len(body['not_found']) == 1
     assert body['not_found'][0]['name'] == 'BulkGhostZzz'
     _bulk_cleanup(client, 'BulkHalf', 'fridge')
+
+
+def test_inventory_bulk_set_expiry_clears_with_null(client):
+    """'expires': null is a legal value (clear the expiry), not an omitted param.
+
+    The route collects bulk params by key presence (`k in data`), not
+    truthiness — if that ever regressed to a truthiness filter, a null
+    expires would silently vanish from **params and 400 with "requires
+    'expires'". Guard the whole round trip end to end.
+    """
+    _bulk_seed(client, 'BulkExpiryClear', 'ct', 'fridge')
+    # Give it a real expiry first, so clearing it is an observable change.
+    client.post('/api/inventory/extend', json={
+        'name': 'BulkExpiryClear', 'location': 'fridge', 'days': 5})
+    response = client.post('/api/inventory/bulk', json={
+        'action': 'set-expiry', 'expires': None,
+        'refs': [{'name': 'BulkExpiryClear', 'unit': 'ct', 'location': 'fridge'}]})
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body['status'] == 'applied'
+    assert body['applied'] == 1
+    assert body['not_found'] == []
+    assert body['removed'] == []
+    assert len(body['items']) == 1
+    assert body['items'][0]['expires'] is None
+    _bulk_cleanup(client, 'BulkExpiryClear', 'fridge')
+
+
+def test_inventory_bulk_set_category_applies_to_all(client):
+    _bulk_seed(client, 'BulkCatKale', 'bunch', 'fridge')
+    _bulk_seed(client, 'BulkCatRice', 'lb', 'pantry', category='pantry')
+    response = client.post('/api/inventory/bulk', json={
+        'action': 'set-category', 'category': 'frozen',
+        'refs': [
+            {'name': 'BulkCatKale', 'unit': 'bunch', 'location': 'fridge'},
+            {'name': 'BulkCatRice', 'unit': 'lb', 'location': 'pantry'},
+        ]})
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body['applied'] == 2
+    assert body['not_found'] == []
+    assert len(body['items']) == 2
+    for item in body['items']:
+        assert item['category'] == 'frozen'
+    _bulk_cleanup(client, 'BulkCatKale', 'fridge')
+    _bulk_cleanup(client, 'BulkCatRice', 'pantry')
+
+
+def test_inventory_bulk_move_applies_to_all(client):
+    _bulk_seed(client, 'BulkMoveKale', 'bunch', 'fridge')
+    _bulk_seed(client, 'BulkMoveRice', 'lb', 'pantry', category='pantry')
+    response = client.post('/api/inventory/bulk', json={
+        'action': 'move', 'to_location': 'counter',
+        'refs': [
+            {'name': 'BulkMoveKale', 'unit': 'bunch', 'location': 'fridge'},
+            {'name': 'BulkMoveRice', 'unit': 'lb', 'location': 'pantry'},
+        ]})
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body['applied'] == 2
+    assert body['not_found'] == []
+    assert len(body['items']) == 2
+    for item in body['items']:
+        assert item['location'] == 'counter'
+    _bulk_cleanup(client, 'BulkMoveKale', 'counter')
+    _bulk_cleanup(client, 'BulkMoveRice', 'counter')
+
+
+def test_inventory_bulk_freeze_applies_to_all(client):
+    _bulk_seed(client, 'BulkFreezeKale', 'bunch', 'fridge')
+    _bulk_seed(client, 'BulkFreezeRice', 'lb', 'pantry', category='pantry')
+    response = client.post('/api/inventory/bulk', json={
+        'action': 'freeze',
+        'refs': [
+            {'name': 'BulkFreezeKale', 'unit': 'bunch', 'location': 'fridge'},
+            {'name': 'BulkFreezeRice', 'unit': 'lb', 'location': 'pantry'},
+        ]})
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body['applied'] == 2
+    assert body['not_found'] == []
+    assert len(body['items']) == 2
+    for item in body['items']:
+        assert item['location'] == 'freezer'
+        assert item['category'] == 'frozen'
+        assert item['expires'] is None
+    _bulk_cleanup(client, 'BulkFreezeKale', 'freezer')
+    _bulk_cleanup(client, 'BulkFreezeRice', 'freezer')
+
+
+def test_review_page_has_bulk_selection_ui(client):
+    """The bulk bar, select-all, and per-row checkbox ship in the page."""
+    response = client.get('/review')
+    assert response.status_code == 200
+    html = response.data
+    assert b'id="bulkbar"' in html
+    assert b'id="selall"' in html
+    assert b'class="pick"' in html
+    assert b'/api/inventory/bulk' in html

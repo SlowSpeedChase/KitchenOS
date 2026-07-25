@@ -51,10 +51,22 @@
   #toast.show { display: flex; }
   #toast button { background: #fff3; color: #fff; border-color: #fff5; }
   #empty { padding: 3rem 1rem; text-align: center; opacity: 0.6; }
+  li input[type=checkbox], header input[type=checkbox] {
+    width: 22px; height: 22px; flex: none; accent-color: #4a90d9; margin: 0; }
+  #bulkbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 15;
+             display: flex; align-items: center; gap: 10px;
+             padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+             background: Canvas; border-top: 1px solid #8886;
+             box-shadow: 0 -4px 16px #0003; }
+  #bulkbar[hidden] { display: none; }
+  #bulkcount { flex: 1; font-weight: 600; }
+  #bulkbar .err { flex-basis: 100%; }
+  body.has-bulk #toast { bottom: 88px; }
 </style>
 </head>
 <body>
 <header>
+  <input type="checkbox" id="selall" aria-label="Select all items">
   <h1>Inventory Review</h1>
   <button id="refresh" aria-label="Refresh">↻</button>
 </header>
@@ -62,6 +74,15 @@
 <div id="empty" hidden>Nothing in inventory.</div>
 <div id="toast"><span id="toast-msg"></span><button id="undo">Undo</button></div>
 <div id="menu"></div>
+<div id="bulkbar" hidden>
+  <button id="bulkclear" aria-label="Clear selection">✕</button>
+  <span id="bulkcount"></span>
+  <span class="actions">
+    <button class="rm" id="bulkrm">Remove</button>
+    <button data-bd="3">+3d</button><button data-bd="7">+7d</button>
+    <button class="kebab" id="bulkkebab" aria-label="More actions">⋮</button>
+  </span>
+</div>
 
 <script>
 const EMOJI = { produce:"🥬", dairy:"🥛", meat:"🥩", seafood:"🐟", pantry:"🥫",
@@ -74,8 +95,26 @@ const list = document.getElementById('list');
 const empty = document.getElementById('empty');
 const toast = document.getElementById('toast');
 const menu = document.getElementById('menu');
+const bulkbar = document.getElementById('bulkbar');
+const selall = document.getElementById('selall');
 let lastRemoved = null, toastTimer = null;
-let menuItem = null, menuLi = null;
+let menuTarget = null;
+const selected = new Set();   // merge keys, so selection survives a re-render
+const rows = new Map();       // merge key -> { it, li }
+
+function keyOf(it){
+  // Mirrors InventoryItem.merge_key(). The separator below is a NUL *escape*
+  // (six characters), not a literal NUL byte — so a name containing the
+  // separator can't collide with a different (name, unit, location) triple.
+  return [it.name, it.unit, it.location]
+    .map(s => (s || "").toLowerCase().trim()).join("\u0000");
+}
+function refOf(it){
+  return { name: it.name, unit: it.unit, location: it.location };
+}
+function selectedEntries(){
+  return [...selected].map(k => rows.get(k)).filter(Boolean);
+}
 
 function rankOf(it){
   const r = RANK[it.expiry_status]; return r === undefined ? 3 : r;
@@ -99,15 +138,27 @@ function subline(it){
 }
 async function load(){
   list.innerHTML = "";
+  rows.clear();
   let items;
   try { items = await (await fetch('/api/inventory')).json(); }
   catch(e){ empty.hidden = false; empty.textContent = "Couldn't load inventory. Tap ↻ to retry."; return; }
   empty.hidden = items.length > 0;
-  for (const it of sortItems(items)) list.appendChild(row(it));
+  const live = new Set();
+  for (const it of sortItems(items)){
+    const key = keyOf(it);
+    live.add(key);
+    const li = row(it, key);
+    rows.set(key, { it, li });
+    list.appendChild(li);
+  }
+  // Drop selections whose rows no longer exist.
+  for (const k of [...selected]) if (!live.has(k)) selected.delete(k);
+  renderBulk();
 }
-function row(it){
+function row(it, key){
   const li = document.createElement('li');
   li.innerHTML =
+    `<input type="checkbox" class="pick" aria-label="Select item">` +
     `<span class="emoji">${EMOJI[it.category] || "📦"}</span>` +
     `<span class="meta"><div class="name"></div><div class="sub">${subline(it)}</div></span>` +
     `<span class="actions">` +
@@ -115,12 +166,89 @@ function row(it){
     `<button data-d="3">+3d</button><button data-d="7">+7d</button>` +
     `<button class="kebab" aria-label="More actions">⋮</button></span>`;
   li.querySelector('.name').textContent = it.name;
+  const pick = li.querySelector('.pick');
+  pick.checked = selected.has(key);
+  pick.onchange = () => {
+    if (pick.checked) selected.add(key); else selected.delete(key);
+    renderBulk();
+  };
   li.querySelector('.rm').onclick = () => remove(it, li);
   li.querySelectorAll('button[data-d]').forEach(b =>
     b.onclick = () => extend(it, li, parseInt(b.dataset.d, 10)));
-  li.querySelector('.kebab').onclick = (e) => openMenu(it, li, e.currentTarget);
+  li.querySelector('.kebab').onclick = (e) =>
+    openMenu(rowTarget(it, li), e.currentTarget);
   return li;
 }
+function renderBulk(){
+  const n = selected.size;
+  bulkbar.hidden = n === 0;
+  document.body.classList.toggle('has-bulk', n > 0);
+  document.getElementById('bulkcount').textContent =
+    n + " selected";
+  selall.checked = n > 0 && n === rows.size;
+  selall.indeterminate = n > 0 && n < rows.size;
+  const e = bulkbar.querySelector('.err'); if (e && n === 0) e.remove();
+}
+selall.onchange = () => {
+  selected.clear();
+  if (selall.checked) for (const k of rows.keys()) selected.add(k);
+  for (const { li } of rows.values())
+    li.querySelector('.pick').checked = selall.checked;
+  renderBulk();
+};
+document.getElementById('bulkclear').onclick = () => {
+  selected.clear();
+  for (const { li } of rows.values()) li.querySelector('.pick').checked = false;
+  renderBulk();
+};
+function bulkError(msg){
+  let e = bulkbar.querySelector('.err');
+  if (!e){ e = document.createElement('div'); e.className = 'err';
+           bulkbar.appendChild(e); }
+  e.textContent = msg;
+}
+async function runBulk(action, params, errLabel){
+  const entries = selectedEntries();
+  if (!entries.length) return;
+  let body;
+  try {
+    const r = await fetch('/api/inventory/bulk', { method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ action, refs: entries.map(e => refOf(e.it)), ...params }) });
+    if (!r.ok){ bulkError(`Couldn't ${errLabel} — tap ↻`); return; }
+    body = await r.json();
+  } catch(e){ bulkError("Network error — tap ↻"); return; }
+
+  const e = bulkbar.querySelector('.err'); if (e) e.remove();
+
+  if (action === 'remove'){
+    lastRemoved = body.removed;
+    for (const item of body.removed){
+      const entry = rows.get(keyOf(item));
+      if (entry){ entry.li.remove(); rows.delete(keyOf(item)); }
+    }
+    selected.clear();
+    showToast(`Removed ${body.removed.length} item${body.removed.length === 1 ? "" : "s"}`);
+    renderBulk();
+  } else if (action === 'move' || action === 'freeze'){
+    // Both change a row's location — and therefore its key — and can merge two
+    // rows into one. Patching by the old key would leave the selection stale.
+    selected.clear();
+    await load();
+  } else {
+    for (const item of body.items){
+      const entry = rows.get(keyOf(item));
+      if (entry) applyUpdate(entry.it, entry.li, item);
+    }
+    renderBulk();
+  }
+  if (body.not_found && body.not_found.length) await load();
+}
+document.getElementById('bulkrm').onclick = () => runBulk('remove', {}, "remove");
+bulkbar.querySelectorAll('button[data-bd]').forEach(b =>
+  b.onclick = () => runBulk('extend', { days: parseInt(b.dataset.bd, 10) }, "extend"));
+document.getElementById('bulkkebab').onclick = (e) =>
+  openMenu(bulkTarget(), e.currentTarget);
 function rowError(li, msg){
   let e = li.querySelector('.err');
   if (!e){ e = document.createElement('div'); e.className = 'err';
@@ -133,7 +261,10 @@ async function remove(it, li){
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ name: it.name, location: it.location }) });
     if (!r.ok){ rowError(li, "Couldn't remove — tap ↻"); return; }
-    lastRemoved = it; li.remove(); showToast(`Removed ${it.name}`);
+    lastRemoved = [it];
+    selected.delete(keyOf(it)); rows.delete(keyOf(it));
+    li.remove(); showToast(`Removed ${it.name}`);
+    renderBulk();
   } catch(e){ rowError(li, "Network error — tap ↻"); }
 }
 async function extend(it, li, days){
@@ -165,39 +296,63 @@ function applyUpdate(it, li, item){
   li.querySelector('.emoji').textContent = EMOJI[it.category] || "📦";
   li.querySelector('.sub').innerHTML = subline(it);
 }
+function rowTarget(it, li){
+  const SINGLE = { 'set-expiry': '/api/inventory/set-expiry',
+                   'set-category': '/api/inventory/set-category',
+                   'move': '/api/inventory/move',
+                   'freeze': '/api/inventory/freeze' };
+  return {
+    id: keyOf(it),
+    location: it.location, category: it.category, expires: it.expires,
+    async run(action, params, errLabel){
+      applyUpdate(it, li, await post(SINGLE[action],
+        { name: it.name, location: it.location, ...params }, li, errLabel));
+    }
+  };
+}
+function bulkTarget(){
+  // A heterogeneous selection has no single current value, so every location
+  // and category chip is offered rather than skipping "the current one".
+  return {
+    id: '__bulk__',
+    location: null, category: null, expires: null,
+    async run(action, params, errLabel){ await runBulk(action, params, errLabel); }
+  };
+}
 function closeMenu(){
-  menu.classList.remove('show'); menuItem = null; menuLi = null;
+  menu.classList.remove('show'); menuTarget = null;
 }
 function menuAction(label, fn, cls){
   const b = document.createElement('button');
   b.className = 'mi' + (cls ? ' ' + cls : '');
   b.textContent = label;
-  b.onclick = async () => { const it = menuItem, li = menuLi; closeMenu(); await fn(it, li); };
+  b.onclick = async () => { const t = menuTarget; closeMenu(); await fn(t); };
   return b;
 }
-function openMenu(it, li, anchor){
-  if (menuItem === it && menu.classList.contains('show')){ closeMenu(); return; }
-  menuItem = it; menuLi = li;
+function openMenu(target, anchor){
+  // Re-tapping the *same* trigger closes; tapping a different one re-opens
+  // against the new target. Targets are freshly built each call, so compare
+  // their ids, not the objects.
+  if (menuTarget && menuTarget.id === target.id &&
+      menu.classList.contains('show')){ closeMenu(); return; }
+  menuTarget = target;
   menu.innerHTML = '';
 
   // Set expiration date — native picker
   const dl = document.createElement('div'); dl.className = 'sub-label';
   dl.textContent = 'Expiration'; menu.appendChild(dl);
   const dp = document.createElement('input'); dp.type = 'date';
-  if (it.expires) dp.value = it.expires;
+  if (target.expires) dp.value = target.expires;
   dp.onchange = async () => {
     if (!dp.value) return;
-    const cur = menuLi; closeMenu();
-    applyUpdate(it, cur, await post('/api/inventory/set-expiry',
-      { name: it.name, location: it.location, expires: dp.value }, cur, "set date"));
+    const t = menuTarget; closeMenu();
+    await t.run('set-expiry', { expires: dp.value }, "set date");
   };
   menu.appendChild(dp);
-  menu.appendChild(menuAction('🚫 Remove expiration', async (it, li) =>
-    applyUpdate(it, li, await post('/api/inventory/set-expiry',
-      { name: it.name, location: it.location, expires: null }, li, "clear expiry"))));
-  menu.appendChild(menuAction('🧊 Mark as frozen', async (it, li) =>
-    applyUpdate(it, li, await post('/api/inventory/freeze',
-      { name: it.name, location: it.location }, li, "freeze"))));
+  menu.appendChild(menuAction('🚫 Remove expiration', (t) =>
+    t.run('set-expiry', { expires: null }, "clear expiry")));
+  menu.appendChild(menuAction('🧊 Mark as frozen', (t) =>
+    t.run('freeze', {}, "freeze")));
 
   menu.appendChild(document.createElement('hr'));
 
@@ -206,13 +361,12 @@ function openMenu(it, li, anchor){
   ml.textContent = 'Move to'; menu.appendChild(ml);
   const mc = document.createElement('div'); mc.className = 'chips';
   for (const loc of LOCATIONS){
-    if (loc === it.location) continue;
+    if (loc === target.location) continue;
     const b = document.createElement('button');
     b.textContent = loc;
     b.onclick = async () => {
-      const cur = menuLi; closeMenu();
-      applyUpdate(it, cur, await post('/api/inventory/move',
-        { name: it.name, location: it.location, to_location: loc }, cur, "move"));
+      const t = menuTarget; closeMenu();
+      await t.run('move', { to_location: loc }, "move");
     };
     mc.appendChild(b);
   }
@@ -223,13 +377,12 @@ function openMenu(it, li, anchor){
   cl.textContent = 'Category'; menu.appendChild(cl);
   const cc = document.createElement('div'); cc.className = 'chips';
   for (const cat of CATEGORIES){
-    if (cat === it.category) continue;
+    if (cat === target.category) continue;
     const b = document.createElement('button');
     b.textContent = (EMOJI[cat] || "📦") + " " + cat;
     b.onclick = async () => {
-      const cur = menuLi; closeMenu();
-      applyUpdate(it, cur, await post('/api/inventory/set-category',
-        { name: it.name, location: it.location, category: cat }, cur, "set category"));
+      const t = menuTarget; closeMenu();
+      await t.run('set-category', { category: cat }, "set category");
     };
     cc.appendChild(b);
   }
@@ -259,14 +412,14 @@ function showToast(msg){
   toastTimer = setTimeout(() => { toast.classList.remove('show'); lastRemoved = null; }, 5000);
 }
 document.getElementById('undo').onclick = async () => {
-  if (!lastRemoved) return;
-  const it = lastRemoved; lastRemoved = null; toast.classList.remove('show');
+  if (!lastRemoved || !lastRemoved.length) return;
+  const items = lastRemoved; lastRemoved = null; toast.classList.remove('show');
   await fetch('/api/inventory/add', { method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ items: [ {
+    body: JSON.stringify({ items: items.map(it => ({
       name: it.name, quantity: it.quantity, unit: it.unit, category: it.category,
       location: it.location, purchased: it.purchased, expires: it.expires,
-      for_recipe: it.for_recipe, source: it.source, notes: it.notes } ] }) });
+      for_recipe: it.for_recipe, source: it.source, notes: it.notes })) }) });
   load();
 };
 document.getElementById('refresh').onclick = load;
