@@ -84,6 +84,7 @@ exempt. Gated routes are marked **🔒** in the table.
 | `/nutrition-review` | GET | Human review UI for weak/unresolved nutrition matches (HTML). |
 | `/review` | GET | Inventory scan/review UI — interactive list of items sorted soonest-expiring first, with in-place actions: Remove (with Undo), +3d, +7d quick-extend buttons, and Refresh. Linked from the top of `Inventory.md`. |
 | `/receipt-paste` | GET | Phone-friendly HTML page: copy the Claude-app prompt, paste the receipt JSON it returns, preview (routed items + reconciliation), then confirm to ingest. Backed by `/api/receipt/paste`. |
+| `/` | GET | The web home page — every browsable KitchenOS page as tappable cards, rendered from the `SECTIONS` registry in `lib/web_dashboard.py`. Every page's Claude bar links back here. |
 | `/api/nutrition-review/recipes` 🔒 | GET | Ranked queue of recipes needing nutrition review, worst first (lowest coverage, then lowest confidence). Frontmatter-only — fast. |
 | `/api/nutrition-review/recipe/<name>` 🔒 | GET | Recompute one recipe's nutrition live (deterministic, no LLM) and return an audit-trail view with USDA candidates for weak/unresolved items. |
 | `/api/nutrition-review/resolve` 🔒 | POST | Pin a human food match (or mark an item resolved-as-zero) so the nutrition engine's cache uses it on the next recompute. |
