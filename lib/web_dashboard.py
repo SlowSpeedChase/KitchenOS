@@ -1,10 +1,12 @@
-"""Generate the 'KitchenOS Web.md' vault note.
+"""Generate the 'KitchenOS Web.md' vault note and the '/' home-page HTML fragment.
 
 The note is a regenerated read-only view (like ``Inventory.md`` / ``Use It Up.md``)
 whose only job is to be a tap-anywhere launcher for the KitchenOS web app. Every
 link points at the configured web base URL — a stable Tailscale MagicDNS hostname
 by default — so the same note works from any device on the tailnet (Mac, iPad,
-iPhone), not just localhost on the server.
+iPhone), not just localhost on the server. ``render_html()`` renders the same
+SECTIONS registry as the HTML fragment served at ``/``, the in-browser counterpart
+to the vault note.
 
 Base URL resolution matches ``templates/recipe_template.py``: the
 ``KITCHENOS_API_BASE`` env var, defaulting to the tailnet host. Change the host
@@ -29,11 +31,12 @@ HOME = ("🏠", "KitchenOS Home", "/", "every page, one tap away")
 
 # (emoji, title, route path, one-line description). Grouped by section below.
 #
-# This is the registry of *browsable* KitchenOS pages, and it has two consumers:
-# the vault launcher note rendered below, and ``scripts/sync_safari_bookmarks.py``,
-# which mirrors it into the Safari "KitchenOS" bookmarks folder. Adding a new HTML
-# page route without adding it here fails ``tests/test_web_dashboard.py`` — pages
-# that genuinely can't be bookmarked go in that test's ``NOT_BOOKMARKABLE`` set.
+# This is the registry of *browsable* KitchenOS pages, and it has three consumers:
+# the vault launcher note rendered below, ``render_html()`` for the '/' home page,
+# and ``scripts/sync_safari_bookmarks.py``, which mirrors it into the Safari
+# "KitchenOS" bookmarks folder. Adding a new HTML page route without adding it
+# here fails ``tests/test_web_dashboard.py`` — pages that genuinely can't be
+# bookmarked go in that test's ``NOT_BOOKMARKABLE`` set.
 SECTIONS = [
     (
         "Plan & cook",

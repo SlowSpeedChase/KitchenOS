@@ -4,6 +4,8 @@
 The page list comes from ``SECTIONS`` in ``lib/web_dashboard.py`` — the same
 registry that renders ``Dashboards/KitchenOS Web.md`` — so one edit there
 propagates to both the vault launcher note and the phone's bookmarks bar.
+``desired_bookmarks()`` also prepends ``HOME``, the registry root that lives
+outside ``SECTIONS`` (see that function's docstring).
 
 Additive and idempotent: entries are matched on ``URLString``, nothing is ever
 deleted or reordered, and the folder is never created a second time. Hand-made
