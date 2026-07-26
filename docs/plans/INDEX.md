@@ -33,6 +33,7 @@ Templates: [`templates/DESIGN-DOC-TEMPLATE.md`](../../templates/DESIGN-DOC-TEMPL
 | Date | Doc | Branch | Notes |
 |---|---|---|---|
 | 2026-07-08 | [macro-meal-planner — design](2026-07-08-macro-meal-planner-design.md) · [plan](2026-07-08-macro-meal-planner-plan.md) | `macro-planner-phase-1/servings-backfill` | **PARKED.** Phase 1 (servings backfill) blocked: servings labels are not reliably inferable (see design-doc "Phase 1 finding"). Tooling/estimator built & committed on the branch; resume after grams coverage improves. |
+| 2026-07-25 | [cook-now-meal-type-filter — design](../superpowers/specs/2026-07-25-cook-now-meal-type-filter-design.md) | `cook-now-meal-type-filter` | Filter Cook Now by meal type. Repairs the `dish_type` vocabulary (one-off Claude Batches pass + drops the `biscuit → dessert` rule), then adds `/cook-now` with six chip groups. |
 
 ## Done
 

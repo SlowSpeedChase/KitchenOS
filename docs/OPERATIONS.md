@@ -52,6 +52,17 @@ a bulk re-extract.
 .venv/bin/python scripts/dedupe_recipes.py --apply  # move dupes to _Archive
 ```
 
+### Reclassify recipe dish types (one-off repair)
+
+Batch-classifies every recipe into `normalizer.VALID_DISH_TYPES` via the Claude
+Batches API. Dry-run by default. `--apply` backs each file up into `.history/`
+before writing. Needs `ANTHROPIC_API_KEY`; costs well under $1 for ~240 recipes.
+
+```bash
+.venv/bin/python scripts/reclassify_dish_type.py            # dry-run report
+.venv/bin/python scripts/reclassify_dish_type.py --apply    # write changes
+```
+
 ### Batch extract from Reminders
 
 ```bash

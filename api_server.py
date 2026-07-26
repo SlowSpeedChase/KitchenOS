@@ -2015,6 +2015,24 @@ def api_use_it_up():
     return jsonify(use_it_up.generate(limit=limit))
 
 
+@app.route('/api/cook-now', methods=['GET'])
+def api_cook_now():
+    """Recipes ranked by how much of what they need is already on hand.
+
+    Returns {recipes: [...]} — see lib/cook_now.generate. Each entry carries a
+    `group` (the chip it belongs to); the page filters client-side from this one
+    payload, so there is no per-chip round trip and no server-side filtering.
+    """
+    from lib import cook_now
+
+    limit = request.args.get('limit', type=int)
+    if limit is None:
+        limit = 30  # absent or unparseable
+    elif limit < 0:
+        limit = 0  # clamp instead of slicing from the end
+    return jsonify(cook_now.generate(limit=limit))
+
+
 @app.route('/api/cook', methods=['POST'])
 def api_cook():
     """Mark a recipe cooked: decrement its non-staple ingredients from inventory.
@@ -2737,6 +2755,12 @@ def nutrition_review_page():
 def review_page():
     """Mobile inventory scan/review page: remove or extend expiry per item."""
     return _serve_page_with_claude_bar('review.html')
+
+
+@app.route('/cook-now')
+def cook_now_page():
+    """What you could cook right now, filterable by meal type."""
+    return _serve_page_with_claude_bar('cook_now.html')
 
 
 @app.route('/receipt-paste', methods=['GET'])
