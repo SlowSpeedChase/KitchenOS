@@ -80,6 +80,22 @@ def test_limit_is_respected(client, tmp_db, tmp_vault):
     assert len(resp.get_json()["recipes"]) <= 2
 
 
+def test_limit_zero_returns_empty_list(client, tmp_db, tmp_vault):
+    """`?limit=0` must honour the request, not silently fall back to 30."""
+    _setup_vault(tmp_vault)
+    resp = client.get("/api/cook-now?limit=0")
+    assert resp.status_code == 200
+    assert resp.get_json()["recipes"] == []
+
+
+def test_negative_limit_is_clamped_to_zero(client, tmp_db, tmp_vault):
+    """A negative limit must not slice from the end and return the worst matches."""
+    _setup_vault(tmp_vault)
+    resp = client.get("/api/cook-now?limit=-5")
+    assert resp.status_code == 200
+    assert resp.get_json()["recipes"] == []
+
+
 def test_page_renders(client, tmp_db, tmp_vault):
     resp = client.get("/cook-now")
     assert resp.status_code == 200

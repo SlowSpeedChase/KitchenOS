@@ -2025,7 +2025,11 @@ def api_cook_now():
     """
     from lib import cook_now
 
-    limit = request.args.get('limit', type=int) or 30
+    limit = request.args.get('limit', type=int)
+    if limit is None:
+        limit = 30  # absent or unparseable
+    elif limit < 0:
+        limit = 0  # clamp instead of slicing from the end
     return jsonify(cook_now.generate(limit=limit))
 
 

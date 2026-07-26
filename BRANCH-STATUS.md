@@ -2,7 +2,7 @@
 
 **Created:** 2026-07-25
 **Design Doc:** docs/superpowers/specs/2026-07-25-cook-now-meal-type-filter-design.md
-**Current Stage:** planning
+**Current Stage:** review
 **Last Rebased:** 2026-07-25
 
 ## Overview
@@ -11,10 +11,10 @@ Filter Cook Now by meal type, so reviewing "what could I cook right now?" can ex
 desserts. Two sequential parts:
 
 1. **Repair `dish_type`** — a one-off Claude Batches pass reclassifies all 239 recipes into
-   a 12-value controlled vocabulary, with a dry-run diff report before anything is written.
+   a 13-value controlled vocabulary, with a dry-run diff report before anything is written.
    Also deletes the `"biscuit": "dessert"` rule in `lib/normalizer.py` that mis-files savory
    biscuits and would re-corrupt the data after the repair.
-2. **`/cook-now` page + `GET /api/cook-now`** — 6 chip groups over the 12 stored values,
+2. **`/cook-now` page + `GET /api/cook-now`** — 6 chip groups over the 13 stored values,
    filtering client-side, Desserts deselected on first load.
 
 The generated `Cook Now.md` vault note is deliberately unchanged; the page is additive.
@@ -35,24 +35,24 @@ The generated `Cook Now.md` vault note is deliberately unchanged; the page is ad
 - [ ] Implementation plan written (superpowers:writing-plans)
 
 ### Dev
-- [ ] Tests written first (superpowers:test-driven-development)
-- [ ] Core implementation complete
-- [ ] All tests passing
-- [ ] No linting/type errors
-- [ ] Code follows project patterns
+- [x] Tests written first (superpowers:test-driven-development)
+- [x] Core implementation complete
+- [x] All tests passing
+- [x] No linting/type errors
+- [x] Code follows project patterns
 - [ ] LaunchAgent restarted if lib/, templates/, or prompts/ changed
 
 ### Testing
-- [ ] Unit tests pass
-- [ ] Integration tests pass (if applicable)
-- [ ] Manual testing completed
-- [ ] Edge cases verified
-- [ ] Verified with superpowers:verification-before-completion
+- [x] Unit tests pass
+- [x] Integration tests pass (if applicable)
+- [x] Manual testing completed
+- [x] Edge cases verified
+- [x] Verified with superpowers:verification-before-completion
 
 ### Docs
-- [ ] Doc obligations met per CLAUDE.md table (ARCHITECTURE / API / OPERATIONS / invariants)
+- [x] Doc obligations met per CLAUDE.md table (ARCHITECTURE / API / OPERATIONS / invariants)
 - [ ] README updated (if interface changed)
-- [ ] docs/plans/INDEX.md updated
+- [x] docs/plans/INDEX.md updated
 - [ ] Code comments where needed
 
 ### Review

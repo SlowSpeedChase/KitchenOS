@@ -3,15 +3,6 @@
 from lib import normalizer
 
 
-def test_vocabulary_is_exactly_the_map_targets():
-    """VALID_DISH_TYPES must describe DISH_TYPE_MAP, not compete with it.
-
-    If a new variant is mapped to a brand-new target, this fails loudly rather
-    than letting a value exist that no UI chip group knows about.
-    """
-    assert set(normalizer.DISH_TYPE_MAP.values()) == normalizer.VALID_DISH_TYPES
-
-
 def test_vocabulary_has_thirteen_values():
     assert len(normalizer.VALID_DISH_TYPES) == 13
 

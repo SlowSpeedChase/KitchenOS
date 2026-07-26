@@ -130,16 +130,22 @@ function renderList() {
 }
 
 async function load() {
+  let loadError = null;
   try {
     const resp = await fetch("/api/cook-now?limit=60");
     const data = await resp.json();
     recipes = data.recipes || [];
   } catch (e) {
-    document.getElementById("list").textContent = "Could not load Cook Now.";
-    return;
+    loadError = "Could not load Cook Now.";
   }
+  // Chips render unconditionally: a failed fetch must still leave the filter
+  // UI usable. Only the recipe list area shows the error in its place.
   renderChips();
-  renderList();
+  if (loadError) {
+    document.getElementById("list").textContent = loadError;
+  } else {
+    renderList();
+  }
 }
 
 load();

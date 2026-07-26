@@ -54,7 +54,14 @@ _GROUP_FOR_DISH_TYPE = {
 
 def group_for(dish_type: Optional[str]) -> str:
     """The chip group a dish_type belongs to. Unknown values fall back to Mains."""
-    return _GROUP_FOR_DISH_TYPE.get((dish_type or "").strip().lower(), DEFAULT_GROUP)
+    # recipe_parser's hand-rolled YAML reader (lib/recipe_parser.py:49-55) can
+    # hand back a list (`dish_type: [dessert]`) or an int (`dish_type: 2`) for
+    # malformed frontmatter — normalizer.py:315 hits the same shape and guards
+    # the same way. Without this, one bad line in any of 239 recipe files
+    # raises AttributeError here and 500s the whole /api/cook-now page.
+    if not isinstance(dish_type, str):
+        return DEFAULT_GROUP
+    return _GROUP_FOR_DISH_TYPE.get(dish_type.strip().lower(), DEFAULT_GROUP)
 
 
 def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,

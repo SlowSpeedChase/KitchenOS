@@ -45,7 +45,7 @@ Decisions, and what they ruled out:
 | Repair `dish_type` in the vault, then filter | Read-time bucketing only — leaves `Butter Biscuits` a dessert forever |
 | LLM reclassification of all 239 recipes | Hand-mapping the 12 visible strays; only re-checking the 47 desserts |
 | Dry-run diff report, `--apply` as a second explicit step | Writing straight to frontmatter on a single run |
-| 12-value stored vocabulary, 6 UI chip groups | Chips bound 1:1 to stored values (24 chips, 12 of them singletons) |
+| 13-value stored vocabulary, 6 UI chip groups | Chips bound 1:1 to stored values (24 chips, 12 of them singletons) |
 | New `/cook-now` page + API, note left untouched | Sectioning the generated note; excluding desserts via config |
 | Client-side chip filtering from one payload | A round trip per chip toggle |
 
@@ -159,7 +159,7 @@ running). Skipping the registration fails the existing test suite.
 
 | Test | What it pins |
 |---|---|
-| `tests/test_normalizer.py` | The 12-value `VALID_DISH_TYPES`; that `biscuit` no longer maps to `dessert` |
+| `tests/test_normalizer_dish_type.py` | The 13-value `VALID_DISH_TYPES`; that `biscuit` no longer maps to `dessert` |
 | `tests/test_cook_now.py` | `DISH_TYPE_GROUPS` covers every value in `VALID_DISH_TYPES`; unknown/missing `dish_type` falls back to `Mains` |
 | `tests/test_reclassify_dish_type.py` | Results keyed by `custom_id` not position; an errored result leaves `dish_type` untouched and reports `UNRESOLVED`; the three report counts sum to the recipe total |
 | `tests/test_api_cook_now.py` | `GET /api/cook-now` returns 200 with a `group` on every recipe; `limit` respected |
