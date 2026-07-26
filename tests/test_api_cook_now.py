@@ -78,3 +78,16 @@ def test_limit_is_respected(client, tmp_db, tmp_vault):
     _setup_vault(tmp_vault)
     resp = client.get("/api/cook-now?limit=2")
     assert len(resp.get_json()["recipes"]) <= 2
+
+
+def test_page_renders(client, tmp_db, tmp_vault):
+    resp = client.get("/cook-now")
+    assert resp.status_code == 200
+    assert b"cook-now-chips" in resp.data
+
+
+def test_page_is_registered_in_sections():
+    """CLAUDE.md invariant: a browsable page must be in the SECTIONS registry."""
+    from lib import web_dashboard as wd
+    paths = {path for _s, items in wd.SECTIONS for _e, _t, path, _d in items}
+    assert "/cook-now" in paths

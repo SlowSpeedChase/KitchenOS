@@ -2753,6 +2753,12 @@ def review_page():
     return _serve_page_with_claude_bar('review.html')
 
 
+@app.route('/cook-now')
+def cook_now_page():
+    """What you could cook right now, filterable by meal type."""
+    return _serve_page_with_claude_bar('cook_now.html')
+
+
 @app.route('/receipt-paste', methods=['GET'])
 def receipt_paste_page():
     """Paste a photographed-receipt JSON (from the Claude app), preview, ingest."""
