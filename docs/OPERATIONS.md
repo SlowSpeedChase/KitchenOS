@@ -54,14 +54,14 @@ a bulk re-extract.
 
 ### Reclassify recipe dish types (one-off repair)
 
+Batch-classifies every recipe into `normalizer.VALID_DISH_TYPES` via the Claude
+Batches API. Dry-run by default. `--apply` backs each file up into `.history/`
+before writing. Needs `ANTHROPIC_API_KEY`; costs well under $1 for ~240 recipes.
+
 ```bash
 .venv/bin/python scripts/reclassify_dish_type.py            # dry-run report
 .venv/bin/python scripts/reclassify_dish_type.py --apply    # write changes
 ```
-
-Batch-classifies every recipe into `normalizer.VALID_DISH_TYPES` via the Claude
-Batches API. Dry-run by default. `--apply` backs each file up into `.history/`
-before writing. Needs `ANTHROPIC_API_KEY`; costs well under $1 for ~240 recipes.
 
 ### Batch extract from Reminders
 

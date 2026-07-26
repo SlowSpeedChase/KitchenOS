@@ -20,7 +20,7 @@ exempt. Gated routes are marked **🔒** in the table.
 
 ## 1. HTTP endpoints
 
-75 routes. Path | Method | Purpose.
+76 routes. Path | Method | Purpose.
 
 | Path | Method | Purpose |
 |------|--------|---------|
