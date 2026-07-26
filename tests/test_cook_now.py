@@ -101,3 +101,55 @@ class TestRender:
     def test_empty_library_fallback(self):
         md = cook_now.render_markdown({"recipes": []})
         assert "No recipes with ingredients" in md
+
+
+class TestChipGroups:
+    def test_every_vocabulary_value_has_a_group(self):
+        """A dish type with no chip would be unreachable in the UI."""
+        from lib.normalizer import VALID_DISH_TYPES
+        grouped = {dt for dts in cook_now.DISH_TYPE_GROUPS.values() for dt in dts}
+        assert grouped == VALID_DISH_TYPES
+
+    def test_no_dish_type_is_in_two_groups(self):
+        seen, dupes = set(), []
+        for dts in cook_now.DISH_TYPE_GROUPS.values():
+            for dt in dts:
+                if dt in seen:
+                    dupes.append(dt)
+                seen.add(dt)
+        assert dupes == []
+
+    def test_known_mappings(self):
+        assert cook_now.group_for("dessert") == "Desserts"
+        assert cook_now.group_for("main") == "Mains"
+        assert cook_now.group_for("dip") == "Snacks"
+        assert cook_now.group_for("bread") == "Sides"
+
+    def test_unknown_and_missing_fall_back_to_mains(self):
+        """A data gap must never hide a cookable recipe."""
+        assert cook_now.group_for(None) == "Mains"
+        assert cook_now.group_for("") == "Mains"
+        assert cook_now.group_for("Tostada") == "Mains"
+
+    def test_case_and_whitespace_insensitive(self):
+        assert cook_now.group_for("  Dessert ") == "Desserts"
+
+
+class TestGenerateCarriesGroup:
+    def test_each_recipe_has_dish_type_and_group(self):
+        items = [_item("Rice")]
+        recipes = [{"name": "Plain Rice", "dish_type": "side",
+                    "ingredient_items": ["rice", "salt", "olive oil"]}]
+        result = cook_now.generate(items, recipes, today=TODAY)
+        top = result["recipes"][0]
+        assert top["dish_type"] == "side"
+        assert top["group"] == "Sides"
+
+    def test_note_rendering_is_unaffected_by_the_new_keys(self):
+        """Cook Now.md must be byte-identical — the note is not part of this feature."""
+        items = [_item("Rice")]
+        recipes = [{"name": "Plain Rice", "dish_type": "side",
+                    "ingredient_items": ["rice", "salt", "olive oil"]}]
+        md = cook_now.render_markdown(cook_now.generate(items, recipes, today=TODAY))
+        assert "Sides" not in md
+        assert "dish_type" not in md

@@ -28,14 +28,42 @@ from lib.use_it_up import (
     at_risk_items,
 )
 
+# The 13-value stored vocabulary collapsed into the 6 chips the page shows.
+# Stored data stays precise; the interface stays usable. Adding a dish type to
+# normalizer.VALID_DISH_TYPES without adding it here fails tests/test_cook_now.py.
+DISH_TYPE_GROUPS = {
+    "Mains": ("main", "sandwich", "soup"),
+    "Breakfast": ("breakfast",),
+    "Sides": ("side", "salad", "bread", "sauce"),
+    "Snacks": ("snack", "appetizer", "dip"),
+    "Desserts": ("dessert",),
+    "Drinks": ("drink",),
+}
+
+# A recipe with a missing or unrecognized dish_type shows under Mains rather
+# than vanishing: the filter must never make a cookable recipe unreachable
+# because of a data gap.
+DEFAULT_GROUP = "Mains"
+
+_GROUP_FOR_DISH_TYPE = {
+    dish_type: group
+    for group, dish_types in DISH_TYPE_GROUPS.items()
+    for dish_type in dish_types
+}
+
+
+def group_for(dish_type: Optional[str]) -> str:
+    """The chip group a dish_type belongs to. Unknown values fall back to Mains."""
+    return _GROUP_FOR_DISH_TYPE.get((dish_type or "").strip().lower(), DEFAULT_GROUP)
+
 
 def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
              today: Optional[date] = None, limit: int = 30) -> dict:
     """Rank recipes by ingredient coverage against current inventory.
 
     Returns ``{"recipes": [...]}``, each entry
-    ``{recipe, image, have, total, coverage, missing, at_risk}``, sorted by
-    coverage (then have count, then fewest missing) descending and capped at
+    ``{recipe, image, dish_type, group, have, total, coverage, missing, at_risk}``,
+    sorted by coverage (then have count, then fewest missing) descending and capped at
     ``limit``. Staples count as always-on-hand: they raise coverage but never
     appear in ``missing``. ``at_risk`` is True when the recipe uses an item in
     the expiry window (per ``use_it_up.at_risk_items``).
@@ -77,6 +105,8 @@ def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
         recipes.append({
             "recipe": recipe["name"],
             "image": recipe.get("image"),
+            "dish_type": recipe.get("dish_type"),
+            "group": group_for(recipe.get("dish_type")),
             "have": have,
             "total": total,
             "coverage": have / total,
