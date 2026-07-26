@@ -34,11 +34,10 @@ def test_toggling_desserts_reveals_them_without_refetching(live_server, page, pa
     page.wait_for_selector(".chip")
     after_load = len(calls)
 
-    before = page.locator(".recipe").count()
     page.locator(".chip", has_text="Desserts").click()
 
     assert page.locator(".chip", has_text="Desserts").get_attribute("aria-pressed") == "true"
-    assert page.locator(".recipe").count() >= before
+    assert page.locator('.recipe[data-group="Desserts"]').count() > 0
     assert len(calls) == after_load, "chip toggle refetched the API"
     assert page_errors == []
 
