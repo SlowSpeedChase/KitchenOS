@@ -32,6 +32,7 @@ Templates: [`templates/DESIGN-DOC-TEMPLATE.md`](../../templates/DESIGN-DOC-TEMPL
 
 | Date | Doc | Branch | Notes |
 |---|---|---|---|
+| 2026-07-26 | [consume-on-cook — design](../superpowers/specs/2026-07-26-consume-on-cook-design.md) | `consume-on-cook` | Marking a recipe cooked decrements nothing: 234 of the 236 recipes with parseable ingredients change no inventory, and of 2,634 ingredient lines exactly 2 subtract. Three coupled defects — `split_against_pantry` credits limes that `apply_decisions` refuses to spend, `pantry.find_match` still runs the substring matcher `436597d` deleted everywhere else (11 peanut-butter lines match the `butter` staple), and the UI reads only `consumed` so failure renders as a green toast. Governing constraint: inventory holds **containers, not quantities** (188 of 198 count rows are qty exactly 1.0), so a qty-1 row is use-stamped, never decremented. Target: 18 decrements, 455 use-stamps, zero false decrements. |
 | 2026-07-08 | [macro-meal-planner — design](2026-07-08-macro-meal-planner-design.md) · [plan](2026-07-08-macro-meal-planner-plan.md) | `macro-planner-phase-1/servings-backfill` | **PARKED.** Phase 1 (servings backfill) blocked: servings labels are not reliably inferable (see design-doc "Phase 1 finding"). Tooling/estimator built & committed on the branch; resume after grams coverage improves. |
 
 ## Done

@@ -1,27 +1,43 @@
-# Branch Status: cook-now-meal-type-filter
+# Branch Status: consume-on-cook
 
-**Created:** 2026-07-25
-**Design Doc:** docs/superpowers/specs/2026-07-25-cook-now-meal-type-filter-design.md
-**Current Stage:** review
-**Last Rebased:** 2026-07-25
+**Created:** 2026-07-26
+**Design Doc:** docs/superpowers/specs/2026-07-26-consume-on-cook-design.md
+**Current Stage:** planning
+**Last Rebased:** 2026-07-26 (branched from main @ c33d867)
 
 ## Overview
 
-Filter Cook Now by meal type, so reviewing "what could I cook right now?" can exclude
-desserts. Two sequential parts:
+Make consume-on-cook work. Today 234 of the 236 recipes with parseable
+ingredients decrement nothing when marked cooked — of 2,634 ingredient lines,
+exactly 2 subtract.
 
-1. **Repair `dish_type`** — a one-off Claude Batches pass reclassifies all 239 recipes into
-   a 13-value controlled vocabulary, with a dry-run diff report before anything is written.
-   Also deletes the `"biscuit": "dessert"` rule in `lib/normalizer.py` that mis-files savory
-   biscuits and would re-corrupt the data after the repair.
-2. **`/cook-now` page + `GET /api/cook-now`** — 6 chip groups over the 13 stored values,
-   filtering client-side, Desserts deselected on first load.
+Three coupled defects: `split_against_pantry` and `apply_decisions` use different
+unit-compatibility rules (the shopping list credits limes the cook won't spend);
+`lib/pantry.find_match` still runs the substring matcher that `436597d` deleted
+everywhere else; and the UI reads only `consumed`, rendering failure as a green
+success toast.
 
-The generated `Cook Now.md` vault note is deliberately unchanged; the page is additive.
+The governing constraint is that inventory holds **containers, not quantities** —
+188 of 198 count rows are qty exactly `1.0`, meaning one package. So the fix
+centres on a container gate: a qty-1 row is use-stamped, never decremented.
+
+Target end state (measured): 18 decrements, 455 use-stamps across 90 rows,
+199 of 239 recipes reporting something, **zero false decrements**.
 
 ## Dependencies
 
-- None. Part 2 depends on Part 1 landing first (chips are only as good as `dish_type`).
+- None blocking.
+- **Coordination:** `inventory-scan-and-extend` (worktree, unmerged) touches
+  `api_server.py`, `lib/inventory.py`, `docs/API.md`, `templates/review.html`,
+  `tests/test_api_endpoints.py`, `tests/test_inventory.py`. Overlap assessed as
+  benign — it adds `extend_expiry()` and a review-page banner, in different
+  regions than this branch's dataclass-field and decorator changes. The one real
+  collision, surfacing `last_used` in `/review`, is **dropped from scope** here.
+- `inventory-location-visibility` is docs-only so far (spec + plan, no code).
+
+Conflict-check method: `git log main..<branch> --name-only`. Do **not** use
+`git diff main..<branch>` — it also lists files where the branch is merely
+*behind* main, which produces false conflicts.
 
 ---
 
@@ -35,24 +51,24 @@ The generated `Cook Now.md` vault note is deliberately unchanged; the page is ad
 - [ ] Implementation plan written (superpowers:writing-plans)
 
 ### Dev
-- [x] Tests written first (superpowers:test-driven-development)
-- [x] Core implementation complete
-- [x] All tests passing
-- [x] No linting/type errors
-- [x] Code follows project patterns
+- [ ] Tests written first (superpowers:test-driven-development)
+- [ ] Core implementation complete
+- [ ] All tests passing
+- [ ] No linting/type errors
+- [ ] Code follows project patterns
 - [ ] LaunchAgent restarted if lib/, templates/, or prompts/ changed
 
 ### Testing
-- [x] Unit tests pass
-- [x] Integration tests pass (if applicable)
-- [x] Manual testing completed
-- [x] Edge cases verified
-- [x] Verified with superpowers:verification-before-completion
+- [ ] Unit tests pass
+- [ ] Integration tests pass (if applicable)
+- [ ] Manual testing completed
+- [ ] Edge cases verified
+- [ ] Verified with superpowers:verification-before-completion
 
 ### Docs
-- [x] Doc obligations met per CLAUDE.md table (ARCHITECTURE / API / OPERATIONS / invariants)
+- [ ] Doc obligations met per CLAUDE.md table (ARCHITECTURE / API / OPERATIONS / invariants)
 - [ ] README updated (if interface changed)
-- [x] docs/plans/INDEX.md updated
+- [ ] docs/plans/INDEX.md updated
 - [ ] Code comments where needed
 
 ### Review
@@ -70,36 +86,29 @@ The generated `Cook Now.md` vault note is deliberately unchanged; the page is ad
 
 ## Notes
 
-**Conflict check (2026-07-25):** clean. Checked with
-`git log main..<branch> --name-only` per branch — i.e. only commits *ahead* of main, not
-`git diff main..<branch>`, which also flags files where a branch is merely behind main and
-gives false conflicts.
+**Worktree setup required before running anything** (learned on
+`cook-now-meal-type-filter`): a fresh worktree has no `.env` (git-ignored) and no
+`vault/` (listed in `.git/info/exclude`). Symlink both from the main checkout, or
+`paths.recipes_dir()` silently falls through to the dead default. Copy — do not
+symlink — `data/kitchenos.db` if a test needs real rows, so nothing can write
+through to production.
 
-| Branch | Ahead of main | Touches cook_now / normalizer / web_dashboard |
-|---|---|---|
-| `inventory-scan-and-extend` | 6 commits | no |
-| `macro-planner-phase-1/servings-backfill` | 6 commits | no |
-| `worktree-recipe-accuracy-pass` | 0 commits (stale) | no |
+**Never run `consume_recipe`, `save_pantry` or `write_inventory` against the real
+DB during development.** All measurement so far has been read-only dry runs.
 
-**Doc obligations expected at the docs stage** (per the CLAUDE.md table):
-- `docs/API.md` — new `GET /api/cook-now` endpoint contract.
-- `docs/OPERATIONS.md` — new `scripts/reclassify_dish_type.py` command.
-- `CLAUDE.md` — possible new invariant covering the `dish_type` controlled vocabulary.
-- `SECTIONS` propagation is a code obligation, not just docs: `generate_web_dashboard.py`
-  plus `sync_safari_bookmarks.py --apply`.
+**Design escalated to Claude Fable 5**, which corrected three things worth
+remembering: the container reality (the "obvious" count-unit fix would have
+deleted jars); the coupling between the predicate fix and the matcher fix (11
+peanut-butter lines would otherwise start decrementing the `butter` staple row);
+and a live hole in the shipped `436597d` matcher — `_STOPWORDS` collapses
+`shredded cheese` to `{cheese}`, so **Cook Now today credits corn-syrup coverage
+from a can of corn**.
 
-**Cost note:** the reclassification is one Batches job over 239 recipes, well under $1.
-
-**Deferred, found while diagnosing the biscuits cook (not this branch):** consume-on-cook
-decrements silently no-op — `pantry.find_match` is substring-only and misses `deli ham` vs
-`sliced ham off the bone`; inventory is 190/222 rows in `ct` while recipes call for
-cups/oz, so cross-family conversion always fails; and `meal_planner.html:2505` reads only
-`consumed`, discarding the `unconvertible` / `not_tracked` the API already returns.
-
----
+**Closure obligation:** main currently carries a stale `BRANCH-STATUS.md` from
+`cook-now-meal-type-filter` — the previous branch's closure ritual missed
+deleting it. `ls BRANCH-STATUS.md` must fail on main. Delete it when this branch
+closes.
 
 ## Blocked Items
 
-Move any blocked checklist items here with reason:
-
-- None
+None.
