@@ -2015,6 +2015,20 @@ def api_use_it_up():
     return jsonify(use_it_up.generate(limit=limit))
 
 
+@app.route('/api/cook-now', methods=['GET'])
+def api_cook_now():
+    """Recipes ranked by how much of what they need is already on hand.
+
+    Returns {recipes: [...]} — see lib/cook_now.generate. Each entry carries a
+    `group` (the chip it belongs to); the page filters client-side from this one
+    payload, so there is no per-chip round trip and no server-side filtering.
+    """
+    from lib import cook_now
+
+    limit = request.args.get('limit', type=int) or 30
+    return jsonify(cook_now.generate(limit=limit))
+
+
 @app.route('/api/cook', methods=['POST'])
 def api_cook():
     """Mark a recipe cooked: decrement its non-staple ingredients from inventory.
