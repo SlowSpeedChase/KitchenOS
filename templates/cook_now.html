@@ -47,7 +47,12 @@ function loadSelection() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return new Set(DEFAULT_ON);
     const parsed = JSON.parse(raw);
-    // Ignore stale group names from an older build rather than showing nothing.
+    if (!Array.isArray(parsed)) return new Set(DEFAULT_ON);
+    // An empty stored array means the user deliberately turned every chip off —
+    // respect that instead of reviving defaults. But a non-empty array that
+    // filters down to nothing means every stored name is stale (e.g. from an
+    // older build's group names), so fall back to the defaults in that case.
+    if (parsed.length === 0) return new Set();
     const valid = parsed.filter(g => GROUPS.includes(g));
     return new Set(valid.length ? valid : DEFAULT_ON);
   } catch (e) {
