@@ -1,4 +1,4 @@
-from lib.ingredient_aggregator import aggregate_ingredients
+from lib.ingredient_aggregator import aggregate_ingredients, GENERIC_COUNT, unit_compatibility
 
 
 def test_descriptor_variants_consolidate_to_one_line():
@@ -40,3 +40,45 @@ def test_mixed_family_lines_both_kept():
     assert all(o["item"] == "oil" for o in out)
     units = sorted(o["unit"] for o in out)
     assert units == ["g", "tbsp"]  # both families survive
+
+
+class TestUnitCompatibility:
+    def test_same_volume_family_converts(self):
+        assert unit_compatibility("cup", "tbsp") == "convert"
+
+    def test_same_weight_family_converts(self):
+        assert unit_compatibility("lb", "oz") == "convert"
+
+    def test_volume_against_weight_is_incompatible(self):
+        assert unit_compatibility("cup", "oz") is None
+
+    def test_ct_is_generic_against_whole(self):
+        # The bug this predicate exists to kill: the shopping list credited
+        # `3 ct lime` against `1 whole lime`, but apply_decisions refused it.
+        assert unit_compatibility("ct", "whole") == "one_to_one"
+
+    def test_ct_is_generic_against_a_specific_count_unit(self):
+        # Cans are used whole, so `2 ct` covers `2 cans` one-for-one.
+        assert unit_compatibility("ct", "can") == "one_to_one"
+
+    def test_identical_specific_count_units_match(self):
+        assert unit_compatibility("clove", "clove") == "one_to_one"
+
+    def test_two_different_specific_count_units_do_not_match(self):
+        assert unit_compatibility("slice", "clove") is None
+
+    def test_empty_pantry_unit_is_generic(self):
+        assert unit_compatibility("", "whole") == "one_to_one"
+
+    def test_container_against_measured_amount_is_incompatible(self):
+        # `1 ct Mirin` vs `2 tbsp mirin` — the container case, 264 lines of it.
+        assert unit_compatibility("ct", "tbsp") is None
+
+    def test_unknown_unit_is_incompatible(self):
+        # Extraction garbage: "a sprinkle", "spoonful".
+        assert unit_compatibility("ct", "a sprinkle") is None
+        assert unit_compatibility("a sprinkle", "ct") is None
+
+    def test_generic_count_is_a_subset_of_count_units_plus_empty(self):
+        from lib.ingredient_aggregator import COUNT_UNITS
+        assert GENERIC_COUNT - {""} <= COUNT_UNITS

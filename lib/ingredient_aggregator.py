@@ -54,6 +54,42 @@ def get_unit_family(unit: str) -> str:
     return 'other'
 
 
+# Count units that mean "one of whatever this is" rather than a specific form.
+# `ct` never appears in recipe text — it is the inventory ingest default — so it
+# is generic by construction. Kept separate from COUNT_UNITS because `slice` and
+# `clove` are count units that are NOT interchangeable with each other.
+GENERIC_COUNT = {"", "whole", "ct", "count", "ea", "each", "piece", "pieces"}
+
+
+def unit_compatibility(pantry_unit: str, recipe_unit: str) -> Optional[str]:
+    """How a pantry row's unit relates to a recipe line's unit.
+
+    Returns:
+        "convert"    — same volume or weight family; subtract via base units.
+        "one_to_one" — count-style; subtract numerically.
+        None         — cannot be subtracted without inventing information.
+
+    This is the single authority on the question. `split_against_pantry` and
+    `apply_decisions` previously hand-wrote different rules, so the shopping
+    list credited `3 ct lime` against `1 whole lime` while the cook path
+    refused to spend it. Any future divergence is a bug in one of the callers,
+    not a second rule.
+    """
+    p = (pantry_unit or "").lower().strip()
+    n = (recipe_unit or "").lower().strip()
+
+    p_family = get_unit_family(p)
+    if p_family in ("volume", "weight") and p_family == get_unit_family(n):
+        return "convert"
+
+    p_is_count = p in COUNT_UNITS or p == ""
+    n_is_count = n in COUNT_UNITS or n == ""
+    if p_is_count and n_is_count:
+        if p == n or p in GENERIC_COUNT or n in GENERIC_COUNT:
+            return "one_to_one"
+    return None
+
+
 # parse_amount_to_float is imported from lib.units (one canonical numeric parse,
 # shared with the nutrition engine) and re-exported here for backward compat —
 # shopping_list_generator and pantry import it from this module.
