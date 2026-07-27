@@ -1008,3 +1008,26 @@ class TestUseStamps:
         item = read_inventory()[0]
         assert item.last_used == "2026-07-26T10:00:00"
         assert item.use_count == 1
+
+
+def test_location_source_round_trips_through_the_db(tmp_db, tmp_vault):
+    write_inventory([
+        InventoryItem(name="kale", quantity=1, category="produce",
+                      location="fridge", location_source="manual"),
+    ])
+    [got] = read_inventory()
+    assert got.location_source == "manual"
+
+
+def test_a_missing_location_source_reads_as_default(tmp_db, tmp_vault):
+    """A NULL must surface for review, never pose as confirmed."""
+    conn = inventory_db.connect()
+    conn.execute(
+        "INSERT INTO inventory (name, quantity, category, location)"
+        " VALUES ('mystery', 1, 'produce', 'fridge')"
+    )
+    conn.commit()
+    conn.close()
+
+    [got] = read_inventory()
+    assert got.location_source == "default"

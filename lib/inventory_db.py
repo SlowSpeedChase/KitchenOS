@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS inventory (
     notes TEXT NOT NULL DEFAULT '',
     for_recipe TEXT,
     expires TEXT,
+    location_source TEXT,
     UNIQUE(name, unit, location)
 );
 CREATE TABLE IF NOT EXISTS food_cache (
@@ -116,6 +117,7 @@ _INVENTORY_COLS = (
     "name", "quantity", "unit", "category",
     "location", "purchased", "source", "notes", "for_recipe", "expires",
     "last_used", "use_count",
+    "location_source",
 )
 
 # Columns added after the original schema shipped. ``connect()`` adds any that
@@ -125,6 +127,10 @@ _MIGRATIONS = {
         ("for_recipe", "TEXT"), ("expires", "TEXT"),
         # Set when a cook uses a row it cannot safely decrement (a container).
         ("last_used", "TEXT"), ("use_count", "INTEGER NOT NULL DEFAULT 0"),
+        # Nullable on purpose: normalize_location_source reads NULL as
+        # "default", which is the fail-toward-being-asked direction. A NOT NULL
+        # here would also need a _NOT_NULL_FALLBACKS entry.
+        ("location_source", "TEXT"),
     ),
     "purchases": (("for_recipe", "TEXT"),),
     "cooks": (("make_again", "INTEGER"), ("cook_note", "TEXT")),
@@ -177,6 +183,7 @@ def read_conn() -> sqlite3.Connection:
 
 def _migrate(conn: sqlite3.Connection) -> None:
     """Add columns missing from a pre-existing DB (idempotent)."""
+    added: list[tuple[str, str]] = []
     for table, columns in _MIGRATIONS.items():
         existing = {
             row["name"]
@@ -185,7 +192,32 @@ def _migrate(conn: sqlite3.Connection) -> None:
         for col, decl in columns:
             if col not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+                added.append((table, col))
+    # Classify pre-existing rows exactly once, at the moment the column appears.
+    # Doing it on every connect would re-scan the table for nothing; doing it
+    # never would leave every legacy row NULL.
+    if ("inventory", "location_source") in added:
+        _backfill_location_source(conn)
     conn.commit()
+
+
+def _backfill_location_source(conn: sqlite3.Connection) -> None:
+    """Derive provenance for rows that predate the column.
+
+    Only touches NULLs, so it never re-derives a placement the user has since
+    confirmed by hand. Imported lazily: ``storage_locations`` imports
+    ``lib.inventory``, which would be a cycle at module scope.
+    """
+    from lib.storage_locations import place_item
+
+    rows = conn.execute(
+        "SELECT id, name, category FROM inventory WHERE location_source IS NULL"
+    ).fetchall()
+    for r in rows:
+        conn.execute(
+            "UPDATE inventory SET location_source = ? WHERE id = ?",
+            (place_item(r["name"], r["category"]).source, r["id"]),
+        )
 
 
 def trip_exists(source_id: str) -> bool:

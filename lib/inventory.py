@@ -26,6 +26,9 @@ CATEGORIES = (
 LOCATIONS = ("fridge", "freezer", "pantry", "counter", "other")
 SOURCES = ("receipt", "manual", "claude", "csa", "staple")
 
+# How a row's `location` was decided. Ordered weakest-last; see _SOURCE_RANK.
+LOCATION_SOURCES = ("manual", "item", "category", "default")
+
 HEADER = "| Item | Quantity | Unit | Category | Location | For Recipe | Purchased | Expires | Source | Notes |"
 SEPARATOR = "|------|----------|------|----------|----------|------------|-----------|---------|--------|-------|"
 
@@ -47,6 +50,9 @@ class InventoryItem:
     # which is DELETE-all + re-INSERT.
     last_used: Optional[str] = None
     use_count: int = 0
+    # How `location` was decided. Provenance, deliberately not part of
+    # merge_key() — adding it there would fragment rows.
+    location_source: str = "default"
 
     def merge_key(self) -> tuple[str, str, str]:
         return (
@@ -82,6 +88,19 @@ def normalize_source(src: Optional[str]) -> str:
         return "manual"
     s = src.lower().strip()
     return s if s in SOURCES else "manual"
+
+
+def normalize_location_source(src: Optional[str]) -> str:
+    """Normalize provenance, defaulting to ``"default"``.
+
+    A NULL from a pre-migration row, or anything not in the vocabulary, reads
+    as ``"default"`` — the failure direction is always toward being asked
+    again, never toward posing as confirmed.
+    """
+    if not src:
+        return "default"
+    s = src.lower().strip()
+    return s if s in LOCATION_SOURCES else "default"
 
 
 def _format_quantity(q: float) -> str:
@@ -152,6 +171,7 @@ def read_inventory() -> list[InventoryItem]:
             expires=r["expires"] or None,
             last_used=r["last_used"] or None,
             use_count=int(r["use_count"] or 0),
+            location_source=normalize_location_source(r["location_source"]),
         )
         for r in inventory_db.fetch_inventory_rows()
     ]

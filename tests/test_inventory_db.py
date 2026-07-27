@@ -121,3 +121,67 @@ def test_a_row_dict_omitting_defaulted_columns_still_inserts(tmp_db):
     assert out["source"] == "manual"
     assert out["notes"] == ""
     assert out["use_count"] == 0
+
+
+def test_location_source_is_added_to_a_db_that_predates_it(tmp_db):
+    """An existing DB gains the column, and its rows get classified once."""
+    import sqlite3
+
+    conn = sqlite3.connect(tmp_db)
+    conn.execute("""CREATE TABLE inventory (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL COLLATE NOCASE,
+        quantity REAL NOT NULL,
+        unit TEXT NOT NULL DEFAULT 'ct' COLLATE NOCASE,
+        category TEXT NOT NULL DEFAULT 'other',
+        location TEXT NOT NULL DEFAULT 'pantry' COLLATE NOCASE,
+        purchased TEXT,
+        source TEXT NOT NULL DEFAULT 'manual',
+        notes TEXT NOT NULL DEFAULT '',
+        for_recipe TEXT,
+        expires TEXT,
+        UNIQUE(name, unit, location))""")
+    conn.executemany(
+        "INSERT INTO inventory (name, quantity, category, location)"
+        " VALUES (?, ?, ?, ?)",
+        [("bananas", 1, "produce", "counter"),
+         ("whole milk", 1, "dairy", "fridge"),
+         ("psyllium husk", 1, "other", "pantry")],
+    )
+    conn.commit()
+    conn.close()
+
+    conn = idb.connect()
+    try:
+        got = {r["name"]: r["location_source"]
+               for r in conn.execute("SELECT name, location_source FROM inventory")}
+    finally:
+        conn.close()
+
+    assert got == {
+        "bananas": "item",          # by_item override
+        "whole milk": "category",   # dairy -> fridge
+        "psyllium husk": "default",  # catch-all category, so not an answer
+    }
+
+
+def test_backfill_never_re_derives_a_hand_placed_row(tmp_db):
+    """Re-running the migration must not overwrite a confirmed placement."""
+    conn = idb.connect()
+    conn.execute(
+        "INSERT INTO inventory (name, quantity, category, location, location_source)"
+        " VALUES ('bananas', 1, 'produce', 'freezer', 'manual')"
+    )
+    conn.commit()
+    conn.close()
+
+    idb.connect().close()   # migration runs again
+
+    conn = idb.connect()
+    try:
+        row = conn.execute(
+            "SELECT location_source FROM inventory WHERE name = 'bananas'"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row["location_source"] == "manual"
