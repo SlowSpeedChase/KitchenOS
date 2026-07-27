@@ -10,7 +10,39 @@
 
 **Spec:** `docs/superpowers/specs/2026-07-26-inventory-location-visibility-design.md`
 
-**Branch:** `inventory-location-visibility` (already created, spec already committed at `fe7cfa1`)
+**Branch:** `inventory-location-visibility` (already created, spec committed at `dbe2019`)
+
+> **Rebased onto `main` @ `ffc742d` on 2026-07-27.** This plan was authored against
+> `c33d867`, before `consume-on-cook` merged. That branch rewrote several of the files
+> this plan edits, so the following were corrected in this refresh:
+>
+> - **Task 2's find/replace blocks** — `_INVENTORY_COLS`, `_MIGRATIONS`, the
+>   `InventoryItem` dataclass and the `read_inventory` mapping all gained
+>   `last_used`/`use_count`. The blocks below are the *current* text; the originals
+>   would not have matched.
+> - **Test counts** — the baseline is now `2715 passed`, not `1504`.
+> - **Task 5 scope** — extended to surface `last_used` in the same subline, since
+>   `consume-on-cook` left those columns write-only and Task 5 already rewrites the
+>   one function where they belong. Rewriting `subline()` twice would be waste.
+> - **`templates/review.html` is untouched by `consume-on-cook`**, so every line
+>   number Tasks 5 and 6 cite is still exact.
+>
+> **Line numbers elsewhere are indicative, not exact.** `lib/inventory.py` shifted by
+> about +7 and `api_server.py` by +19. Anchor on the quoted code, not the number:
+>
+> | Symbol | Plan says | Actually |
+> |---|---|---|
+> | `normalize_source` | 75–79 | 80–84 |
+> | `read_inventory` | 132–150 | 137–157 |
+> | `_expiry_cell` (ends) | 180 | 185 |
+> | `render_inventory_md` location cell | 214 | 221 |
+> | `add_items` merge branch | 396–397 | 403 |
+> | `_apply_move` | 585 | 592 |
+> | `bulk_apply` | 740–745 | 683+ |
+> | `move_item` | 787–807 | 794–814 |
+> | `_migrate` | 173–183 | 178–188 |
+> | `api_server` `resolve_location` import | 2049 | 2068 |
+> | `SOURCES`, `storage_locations.py`, `review.html` | — | unchanged ✓ |
 
 ## Global Constraints
 
@@ -30,7 +62,8 @@
   Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
   Claude-Session: https://claude.ai/code/session_01Bz5G5n1sBxwRa6EvokLzCM
   ```
-- **The unit suite must stay green and grow only as planned.** Baseline before this plan: `1504 passed`. This plan adds 21 unit tests, ending at `1525 passed`. Run `.venv/bin/pytest -q` at the end of every task and check the running total stated there. E2E tests are deselected by default via `pytest.ini`.
+- **The unit suite must stay green and grow only as planned.** Baseline before this plan: `2715 passed` (post-`consume-on-cook`). This plan adds 22 unit tests, ending at `2737 passed`. Per-task running totals: T1 → 2721, T2 → 2725, T3 → 2729, T4 → 2733, T5 → 2735, T6 → 2736, T7 → 2737. Run `.venv/bin/pytest -q` at the end of every task and check against those. E2E tests are deselected by default via `pytest.ini`.
+- **The worktree needs a DB copy for the e2e harness.** `tests/e2e/conftest.py` copies `data/kitchenos.db`; a fresh worktree has none. Copy it — never symlink — so nothing can write through to production. Already done for this worktree.
 - **API restart caveat.** The `com.kitchenos.api` LaunchAgent holds `lib/*` and templates in memory. After any `lib/` or `templates/` edit, a running server serves stale code. This matters only for manual verification (Task 9), not for pytest.
 
 ---
@@ -222,7 +255,7 @@ Run: `.venv/bin/pytest tests/test_storage_locations.py -v`
 Expected: 13 passed.
 
 Then the full suite: `.venv/bin/pytest -q`
-Expected: `1510 passed` (1504 + 6) — the four existing `resolve_location` callers are unaffected.
+Expected: `2721 passed` (2715 + 6) — the four existing `resolve_location` callers are unaffected.
 
 - [ ] **Step 5: Commit**
 
@@ -394,18 +427,25 @@ def normalize_location_source(src: Optional[str]) -> str:
     return s if s in LOCATION_SOURCES else "default"
 ```
 
-Add the field to `InventoryItem`, after `expires` (`lib/inventory.py:44`):
+Add the field to `InventoryItem`, **after `use_count`** — `consume-on-cook` added two
+fields between `expires` and `merge_key`, so anchor on `use_count`:
 
 ```python
-    expires: Optional[str] = None
+    last_used: Optional[str] = None
+    use_count: int = 0
+    # How `location` was decided. Provenance, deliberately not part of merge_key().
     location_source: str = "default"
+
+    def merge_key(self) -> tuple[str, str, str]:
 ```
 
-In `read_inventory` (`lib/inventory.py:132-150`), add the field to the constructed item, after `expires`:
+In `read_inventory`, add the field to the constructed item after `use_count`:
 
 ```python
-            expires=r["expires"] or None,
+            last_used=r["last_used"] or None,
+            use_count=int(r["use_count"] or 0),
             location_source=normalize_location_source(r["location_source"]),
+        )
 ```
 
 In `lib/inventory_db.py`, add the column to `_SCHEMA`'s `inventory` table, after `expires TEXT,` (`lib/inventory_db.py:62`):
@@ -416,27 +456,38 @@ In `lib/inventory_db.py`, add the column to `_SCHEMA`'s `inventory` table, after
     UNIQUE(name, unit, location)
 ```
 
-Add it to `_INVENTORY_COLS` (`lib/inventory_db.py:115-118`):
+Add it to `_INVENTORY_COLS` — note the tuple now carries `last_used`/`use_count`:
 
 ```python
 _INVENTORY_COLS = (
     "name", "quantity", "unit", "category",
     "location", "purchased", "source", "notes", "for_recipe", "expires",
+    "last_used", "use_count",
     "location_source",
 )
 ```
 
-Add it to `_MIGRATIONS` (`lib/inventory_db.py:122-126`):
+Add it to `_MIGRATIONS`, whose `inventory` tuple now has four entries and a comment:
 
 ```python
 _MIGRATIONS = {
     "inventory": (
-        ("for_recipe", "TEXT"), ("expires", "TEXT"), ("location_source", "TEXT"),
+        ("for_recipe", "TEXT"), ("expires", "TEXT"),
+        # Set when a cook uses a row it cannot safely decrement (a container).
+        ("last_used", "TEXT"), ("use_count", "INTEGER NOT NULL DEFAULT 0"),
+        ("location_source", "TEXT"),
     ),
     "purchases": (("for_recipe", "TEXT"),),
     "cooks": (("make_again", "INTEGER"), ("cook_note", "TEXT")),
 }
 ```
+
+**`location_source` stays nullable on purpose.** `_NOT_NULL_FALLBACKS` in
+`lib/inventory_db.py` exists because `replace_inventory_rows` names every column in its
+INSERT, so an omitted key binds an explicit NULL and violates a NOT NULL constraint even
+with a DEFAULT. Declaring `location_source TEXT` (no NOT NULL) keeps it out of that
+problem entirely — `normalize_location_source` already reads NULL as `"default"`, which
+is the fail-toward-being-asked direction this design wants.
 
 Replace `_migrate` (`lib/inventory_db.py:173-183`) with:
 
@@ -486,7 +537,7 @@ Run: `.venv/bin/pytest tests/test_inventory_db.py tests/test_inventory.py -v`
 Expected: all pass, including the four new tests.
 
 Then the full suite: `.venv/bin/pytest -q`
-Expected: `1514 passed` (1510 + 4).
+Expected: `2725 passed` (2721 + 4).
 
 - [ ] **Step 5: Commit**
 
@@ -739,7 +790,7 @@ Run: `.venv/bin/pytest tests/test_inventory.py tests/test_api_endpoints.py tests
 Expected: all pass.
 
 Then the full suite: `.venv/bin/pytest -q`
-Expected: `1518 passed` (1514 + 4).
+Expected: `2729 passed` (2725 + 4).
 
 - [ ] **Step 5: Commit**
 
@@ -939,7 +990,7 @@ Run: `.venv/bin/pytest tests/test_inventory.py -v`
 Expected: all pass, including the four new tests.
 
 Then the full suite: `.venv/bin/pytest -q`
-Expected: `1522 passed` (1518 + 4).
+Expected: `2733 passed` (2729 + 4).
 
 Confirm nothing wrote to the real config: `git status --short config/storage_locations.json`
 Expected: no output. The tests monkeypatch `TABLE_PATH` to a tmp file; output here means a test escaped its fixture.
@@ -972,17 +1023,24 @@ EOF
 
 ---
 
-### Task 5: Show the location on every `/review` row
+### Task 5: Show the location — and the last-used stamp — on every `/review` row
 
 **Files:**
-- Modify: `templates/review.html` (new `LOC_EMOJI` map, new `locationLabel`, rewritten `subline`, CSS)
+- Modify: `templates/review.html` (new `LOC_EMOJI` map, new `locationLabel`, new `usedLabel`, rewritten `subline`, CSS)
 - Test: `tests/test_api_endpoints.py`
 
 **Interfaces:**
-- Consumes: `location_source` on each `/api/inventory` row (Task 2 — it reaches the client automatically via `asdict`)
-- Produces: JS `LOC_EMOJI` object and `locationLabel(it) -> string` (HTML), used by Task 6's group headers
+- Consumes: `location_source`, `last_used` and `use_count` on each `/api/inventory` row (`location_source` from Task 2, the other two already shipped with `consume-on-cook`; all reach the client automatically via `asdict`)
+- Produces: JS `LOC_EMOJI` object, `locationLabel(it) -> string` (HTML) used by Task 6's group headers, and `usedLabel(it) -> string`
 
-- [ ] **Step 1: Write the failing test**
+**Scope note (added at the 2026-07-27 rebase).** `consume-on-cook` shipped `last_used` /
+`use_count` but nothing reads them — 453 of the ingredient lines that now touch inventory
+leave no user-visible trace beyond a transient toast. This task already rewrites
+`subline()`, which is where they belong, so it surfaces them here rather than rewriting the
+same function again later. A row's subline then answers both questions you actually have
+when putting groceries away: *where does this go* and *did I just cook with it*.
+
+- [ ] **Step 1: Write the failing tests**
 
 Append to `tests/test_api_endpoints.py`:
 
@@ -995,6 +1053,14 @@ def test_review_page_shows_storage_location(client):
     assert b'location_source' in html
     # The freezer glyph must not be the category emoji for `frozen`.
     assert '🥶'.encode() in html
+
+
+def test_review_page_shows_the_last_used_stamp(client):
+    """consume-on-cook writes last_used/use_count; this is the only view that
+    reads them. Without this the columns are write-only."""
+    html = client.get('/review').data
+    assert b'usedLabel' in html
+    assert b'last_used' in html
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -1029,6 +1095,22 @@ function locationLabel(it){
   return `<span class="loc"${hint}>${LOC_EMOJI[loc] || "📍"} ${loc}`
        + `${unsure ? "?" : ""}</span>`;
 }
+function usedLabel(it){
+  // consume-on-cook stamps a row it used but could not safely decrement (a
+  // package). Surfacing it is what makes "marked cooked" visible at all for the
+  // ~95% of rows that are containers — otherwise the write is invisible.
+  if (!it.last_used) return "";
+  const days = Math.floor((Date.now() - Date.parse(it.last_used)) / 86400000);
+  const when = !Number.isFinite(days) ? "recently"
+             : days <= 0 ? "today"
+             : days === 1 ? "yesterday"
+             : `${days}d ago`;
+  const n = it.use_count || 0;
+  // The count is a tooltip, not inline: on a shelf you want "did I use this",
+  // and the tally only matters when you're wondering why a jar is empty.
+  const tally = n > 1 ? ` title="used ${n} times"` : '';
+  return `<span class="used"${tally}>· used ${when}</span>`;
+}
 ```
 
 Replace `subline` (`templates/review.html:157-163`) with:
@@ -1039,7 +1121,9 @@ function subline(it){
   // Show the date being sorted on, otherwise the "Added" order looks arbitrary.
   const add = sortMode === "added"
     ? " · added " + (it.purchased || "unknown") : "";
-  return locationLabel(it) + " · " + exp + add + badge(it);
+  const used = usedLabel(it);
+  return locationLabel(it) + " · " + exp + add
+       + (used ? " " + used : "") + badge(it);
 }
 ```
 
@@ -1048,6 +1132,8 @@ Add to the `<style>` block, before its closing `</style>` (`templates/review.htm
 ```css
   .loc { white-space: nowrap; }
   .loc[title] { border-bottom: 1px dotted currentColor; }
+  .used { white-space: nowrap; opacity: .75; }
+  .used[title] { border-bottom: 1px dotted currentColor; }
 ```
 
 - [ ] **Step 4: Run the test to verify it passes**
@@ -1056,7 +1142,7 @@ Run: `.venv/bin/pytest tests/test_api_endpoints.py -v -k review`
 Expected: 4 passed.
 
 Then the full suite: `.venv/bin/pytest -q`
-Expected: `1523 passed` (1522 + 1).
+Expected: `2735 passed` (2733 + 2 — location markup and the last-used stamp).
 
 - [ ] **Step 5: Commit**
 
@@ -1244,7 +1330,7 @@ Run: `.venv/bin/pytest tests/test_api_endpoints.py -v -k review`
 Expected: 5 passed.
 
 Then the full suite: `.venv/bin/pytest -q`
-Expected: `1524 passed` (1523 + 1).
+Expected: `2736 passed` (2735 + 1).
 
 - [ ] **Step 5: Commit**
 
@@ -1329,7 +1415,7 @@ Run: `.venv/bin/pytest tests/test_inventory.py -v -k inventory_md`
 Expected: passes.
 
 Then the full suite: `.venv/bin/pytest -q`
-Expected: `1525 passed` (1524 + 1).
+Expected: `2737 passed` (2736 + 1).
 
 - [ ] **Step 5: Commit**
 
@@ -1547,7 +1633,7 @@ Run: `.venv/bin/pytest tests/e2e/test_location_visibility.py -m e2e -v`
 Expected: 3 passed.
 
 Then confirm the default suite is unchanged: `.venv/bin/pytest -q`
-Expected: `1525 passed` — e2e tests stay deselected, so this task adds none.
+Expected: `2737 passed` — e2e tests stay deselected, so this task adds none to the default run.
 
 - [ ] **Step 5: Commit**
 
@@ -1591,7 +1677,9 @@ Absent/NULL reads as `default`. Only `default` is rendered as unsure.
 
 In `docs/ARCHITECTURE.md`, find the section covering inventory/receipt ingest and add a line noting that `lib/storage_locations.place_item()` is the single router deciding an item's storage location and its provenance, and that `resolve_location()` is a thin wrapper over it.
 
-In `CLAUDE.md`, add to the Invariants list (after the `dish_type` entry):
+In `CLAUDE.md`, **append to the end of** the Invariants list. (The plan originally said
+"after the `dish_type` entry"; `consume-on-cook` added two invariants after that one, so
+appending is now what keeps related entries together.)
 
 ```markdown
 - **`location_source` is provenance, not address.** `InventoryItem.merge_key()` is
@@ -1688,7 +1776,7 @@ EOF
 
 Before calling this branch done:
 
-- [ ] `.venv/bin/pytest -q` reports `1525 passed` (baseline was 1504; this plan adds 21).
+- [ ] `.venv/bin/pytest -q` reports `2737 passed` (baseline was 2715; this plan adds 22).
 - [ ] `.venv/bin/pytest tests/e2e/test_location_visibility.py -m e2e -v` reports 3 passed.
 - [ ] `git status --short config/storage_locations.json` is empty except for entries you taught deliberately during manual verification.
 - [ ] The API LaunchAgent has been restarted and `/health` responds.
