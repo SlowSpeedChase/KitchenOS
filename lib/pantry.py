@@ -16,6 +16,7 @@ pantry inventory tracks actual quantities in the user's kitchen.
 """
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from lib.ingredient_aggregator import (
@@ -32,6 +33,27 @@ from lib.use_it_up import _covers, _ingredient_phrase, _phrase
 
 def _normalize(name: str) -> str:
     return (name or "").lower().strip()
+
+
+_PARENTHETICAL_RE = re.compile(r"\([^)]*\)")
+_ALTERNATIVE_RE = re.compile(r"\b(?:or|sub|subs|substitute|substitutes)\b", re.IGNORECASE)
+
+
+def _match_text(item_name: str) -> str:
+    """Ingredient text with prep-note parentheticals removed.
+
+    A parenthetical is kept when it offers alternatives — "almond butter (or
+    peanut, walnut, or cashew butter)" must still match a Peanut butter row,
+    and so must "maple syrup (sub 2 tbsp honey)" — and dropped otherwise,
+    because prep notes inject tokens that produce wrong matches: "cooking oil
+    (for enchilada red sauce)" was matching an enchilada sauce row. The same
+    recipe library writes substitutions both as "or" and as "sub", so both
+    are recognized. This is why `ingredient_normalizer.normalize_name` is not
+    used here: it strips every parenthetical, alternatives included.
+    """
+    def keep(m):
+        return m.group(0) if _ALTERNATIVE_RE.search(m.group(0)) else " "
+    return _PARENTHETICAL_RE.sub(keep, item_name or "").strip()
 
 
 def load_pantry() -> list[dict]:
@@ -109,10 +131,14 @@ def find_match(item_name: str, pantry: list[dict]) -> Optional[dict]:
     Exact name first, then the head-noun matcher shared with Cook Now and Use
     It Up. The old character-substring fallback is gone: it matched "lemon" to
     "Lemon pepper seasoning" and every peanut-butter line to the "butter"
-    staple row, and 436597d already replaced it everywhere else. Ingredient
-    text is passed in raw, exactly as `cook_now` and `use_it_up` pass it:
-    normalizing first would strip the parentheses that carry a line's
-    alternatives ("almond butter (or peanut ...)") and lose real matches.
+    staple row, and 436597d already replaced it everywhere else. The
+    head-noun matcher runs on `_match_text(item_name)` rather than the fully
+    raw string: prep-note parentheticals inject noise tokens that produce
+    wrong matches ("cooking oil (for enchilada red sauce)" was matching an
+    enchilada sauce row), but a parenthetical carrying alternatives
+    ("almond butter (or peanut ...)") is kept, since dropping it loses a real
+    match. The exact-name check above still runs on the untouched
+    `item_name` — only the fuzzy match is affected.
     """
     target = _normalize(item_name)
     if not target:
@@ -121,7 +147,7 @@ def find_match(item_name: str, pantry: list[dict]) -> Optional[dict]:
         if _normalize(entry.get("item")) == target:
             return entry
 
-    phrase = _ingredient_phrase(item_name)
+    phrase = _ingredient_phrase(_match_text(item_name))
     if not phrase.tokens:
         return None
     for entry in pantry:

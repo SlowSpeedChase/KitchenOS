@@ -65,9 +65,12 @@ class TestFindMatch:
     def test_parenthetical_noise_does_not_produce_a_wrong_match(self):
         # AMENDED: the plan originally normalized ingredient text first and
         # asserted this line matched `Avocado oil`. Normalizing strips
-        # parentheses, which is where alternatives live, so it is not done —
-        # see Step 3. What matters is that the noise inside the parenthetical
-        # cannot produce a WRONG match: `corn` must not pull in `Canned corn`.
+        # parentheses, which is where alternatives live, so it is not done.
+        # Instead `_match_text` drops only parentheticals that don't carry an
+        # "or"-alternative — "(for softening corn tortillas)" has none, so it
+        # is stripped, leaving bare "oil". That must not pull in `Canned
+        # corn` (see TestParentheticalHandling for the `Avocado oil` line
+        # this same ingredient text is supposed to match).
         pantry = [{"item": "Canned corn", "amount": "1", "unit": "ct"}]
         assert find_match("oil (for softening corn tortillas)", pantry) is None
 
@@ -99,6 +102,78 @@ class TestFindMatch:
 
     def test_empty_name_returns_none(self):
         assert find_match("", [{"item": "flour", "amount": "1", "unit": "ct"}]) is None
+
+
+class TestParentheticalHandling:
+    """`_match_text` drops a parenthetical unless it names an alternative.
+
+    Prep-note parentheticals ("for enchilada red sauce", "optional", "see
+    note") are noise that produces wrong matches and get stripped;
+    alternatives-list parentheticals ("or peanut, walnut, ...", "sub 2 tbsp
+    honey") name a real substitute ingredient and must be kept, even when
+    nested inside another parenthetical. The recipe library phrases the same
+    kind of substitution both with "or" and with "sub", so both must be
+    recognized.
+    """
+
+    def test_prep_note_parenthetical_does_not_match_the_named_dish(self):
+        pantry = [{"item": "Canned enchilada sauce", "amount": "1", "unit": "ct"}]
+        assert find_match("cooking oil (for enchilada red sauce)", pantry) is None
+
+    def test_stripped_prep_note_still_matches_the_bare_ingredient(self):
+        # The cost of not fully normalizing: with the parenthetical gone,
+        # "oil (for softening corn tortillas)" reduces to "oil" and matches
+        # an oil row it should match.
+        pantry = [{"item": "Avocado oil", "amount": "1", "unit": "ct"}]
+        assert find_match("oil (for softening corn tortillas)", pantry)["item"] == "Avocado oil"
+
+    def test_stripped_prep_note_does_not_match_an_unrelated_row(self):
+        pantry = [{"item": "Canned corn", "amount": "1", "unit": "ct"}]
+        assert find_match("oil (for softening corn tortillas)", pantry) is None
+
+    def test_alternatives_parenthetical_is_kept_and_matches_the_alternative(self):
+        pantry = [{"item": "Peanut butter", "amount": "1", "unit": "ct"}]
+        assert find_match(
+            "almond butter (or peanut, walnut, or cashew butter, or tahini)",
+            pantry,
+        )["item"] == "Peanut butter"
+
+    def test_alternatives_parenthetical_nested_inside_another_is_kept(self):
+        pantry = [{"item": "Cashew pieces", "amount": "1", "unit": "ct"}]
+        assert find_match(
+            "silken tofu (or 1 cup cashews (see note))", pantry,
+        )["item"] == "Cashew pieces"
+
+    def test_sub_phrased_alternative_is_kept(self):
+        # Real corpus case: "Maple Sweet Potato Salad" has a sibling line
+        # phrased "maple syrup (or 2 1/2 tbsp honey)" that already matches
+        # under the "or" rule alone. This line says the same thing with "sub"
+        # instead of "or" — both phrasings name a real substitute ingredient
+        # and must survive, not just the one spelled with "or".
+        pantry = [{"item": "Honey", "amount": "1", "unit": "ct"}]
+        assert find_match("maple syrup (sub 2 tbsp honey)", pantry)["item"] == "Honey"
+
+    def test_malformed_source_data_losing_its_match_is_accepted(self):
+        # "Peanut Butter Cookie"'s ingredient table literally has item text
+        # "beaten (about 1 1/2 large eggs)" — the food noun "eggs" exists only
+        # inside a parenthetical that is an amount clarification, not an
+        # alternative, so it is correctly stripped. The previous raw-text
+        # match to "egg" was incidental (the noun happened to be present
+        # somewhere in the string), not earned by the matcher, and recovering
+        # it would require keeping prep-note parentheticals in general — the
+        # exact behavior this fix removes. This is an accepted loss caused by
+        # malformed source data, not a matching-rule defect; it is pinned
+        # here rather than "fixed".
+        pantry = [{"item": "egg", "amount": "1", "unit": "ct"}]
+        assert find_match("beaten (about 1 1/2 large eggs)", pantry) is None
+
+    def test_optional_parenthetical_is_dropped_and_still_matches(self):
+        pantry = [{"item": "Smoked paprika", "amount": "1", "unit": "ct"}]
+        assert find_match("paprika (optional)", pantry)["item"] == "Smoked paprika"
+
+    def test_optional_parenthetical_dropped_matches_a_different_row(self):
+        pantry = [{"item": "Sucralose sweetener", "amount": "1", "unit": "ct"}]
+        assert find_match("sweetener (optional)", pantry)["item"] == "Sucralose sweetener"
 
 
 def test_split_no_match_returns_full_to_buy():
