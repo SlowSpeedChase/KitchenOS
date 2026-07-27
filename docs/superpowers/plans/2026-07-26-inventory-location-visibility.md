@@ -252,7 +252,7 @@ it stays editable in a text editor, mirroring ``config/item_aliases.json``.
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `.venv/bin/pytest tests/test_storage_locations.py -v`
-Expected: 13 passed.
+Expected: 13 passed. (15 after the review round added two save-safety tests.)
 
 Then the full suite: `.venv/bin/pytest -q`
 Expected: `2721 passed` (2715 + 6) — the four existing `resolve_location` callers are unaffected.
@@ -1776,8 +1776,8 @@ EOF
 
 Before calling this branch done:
 
-- [ ] `.venv/bin/pytest -q` reports `2737 passed` (baseline was 2715; this plan adds 22).
-- [ ] `.venv/bin/pytest tests/e2e/test_location_visibility.py -m e2e -v` reports 3 passed.
-- [ ] `git status --short config/storage_locations.json` is empty except for entries you taught deliberately during manual verification.
+- [x] `.venv/bin/pytest -q` reports `2744 passed` (baseline 2715; +22 planned, +7 from the review round).
+- [x] `.venv/bin/pytest tests/e2e/test_location_visibility.py -m e2e -v` reports 8 passed.
+- [x] `git status --short config/storage_locations.json` is empty. Two isolation layers now guarantee this — in-process and the out-of-process e2e server — verified across two consecutive full e2e runs.
 - [ ] The API LaunchAgent has been restarted and `/health` responds.
 - [ ] `/review` renders locations, groups by location, and re-homes a moved row — checked in a real browser, not just asserted in markup.
