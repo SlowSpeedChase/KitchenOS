@@ -21,7 +21,11 @@ from datetime import datetime
 from typing import Optional
 
 from lib import paths
-from lib.ingredient_aggregator import unit_compatibility
+from lib.ingredient_aggregator import (
+    convert_to_base_unit,
+    get_unit_family,
+    unit_compatibility,
+)
 from lib.inventory_db import stamp_inventory_use
 from lib.pantry import (
     apply_decisions,
@@ -42,6 +46,25 @@ def recipe_ingredients(recipe_name: str) -> Optional[list[dict]]:
         return None
     parsed = parse_recipe_file(path.read_text(encoding="utf-8"))
     return parse_recipe_body(parsed.get("body", "")).get("ingredients", [])
+
+
+def _convert_would_empty(p_qty: float, p_unit: str,
+                         used_amt: float, used_unit: str) -> bool:
+    """True when a weight/volume decrement would zero the row out.
+
+    Mirrors ``apply_decisions``' base-unit math so the two agree. A cook may
+    *reduce* a row but must never *remove* one: rows are packages, so a `5 oz`
+    row matched by a `250 g` line is a unit-of-sale mismatch, not five ounces
+    about to run out. The real library contains exactly that pair — a `5 oz`
+    pumpkin row against `250 g pumpkin puree` — and deleting it is the
+    un-healable direction (a missed depletion self-heals via the expiry prune).
+    """
+    p_unit_norm = (p_unit or "").lower().strip()
+    used_unit_norm = (used_unit or "").lower().strip()
+    family = get_unit_family(p_unit_norm)
+    p_base = convert_to_base_unit(p_qty, p_unit_norm, family)
+    u_base = convert_to_base_unit(used_amt, used_unit_norm, family)
+    return (p_base - u_base) <= 1e-9
 
 
 def _record_use(bucket: list[dict], item: str, unit: Optional[str]) -> None:
@@ -92,10 +115,24 @@ def consume_recipe(recipe_name: str, servings: float = 1.0,
                 "consumed": [], "skipped_staples": [], "not_tracked": [],
                 "use_recorded": []}
 
+    from lib.inventory import read_inventory
+
     staple_sets = _staple_phrases(staples)
     pantry = load_pantry()
     before = {e["item"]: parse_amount_to_float(e["amount"]) or 0.0 for e in pantry}
     units = {e["item"]: e.get("unit") for e in pantry}
+
+    # Row-level facts the pantry view cannot express: load_pantry sums rows that
+    # share (name, unit) across locations, so two 1-ct jars read as a single
+    # 2.0 and the container gate fires on neither. Worse, save_pantry collapses
+    # duplicate locations on write, so a decrement there deletes the second row
+    # outright along with its stamps. Keep the row count and the smallest row so
+    # the gate can see the parts rather than only the total.
+    containers: dict[tuple[str, str], tuple[int, float]] = {}
+    for it in read_inventory():
+        key = (it.name.lower().strip(), it.unit.lower().strip())
+        rows, smallest = containers.get(key, (0, it.quantity))
+        containers[key] = (rows + 1, min(smallest, it.quantity))
 
     decisions: list[dict] = []
     skipped_staples: list[str] = []
@@ -119,11 +156,27 @@ def consume_recipe(recipe_name: str, servings: float = 1.0,
         p_qty = parse_amount_to_float(match.get("amount"))
         amt = parse_amount_to_float(ing.get("amount"))
         scaled = amt * servings if amt is not None else None
+        r_unit = ing.get("unit") or ""
+        mode = unit_compatibility(p_unit, r_unit)
+        # Fall back to the summed view when the row isn't in the map, so an
+        # unknown shape is treated as a single row of that size.
+        rows, smallest = containers.get(
+            (match["item"].lower().strip(), p_unit.lower().strip()), (1, p_qty))
 
         if (scaled is None
                 or p_qty is None
+                or mode is None
+                # The container gate. `smallest` rather than the summed p_qty so
+                # a 1-ct row hiding inside a multi-location total still counts,
+                # and rows > 1 because spending from a sum picks a row for you.
                 or p_qty == 1.0
-                or unit_compatibility(p_unit, ing.get("unit") or "") is None):
+                or smallest == 1.0
+                or rows > 1
+                # Weight/volume packages are containers too — 15 of 17 oz rows
+                # are a 1.0 oz package — but their quantity isn't 1.0, so the
+                # count gate misses them. Refuse the decrement that would empty.
+                or (mode == "convert"
+                    and _convert_would_empty(p_qty, p_unit, scaled, r_unit))):
             _record_use(use_recorded, match["item"], p_unit)
             continue
 
@@ -157,11 +210,33 @@ def consume_recipe(recipe_name: str, servings: float = 1.0,
             # rather than silently claiming a decrement that didn't happen.
             _record_use(use_recorded, name, units.get(name))
 
-    # Stamp AFTER save_pantry — save_pantry is DELETE-all + re-INSERT, so a
-    # stamp written before it would be replaced by the pre-cook row values.
+    # One recipe can both decrement a row (a line whose units convert) and
+    # merely use it (a line whose units don't). That is one cook touching one
+    # row, so report the decrement — the stronger, more informative outcome —
+    # and drop the redundant use record. This makes "exactly one bucket" true
+    # per row as well as per line, and keeps the stamp below from counting the
+    # same cook twice.
+    consumed_keys = {((c["item"] or "").lower(), (c["unit"] or "").lower())
+                     for c in consumed}
+    use_recorded = [
+        u for u in use_recorded
+        if ((u["item"] or "").lower(), (u["unit"] or "").lower())
+        not in consumed_keys
+    ]
+
+    # Stamp AFTER save_pantry. save_pantry re-reads inventory internally, so an
+    # earlier stamp would survive — but a row this cook depleted is gone by now,
+    # and stamping it would be a silent no-op UPDATE against a deleted row.
+    # Doing it last means every ref names a row that still exists.
     stamp_at = now or datetime.now().isoformat(timespec="seconds")
-    refs = [(u["item"], u["unit"] or "") for u in use_recorded]
-    refs += [(c["item"], c["unit"] or "") for c in consumed]
+    seen_refs: set[tuple[str, str]] = set()
+    refs: list[tuple[str, str]] = []
+    for entry in (*use_recorded, *consumed):
+        ref = (entry["item"], entry["unit"] or "")
+        key = (ref[0].lower(), ref[1].lower())
+        if key not in seen_refs:
+            seen_refs.add(key)
+            refs.append(ref)
     if refs:
         stamp_inventory_use(refs, stamp_at)
 

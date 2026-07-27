@@ -177,6 +177,126 @@ class TestContainerGate:
             "recipe", "consumed", "skipped_staples", "not_tracked", "use_recorded"}
 
 
+WEIGHT_RECIPE_MD = """\
+---
+recipe_name: Weight Test
+---
+
+## Ingredients
+
+| Amount | Unit | Ingredient |
+|--------|------|------------|
+| 250 | g | pumpkin puree |
+"""
+
+
+DUPE_RECIPE_MD = """\
+---
+recipe_name: Dupe Test
+---
+
+## Ingredients
+
+| Amount | Unit | Ingredient |
+|--------|------|------------|
+| 1 | whole | cucumber |
+"""
+
+
+def _write_raw_recipe(name, body):
+    rd = paths.recipes_dir()
+    rd.mkdir(parents=True, exist_ok=True)
+    (rd / f"{name}.md").write_text(body, encoding="utf-8")
+
+
+class TestACookNeverDeletesARow:
+    """A cook may reduce a row; it must never remove one.
+
+    Inventory rows are packages. A `5 oz` row matched by a `250 g` recipe line
+    is a unit-of-sale mismatch, not five ounces about to run out — and the
+    real library contains exactly that pair (pumpkin). A missed depletion
+    self-heals through the expiry prune; a deleted row does not.
+    """
+
+    def test_a_weight_package_is_not_emptied_by_a_larger_line(self, tmp_vault, tmp_db):
+        _write_raw_recipe("Weight Test", WEIGHT_RECIPE_MD)
+        add_items([
+            InventoryItem(name="pumpkin", quantity=5, unit="oz", category="produce"),
+        ])
+        result = cook.consume_recipe("Weight Test")
+
+        rows = {i.name: i for i in read_inventory()}
+        assert "pumpkin" in rows, "the row was deleted — the gate under-fired"
+        assert rows["pumpkin"].quantity == 5
+        assert any(u["item"] == "pumpkin" for u in result["use_recorded"])
+
+    def test_a_weight_package_still_decrements_when_stock_survives(
+        self, tmp_vault, tmp_db
+    ):
+        """The guard must not freeze every weight row: 900 g - 250 g still spends."""
+        _write_raw_recipe("Weight Test", WEIGHT_RECIPE_MD)
+        add_items([
+            InventoryItem(name="pumpkin", quantity=900, unit="g", category="produce"),
+        ])
+        result = cook.consume_recipe("Weight Test")
+
+        consumed = {c["item"]: c for c in result["consumed"]}
+        assert consumed["pumpkin"]["after"] == 650
+        assert consumed["pumpkin"]["depleted"] is False
+
+
+class TestRowsSummedAcrossLocations:
+    """load_pantry sums (name, unit) across locations, so two qty-1 rows read as
+    2.0 and the container gate never sees the parts. save_pantry's duplicate
+    collapse then drops the second row outright — along with its stamps."""
+
+    def test_two_container_rows_are_both_preserved(self, tmp_vault, tmp_db):
+        _write_raw_recipe("Dupe Test", DUPE_RECIPE_MD)
+        add_items([
+            InventoryItem(name="cucumber", quantity=1, unit="ct",
+                          category="produce", location="fridge"),
+            InventoryItem(name="cucumber", quantity=1, unit="ct",
+                          category="produce", location="pantry"),
+        ])
+        assert len(read_inventory()) == 2
+
+        result = cook.consume_recipe("Dupe Test")
+
+        rows = read_inventory()
+        assert len(rows) == 2, "a row was dropped by the cook"
+        assert all(r.quantity == 1 for r in rows)
+        assert any(u["item"].lower() == "cucumber" for u in result["use_recorded"])
+
+
+class TestOneCookStampsARowOnce:
+    def test_a_row_in_both_buckets_increments_once(self, tmp_vault, tmp_db):
+        """A row can be decremented by one line and merely used by another. That
+        is one cook touching one row, so use_count must move by exactly 1."""
+        _write_raw_recipe("Both Test", """\
+---
+recipe_name: Both Test
+---
+
+## Ingredients
+
+| Amount | Unit | Ingredient |
+|--------|------|------------|
+| 2 | whole | limes |
+| 1 | pinch | lime |
+""")
+        add_items([
+            InventoryItem(name="lime", quantity=5, unit="ct", category="produce"),
+        ])
+        result = cook.consume_recipe("Both Test", now="2026-07-27T10:00:00")
+
+        rows = {i.name: i for i in read_inventory()}
+        assert rows["lime"].use_count == 1
+        # And the row is reported once, not in two buckets at odds with each other.
+        in_consumed = {c["item"].lower() for c in result["consumed"]}
+        in_used = {u["item"].lower() for u in result["use_recorded"]}
+        assert not (in_consumed & in_used), "same row reported in two buckets"
+
+
 class TestNoOpCookDoesNotRewriteInventory:
     def test_no_decisions_means_no_save_pantry(self, tmp_vault, tmp_db, monkeypatch):
         """234 of 236 recipes decrement nothing. Each one used to trigger a full
