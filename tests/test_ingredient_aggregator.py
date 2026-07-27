@@ -82,3 +82,14 @@ class TestUnitCompatibility:
     def test_generic_count_is_a_subset_of_count_units_plus_empty(self):
         from lib.ingredient_aggregator import COUNT_UNITS
         assert GENERIC_COUNT - {""} <= COUNT_UNITS
+
+    def test_specific_count_against_generic_count_is_one_to_one(self):
+        # Mutation test revealed: "or n in GENERIC_COUNT" was unprotected.
+        # Pantry row with specific unit (clove) should match recipe with generic (ct).
+        assert unit_compatibility("clove", "ct") == "one_to_one"
+
+    def test_generic_specific_count_symmetry_is_order_independent(self):
+        # Mutation test revealed: "or n in GENERIC_COUNT" was unprotected.
+        # Result must not depend on argument order for generic/specific count pairs.
+        assert unit_compatibility("clove", "whole") == "one_to_one"
+        assert unit_compatibility("whole", "clove") == "one_to_one"
