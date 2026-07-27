@@ -217,6 +217,72 @@ class TestCompoundExtensionKeepsTrueMatches:
                        _ingredient_phrase("creamy peanut butter, softened"))
 
 
+class TestAtomicBlockOnlyFiresWhenImplicated:
+    """14fa2bc added cornmeal/cream cheese/cornstarch to `_ATOMIC_FOODS`, but
+    `_covers` blocked on *any* atomic core found anywhere in the longer
+    phrase, not just one the shorter phrase's tokens actually overlap. That
+    produced false negatives: "chicken breast" stopped matching "cornmeal-
+    crusted chicken breasts" because "cornmeal" happened to co-occur in the
+    ingredient text, even though nothing about the match was claiming to be
+    cornmeal. The atomic block must only fire when the atomic core shares a
+    token with the shorter phrase — i.e. the core is part of what's being
+    claimed, not incidental noise elsewhere in the text.
+    """
+
+    # --- regressions from 14fa2bc that must now match again ---
+
+    def test_chicken_breast_matches_despite_unrelated_cornmeal(self):
+        assert _covers(_phrase("chicken breast"),
+                       _ingredient_phrase("cornmeal-crusted chicken breasts"))
+
+    def test_chicken_breast_matches_despite_unrelated_cream_cheese(self):
+        assert _covers(_phrase("chicken breast"),
+                       _ingredient_phrase("cream cheese stuffed chicken breast"))
+
+    def test_potato_starch_matches_despite_unrelated_cornstarch(self):
+        assert _covers(_phrase("Potato starch"),
+                       _ingredient_phrase("potato starch or cornstarch"))
+
+    # --- must stay blocked: the atomic core IS what's being claimed ---
+
+    def test_tortillas_still_does_not_match_corn_tortillas(self):
+        assert not _covers(_phrase("tortillas"),
+                           _ingredient_phrase("corn tortillas"))
+
+    def test_butter_still_does_not_match_peanut_butter(self):
+        assert not _covers(_phrase("butter"),
+                           _ingredient_phrase("peanut butter"))
+
+    def test_shredded_cheese_still_does_not_match_cream_cheese(self):
+        assert not _covers(_phrase("shredded cheese"),
+                           _ingredient_phrase("cream cheese"))
+
+    # --- multi-core lines: several "___ butter"/"___ milk" alternatives at
+    # once. A full-corpus measurement (every recipe x every inventory row)
+    # caught these after the fix above shipped: checking only the first
+    # structurally-present atomic core (via next()) let an irrelevant one
+    # (peanut butter) shadow the one actually implicated (cashew butter), so
+    # `_covers` now checks every core the longer phrase contains.
+
+    def test_cashew_pieces_does_not_match_a_cashew_butter_alternative(self):
+        # "cashew" only names a piece of the "cashew butter" alternative
+        # listed here — it doesn't cover "butter" too, so it must stay
+        # blocked even though "peanut butter" (irrelevant to "cashew") is
+        # structurally the first atomic core found in the phrase.
+        assert not _covers(
+            _phrase("Cashew pieces"),
+            _ingredient_phrase("almond butter (or peanut, walnut, or cashew butter, or tahini)"))
+
+    def test_exact_alternative_still_matches_among_several_atomic_cores(self):
+        # "Peanut butter" fully names one of the listed alternatives, so its
+        # shared "butter" token with the *other* alternatives (almond butter,
+        # cashew butter) is incidental vocabulary overlap, not an
+        # under-claim — this must keep matching.
+        assert _covers(
+            _phrase("Peanut butter"),
+            _ingredient_phrase("almond butter (or peanut, walnut, or cashew butter, or tahini)"))
+
+
 class TestRender:
     def test_markdown_lists_at_risk_and_recipes(self):
         items = [_item("Strawberries", SOON)]

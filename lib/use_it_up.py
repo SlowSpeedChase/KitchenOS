@@ -95,8 +95,31 @@ def _covers(a: Phrase, b: Phrase) -> bool:
     # A compound food only matches something that names the whole compound:
     # "peanut butter" is not "butter", but it is still "creamy peanut butter,
     # softened". Blanket-rejecting anything atomic would break the latter.
-    core = next((c for c in _ATOMIC_FOODS if c <= longer.tokens), None)
-    if core is not None and not core <= shorter.tokens:
+    # But an atomic core has to actually be *implicated* in the shorter
+    # phrase's claim before it can block a match: a compound food only lies
+    # about a match when it overlaps what the shorter name is claiming to be
+    # ("butter" claiming "peanut butter"). An unrelated compound elsewhere in
+    # noisy ingredient text — "chicken breast" containing "cornmeal-crusted",
+    # "potato starch" containing "or cornstarch" — is irrelevant noise, not a
+    # different food being claimed, so it must not block the match.
+    #
+    # Check every atomic core the longer phrase contains, not just the first:
+    # recipe lines routinely list several alternatives together ("almond
+    # butter (or peanut, walnut, or cashew butter, or tahini)"), so more than
+    # one "___ butter"/"___ milk" entry can be simultaneously present. Only
+    # inspecting the first structural match would let an irrelevant core
+    # (peanut butter) shadow the one the shorter phrase is actually implicated
+    # in (cashew butter), silently skipping a block that should have fired.
+    cores = [c for c in _ATOMIC_FOODS if c <= longer.tokens]
+    implicated = [c for c in cores if shorter.tokens & c]
+    # If shorter itself fully names one of the implicated compounds, its claim
+    # is legitimate and complete — sharing a component word ("butter") with
+    # *other* alternatives listed alongside it ("almond butter", "cashew
+    # butter") is incidental vocabulary overlap, not evidence shorter is
+    # under-claiming. Only block when none of the implicated cores are fully
+    # covered by shorter, i.e. shorter names a piece of a compound without
+    # naming the whole thing.
+    if implicated and not any(c <= shorter.tokens for c in implicated):
         return False
     if not longer.strict:
         return True
