@@ -54,8 +54,11 @@ Conflict-check method: `git log main..<branch> --name-only`. Do **not** use
 - [x] Tests written first (superpowers:test-driven-development) — RED observed for every task
 - [x] Core implementation complete — Tasks 1–9 all landed
 - [x] All tests passing — 2708 unit (from a 2691 baseline), 28 e2e + 3 xfail + 1 xpass
-- [x] No linting/type errors — `ruff check` clean on every file this branch touches
-      (the 2 errors it reports in `api_server.py` are pre-existing and identical on `main`)
+- [x] No linting/type errors — `ruff check` clean on every file this branch *authored*.
+      Three findings sit in files this branch touches, all three pre-existing and
+      confirmed identical on `main` (`c33d867`): `E722` bare except and `E741`
+      ambiguous `l` in `api_server.py`, and `F401` unused `re` import in
+      `lib/ingredient_aggregator.py`. Not fixed here — unrelated to this change.
 - [x] Code follows project patterns
 - [ ] LaunchAgent restarted if lib/, templates/, or prompts/ changed — **deliberately not
       done, and owed at merge time.** The plist runs
@@ -117,6 +120,35 @@ from a can of corn**.
 `cook-now-meal-type-filter` — the previous branch's closure ritual missed
 deleting it. `ls BRANCH-STATUS.md` must fail on main. Delete it when this branch
 closes.
+
+## Owed after merge
+
+Not blockers, but this branch creates the obligation:
+
+1. **Restart the `com.kitchenos.api` LaunchAgent.** `lib/` and `templates/` changed;
+   the plist runs the *main* checkout, so the restart only makes sense post-merge.
+2. **Surface `last_used` / `use_count` somewhere.** The columns are currently
+   write-only — no view reads them. `Inventory.md`'s `HEADER` is unchanged, and
+   `/review` surfacing was descoped from this branch to avoid colliding with
+   `inventory-scan-and-extend`. Until something reads them, 453 of the 472
+   ingredient lines that now touch inventory leave no user-visible trace beyond a
+   transient toast. Natural home: the `/review` subline, alongside the
+   `inventory-location-visibility` work.
+3. **Decide the token story for the browser pages.** `/api/cook` is now gated,
+   matching `/api/cooks`. Both are called from `templates/meal_planner.html`
+   with no `Authorization` header, so if `KITCHENOS_API_TOKEN` is ever set both
+   cook buttons 401 for any non-localhost browser — and the tailnet is the normal
+   way these pages get opened. Inert today (the var is unset in `.env` and the
+   plist). Either the pages send the token or the exemption gets written down, as
+   `docs/API.md` already does for `/api/receipt/paste`.
+
+## Known remaining inaccuracy (matcher-level, not this branch)
+
+`find_match("pumpkin puree")` resolves to a fresh-`pumpkin` row, so one line in
+`Dubai Chocolate Brownies` decrements a row it arguably shouldn't. It now only
+*reduces* the row (the never-delete guard covers the destructive case in
+`Rich Fudgy Chocolate Cake`), which is the self-healing direction. Fixing the
+match itself is matcher work, deliberately out of scope here.
 
 ## Blocked Items
 

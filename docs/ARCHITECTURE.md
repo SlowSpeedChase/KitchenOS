@@ -150,7 +150,14 @@ become something the user has to maintain:
 - **Consume-on-cook is optional.** `lib/cook.py` / `POST /api/cook` can
   decrement a cooked recipe's non-staple ingredients for true
   partial-package leftover tracking, but inventory self-cleans on expiry
-  with or without it.
+  with or without it. Every ingredient lands in exactly one of four buckets —
+  `consumed`, `use_recorded`, `not_tracked`, `skipped_staples`. Because
+  inventory rows are *packages* rather than measured quantities, a cook may
+  reduce a row but never delete one: a row at quantity `1.0`, a row summed
+  across locations, or a weight/volume decrement that would zero the row out
+  is use-stamped (`last_used`, `use_count`) instead. `use_recorded` is the
+  dominant outcome by an order of magnitude, which is why every client must
+  report all four buckets and not just `consumed`.
 - **The plan itself fights waste.** The interactive suggester
   (`lib/meal_suggester.py`) ranks recipes by how much at-risk (expiring)
   inventory they use first, so waste-relevant recipes surface without an

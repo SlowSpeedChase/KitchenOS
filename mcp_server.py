@@ -372,11 +372,19 @@ def cook_recipe(recipe: str, servings: float = 1.0) -> str:
     r = _cook_recipe(recipe, servings=servings)
     if r.get("error"):
         return f"Error: {r['error']}"
+    # Report all four buckets, not just `consumed`. Since the container gate
+    # landed, `use_recorded` is the dominant outcome by an order of magnitude
+    # (453 ingredient lines across 89 rows, against 19 decrements), so reading
+    # only `consumed` would answer "Nothing to decrement" for almost every cook
+    # that did in fact touch the inventory — the same defect the web toast had.
     consumed = r.get("consumed", [])
-    if not consumed:
-        skipped = r.get("not_tracked", []) + r.get("skipped_staples", [])
-        extra = f" (ingredients not tracked / are staples: {', '.join(skipped[:6])})" if skipped else ""
-        return f"Nothing to decrement for {recipe}.{extra}"
+    used = r.get("use_recorded", [])
+    untracked = r.get("not_tracked", [])
+    staples = r.get("skipped_staples", [])
+
+    if not (consumed or used or untracked or staples):
+        return f"Cooked {recipe}. Nothing tracked to decrement."
+
     lines = []
     for c in consumed:
         unit = c.get("unit") or ""
@@ -384,6 +392,16 @@ def cook_recipe(recipe: str, servings: float = 1.0) -> str:
             lines.append(f"  - {c['item']}: used up (was {c['before']:g} {unit})")
         else:
             lines.append(f"  - {c['item']}: {c['before']:g} → {c['after']:g} {unit} left")
+    if used:
+        # These are packages: used, but not safely divisible into a number.
+        lines.append("  - marked used (not decremented — one package): "
+                     + ", ".join(u["item"] for u in used[:8])
+                     + (f" +{len(used) - 8} more" if len(used) > 8 else ""))
+    if untracked:
+        lines.append("  - not in inventory: " + ", ".join(untracked[:8])
+                     + (f" +{len(untracked) - 8} more" if len(untracked) > 8 else ""))
+    if staples:
+        lines.append(f"  - {len(staples)} staple(s) assumed on hand")
     return f"Cooked {recipe}. Updated inventory:\n" + "\n".join(lines)
 
 

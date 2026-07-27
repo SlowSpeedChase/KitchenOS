@@ -219,7 +219,10 @@ def split_against_pantry(item: str, amount, unit: str, pantry: list[dict]) -> di
     # correct for almost every count ingredient (cloves, lemons, eggs, onions).
     # The rule lives in unit_compatibility so apply_decisions applies the same
     # one — they used to disagree.
-    n_unit_lower = (unit or "").lower()
+    # Stripped as well as lowered: a padded " whole " would otherwise fall out
+    # of GENERIC_COUNT and pick the pantry's unit for display instead of the
+    # recipe's. Same normalization unit_compatibility applies.
+    n_unit_lower = (unit or "").lower().strip()
     if unit_compatibility(p_unit, unit) == "one_to_one":
         # Display in the recipe's unit if specified, else the pantry's.
         out_unit = unit if n_unit_lower not in GENERIC_COUNT else (p_unit or unit)

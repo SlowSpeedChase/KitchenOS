@@ -300,11 +300,24 @@ def fetch_trip(trip_id: int) -> Optional[dict]:
         conn.close()
 
 
-# Columns the schema declares NOT NULL. A caller may hand us a dict that omits
-# one — `r.get()` then yields None, and binding an explicit NULL violates the
-# constraint even though the column has a DEFAULT. Tested by `is None` rather
-# than falsiness so a legitimate 0 or "" survives.
-_NOT_NULL_FALLBACKS = {"notes": "", "use_count": 0}
+# Every column the inventory schema declares NOT NULL with a DEFAULT. A caller
+# may hand us a dict that omits one — `r.get()` then yields None, and binding an
+# explicit NULL violates the constraint even though the column has a DEFAULT
+# (the default only applies when the column is left out of the INSERT, and this
+# INSERT always names all of them). Tested by `is None` rather than falsiness so
+# a legitimate 0 or "" survives.
+#
+# Keep in sync with _SCHEMA: these values mirror its DEFAULT clauses. A NOT NULL
+# column missing from this table is an IntegrityError waiting for the first
+# caller that builds a row dict by hand.
+_NOT_NULL_FALLBACKS = {
+    "unit": "ct",
+    "category": "other",
+    "location": "pantry",
+    "source": "manual",
+    "notes": "",
+    "use_count": 0,
+}
 
 
 def replace_inventory_rows(rows: list[dict]) -> None:
@@ -346,10 +359,13 @@ def stamp_inventory_use(refs: list[tuple[str, str]], when: str) -> int:
         total = 0
         with conn:
             for name, unit in refs:
+                # trim() on the DB side too: the Python side is stripped, so a
+                # stored name with padding would silently match nothing. That
+                # class of desync already bit once (8298c51).
                 cur = conn.execute(
                     "UPDATE inventory"
                     " SET last_used = ?, use_count = COALESCE(use_count, 0) + 1"
-                    " WHERE lower(name) = ? AND lower(unit) = ?",
+                    " WHERE trim(lower(name)) = ? AND trim(lower(unit)) = ?",
                     (when, (name or "").lower().strip(),
                      (unit or "").lower().strip()),
                 )

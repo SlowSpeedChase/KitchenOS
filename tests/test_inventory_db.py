@@ -86,3 +86,38 @@ def test_inventory_rows_roundtrip(tmp_db):
     assert out[0]["name"] == "Chicken breast"
     assert out[0]["quantity"] == 2.0
     assert out[0]["location"] == "fridge"
+
+
+def test_every_not_null_column_has_a_fallback(tmp_db):
+    """_NOT_NULL_FALLBACKS must cover the schema, or a hand-built row dict
+    omitting a NOT NULL column raises IntegrityError.
+
+    replace_inventory_rows names every column in the INSERT, so a column's
+    DEFAULT never applies — an omitted key binds an explicit NULL. Derived from
+    the live schema so adding a NOT NULL column fails here rather than in
+    production.
+    """
+    conn = idb.connect()
+    try:
+        required = {
+            r["name"] for r in conn.execute("PRAGMA table_info(inventory)")
+            if r["notnull"] and r["dflt_value"] is not None
+        }
+    finally:
+        conn.close()
+
+    missing = required - set(idb._NOT_NULL_FALLBACKS)
+    assert not missing, f"NOT NULL columns with no fallback: {sorted(missing)}"
+
+
+def test_a_row_dict_omitting_defaulted_columns_still_inserts(tmp_db):
+    """The minimum a caller can hand us: name and quantity."""
+    idb.replace_inventory_rows([{"name": "Sparse", "quantity": 1.0}])
+    [out] = idb.fetch_inventory_rows()
+    assert out["name"] == "Sparse"
+    assert out["unit"] == "ct"
+    assert out["category"] == "other"
+    assert out["location"] == "pantry"
+    assert out["source"] == "manual"
+    assert out["notes"] == ""
+    assert out["use_count"] == 0
