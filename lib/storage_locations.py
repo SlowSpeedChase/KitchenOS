@@ -19,6 +19,7 @@ it stays editable in a text editor, mirroring ``config/item_aliases.json``.
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,12 +32,26 @@ TABLE_PATH = Path(__file__).resolve().parent.parent / "config" / "storage_locati
 _DEFAULT_LOCATION = "pantry"
 
 
+def table_path() -> Path:
+    """Where the storage table lives. ``KITCHENOS_STORAGE_TABLE`` overrides.
+
+    Resolved at call time, mirroring ``inventory_db.db_path``, so a *subprocess*
+    launched with the var set writes to its own copy. The e2e harness needs
+    this: it runs api_server.py out-of-process, so an in-process monkeypatch of
+    TABLE_PATH can't reach it, and a move teaches the table — which meant the
+    browser tests were rewriting the developer's real config.
+    """
+    raw = os.environ.get("KITCHENOS_STORAGE_TABLE")
+    return Path(raw) if raw else TABLE_PATH
+
+
 def load_table() -> dict:
     """Return the storage-location table, or empty tiers if missing/corrupt."""
-    if not TABLE_PATH.exists():
+    path = table_path()
+    if not path.exists():
         return {"by_item": {}, "by_category": {}}
     try:
-        data = json.loads(TABLE_PATH.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {"by_item": {}, "by_category": {}}
     if not isinstance(data, dict):
@@ -48,14 +63,15 @@ def load_table() -> dict:
 
 def save_table(table: dict) -> None:
     """Atomically persist the table (tmp + replace), keys sorted."""
-    TABLE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    path = table_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
     out = {
         "by_item": dict(sorted(table.get("by_item", {}).items())),
         "by_category": dict(sorted(table.get("by_category", {}).items())),
     }
-    tmp = TABLE_PATH.with_suffix(".json.tmp")
+    tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(out, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(TABLE_PATH)
+    tmp.replace(path)
 
 
 def _tokens(s: str) -> set[str]:
