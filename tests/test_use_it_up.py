@@ -220,16 +220,36 @@ class TestCompoundExtensionKeepsTrueMatches:
 class TestAtomicBlockOnlyFiresWhenImplicated:
     """14fa2bc added cornmeal/cream cheese/cornstarch to `_ATOMIC_FOODS`, but
     `_covers` blocked on *any* atomic core found anywhere in the longer
-    phrase, not just one the shorter phrase's tokens actually overlap. That
-    produced false negatives: "chicken breast" stopped matching "cornmeal-
-    crusted chicken breasts" because "cornmeal" happened to co-occur in the
-    ingredient text, even though nothing about the match was claiming to be
-    cornmeal. The atomic block must only fire when the atomic core shares a
-    token with the shorter phrase — i.e. the core is part of what's being
-    claimed, not incidental noise elsewhere in the text.
+    phrase, not just one implicated by what the shorter phrase claims to be.
+    That produced false negatives: "chicken breast" stopped matching
+    "cornmeal-crusted chicken breasts" because "cornmeal" happened to
+    co-occur in the ingredient text, even though nothing about the match was
+    claiming to be cornmeal.
+
+    34c33b5 fixed that by firing the block whenever a core shared *any* token
+    with the shorter phrase — but that also fires on a modifier-only overlap:
+    "vanilla" (a bottle of extract) shares the token "vanilla" with "vanilla
+    almond milk", so it wrongly matched a food it isn't. The block now fires
+    on two independent tests instead: the compound's head noun is part of the
+    core (the compound genuinely *is* this phrase's food, e.g. "corn
+    tortillas"), or the shorter phrase's tokens overlap the core at all (the
+    shorter name is an incomplete piece of the compound, e.g. "butter" for
+    "peanut butter") — checked over every core the longer phrase contains, not
+    just the first, since recipe lines can list several alternatives at once.
+
+    That per-core check still needs one more exception: it fired whenever
+    *any* implicated core wasn't fully named by the shorter phrase, even when
+    a *different* implicated core was. That broke "Peanut butter" against
+    "almond butter (or peanut, walnut, or cashew butter, or tahini)" — the
+    shorter phrase fully names the "peanut butter" alternative, but "almond
+    butter" and "cashew butter" are also implicated cores it doesn't fully
+    name, so the naive per-core loop still blocked a legitimate match. The
+    fix: skip the per-core loop entirely once the shorter phrase fully names
+    *any* implicated core — at that point it's naming one of the line's
+    alternatives, not under-claiming a different one.
     """
 
-    # --- regressions from 14fa2bc that must now match again ---
+    # --- regressions from 14fa2bc that must stay fixed ---
 
     def test_chicken_breast_matches_despite_unrelated_cornmeal(self):
         assert _covers(_phrase("chicken breast"),
@@ -238,10 +258,6 @@ class TestAtomicBlockOnlyFiresWhenImplicated:
     def test_chicken_breast_matches_despite_unrelated_cream_cheese(self):
         assert _covers(_phrase("chicken breast"),
                        _ingredient_phrase("cream cheese stuffed chicken breast"))
-
-    def test_potato_starch_matches_despite_unrelated_cornstarch(self):
-        assert _covers(_phrase("Potato starch"),
-                       _ingredient_phrase("potato starch or cornstarch"))
 
     # --- must stay blocked: the atomic core IS what's being claimed ---
 
@@ -257,27 +273,59 @@ class TestAtomicBlockOnlyFiresWhenImplicated:
         assert not _covers(_phrase("shredded cheese"),
                            _ingredient_phrase("cream cheese"))
 
-    # --- multi-core lines: several "___ butter"/"___ milk" alternatives at
-    # once. A full-corpus measurement (every recipe x every inventory row)
-    # caught these after the fix above shipped: checking only the first
-    # structurally-present atomic core (via next()) let an irrelevant one
-    # (peanut butter) shadow the one actually implicated (cashew butter), so
-    # `_covers` now checks every core the longer phrase contains.
+    # --- must stay matching: shorter fully names the compound (or a
+    # different, unimplicated compound is just noise in the line) ---
 
-    def test_cashew_pieces_does_not_match_a_cashew_butter_alternative(self):
-        # "cashew" only names a piece of the "cashew butter" alternative
-        # listed here — it doesn't cover "butter" too, so it must stay
-        # blocked even though "peanut butter" (irrelevant to "cashew") is
-        # structurally the first atomic core found in the phrase.
-        assert not _covers(
-            _phrase("Cashew pieces"),
-            _ingredient_phrase("almond butter (or peanut, walnut, or cashew butter, or tahini)"))
+    def test_cornstarch_matches_despite_unrelated_potato_starch(self):
+        assert _covers(_phrase("Cornstarch"),
+                       _ingredient_phrase("potato starch or cornstarch"))
 
-    def test_exact_alternative_still_matches_among_several_atomic_cores(self):
-        # "Peanut butter" fully names one of the listed alternatives, so its
-        # shared "butter" token with the *other* alternatives (almond butter,
-        # cashew butter) is incidental vocabulary overlap, not an
-        # under-claim — this must keep matching.
+    def test_basil_matches_prep_note_variant(self):
+        assert _covers(_phrase("Basil"), _ingredient_phrase("basil leaves"))
+
+    def test_peanut_butter_matches_a_noisy_ingredient_line(self):
+        assert _covers(_phrase("peanut butter"),
+                       _ingredient_phrase("creamy peanut butter, softened"))
+
+    # --- accepted loss: 34c33b5 fixed this same-line case by treating
+    # "cornstarch" as merely incidental to "Potato starch", but that overlap
+    # test can't tell "cornmeal is noise in a chicken breast line" apart from
+    # "cornstarch is genuinely another named alternative in a starch line"
+    # without reintroducing the false positives below. "Potato starch" no
+    # longer matches this line directly, but the same ingredient line is
+    # still covered via the "Cornstarch" inventory row above, so the recipe
+    # itself is not lost — only this one inventory-row/ingredient pairing is.
+
+    def test_potato_starch_no_longer_matches_the_cornstarch_alternative(self):
+        assert not _covers(_phrase("Potato starch"),
+                           _ingredient_phrase("potato starch or cornstarch"))
+
+    # --- newly blocked: a modifier-only inventory name must not match a
+    # compound food it merely happens to season. "vanilla" is a bottle of
+    # extract; the ingredient's actual food is almond milk, an
+    # `_ATOMIC_FOODS` entry — 34c33b5's any-token-overlap test let "vanilla"
+    # match because it shares the "vanilla" token, even though the compound's
+    # head noun ("milk") has nothing to do with what's in the inventory.
+
+    def test_vanilla_does_not_match_vanilla_almond_milk(self):
+        assert not _covers(_phrase("vanilla"),
+                           _ingredient_phrase("vanilla almond milk"))
+
+    def test_vanilla_does_not_match_unsweetened_vanilla_almond_milk(self):
+        assert not _covers(_phrase("vanilla"),
+                           _ingredient_phrase("unsweetened vanilla almond milk"))
+
+    # --- must stay matching: shorter fully names one of several implicated
+    # alternatives listed together in the same line ---
+
+    def test_peanut_butter_matches_among_several_nut_butter_alternatives(self):
+        # "Peanut butter" fully names one of the alternatives listed here
+        # ("almond butter (or peanut, walnut, or cashew butter, or tahini)").
+        # "almond butter" and "cashew butter" are also implicated cores
+        # structurally present in the line, and neither is fully named by
+        # "Peanut butter" — but a name that IS one of the compounds present
+        # must still match; it's naming an alternative, not under-claiming a
+        # different one.
         assert _covers(
             _phrase("Peanut butter"),
             _ingredient_phrase("almond butter (or peanut, walnut, or cashew butter, or tahini)"))
