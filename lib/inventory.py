@@ -361,6 +361,9 @@ def seed_pantry_staples(staples: Optional[set] = None) -> dict:
         write_inventory(existing + [
             InventoryItem(name=name, quantity=1, unit="ct", category="pantry",
                           location="pantry", source="staple",
+                          # Hand-authored in pantry_staples.json, so these are
+                          # curated placements — not guesses to review.
+                          location_source="item",
                           notes="always on hand")
             for name in added
         ])
@@ -393,6 +396,17 @@ def prune_expired(today: Optional[date] = None,
     return removed
 
 
+# Strongest wins when two rows merge. A hand-placed row must never be
+# downgraded to a guess by a restock that happened to resolve weakly.
+_SOURCE_RANK = {"manual": 3, "item": 2, "category": 1, "default": 0}
+
+
+def _stronger_source(a: Optional[str], b: Optional[str]) -> str:
+    """The more trustworthy of two provenances."""
+    a, b = normalize_location_source(a), normalize_location_source(b)
+    return a if _SOURCE_RANK[a] >= _SOURCE_RANK[b] else b
+
+
 # TODO(receipt-ingestion plan, task 9): read→merge→replace can lose updates
 # with concurrent writers (Flask threads + ingest LaunchAgent). Switch to
 # INSERT ... ON CONFLICT(name, unit, location) DO UPDATE SET
@@ -422,6 +436,9 @@ def add_items(new_items: list[InventoryItem]) -> dict:
                 cur.notes = new.notes
             if new.category != "other":
                 cur.category = new.category
+            cur.location_source = _stronger_source(
+                cur.location_source, new.location_source
+            )
             cur.for_recipe = _merge_recipes(cur.for_recipe, new.for_recipe)
             # Keep the earliest expiry so warnings fire for the oldest stock.
             cur.expires = _earliest_expiry(cur.expires, new.expires)

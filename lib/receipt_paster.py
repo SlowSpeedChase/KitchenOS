@@ -19,7 +19,7 @@ from lib.inventory import (
     normalize_location,
 )
 from lib.expiry import compute_expires
-from lib.storage_locations import resolve_location
+from lib.storage_locations import place_item
 
 # Header label -> canonical field name.
 _COLUMN_ALIASES = {
@@ -82,11 +82,14 @@ def parse_inventory_table(markdown: str) -> dict:
             continue  # blank/spacer row
 
         category = normalize_category(row.get("category"))
-        location = (
-            normalize_location(row["location"])
-            if row.get("location")
-            else resolve_location(name, category)
-        )
+        # An explicit location in the pasted row is the caller's stated choice,
+        # not a guess, so it records as manual.
+        if row.get("location"):
+            location = normalize_location(row["location"])
+            location_source = "manual"
+        else:
+            placement = place_item(name, category)
+            location, location_source = placement.location, placement.source
         purchased = (row.get("purchased") or "").strip() or None
         expires = (row.get("expires") or "").strip() or compute_expires(purchased, name, category)
 
@@ -97,6 +100,7 @@ def parse_inventory_table(markdown: str) -> dict:
                 unit=(row.get("unit") or "ct").strip() or "ct",
                 category=category,
                 location=location,
+                location_source=location_source,
                 purchased=purchased,
                 source="claude",
                 notes=(row.get("notes") or "").strip(),

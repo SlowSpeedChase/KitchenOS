@@ -25,7 +25,7 @@ from lib.receipt_parser import (
     to_cents,
     validate_receipt,
 )
-from lib.storage_locations import resolve_location
+from lib.storage_locations import place_item, resolve_location
 
 PHOTO_SOURCE = "photo_receipt"
 
@@ -95,20 +95,24 @@ def ingest_parsed(
         result["status"] = "needs_review"
         return result
 
-    stock = [
-        InventoryItem(
+    # A loop rather than a comprehension: each row now needs two values from
+    # one place_item call, and calling it twice would double the table reads.
+    stock = []
+    for p in purchases:
+        if p["category"] == "fee":
+            continue
+        placement = place_item(p["canonical_name"], p["category"])
+        stock.append(InventoryItem(
             name=p["canonical_name"],
             quantity=float(p["quantity"] or 1),
             unit=p["unit"],
             category=p["category"],
-            location=resolve_location(p["canonical_name"], p["category"]),
+            location=placement.location,
+            location_source=placement.source,
             purchased=date,
             source="receipt",
             for_recipe=p.get("for_recipe"),
-        )
-        for p in purchases
-        if p["category"] != "fee"
-    ]
+        ))
     if stock:
         add_items(stock)
     result["status"] = "ingested"

@@ -1031,3 +1031,43 @@ def test_a_missing_location_source_reads_as_default(tmp_db, tmp_vault):
 
     [got] = read_inventory()
     assert got.location_source == "default"
+
+
+def test_merge_keeps_the_stronger_source(tmp_db, tmp_vault):
+    """Restocking a hand-placed row must not downgrade it back to a guess."""
+    write_inventory([
+        InventoryItem(name="oat milk", quantity=1, unit="ct",
+                      category="dairy", location="fridge",
+                      location_source="manual"),
+    ])
+    add_items([
+        InventoryItem(name="oat milk", quantity=2, unit="ct",
+                      category="dairy", location="fridge",
+                      location_source="category"),
+    ])
+    [got] = read_inventory()
+    assert got.quantity == 3
+    assert got.location_source == "manual"
+
+
+def test_merge_upgrades_a_weaker_source(tmp_db, tmp_vault):
+    write_inventory([
+        InventoryItem(name="oat milk", quantity=1, unit="ct",
+                      category="dairy", location="fridge",
+                      location_source="default"),
+    ])
+    add_items([
+        InventoryItem(name="oat milk", quantity=1, unit="ct",
+                      category="dairy", location="fridge",
+                      location_source="item"),
+    ])
+    [got] = read_inventory()
+    assert got.location_source == "item"
+
+
+def test_seeded_staples_are_not_flagged_for_review(tmp_db, tmp_vault):
+    """pantry_staples.json is hand-authored, so its rows are curated, not guesses."""
+    seed_pantry_staples({"olive oil"})
+    [got] = read_inventory()
+    assert got.name == "olive oil"
+    assert got.location_source == "item"

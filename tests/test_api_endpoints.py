@@ -572,3 +572,19 @@ def test_plan_week_unplanned_is_empty_state_not_404(client, tmp_vault):
 
 def test_plan_week_invalid_week_400(client):
     assert client.get('/plan-week?week=bogus').status_code == 400
+
+
+def test_add_records_the_resolved_placement(client, tmp_db, tmp_vault):
+    """A resolved location carries its tier; an explicit one is the caller's call."""
+    client.post('/api/inventory/add', json={'items': [
+        {'name': 'PlacementTestMilk', 'quantity': 1, 'category': 'dairy'},
+        {'name': 'PlacementTestHusk', 'quantity': 1, 'category': 'other'},
+        {'name': 'PlacementTestPick', 'quantity': 1, 'category': 'dairy',
+         'location': 'counter'},
+    ], 'match_plan': False})
+
+    rows = {i['name']: i for i in client.get('/api/inventory').get_json()}
+    assert rows['PlacementTestMilk']['location_source'] == 'category'
+    assert rows['PlacementTestHusk']['location_source'] == 'default'
+    assert rows['PlacementTestPick']['location_source'] == 'manual'
+    assert rows['PlacementTestPick']['location'] == 'counter'

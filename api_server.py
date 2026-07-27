@@ -2195,7 +2195,7 @@ def api_inventory_add():
         InventoryItem, add_items,
         normalize_category, normalize_location, normalize_source,
     )
-    from lib.storage_locations import resolve_location
+    from lib.storage_locations import place_item
 
     data = request.get_json(force=True, silent=True)
     if not data or 'items' not in data:
@@ -2226,15 +2226,20 @@ def api_inventory_add():
             quantity = 1.0
         category = normalize_category(raw.get('category'))
         # Explicit location wins; otherwise resolve from the storage table.
-        location = (normalize_location(raw['location'])
-                    if raw.get('location')
-                    else resolve_location(name, category))
+        # An explicit one is the caller's stated choice, so it records as manual.
+        if raw.get('location'):
+            location = normalize_location(raw['location'])
+            location_source = 'manual'
+        else:
+            placement = place_item(name, category)
+            location, location_source = placement.location, placement.source
         parsed.append(InventoryItem(
             name=name,
             quantity=quantity,
             unit=(raw.get('unit') or 'ct').strip(),
             category=category,
             location=location,
+            location_source=location_source,
             purchased=(raw.get('purchased') or None),
             source=normalize_source(raw.get('source') or 'claude'),
             notes=(raw.get('notes') or '').strip(),
