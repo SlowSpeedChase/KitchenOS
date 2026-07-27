@@ -1,6 +1,9 @@
 """Tests for the inventory module."""
+import json
 
-from lib import inventory_db
+import pytest
+
+from lib import inventory_db, storage_locations
 from lib.inventory import (
     InventoryItem,
     add_items,
@@ -1071,3 +1074,84 @@ def test_seeded_staples_are_not_flagged_for_review(tmp_db, tmp_vault):
     [got] = read_inventory()
     assert got.name == "olive oil"
     assert got.location_source == "item"
+
+
+@pytest.fixture
+def empty_storage_table(monkeypatch, tmp_path):
+    """An isolated, empty storage-locations table. Yields its path.
+
+    Without this, teaching would write to the real config/storage_locations.json.
+    """
+    table = tmp_path / "storage_locations.json"
+    table.write_text(json.dumps({"by_item": {}, "by_category": {}}))
+    monkeypatch.setattr(storage_locations, "TABLE_PATH", table)
+    return table
+
+
+def _taught(table):
+    return json.loads(table.read_text())["by_item"]
+
+
+def test_move_confirms_the_row_and_teaches_the_table(
+    tmp_db, tmp_vault, empty_storage_table
+):
+    write_inventory([
+        InventoryItem(name="oat milk", quantity=1, unit="ct",
+                      category="dairy", location="pantry",
+                      location_source="default"),
+    ])
+    moved = move_item("oat milk", "fridge")
+    assert moved.location == "fridge"
+    assert moved.location_source == "manual"
+    assert _taught(empty_storage_table) == {"oat milk": "fridge"}
+
+
+def test_freeze_confirms_the_row_but_teaches_nothing(
+    tmp_db, tmp_vault, empty_storage_table
+):
+    """Freezing rescues one item from spoiling; it does not say where bread lives."""
+    write_inventory([
+        InventoryItem(name="sourdough loaf", quantity=1, unit="ct",
+                      category="bakery", location="counter",
+                      location_source="category"),
+    ])
+    frozen = freeze_item("sourdough loaf")
+    assert frozen.location == "freezer"
+    assert frozen.location_source == "manual"
+    assert _taught(empty_storage_table) == {}
+
+
+def test_bulk_move_teaches_every_item(tmp_db, tmp_vault, empty_storage_table):
+    from lib.inventory import bulk_apply
+    write_inventory([
+        InventoryItem(name="peas", quantity=1, unit="ct",
+                      category="produce", location="fridge"),
+        InventoryItem(name="corn", quantity=1, unit="ct",
+                      category="produce", location="fridge"),
+    ])
+    result = bulk_apply(
+        "move",
+        [{"name": "peas", "unit": "ct", "location": "fridge"},
+         {"name": "corn", "unit": "ct", "location": "fridge"}],
+        to_location="freezer",
+    )
+    assert result["applied"] == 2
+    assert all(it.location_source == "manual" for it in result["items"])
+    assert _taught(empty_storage_table) == {"peas": "freezer", "corn": "freezer"}
+
+
+def test_a_failed_override_write_still_commits_the_move(
+    tmp_db, tmp_vault, empty_storage_table, monkeypatch
+):
+    """The row is the user's intent; the lesson is a side effect."""
+    def boom(*args, **kwargs):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(storage_locations, "save_item_override", boom)
+    write_inventory([
+        InventoryItem(name="oat milk", quantity=1, unit="ct",
+                      category="dairy", location="pantry"),
+    ])
+    moved = move_item("oat milk", "fridge")
+    assert moved.location == "fridge"
+    assert moved.location_source == "manual"

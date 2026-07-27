@@ -626,6 +626,22 @@ def _apply_set_category(
     return list(matches)
 
 
+def _teach_location(name: str, to_location: str) -> None:
+    """Remember a hand-correction so future purchases of this item file right.
+
+    Never lets a config-write failure sink the move: the row is already
+    committed and the lesson is a side effect. ``save_item_override`` writes
+    tmp+replace, so a failure leaves the previous table intact.
+    """
+    from lib import storage_locations
+
+    try:
+        storage_locations.save_item_override(name, to_location)
+    except OSError as e:
+        print(f"⚠️  Couldn't record storage override for {name}: {e}",
+              file=sys.stderr)
+
+
 def _apply_move(
     items: list[InventoryItem], matches: list[InventoryItem], to_location: str
 ) -> list[InventoryItem]:
@@ -669,6 +685,11 @@ def _apply_move(
         if id(r) not in seen:
             seen.add(id(r))
             unique.append(r)
+    # A move is the user asserting where this belongs — including the case where
+    # it was already there. Stamped here rather than in the callers so freeze
+    # (which moves to the freezer) is confirmed too, without also teaching.
+    for r in unique:
+        r.location_source = "manual"
     return unique
 
 
@@ -782,11 +803,18 @@ def bulk_apply(action: str, refs: list[dict], **params) -> dict:
         elif action == "set-category":
             updated = _apply_set_category(items, matches, category)
         elif action == "move":
+            # Captured before the move: a colliding row is dropped from `items`,
+            # so reading names off the result would miss the merged-away source.
+            moved_names = [m.name for m in matches]
             updated = _apply_move(items, matches, to_location)
         elif action == "freeze":
             updated = _apply_freeze(items, matches)
 
         write_inventory(items)
+
+        if action == "move":
+            for moved_name in moved_names:
+                _teach_location(moved_name, to_location)
 
     return {
         "applied": len(matches),
@@ -844,10 +872,21 @@ def move_item(
         return None
     # Already there: return without a write, so a no-op move doesn't churn the
     # DB and regenerate Inventory.md / Cook Now.md for nothing.
+    # Already there. Normally a no-op, so we return without a write rather than
+    # churning the DB and regenerating two vault notes for nothing — but if the
+    # row's placement was only ever a guess, the tap is the user confirming it,
+    # which is worth the write and worth teaching.
     if matches[0].location == normalize_location(to_location):
+        if matches[0].location_source == "manual":
+            return matches[0]
+        matches[0].location_source = "manual"
+        write_inventory(items)
+        _teach_location(name, to_location)
         return matches[0]
     result = _apply_move(items, matches, to_location)
     write_inventory(items)
+    # After the write: a config failure must not precede a failed DB write.
+    _teach_location(name, to_location)
     return result[0]
 
 
