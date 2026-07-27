@@ -115,12 +115,17 @@ CREATE INDEX IF NOT EXISTS idx_placements_cook ON placements(cook_id);
 _INVENTORY_COLS = (
     "name", "quantity", "unit", "category",
     "location", "purchased", "source", "notes", "for_recipe", "expires",
+    "last_used", "use_count",
 )
 
 # Columns added after the original schema shipped. ``connect()`` adds any that
 # an existing DB is missing — SQLite ``ADD COLUMN`` is cheap and append-only.
 _MIGRATIONS = {
-    "inventory": (("for_recipe", "TEXT"), ("expires", "TEXT")),
+    "inventory": (
+        ("for_recipe", "TEXT"), ("expires", "TEXT"),
+        # Set when a cook uses a row it cannot safely decrement (a container).
+        ("last_used", "TEXT"), ("use_count", "INTEGER NOT NULL DEFAULT 0"),
+    ),
     "purchases": (("for_recipe", "TEXT"),),
     "cooks": (("make_again", "INTEGER"), ("cook_note", "TEXT")),
 }
@@ -295,6 +300,13 @@ def fetch_trip(trip_id: int) -> Optional[dict]:
         conn.close()
 
 
+# Columns the schema declares NOT NULL. A caller may hand us a dict that omits
+# one — `r.get()` then yields None, and binding an explicit NULL violates the
+# constraint even though the column has a DEFAULT. Tested by `is None` rather
+# than falsiness so a legitimate 0 or "" survives.
+_NOT_NULL_FALLBACKS = {"notes": "", "use_count": 0}
+
+
 def replace_inventory_rows(rows: list[dict]) -> None:
     """Overwrite the inventory table with ``rows`` atomically."""
     conn = connect()
@@ -305,11 +317,44 @@ def replace_inventory_rows(rows: list[dict]) -> None:
                 f"INSERT INTO inventory ({', '.join(_INVENTORY_COLS)})"
                 f" VALUES ({', '.join('?' * len(_INVENTORY_COLS))})",
                 [
-                    tuple(r.get(c) if c != "notes" else (r.get(c) or "")
-                          for c in _INVENTORY_COLS)
+                    tuple(
+                        _NOT_NULL_FALLBACKS[c]
+                        if r.get(c) is None and c in _NOT_NULL_FALLBACKS
+                        else r.get(c)
+                        for c in _INVENTORY_COLS
+                    )
                     for r in rows
                 ],
             )
+    finally:
+        conn.close()
+
+
+def stamp_inventory_use(refs: list[tuple[str, str]], when: str) -> int:
+    """Mark inventory rows as used by a cook. Returns the number updated.
+
+    ``refs`` are ``(name, unit)`` pairs, matched case-insensitively. A targeted
+    UPDATE rather than the read-modify-write of ``write_inventory()``, so
+    marking a recipe cooked does not rewrite all 222 rows or regenerate the
+    Inventory.md and Cook Now.md views. A ref naming no row updates nothing —
+    that is expected for a row the same cook just depleted and removed.
+    """
+    if not refs:
+        return 0
+    conn = connect()
+    try:
+        total = 0
+        with conn:
+            for name, unit in refs:
+                cur = conn.execute(
+                    "UPDATE inventory"
+                    " SET last_used = ?, use_count = COALESCE(use_count, 0) + 1"
+                    " WHERE lower(name) = ? AND lower(unit) = ?",
+                    (when, (name or "").lower().strip(),
+                     (unit or "").lower().strip()),
+                )
+                total += cur.rowcount
+        return total
     finally:
         conn.close()
 

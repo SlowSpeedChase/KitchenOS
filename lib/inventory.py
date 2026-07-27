@@ -42,6 +42,11 @@ class InventoryItem:
     notes: str = ""
     for_recipe: Optional[str] = None
     expires: Optional[str] = None
+    # Written by consume-on-cook when a row is used but cannot safely be
+    # decremented (a container). Must round-trip through write_inventory(),
+    # which is DELETE-all + re-INSERT.
+    last_used: Optional[str] = None
+    use_count: int = 0
 
     def merge_key(self) -> tuple[str, str, str]:
         return (
@@ -145,6 +150,8 @@ def read_inventory() -> list[InventoryItem]:
             notes=r["notes"] or "",
             for_recipe=r["for_recipe"] or None,
             expires=r["expires"] or None,
+            last_used=r["last_used"] or None,
+            use_count=int(r["use_count"] or 0),
         )
         for r in inventory_db.fetch_inventory_rows()
     ]

@@ -1,5 +1,6 @@
 """Tests for the inventory module."""
 
+from lib import inventory_db
 from lib.inventory import (
     InventoryItem,
     add_items,
@@ -954,3 +955,56 @@ class TestBulkApply:
         with pytest.raises(ValueError, match="days"):
             bulk_apply("extend", [self._ref("Kale", "bunch", "fridge")],
                        days="soon")
+
+
+class TestUseStamps:
+    def test_new_items_start_unused(self, tmp_db, tmp_vault):
+        add_items([InventoryItem(name="Mirin", quantity=1, unit="ct")])
+        item = read_inventory()[0]
+        assert item.last_used is None
+        assert item.use_count == 0
+
+    def test_stamp_sets_timestamp_and_increments_count(self, tmp_db, tmp_vault):
+        add_items([InventoryItem(name="Mirin", quantity=1, unit="ct")])
+        updated = inventory_db.stamp_inventory_use(
+            [("Mirin", "ct")], "2026-07-26T10:00:00")
+        assert updated == 1
+
+        item = read_inventory()[0]
+        assert item.last_used == "2026-07-26T10:00:00"
+        assert item.use_count == 1
+
+    def test_stamping_twice_increments_twice(self, tmp_db, tmp_vault):
+        add_items([InventoryItem(name="Mirin", quantity=1, unit="ct")])
+        inventory_db.stamp_inventory_use([("Mirin", "ct")], "2026-07-26T10:00:00")
+        inventory_db.stamp_inventory_use([("Mirin", "ct")], "2026-07-27T10:00:00")
+
+        item = read_inventory()[0]
+        assert item.use_count == 2
+        assert item.last_used == "2026-07-27T10:00:00"
+
+    def test_matching_is_case_insensitive_on_name_and_unit(self, tmp_db, tmp_vault):
+        add_items([InventoryItem(name="Mirin", quantity=1, unit="CT")])
+        assert inventory_db.stamp_inventory_use(
+            [("mirin", "ct")], "2026-07-26T10:00:00") == 1
+
+    def test_unknown_ref_updates_nothing(self, tmp_db, tmp_vault):
+        add_items([InventoryItem(name="Mirin", quantity=1, unit="ct")])
+        assert inventory_db.stamp_inventory_use(
+            [("Nonexistent", "ct")], "2026-07-26T10:00:00") == 0
+
+    def test_empty_refs_is_a_noop(self, tmp_db, tmp_vault):
+        assert inventory_db.stamp_inventory_use([], "2026-07-26T10:00:00") == 0
+
+    def test_stamps_survive_a_write_inventory_round_trip(self, tmp_db, tmp_vault):
+        """write_inventory is DELETE-all + re-INSERT. If last_used/use_count are
+        missing from _INVENTORY_COLS, the dataclass, or the read_inventory
+        mapping, every stamp is silently wiped by the next receipt ingest."""
+        add_items([InventoryItem(name="Mirin", quantity=1, unit="ct")])
+        inventory_db.stamp_inventory_use([("Mirin", "ct")], "2026-07-26T10:00:00")
+
+        write_inventory(read_inventory())          # the round trip
+
+        item = read_inventory()[0]
+        assert item.last_used == "2026-07-26T10:00:00"
+        assert item.use_count == 1
