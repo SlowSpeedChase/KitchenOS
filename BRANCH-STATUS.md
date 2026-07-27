@@ -53,7 +53,7 @@ Conflict-check method: `git log main..<branch> --name-only`. Do **not** use
 ### Dev
 - [x] Tests written first (superpowers:test-driven-development) — RED observed for every task
 - [x] Core implementation complete — Tasks 1–9 all landed
-- [x] All tests passing — 2708 unit (from a 2691 baseline), 28 e2e + 3 xfail + 1 xpass
+- [x] All tests passing — 2715 unit (from a 2691 baseline), 28 e2e + 3 xfail + 1 xpass
 - [x] No linting/type errors — `ruff check` clean on every file this branch *authored*.
       Three findings sit in files this branch touches, all three pre-existing and
       confirmed identical on `main` (`c33d867`): `E722` bare except and `E741`
@@ -141,6 +141,21 @@ Not blockers, but this branch creates the obligation:
    way these pages get opened. Inert today (the var is unset in `.env` and the
    plist). Either the pages send the token or the exemption gets written down, as
    `docs/API.md` already does for `/api/receipt/paste`.
+
+## Found during review, pre-existing, deliberately out of scope
+
+**`save_pantry` collapses duplicate-location rows unconditionally** — `lib/pantry.py:109-110`.
+No cook and no decrement required: `save_pantry(apply_decisions([], load_pantry()))`,
+i.e. a no-op shopping-list confirm, turns two `1 ct cucumber` rows (fridge + pantry)
+into one `2.0 ct` row. Reached from `api_server.py:1952-1954` and
+`shopping_list.py:196-197`. This branch's `rows > 1` gate makes the *cook* path safe,
+but the underlying data loss lives here and is reachable from the confirm path.
+
+Consequence worth knowing: because `rows > 1` fires regardless of size, a `6 ct` +
+`4 ct` split across two locations can never be decremented by any cook. Refusing
+beats deleting while `save_pantry` behaves this way, so it's the right trade today —
+but gate coverage silently shrinks as receipts create duplicate-location rows. Fixing
+`save_pantry` is what would let `rows > 1` be narrowed later.
 
 ## Known remaining inaccuracy (matcher-level, not this branch)
 

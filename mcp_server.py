@@ -393,8 +393,10 @@ def cook_recipe(recipe: str, servings: float = 1.0) -> str:
         else:
             lines.append(f"  - {c['item']}: {c['before']:g} → {c['after']:g} {unit} left")
     if used:
-        # These are packages: used, but not safely divisible into a number.
-        lines.append("  - marked used (not decremented — one package): "
+        # This bucket is wider than containers: it also holds lines whose units
+        # don't convert and lines whose amount wouldn't parse.
+        lines.append("  - marked used, not decremented (package, or amount not "
+                     "convertible): "
                      + ", ".join(u["item"] for u in used[:8])
                      + (f" +{len(used) - 8} more" if len(used) > 8 else ""))
     if untracked:
@@ -402,7 +404,12 @@ def cook_recipe(recipe: str, servings: float = 1.0) -> str:
                      + (f" +{len(untracked) - 8} more" if len(untracked) > 8 else ""))
     if staples:
         lines.append(f"  - {len(staples)} staple(s) assumed on hand")
-    return f"Cooked {recipe}. Updated inventory:\n" + "\n".join(lines)
+    # Only claim an inventory update when a quantity actually changed. With the
+    # container gate in place that is the minority case, so a fixed "Updated
+    # inventory" header would misreport most cooks.
+    header = (f"Cooked {recipe}. Updated inventory:" if consumed
+              else f"Cooked {recipe}. No quantities changed:")
+    return header + "\n" + "\n".join(lines)
 
 
 if __name__ == "__main__":

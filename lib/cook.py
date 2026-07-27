@@ -48,23 +48,23 @@ def recipe_ingredients(recipe_name: str) -> Optional[list[dict]]:
     return parse_recipe_body(parsed.get("body", "")).get("ingredients", [])
 
 
-def _convert_would_empty(p_qty: float, p_unit: str,
-                         used_amt: float, used_unit: str) -> bool:
-    """True when a weight/volume decrement would zero the row out.
+def _convert_base_amounts(p_qty: float, p_unit: str,
+                          used_amt: float, used_unit: str) -> tuple[float, float]:
+    """``(row, requested)`` expressed in the row's base unit.
 
-    Mirrors ``apply_decisions``' base-unit math so the two agree. A cook may
-    *reduce* a row but must never *remove* one: rows are packages, so a `5 oz`
-    row matched by a `250 g` line is a unit-of-sale mismatch, not five ounces
-    about to run out. The real library contains exactly that pair — a `5 oz`
-    pumpkin row against `250 g pumpkin puree` — and deleting it is the
-    un-healable direction (a missed depletion self-heals via the expiry prune).
+    Mirrors ``apply_decisions``' base-unit math so the two cannot disagree about
+    whether a decrement would empty a row. A cook may *reduce* a row but must
+    never *remove* one: rows are packages, so a `5 oz` row matched by a `250 g`
+    line is a unit-of-sale mismatch, not five ounces about to run out. The real
+    library contains exactly that pair — a `5 oz` pumpkin row against `250 g
+    pumpkin puree` — and deleting it is the un-healable direction (a missed
+    depletion self-heals via the expiry prune).
     """
     p_unit_norm = (p_unit or "").lower().strip()
     used_unit_norm = (used_unit or "").lower().strip()
     family = get_unit_family(p_unit_norm)
-    p_base = convert_to_base_unit(p_qty, p_unit_norm, family)
-    u_base = convert_to_base_unit(used_amt, used_unit_norm, family)
-    return (p_base - u_base) <= 1e-9
+    return (convert_to_base_unit(p_qty, p_unit_norm, family),
+            convert_to_base_unit(used_amt, used_unit_norm, family))
 
 
 def _record_use(bucket: list[dict], item: str, unit: Optional[str]) -> None:
@@ -139,6 +139,12 @@ def consume_recipe(recipe_name: str, servings: float = 1.0,
     not_tracked: list[str] = []
     use_recorded: list[dict] = []
     matched: set[str] = set()
+    # Base-unit total already committed against each row by earlier lines of this
+    # same recipe. apply_decisions subtracts cumulatively, so the never-delete
+    # guard has to see the running total: two 100 g lines against a 5 oz row
+    # (≈141.7 g) each clear a check against the original quantity, then jointly
+    # empty it.
+    spent_base: dict[tuple[str, str], float] = {}
 
     for ing in ings:
         item = (ing.get("item") or "").strip()
@@ -158,10 +164,19 @@ def consume_recipe(recipe_name: str, servings: float = 1.0,
         scaled = amt * servings if amt is not None else None
         r_unit = ing.get("unit") or ""
         mode = unit_compatibility(p_unit, r_unit)
+        row_key = (match["item"].lower().strip(), p_unit.lower().strip())
         # Fall back to the summed view when the row isn't in the map, so an
         # unknown shape is treated as a single row of that size.
-        rows, smallest = containers.get(
-            (match["item"].lower().strip(), p_unit.lower().strip()), (1, p_qty))
+        rows, smallest = containers.get(row_key, (1, p_qty))
+
+        # Weight/volume packages are containers too — 15 of 17 oz rows are a
+        # 1.0 oz package — but their quantity isn't 1.0, so the count gate
+        # misses them. Refuse any decrement that would empty the row, counting
+        # what earlier lines of this recipe already spent against it.
+        would_empty, u_base = False, 0.0
+        if mode == "convert" and scaled is not None and p_qty is not None:
+            row_base, u_base = _convert_base_amounts(p_qty, p_unit, scaled, r_unit)
+            would_empty = (row_base - spent_base.get(row_key, 0.0) - u_base) <= 1e-9
 
         if (scaled is None
                 or p_qty is None
@@ -172,13 +187,12 @@ def consume_recipe(recipe_name: str, servings: float = 1.0,
                 or p_qty == 1.0
                 or smallest == 1.0
                 or rows > 1
-                # Weight/volume packages are containers too — 15 of 17 oz rows
-                # are a 1.0 oz package — but their quantity isn't 1.0, so the
-                # count gate misses them. Refuse the decrement that would empty.
-                or (mode == "convert"
-                    and _convert_would_empty(p_qty, p_unit, scaled, r_unit))):
+                or would_empty):
             _record_use(use_recorded, match["item"], p_unit)
             continue
+
+        if mode == "convert":
+            spent_base[row_key] = spent_base.get(row_key, 0.0) + u_base
 
         decisions.append({
             "item": match["item"],  # exact pantry name so apply_decisions matches

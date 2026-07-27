@@ -230,6 +230,30 @@ class TestACookNeverDeletesARow:
         assert rows["pumpkin"].quantity == 5
         assert any(u["item"] == "pumpkin" for u in result["use_recorded"])
 
+    def test_two_lines_cannot_jointly_empty_a_row(self, tmp_vault, tmp_db):
+        """apply_decisions subtracts cumulatively, so a guard that checks each
+        line against the *original* quantity lets two passing lines combine to
+        delete the row. 5 oz ≈ 141.7 g, so 100 g twice would zero it."""
+        _write_raw_recipe("Accum Test", """\
+---
+recipe_name: Accum Test
+---
+
+## Ingredients
+
+| Amount | Unit | Ingredient |
+|--------|------|------------|
+| 100 | g | pumpkin puree |
+| 100 | g | pumpkin puree for the glaze |
+""")
+        add_items([
+            InventoryItem(name="pumpkin", quantity=5, unit="oz", category="produce"),
+        ])
+        cook.consume_recipe("Accum Test")
+
+        rows = {i.name: i for i in read_inventory()}
+        assert "pumpkin" in rows, "two lines combined to delete the row"
+
     def test_a_weight_package_still_decrements_when_stock_survives(
         self, tmp_vault, tmp_db
     ):
