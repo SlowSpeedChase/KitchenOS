@@ -6,6 +6,8 @@ import pytest
 from lib import pantry as pantry_module
 from lib.ingredient_aggregator import (
     COUNT_UNITS,
+    VOLUME_UNITS,
+    WEIGHT_UNITS,
     parse_amount_to_float,
     unit_compatibility,
 )
@@ -234,28 +236,123 @@ PARITY_UNITS = [
 ]
 
 
-@pytest.mark.parametrize("p_unit,n_unit", itertools.product(PARITY_UNITS, PARITY_UNITS))
-def test_split_credit_implies_apply_can_spend(p_unit, n_unit):
-    """Whatever the shopping list credits, the cook path must be able to spend.
+_ALL_PARITY_PAIRS = list(itertools.product(PARITY_UNITS, PARITY_UNITS))
 
-    This is the invariant whose absence produced the bug. It is asserted over
-    unit pairs rather than by inspecting the predicate, so it still holds if a
-    caller stops delegating.
+# Independent reference for "should p_unit (pantry) and n_unit (recipe) be
+# treated as convertible" — deliberately reimplemented from the same
+# underlying tables rather than built by calling unit_compatibility()
+# itself. split_against_pantry and apply_decisions both delegate to that one
+# function, so if its *logic* ever regresses (e.g. the count branch stops
+# recognizing "ct"/"whole" as compatible), both callers would agree to
+# refuse it — and a pair list filtered through the same broken function
+# would just quietly drop that pair instead of failing a test. Mirroring the
+# classification here keeps the pair list, and therefore the assertion
+# below, independent of whether unit_compatibility is currently correct.
+_GENERIC = {"", "whole", "ct", "count", "ea", "each", "piece", "pieces"}
+
+
+def _family(unit: str) -> str:
+    if unit in VOLUME_UNITS:
+        return "volume"
+    if unit in WEIGHT_UNITS:
+        return "weight"
+    if unit in COUNT_UNITS or unit == "":
+        return "count"
+    return "other"
+
+
+def _should_be_compatible(p_unit: str, n_unit: str) -> bool:
+    p_family, n_family = _family(p_unit), _family(n_unit)
+    if p_family in ("volume", "weight") and p_family == n_family:
+        return True
+    if p_family == "count" and n_family == "count":
+        return p_unit == n_unit or p_unit in _GENERIC or n_unit in _GENERIC
+    return False
+
+
+COMPATIBLE_PAIRS = [
+    (p, n) for p, n in _ALL_PARITY_PAIRS if _should_be_compatible(p, n)
+]
+
+INCOMPATIBLE_PAIRS = [
+    (p, n) for p, n in _ALL_PARITY_PAIRS if not _should_be_compatible(p, n)
+]
+
+# Units the aggregator actually classifies into a family, as opposed to the
+# unrecognized/garbage units in PARITY_UNITS ("", "a sprinkle", "loaf").
+RECOGNIZED_UNITS = COUNT_UNITS | set(VOLUME_UNITS) | set(WEIGHT_UNITS)
+
+RECOGNIZED_INCOMPATIBLE_PAIRS = [
+    (p, n) for p, n in INCOMPATIBLE_PAIRS
+    if p in RECOGNIZED_UNITS and n in RECOGNIZED_UNITS
+]
+
+
+@pytest.mark.parametrize("p_unit,n_unit", COMPATIBLE_PAIRS)
+def test_compatible_units_are_both_credited_and_spendable(p_unit, n_unit):
+    """Whatever unit_compatibility says is convertible must be both
+    creditable on the shopping list and spendable on the cook path.
+
+    This is the invariant the reported lime bug violated: the shopping list
+    credited "3 ct" against a "1 whole" recipe line while the cook path
+    refused to spend it, because the two paths hand-wrote different rules.
     """
+    # Count pairs ("one_to_one") subtract exact integers, so "1" from a
+    # pantry of "10" is always visible. Volume/weight pairs ("convert") go
+    # through a base-unit conversion first; a decrement that's tiny in the
+    # pantry's own unit (e.g. subtracting a few grams from a "10 lb" row)
+    # can round back to "10" in format_amount's 2-decimal display. "10" is
+    # large enough to stay visible even for the widest mismatch in
+    # PARITY_UNITS (lb vs g, ~453:1).
+    amount = "1" if _family(p_unit) == "count" else "10"
+
     pantry = [{"item": "thing", "amount": "10", "unit": p_unit}]
     credited = split_against_pantry(
-        "thing", "1", n_unit, pantry)["from_pantry"] is not None
+        "thing", amount, n_unit, pantry)["from_pantry"] is not None
 
     updated = apply_decisions(
-        [{"item": "thing", "amount": "1", "unit": n_unit}], pantry)
+        [{"item": "thing", "amount": amount, "unit": n_unit}], pantry)
     if not updated:
         spent = True                      # row removed entirely
     else:
-        spent = parse_amount_to_float(updated[0]["amount"]) < 10.0
+        spent = parse_amount_to_float(updated[0]["amount"]) < 10.0 - 0.001
 
-    assert credited == spent, (
+    assert credited and spent, (
         f"pantry {p_unit!r} vs recipe {n_unit!r}: "
-        f"split credited={credited} but apply spent={spent}")
+        f"credited={credited} spent={spent}")
+
+
+@pytest.mark.parametrize("p_unit,n_unit", INCOMPATIBLE_PAIRS)
+def test_incompatible_units_are_never_spent(p_unit, n_unit):
+    """apply_decisions must never subtract across units it cannot convert.
+
+    This is the dangerous direction: silently subtracting, say, "2 g" from a
+    "10 lb" row would corrupt inventory with an invented conversion. The old
+    parity test only ever checked `credited == spent`, so a caller that
+    started spending across incompatible units without also crediting them
+    would have slipped through unnoticed.
+    """
+    pantry = [{"item": "thing", "amount": "10", "unit": p_unit}]
+    updated = apply_decisions(
+        [{"item": "thing", "amount": "2", "unit": n_unit}], pantry)
+    assert updated == pantry
+
+
+@pytest.mark.parametrize("p_unit,n_unit", RECOGNIZED_INCOMPATIBLE_PAIRS)
+def test_recognised_but_incompatible_units_are_not_credited(p_unit, n_unit):
+    """Among units the aggregator actually recognizes (count/volume/weight),
+    an incompatible pair must not be credited from the pantry either.
+
+    Unrecognized units ("", "a sprinkle", "loaf") are deliberately excluded
+    from this pair list: split_against_pantry crediting an unrecognized
+    recipe unit against a recognized pantry unit ("you have flour, don't buy
+    more") is an intentional convenience, not a bug, even though
+    apply_decisions correctly refuses to spend it — that asymmetry is
+    exercised by test_incompatible_units_are_never_spent, not this test.
+    """
+    pantry = [{"item": "thing", "amount": "10", "unit": p_unit}]
+    result = split_against_pantry("thing", "1", n_unit, pantry)
+    assert result["from_pantry"] is None
 
 
 def test_parity_units_cover_every_count_unit_group():
