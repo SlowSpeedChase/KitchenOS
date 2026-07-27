@@ -627,7 +627,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 - Test: `tests/test_pantry.py`
 
 **Interfaces:**
-- Consumes: `_phrase`, `_ingredient_phrase`, `_covers` from `lib.use_it_up`; `normalize_name` from `lib.ingredient_normalizer`; the Task 3 `_ATOMIC_FOODS` extension.
+- Consumes: `_phrase`, `_ingredient_phrase`, `_covers` from `lib.use_it_up`; the Task 3 `_ATOMIC_FOODS` extension and its atomic-block refinements.
 - Produces: no new names. `find_match` keeps its signature `find_match(item_name: str, pantry: list[dict]) -> Optional[dict]`.
 
 Import safety, already verified: `lib.pantry` is **not** in `lib.use_it_up`'s transitive import closure, and the only module-level import of `lib.pantry` anywhere in `lib/` is `lib/cook.py`. A module-level `from lib.use_it_up import ...` in `pantry.py` therefore cannot cycle.
@@ -650,10 +650,22 @@ class TestFindMatch:
         pantry = [{"item": "Capers", "amount": "1", "unit": "ct"}]
         assert find_match("capers, drained", pantry)["item"] == "Capers"
 
-    def test_parenthetical_is_stripped_before_matching(self):
-        pantry = [{"item": "Avocado oil", "amount": "1", "unit": "ct"}]
-        assert find_match("oil (for softening corn tortillas)",
-                          pantry)["item"] == "Avocado oil"
+    def test_parenthetical_noise_does_not_produce_a_wrong_match(self):
+        # AMENDED: the plan originally normalized ingredient text first and
+        # asserted this line matched `Avocado oil`. Normalizing strips
+        # parentheses, which is where alternatives live, so it is not done —
+        # see Step 3. What matters is that the noise inside the parenthetical
+        # cannot produce a WRONG match: `corn` must not pull in `Canned corn`.
+        pantry = [{"item": "Canned corn", "amount": "1", "unit": "ct"}]
+        assert find_match("oil (for softening corn tortillas)", pantry) is None
+
+    def test_an_alternatives_list_still_matches_a_named_alternative(self):
+        # Normalizing would collapse this line to "almond butter" and lose the
+        # peanut alternative entirely.
+        pantry = [{"item": "Peanut butter", "amount": "1", "unit": "ct"}]
+        assert find_match(
+            "almond butter (or peanut, walnut, or cashew butter, or tahini)",
+            pantry)["item"] == "Peanut butter"
 
     def test_generic_ingredient_does_not_match_a_compound_row(self):
         # The substring matcher gave `lemon` -> `Lemon pepper seasoning`.
@@ -683,16 +695,34 @@ class TestFindMatch:
 .venv/bin/python -m pytest tests/test_pantry.py -q -k FindMatch
 ```
 
-Expected: `test_generic_ingredient_does_not_match_a_compound_row`, `test_peanut_butter_does_not_match_the_butter_staple` and `test_parenthetical_is_stripped_before_matching` FAIL. The rest pass already.
+Expected: `test_generic_ingredient_does_not_match_a_compound_row`,
+`test_peanut_butter_does_not_match_the_butter_staple` and
+`test_parenthetical_noise_does_not_produce_a_wrong_match` FAIL — all three are
+the substring matcher's false positives. The rest pass already, including
+`test_an_alternatives_list_still_matches_a_named_alternative`, which is a
+regression guard proving the change does not cost that match.
 
 - [ ] **Step 3: Add the imports to `lib/pantry.py`**
 
 Directly below the existing `from lib.ingredient_aggregator import (...)` block, add:
 
 ```python
-from lib.ingredient_normalizer import normalize_name
 from lib.use_it_up import _covers, _ingredient_phrase, _phrase
 ```
+
+**AMENDED DURING EXECUTION.** The original plan also imported
+`ingredient_normalizer.normalize_name` and ran ingredient text through it before
+matching. Do **not** do that. `normalize_name` strips parentheticals, and that
+is where ingredient text keeps its *alternatives*: `almond butter (or peanut,
+walnut, or cashew butter, or tahini)` collapses to `almond butter`, so a
+`Peanut butter` inventory row stops matching a line that explicitly offers
+peanut. Measured on this task's own test cases, raw and normalized each miss
+exactly one case and both misses are in the safe false-negative direction — raw
+misses `Avocado oil` ← `oil (for softening corn tortillas)`, normalized misses
+the nut-butter line. Raw wins because it preserves disjunctions, and because
+`cook_now` and `use_it_up` already hand `_covers` raw ingredient text, so
+normalizing here would have made the cook path inconsistent rather than
+consistent.
 
 - [ ] **Step 4: Replace `find_match`**
 
@@ -725,8 +755,9 @@ def find_match(item_name: str, pantry: list[dict]) -> Optional[dict]:
     It Up. The old character-substring fallback is gone: it matched "lemon" to
     "Lemon pepper seasoning" and every peanut-butter line to the "butter"
     staple row, and 436597d already replaced it everywhere else. Ingredient
-    text is run through `normalize_name` first so this path sees the same shape
-    `split_against_pantry` receives from the aggregator.
+    text is passed in raw, exactly as `cook_now` and `use_it_up` pass it:
+    normalizing first would strip the parentheses that carry a line's
+    alternatives ("almond butter (or peanut ...)") and lose real matches.
     """
     target = _normalize(item_name)
     if not target:
@@ -735,7 +766,7 @@ def find_match(item_name: str, pantry: list[dict]) -> Optional[dict]:
         if _normalize(entry.get("item")) == target:
             return entry
 
-    phrase = _ingredient_phrase(normalize_name(item_name))
+    phrase = _ingredient_phrase(item_name)
     if not phrase.tokens:
         return None
     for entry in pantry:
