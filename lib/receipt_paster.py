@@ -13,6 +13,7 @@ aliases (Qty/Quantity, Loc/Location, Expiry/Expires, …).
 from __future__ import annotations
 
 from lib.inventory import (
+    UNSURE_MARKER,
     InventoryItem,
     _parse_quantity,
     normalize_category,
@@ -82,14 +83,22 @@ def parse_inventory_table(markdown: str) -> dict:
             continue  # blank/spacer row
 
         category = normalize_category(row.get("category"))
-        # An explicit location in the pasted row is the caller's stated choice,
-        # not a guess, so it records as manual.
-        if row.get("location"):
-            location = normalize_location(row["location"])
-            location_source = "manual"
-        else:
+        # `Inventory.md` renders an unresolved location as "pantry?", and people
+        # paste that view back. Without stripping the marker, normalize_location
+        # rejects "pantry?" and files the row under `other` — the wrong shelf —
+        # while the non-empty cell also records it as a confirmed choice. So:
+        # keep the shelf, drop the confidence.
+        raw_location = (row.get("location") or "").strip()
+        marked = raw_location.endswith(UNSURE_MARKER)
+        raw_location = raw_location.rstrip(UNSURE_MARKER).strip()
+        if not raw_location:
             placement = place_item(name, category)
             location, location_source = placement.location, placement.source
+        elif marked:
+            location, location_source = normalize_location(raw_location), "default"
+        else:
+            # An explicit, unmarked location is the caller's stated choice.
+            location, location_source = normalize_location(raw_location), "manual"
         purchased = (row.get("purchased") or "").strip() or None
         expires = (row.get("expires") or "").strip() or compute_expires(purchased, name, category)
 

@@ -77,3 +77,18 @@ class TestPreviewCommit:
         result = commit(TABLE)
         assert result["added"] == 3
         assert {i.name for i in read_inventory()} == {"Milk", "Bananas", "Black beans"}
+
+
+def test_a_question_marked_location_is_not_taken_as_explicit():
+    """`Inventory.md` renders an unresolved location as "pantry?". Pasting that
+    back must not file the row in `other` (normalize_location rejects "pantry?")
+    nor record it as the caller's confirmed choice.
+    """
+    md = (
+        "| Item | Quantity | Unit | Category | Location |\n"
+        "|---|---|---|---|---|\n"
+        "| psyllium husk | 1 | ct | other | pantry? |\n"
+    )
+    [it] = parse_inventory_table(md)["items"]
+    assert it.location == "pantry", f"filed on the wrong shelf: {it.location}"
+    assert it.location_source != "manual", "a guess was recorded as confirmed"

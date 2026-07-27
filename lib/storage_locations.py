@@ -45,6 +45,23 @@ def table_path() -> Path:
     return Path(raw) if raw else TABLE_PATH
 
 
+def _is_readable() -> bool:
+    """True when the table is absent (a first write is fine) or parses cleanly.
+
+    ``load_table`` degrades an unreadable file to empty tiers so *reads* keep
+    working. Writing those empties back would destroy the file, so any writer
+    must check this first.
+    """
+    path = table_path()
+    if not path.exists():
+        return True
+    try:
+        json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return True
+
+
 def load_table() -> dict:
     """Return the storage-location table, or empty tiers if missing/corrupt."""
     path = table_path()
@@ -151,10 +168,21 @@ def resolve_location(name: str, category: Optional[str] = None) -> str:
 
 
 def save_item_override(name: str, location: str) -> None:
-    """Remember a hand-correction: store this item here from now on."""
+    """Remember a hand-correction: store this item here from now on.
+
+    Refuses to write over a table that exists but doesn't parse. ``load_table``
+    would hand us empty tiers, and persisting those would silently wipe every
+    curated override and category rule — one hand-edit typo plus one move. The
+    docstring above invites text-editor edits, so that is a reachable sequence.
+    """
     n = (name or "").lower().strip()
     if not n:
         return
+    if not _is_readable():
+        raise OSError(
+            f"{table_path()} exists but does not parse as JSON; refusing to "
+            "overwrite it with an empty table. Fix or restore the file."
+        )
     table = load_table()
     table.setdefault("by_item", {})[n] = normalize_location(location)
     save_table(table)

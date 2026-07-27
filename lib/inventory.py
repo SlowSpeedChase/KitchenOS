@@ -29,6 +29,12 @@ SOURCES = ("receipt", "manual", "claude", "csa", "staple")
 # How a row's `location` was decided. Ordered weakest-last; see _SOURCE_RANK.
 LOCATION_SOURCES = ("manual", "item", "category", "default")
 
+# Suffix marking a location nothing actually resolved. Rendered by
+# `_location_cell` into Inventory.md and mirrored on `/review`. Anything that
+# *parses* a location cell must strip it and must not read a marked cell as a
+# confirmed choice — `lib/receipt_paster.py` is the one such consumer.
+UNSURE_MARKER = "?"
+
 HEADER = "| Item | Quantity | Unit | Category | Location | For Recipe | Purchased | Expires | Source | Notes |"
 SEPARATOR = "|------|----------|------|----------|----------|------------|-----------|---------|--------|-------|"
 
@@ -212,7 +218,7 @@ def _location_cell(location: str, source: Optional[str]) -> str:
     known rather than one quietly presenting a guess as fact.
     """
     if normalize_location_source(source) == "default":
-        return f"{location}?"
+        return f"{location}{UNSURE_MARKER}"
     return location
 
 

@@ -99,3 +99,32 @@ def test_resolve_location_still_returns_a_bare_string():
     assert sl.resolve_location("whole milk", "dairy") == "fridge"
     assert sl.resolve_location("bananas", "produce") == "counter"
     assert isinstance(sl.resolve_location("mystery item", None), str)
+
+
+def test_a_corrupt_table_is_never_overwritten(monkeypatch, tmp_path):
+    """load_table degrades an unparseable file to empty tiers so reads keep
+    working. save_table must not then write those empties back — the module
+    docstring invites hand-editing, so one typo plus one move would destroy
+    every curated override and category rule.
+    """
+    table = tmp_path / "storage_locations.json"
+    original = json.dumps({"by_item": {"bananas": "counter"},
+                           "by_category": {"produce": "fridge"}})
+    table.write_text(original.replace('"by_item": {', '"by_item": {,', 1))
+    monkeypatch.setattr(sl, "TABLE_PATH", table)
+    before = table.read_text()
+
+    # Raises rather than returning quietly, so `_teach_location` surfaces it on
+    # stderr — it already swallows OSError so the committed move still stands.
+    with pytest.raises(OSError, match="does not parse"):
+        sl.save_item_override("oat milk", "fridge")
+
+    assert table.read_text() == before, "a corrupt table was overwritten"
+
+
+def test_a_missing_table_is_still_created(monkeypatch, tmp_path):
+    """Refusing to clobber a *corrupt* file must not stop a first write."""
+    table = tmp_path / "sub" / "storage_locations.json"
+    monkeypatch.setattr(sl, "TABLE_PATH", table)
+    sl.save_item_override("oat milk", "fridge")
+    assert json.loads(table.read_text())["by_item"] == {"oat milk": "fridge"}
