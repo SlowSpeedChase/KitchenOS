@@ -19,11 +19,13 @@ from __future__ import annotations
 from typing import Optional
 
 from lib.ingredient_aggregator import (
+    GENERIC_COUNT,
     convert_from_base_unit,
     convert_to_base_unit,
     format_amount,
     get_unit_family,
     parse_amount_to_float,
+    unit_compatibility,
 )
 
 
@@ -168,21 +170,16 @@ def split_against_pantry(item: str, amount, unit: str, pantry: list[dict]) -> di
             "warning": None,
         }
 
-    # count / other: combine if same unit, or if either side is the generic
-    # "whole" / empty (the auto-fallback when no unit is parsed). This treats
-    # "6 cloves garlic" as covering "10 whole garlic" 1:1, which is correct
-    # for almost every count ingredient (cloves, lemons, eggs, onions, ...).
+    # count / other: 1:1 when the units are the same or either side is generic.
+    # This treats "6 cloves garlic" as covering "10 whole garlic" 1:1, which is
+    # correct for almost every count ingredient (cloves, lemons, eggs, onions).
+    # The rule lives in unit_compatibility so apply_decisions applies the same
+    # one — they used to disagree.
     p_unit_lower = (p_unit or "").lower()
     n_unit_lower = (unit or "").lower()
-    generic = {"", "whole"}
-    units_compatible = (
-        p_unit_lower == n_unit_lower
-        or p_unit_lower in generic
-        or n_unit_lower in generic
-    )
-    if units_compatible:
+    if unit_compatibility(p_unit, unit) == "one_to_one":
         # Display in the recipe's unit if specified, else the pantry's.
-        out_unit = unit if n_unit_lower not in generic else (p_unit or unit)
+        out_unit = unit if n_unit_lower not in GENERIC_COUNT else (p_unit or unit)
         if p_amt >= n_amt:
             return {"from_pantry": needed, "to_buy": None, "warning": None}
         return {
@@ -226,18 +223,18 @@ def apply_decisions(decisions: list[dict], pantry: list[dict]) -> list[dict]:
                 updated.pop(idx)
                 break
 
-            p_family = get_unit_family(p_unit)
-            u_family = get_unit_family(used_unit)
-            if p_family in ("volume", "weight") and p_family == u_family:
+            mode = unit_compatibility(p_unit, used_unit)
+            if mode == "convert":
+                p_family = get_unit_family(p_unit)
                 p_base = convert_to_base_unit(p_amt, p_unit, p_family)
-                u_base = convert_to_base_unit(used_amt, used_unit, u_family)
+                u_base = convert_to_base_unit(used_amt, used_unit, p_family)
                 remaining_base = max(0.0, p_base - u_base)
                 if remaining_base <= 1e-9:
                     updated.pop(idx)
                 else:
                     remaining_native = convert_from_base_unit(remaining_base, p_unit, p_family)
                     entry["amount"] = format_amount(remaining_native)
-            elif (p_unit or "").lower() == (used_unit or "").lower():
+            elif mode == "one_to_one":
                 remaining = max(0.0, p_amt - used_amt)
                 if remaining <= 1e-9:
                     updated.pop(idx)

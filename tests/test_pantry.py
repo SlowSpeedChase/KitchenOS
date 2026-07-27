@@ -1,5 +1,15 @@
 """Tests for lib.pantry."""
+import itertools
+
+import pytest
+
 from lib import pantry as pantry_module
+from lib.ingredient_aggregator import (
+    COUNT_UNITS,
+    parse_amount_to_float,
+    unit_compatibility,
+)
+from lib.pantry import apply_decisions, split_against_pantry
 
 
 def test_load_pantry_empty_inventory_returns_empty(tmp_vault, tmp_db):
@@ -195,3 +205,76 @@ def test_save_pantry_inserts_new_items(tmp_vault, tmp_db):
     assert items[0].name == "Olive oil"
     assert items[0].location == "pantry"
     assert items[0].source == "manual"
+
+
+def test_ct_pantry_is_spent_by_a_whole_recipe_line():
+    """The reported bug: 3 ct lime, recipe wants 1 whole lime."""
+    pantry = [{"item": "lime", "amount": "3", "unit": "ct"}]
+    updated = apply_decisions(
+        [{"item": "lime", "amount": "1", "unit": "whole"}], pantry)
+    assert parse_amount_to_float(updated[0]["amount"]) == 2.0
+
+
+def test_ct_pantry_depletes_to_removal():
+    pantry = [{"item": "lime", "amount": "2", "unit": "ct"}]
+    updated = apply_decisions(
+        [{"item": "lime", "amount": "2", "unit": "whole"}], pantry)
+    assert updated == []
+
+
+# A representative unit from every group that behaves differently, rather than
+# the full cross product of ~40 units, which would add 1600 slow cases for no
+# extra coverage.
+PARITY_UNITS = [
+    "", "whole", "ct", "count", "ea", "each", "piece",   # generic count
+    "clove", "slice", "can", "bunch", "head", "package",  # specific count
+    "cup", "tbsp", "tsp", "qt",                           # volume
+    "oz", "lb", "g",                                      # weight
+    "a sprinkle", "loaf",                                 # unknown / garbage
+]
+
+
+@pytest.mark.parametrize("p_unit,n_unit", itertools.product(PARITY_UNITS, PARITY_UNITS))
+def test_split_credit_implies_apply_can_spend(p_unit, n_unit):
+    """Whatever the shopping list credits, the cook path must be able to spend.
+
+    This is the invariant whose absence produced the bug. It is asserted over
+    unit pairs rather than by inspecting the predicate, so it still holds if a
+    caller stops delegating.
+    """
+    pantry = [{"item": "thing", "amount": "10", "unit": p_unit}]
+    credited = split_against_pantry(
+        "thing", "1", n_unit, pantry)["from_pantry"] is not None
+
+    updated = apply_decisions(
+        [{"item": "thing", "amount": "1", "unit": n_unit}], pantry)
+    if not updated:
+        spent = True                      # row removed entirely
+    else:
+        spent = parse_amount_to_float(updated[0]["amount"]) < 10.0
+
+    assert credited == spent, (
+        f"pantry {p_unit!r} vs recipe {n_unit!r}: "
+        f"split credited={credited} but apply spent={spent}")
+
+
+def test_parity_units_cover_every_count_unit_group():
+    """Guard: if COUNT_UNITS grows a new *kind* of unit, extend PARITY_UNITS."""
+    assert set(PARITY_UNITS) & COUNT_UNITS, "parity list lost its count units"
+    assert unit_compatibility("ct", "whole") == "one_to_one"
+
+
+def test_split_shows_the_pantry_unit_when_the_recipe_unit_is_generic():
+    """`generic` was a local set used both to decide compatibility and to pick
+    the display unit. It is now GENERIC_COUNT — this pins the display half so
+    the swap can't silently change what the shopping list renders."""
+    pantry = [{"item": "lime", "amount": "1", "unit": "ct"}]
+    split = split_against_pantry("lime", "3", "whole", pantry)
+    assert split["from_pantry"] == {"amount": "1", "unit": "ct"}
+    assert split["to_buy"] == {"amount": "2", "unit": "ct"}
+
+
+def test_split_shows_the_recipe_unit_when_it_is_specific():
+    pantry = [{"item": "garlic", "amount": "1", "unit": "ct"}]
+    split = split_against_pantry("garlic", "3", "cloves", pantry)
+    assert split["from_pantry"]["unit"] == "cloves"
