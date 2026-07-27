@@ -183,7 +183,6 @@ def read_conn() -> sqlite3.Connection:
 
 def _migrate(conn: sqlite3.Connection) -> None:
     """Add columns missing from a pre-existing DB (idempotent)."""
-    added: list[tuple[str, str]] = []
     for table, columns in _MIGRATIONS.items():
         existing = {
             row["name"]
@@ -192,11 +191,18 @@ def _migrate(conn: sqlite3.Connection) -> None:
         for col, decl in columns:
             if col not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
-                added.append((table, col))
-    # Classify pre-existing rows exactly once, at the moment the column appears.
-    # Doing it on every connect would re-scan the table for nothing; doing it
-    # never would leave every legacy row NULL.
-    if ("inventory", "location_source") in added:
+    # Classify rows with no provenance yet. Triggered by the NULLs rather than by
+    # having just added the column, because those two are not atomic: ALTER TABLE
+    # commits on its own, while the backfill UPDATEs commit at the end of this
+    # function. A crash in between left the column present and every row NULL,
+    # and a creation-triggered backfill then never ran again — permanently
+    # stranding the whole table on "default", with no migration script to rerun.
+    # Probing for a NULL is self-healing, also covers two processes racing the
+    # first migration, and costs a short-circuiting LIMIT 1 against a table
+    # `connect()` already runs executescript + three PRAGMAs over.
+    if conn.execute(
+        "SELECT 1 FROM inventory WHERE location_source IS NULL LIMIT 1"
+    ).fetchone():
         _backfill_location_source(conn)
     conn.commit()
 
@@ -211,12 +217,23 @@ def _backfill_location_source(conn: sqlite3.Connection) -> None:
     from lib.storage_locations import place_item
 
     rows = conn.execute(
-        "SELECT id, name, category FROM inventory WHERE location_source IS NULL"
+        "SELECT id, name, category, location FROM inventory"
+        " WHERE location_source IS NULL"
     ).fetchall()
     for r in rows:
+        placement = place_item(r["name"], r["category"])
+        # If the row is not where the router would put it, the router did not put
+        # it there — a person did, and that is `manual`. Stamping the router's
+        # own tier would claim a curated override chose this shelf while that
+        # override names a different one: `frozen bananas` sits in the freezer,
+        # but by_item["bananas"] says counter. Five live rows are like this.
+        stored = (r["location"] or "").lower().strip()
+        source = (placement.source
+                  if placement.location.lower().strip() == stored
+                  else "manual")
         conn.execute(
             "UPDATE inventory SET location_source = ? WHERE id = ?",
-            (place_item(r["name"], r["category"]).source, r["id"]),
+            (source, r["id"]),
         )
 
 

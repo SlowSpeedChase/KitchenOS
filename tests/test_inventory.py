@@ -1027,8 +1027,24 @@ def test_location_source_round_trips_through_the_db(tmp_db, tmp_vault):
     assert got.location_source == "manual"
 
 
-def test_a_missing_location_source_reads_as_default(tmp_db, tmp_vault):
-    """A NULL must surface for review, never pose as confirmed."""
+def test_an_unrecognised_location_source_reads_as_default():
+    """The safety net: anything not in the vocabulary must surface for review
+    rather than pose as confirmed. Fail toward being asked."""
+    from lib.inventory import normalize_location_source
+    assert normalize_location_source(None) == "default"
+    assert normalize_location_source("") == "default"
+    assert normalize_location_source("  ") == "default"
+    assert normalize_location_source("bogus") == "default"
+    assert normalize_location_source("MANUAL") == "manual"
+
+
+def test_a_null_location_source_is_healed_rather_than_left_unsure(tmp_db, tmp_vault):
+    """A row inserted with no provenance gets classified on the next connect.
+
+    The normalizer would read the NULL as `default`, but leaving it there means a
+    row shows "?" forever with nothing to resolve it. The self-healing backfill
+    is what makes that a transient state instead of a permanent one.
+    """
     conn = inventory_db.connect()
     conn.execute(
         "INSERT INTO inventory (name, quantity, category, location)"
@@ -1038,7 +1054,8 @@ def test_a_missing_location_source_reads_as_default(tmp_db, tmp_vault):
     conn.close()
 
     [got] = read_inventory()
-    assert got.location_source == "default"
+    # produce -> fridge is a real by_category rule, and the row is already there.
+    assert got.location_source == "category"
 
 
 def test_merge_keeps_the_stronger_source(tmp_db, tmp_vault):

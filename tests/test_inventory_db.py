@@ -185,3 +185,85 @@ def test_backfill_never_re_derives_a_hand_placed_row(tmp_db):
     finally:
         conn.close()
     assert row["location_source"] == "manual"
+
+
+def test_backfill_recovers_from_an_interrupted_run(tmp_db, monkeypatch):
+    """ALTER TABLE commits immediately; the backfill UPDATEs commit at the end.
+    A crash between them left the column present and every row NULL — and a
+    creation-triggered backfill never fires again, stranding the whole table on
+    "default" permanently. The trigger must be the NULLs, not the ALTER."""
+    import sqlite3
+
+    from lib import storage_locations
+
+    conn = sqlite3.connect(tmp_db)
+    conn.execute("""CREATE TABLE inventory (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL COLLATE NOCASE,
+        quantity REAL NOT NULL,
+        unit TEXT NOT NULL DEFAULT 'ct' COLLATE NOCASE,
+        category TEXT NOT NULL DEFAULT 'other',
+        location TEXT NOT NULL DEFAULT 'pantry' COLLATE NOCASE,
+        purchased TEXT,
+        source TEXT NOT NULL DEFAULT 'manual',
+        notes TEXT NOT NULL DEFAULT '',
+        for_recipe TEXT,
+        expires TEXT,
+        UNIQUE(name, unit, location))""")
+    conn.executemany(
+        "INSERT INTO inventory (name, quantity, category, location)"
+        " VALUES (?, ?, ?, ?)",
+        [("bananas", 1, "produce", "counter"),
+         ("whole milk", 1, "dairy", "fridge")],
+    )
+    conn.commit()
+    conn.close()
+
+    real = storage_locations.place_item
+    monkeypatch.setattr(
+        storage_locations, "place_item",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("crash mid-backfill")))
+    with pytest.raises(RuntimeError):
+        idb.connect().close()
+    monkeypatch.setattr(storage_locations, "place_item", real)
+
+    # The next connect must finish the job rather than skip it forever.
+    conn = idb.connect()
+    try:
+        got = {r["name"]: r["location_source"]
+               for r in conn.execute("SELECT name, location_source FROM inventory")}
+    finally:
+        conn.close()
+    assert got == {"bananas": "item", "whole milk": "category"}
+
+
+def test_backfill_marks_a_row_the_router_disagrees_with_as_manual(tmp_db):
+    """If a row isn't where the router would put it, the router didn't put it
+    there — a person did. Stamping the router's tier would claim a curated
+    override chose this shelf while that override names a different one.
+
+    Live data has five such rows: `frozen bananas` sits in the freezer, but
+    `by_item["bananas"]` says counter.
+    """
+    conn = idb.connect()
+    conn.execute(
+        "INSERT INTO inventory (name, quantity, category, location, location_source)"
+        " VALUES ('frozen bananas', 1, 'frozen', 'freezer', NULL)"
+    )
+    conn.commit()
+    conn.close()
+
+    idb.connect().close()   # trigger the backfill
+
+    conn = idb.connect()
+    try:
+        row = conn.execute(
+            "SELECT location, location_source FROM inventory"
+            " WHERE name = 'frozen bananas'"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row["location"] == "freezer"
+    assert row["location_source"] == "manual", (
+        "a row the router would place elsewhere was stamped as router-placed"
+    )
