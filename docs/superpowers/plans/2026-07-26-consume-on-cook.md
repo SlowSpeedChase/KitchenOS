@@ -308,6 +308,22 @@ def test_parity_units_cover_every_count_unit_group():
     """Guard: if COUNT_UNITS grows a new *kind* of unit, extend PARITY_UNITS."""
     assert set(PARITY_UNITS) & COUNT_UNITS, "parity list lost its count units"
     assert unit_compatibility("ct", "whole") == "one_to_one"
+
+
+def test_split_shows_the_pantry_unit_when_the_recipe_unit_is_generic():
+    """`generic` was a local set used both to decide compatibility and to pick
+    the display unit. It is now GENERIC_COUNT — this pins the display half so
+    the swap can't silently change what the shopping list renders."""
+    pantry = [{"item": "lime", "amount": "1", "unit": "ct"}]
+    split = split_against_pantry("lime", "3", "whole", pantry)
+    assert split["from_pantry"] == {"amount": "1", "unit": "ct"}
+    assert split["to_buy"] == {"amount": "2", "unit": "ct"}
+
+
+def test_split_shows_the_recipe_unit_when_it_is_specific():
+    pantry = [{"item": "garlic", "amount": "1", "unit": "ct"}]
+    split = split_against_pantry("garlic", "3", "cloves", pantry)
+    assert split["from_pantry"]["unit"] == "cloves"
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -336,6 +352,7 @@ to:
 
 ```python
 from lib.ingredient_aggregator import (
+    GENERIC_COUNT,
     convert_from_base_unit,
     convert_to_base_unit,
     format_amount,
@@ -378,7 +395,28 @@ with:
     if unit_compatibility(p_unit, unit) == "one_to_one":
 ```
 
-Leave the body of the `if` unchanged — it still uses `p_unit_lower` and `n_unit_lower`.
+**Then fix the one line in the body that referenced the deleted set.** Three lines below, replace:
+
+```python
+        out_unit = unit if n_unit_lower not in generic else (p_unit or unit)
+```
+
+with:
+
+```python
+        out_unit = unit if n_unit_lower not in GENERIC_COUNT else (p_unit or unit)
+```
+
+`generic` was a local `{"", "whole"}` used both by the condition and by this
+display choice. Deleting it without fixing this line raises `NameError` on the
+first count-unit split. `GENERIC_COUNT` is a superset — it also contains `ct`,
+`count`, `ea`, `each`, `piece`, `pieces` — so a recipe line whose unit is `ea`
+now displays in the pantry row's unit rather than `ea`. That is the intended
+reading of "the recipe's unit is generic, so show the pantry's".
+
+`p_unit_lower` is still used further down in the final "different count units"
+warning; leave it. If your editor reports `n_unit_lower` as unused after this
+change, re-check — it is used on the line you just edited.
 
 - [ ] **Step 5: Delegate the unit branch of `apply_decisions`**
 
