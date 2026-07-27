@@ -3,7 +3,7 @@
 **Created:** 2026-07-26
 **Design Doc:** docs/superpowers/specs/2026-07-26-inventory-location-visibility-design.md
 **Impl Plan:** docs/superpowers/plans/2026-07-26-inventory-location-visibility.md
-**Current Stage:** dev
+**Current Stage:** review
 **Last Rebased:** 2026-07-27 (onto main @ `ffc742d`, post-`consume-on-cook`)
 
 ## Overview
@@ -48,26 +48,37 @@ which produces false conflicts.
 - [x] Plan refreshed against the post-`consume-on-cook` baseline
 
 ### Dev
-- [ ] Tests written first (superpowers:test-driven-development)
-- [ ] Core implementation complete
-- [ ] All tests passing — baseline `2715`, target `2737`
-- [ ] No linting/type errors
-- [ ] Code follows project patterns
+- [x] Tests written first (superpowers:test-driven-development) — RED observed per task
+- [x] Core implementation complete — Tasks 1–9
+- [x] All tests passing — **2737** unit (baseline 2715, +22 exactly as planned),
+      34 e2e + 3 xfail + 1 xpass (was 28)
+- [x] No linting/type errors — `ruff check` clean on everything authored. The 4 findings
+      across branch-touched files (`E722`/`E741` in `api_server.py`, `F401` in
+      `ingest_csa.py` and `tests/test_storage_locations.py`) are all pre-existing and
+      confirmed present on `main`.
+- [x] Code follows project patterns
 - [ ] LaunchAgent restarted if lib/, templates/, or prompts/ changed — **owed at merge**;
       the plist runs the *main* checkout, so a restart from this worktree loads nothing
 
 ### Testing
-- [ ] Unit tests pass
-- [ ] Integration tests pass (Playwright, `tests/e2e/test_location_visibility.py`)
-- [ ] Manual testing completed
-- [ ] Edge cases verified
-- [ ] Verified with superpowers:verification-before-completion
+- [x] Unit tests pass
+- [x] Integration tests pass — `tests/e2e/test_location_visibility.py`, 6 new Playwright
+      tests; full e2e run twice consecutively to confirm order-independence
+- [ ] Manual testing completed — **not done on purpose.** The migration and backfill are
+      verified against *copies* of the live DB (222 rows → 199 category / 16 item / 7
+      default). Touching the real DB and vault should be the reviewer's deliberate call.
+- [x] Edge cases verified — longest-key-wins, catch-all-is-not-an-answer, NULL reads as
+      default, merge keeps the stronger source, freeze confirms without teaching, a failed
+      config write still commits the move, header counts match labelled rows
+- [x] Verified with superpowers:verification-before-completion
 
 ### Docs
-- [ ] Doc obligations met per CLAUDE.md table (ARCHITECTURE / API / OPERATIONS / invariants)
-- [ ] README updated (if interface changed)
-- [ ] docs/plans/INDEX.md updated
-- [ ] Code comments where needed
+- [x] Doc obligations met per CLAUDE.md table — `docs/API.md` (`/api/inventory` row shape
+      + `/review` behaviour), `docs/ARCHITECTURE.md` (the placement router), `CLAUDE.md`
+      (two invariants + the new env var)
+- [x] README updated (if interface changed) — n/a, README documents no API routes
+- [x] docs/plans/INDEX.md updated
+- [x] Code comments where needed
 
 ### Review
 - [ ] Requested review (superpowers:requesting-code-review)
