@@ -2,7 +2,7 @@
 
 **Created:** 2026-07-26
 **Design Doc:** docs/superpowers/specs/2026-07-26-consume-on-cook-design.md
-**Current Stage:** planning
+**Current Stage:** review
 **Last Rebased:** 2026-07-26 (branched from main @ c33d867)
 
 ## Overview
@@ -48,28 +48,37 @@ Conflict-check method: `git log main..<branch> --name-only`. Do **not** use
 - [x] Conflict check completed (no overlapping work)
 - [x] Dependencies identified and noted
 - [x] Branch and worktree created
-- [ ] Implementation plan written (superpowers:writing-plans)
+- [x] Implementation plan written (superpowers:writing-plans)
 
 ### Dev
-- [ ] Tests written first (superpowers:test-driven-development)
-- [ ] Core implementation complete
-- [ ] All tests passing
-- [ ] No linting/type errors
-- [ ] Code follows project patterns
-- [ ] LaunchAgent restarted if lib/, templates/, or prompts/ changed
+- [x] Tests written first (superpowers:test-driven-development) — RED observed for every task
+- [x] Core implementation complete — Tasks 1–9 all landed
+- [x] All tests passing — 2708 unit (from a 2691 baseline), 28 e2e + 3 xfail + 1 xpass
+- [x] No linting/type errors — `ruff check` clean on every file this branch touches
+      (the 2 errors it reports in `api_server.py` are pre-existing and identical on `main`)
+- [x] Code follows project patterns
+- [ ] LaunchAgent restarted if lib/, templates/, or prompts/ changed — **deliberately not
+      done, and owed at merge time.** The plist runs
+      `/Users/chaseeasterling/Dev/KitchenOS/api_server.py`, i.e. the *main* checkout, so a
+      restart from this worktree would bounce the live service without loading any of
+      these changes. Restart after the merge lands on main.
 
 ### Testing
-- [ ] Unit tests pass
-- [ ] Integration tests pass (if applicable)
-- [ ] Manual testing completed
-- [ ] Edge cases verified
-- [ ] Verified with superpowers:verification-before-completion
+- [x] Unit tests pass
+- [x] Integration tests pass (if applicable) — Playwright e2e, incl. 3 new cook-toast tests
+- [ ] Manual testing completed — **not done on purpose.** No real cook has been run; all
+      measurement so far is the read-only census. A live cook writes to the production DB
+      and should be the reviewer's deliberate call, not a side effect of implementation.
+- [x] Edge cases verified — container gate, garbage units, unparseable amounts, duplicate
+      ingredient lines, no-op cooks, stamp survival across a DELETE-all + re-INSERT
+- [x] Verified with superpowers:verification-before-completion
 
 ### Docs
-- [ ] Doc obligations met per CLAUDE.md table (ARCHITECTURE / API / OPERATIONS / invariants)
-- [ ] README updated (if interface changed)
-- [ ] docs/plans/INDEX.md updated
-- [ ] Code comments where needed
+- [x] Doc obligations met per CLAUDE.md table (ARCHITECTURE / API / OPERATIONS / invariants)
+      — `docs/API.md` `/api/cook` row (contract + 🔒), container-gate invariant in `CLAUDE.md`
+- [x] README updated (if interface changed) — n/a, README documents no API routes
+- [x] docs/plans/INDEX.md updated
+- [x] Code comments where needed
 
 ### Review
 - [ ] Requested review (superpowers:requesting-code-review)
