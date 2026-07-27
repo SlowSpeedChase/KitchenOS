@@ -52,10 +52,15 @@ def _isolate_storage_table(monkeypatch, tmp_path):
     `test_category_fallback` on the next run.
 
     The real table is *copied* rather than replaced with empty tiers, because
-    plenty of tests legitimately depend on its contents (bananas → counter is a
-    real by_item entry). Reads see the real data; writes land on the copy.
-    Tests wanting a known-empty table monkeypatch TABLE_PATH themselves — their
-    patch is applied after this one and wins.
+    some tests legitimately depend on its contents. Reads see the real data;
+    writes land on the copy. Tests wanting a known table monkeypatch TABLE_PATH
+    themselves — their patch is applied after this one and wins.
+
+    Sets the env var rather than patching the attribute, because
+    `table_path()` checks the env var *first*: patching only the attribute would
+    leave a stray KITCHENOS_STORAGE_TABLE in the environment silently overriding
+    this fixture. Using the same knob also means any subprocess a future test
+    spawns inherits the isolation, not just in-process code.
     """
     from lib import storage_locations
 
@@ -63,4 +68,4 @@ def _isolate_storage_table(monkeypatch, tmp_path):
     copy = tmp_path / "storage_locations.json"
     if real.exists():
         copy.write_bytes(real.read_bytes())
-    monkeypatch.setattr(storage_locations, "TABLE_PATH", copy)
+    monkeypatch.setenv("KITCHENOS_STORAGE_TABLE", str(copy))

@@ -887,8 +887,6 @@ def move_item(
     matches = _match_by_name(items, name, location)[:1]
     if not matches:
         return None
-    # Already there: return without a write, so a no-op move doesn't churn the
-    # DB and regenerate Inventory.md / Cook Now.md for nothing.
     # Already there. Normally a no-op, so we return without a write rather than
     # churning the DB and regenerating two vault notes for nothing — but if the
     # row's placement was only ever a guess, the tap is the user confirming it,

@@ -575,13 +575,45 @@ class TestMoveItem:
         assert items[0].quantity == 3.0
         assert items[0].location == "freezer"
 
-    def test_move_to_same_location_is_noop(self, tmp_vault, tmp_db):
+    def test_move_to_same_location_confirms_an_unsure_row(
+        self, tmp_vault, tmp_db, empty_storage_table
+    ):
+        """Not a no-op any more. The row is where it belongs but nothing
+        resolved it, so the tap is the user confirming: stamp `manual`, write,
+        and teach. A no-op that leaves a visible "?" reads as a broken button —
+        the same reasoning as test_repeated_extends_accumulate.
+        """
         add_items([InventoryItem(name="Bread", quantity=1, unit="loaf",
                                  location="pantry")])
         item = move_item("Bread", "pantry", location="pantry")
         assert item is not None
         assert item.location == "pantry"
+        assert item.location_source == "manual"
         assert len(read_inventory()) == 1
+        assert read_inventory()[0].location_source == "manual", "not persisted"
+        assert _taught(empty_storage_table) == {"bread": "pantry"}
+
+    def test_move_to_same_location_is_a_true_noop_once_confirmed(
+        self, tmp_vault, tmp_db, empty_storage_table, monkeypatch
+    ):
+        """An already-`manual` row has nothing to confirm, so it must not write
+        — that's what keeps the churn-avoidance the early return was added for.
+        """
+        from lib import inventory_db
+        add_items([InventoryItem(name="Bread", quantity=1, unit="loaf",
+                                 location="pantry",
+                                 location_source="manual")])
+
+        writes = []
+        real = inventory_db.replace_inventory_rows
+        monkeypatch.setattr(inventory_db, "replace_inventory_rows",
+                            lambda rows: writes.append(rows) or real(rows))
+        item = move_item("Bread", "pantry", location="pantry")
+
+        assert item is not None
+        assert item.location_source == "manual"
+        assert writes == [], "an already-confirmed no-op still wrote to the DB"
+        assert _taught(empty_storage_table) == {}, "and it taught the table"
 
     def test_returns_none_when_not_found(self, tmp_vault, tmp_db):
         assert move_item("Nonexistent", "freezer") is None
@@ -735,11 +767,17 @@ class TestPureMutators:
         assert out[0].quantity == 3.0
         assert out[0].location == "freezer"
 
-    def test_apply_move_to_same_location_is_a_noop(self):
+    def test_apply_move_to_same_location_keeps_the_row_but_stamps_it(self):
+        """`out == [items[0]]` was trivially true — it's the same object
+        _apply_move just mutated. Assert the identity and the stamp separately,
+        so the confirmation behaviour is actually defended.
+        """
         from lib.inventory import _apply_move
         items = self._items()
         out = _apply_move(items, [items[0]], "pantry")
-        assert out == [items[0]]
+        assert out[0] is items[0]
+        assert out[0].location == "pantry"
+        assert out[0].location_source == "manual"
         assert len(items) == 3
 
     def test_apply_freeze_moves_sets_category_and_clears_expiry(self):
@@ -1106,7 +1144,7 @@ def empty_storage_table(monkeypatch, tmp_path):
     """
     table = tmp_path / "storage_locations.json"
     table.write_text(json.dumps({"by_item": {}, "by_category": {}}))
-    monkeypatch.setattr(storage_locations, "TABLE_PATH", table)
+    monkeypatch.setenv("KITCHENOS_STORAGE_TABLE", str(table))
     return table
 
 

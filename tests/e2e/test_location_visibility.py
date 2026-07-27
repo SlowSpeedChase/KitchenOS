@@ -175,8 +175,11 @@ def test_a_used_row_shows_when_it_was_last_used(live_server, page, page_errors):
     page.wait_for_selector("#list li", timeout=15_000)
     # Render the label directly against a known stamp: the seeded row has never
     # been cooked, so there is no real last_used to assert against.
+    # Through subline(), not usedLabel() directly: otherwise nothing anywhere
+    # proves the subline actually calls it, and un-wiring it would pass.
     text = page.evaluate(
-        "ts => usedLabel({last_used: ts, use_count: 3})", stamped
+        "ts => subline({last_used: ts, use_count: 3, location: 'fridge',"
+        " location_source: 'manual', expires: '2026-09-01'})", stamped
     )
     assert "used today" in text
     assert 'title="used 3 times"' in text
