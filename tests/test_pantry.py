@@ -11,7 +11,7 @@ from lib.ingredient_aggregator import (
     parse_amount_to_float,
     unit_compatibility,
 )
-from lib.pantry import apply_decisions, split_against_pantry
+from lib.pantry import apply_decisions, find_match, split_against_pantry
 
 
 def test_load_pantry_empty_inventory_returns_empty(tmp_vault, tmp_db):
@@ -50,6 +50,55 @@ def test_find_match_substring():
 
 def test_find_match_returns_none():
     assert pantry_module.find_match("saffron", [{"item": "salt", "amount": "1", "unit": "tsp"}]) is None
+
+
+class TestFindMatch:
+    def test_exact_name_wins(self):
+        pantry = [{"item": "lime", "amount": "3", "unit": "ct"},
+                  {"item": "lime juice", "amount": "1", "unit": "oz"}]
+        assert find_match("lime", pantry)["item"] == "lime"
+
+    def test_prep_note_variant_matches(self):
+        pantry = [{"item": "Capers", "amount": "1", "unit": "ct"}]
+        assert find_match("capers, drained", pantry)["item"] == "Capers"
+
+    def test_parenthetical_noise_does_not_produce_a_wrong_match(self):
+        # AMENDED: the plan originally normalized ingredient text first and
+        # asserted this line matched `Avocado oil`. Normalizing strips
+        # parentheses, which is where alternatives live, so it is not done —
+        # see Step 3. What matters is that the noise inside the parenthetical
+        # cannot produce a WRONG match: `corn` must not pull in `Canned corn`.
+        pantry = [{"item": "Canned corn", "amount": "1", "unit": "ct"}]
+        assert find_match("oil (for softening corn tortillas)", pantry) is None
+
+    def test_an_alternatives_list_still_matches_a_named_alternative(self):
+        # Normalizing would collapse this line to "almond butter" and lose the
+        # peanut alternative entirely.
+        pantry = [{"item": "Peanut butter", "amount": "1", "unit": "ct"}]
+        assert find_match(
+            "almond butter (or peanut, walnut, or cashew butter, or tahini)",
+            pantry)["item"] == "Peanut butter"
+
+    def test_generic_ingredient_does_not_match_a_compound_row(self):
+        # The substring matcher gave `lemon` -> `Lemon pepper seasoning`.
+        pantry = [{"item": "Lemon pepper seasoning", "amount": "1", "unit": "ct"}]
+        assert find_match("lemons", pantry) is None
+
+    def test_peanut_butter_does_not_match_the_butter_staple(self):
+        # 11 ingredient lines in the real library hit this.
+        pantry = [{"item": "butter", "amount": "1", "unit": "ct"}]
+        assert find_match("peanut butter", pantry) is None
+
+    def test_compound_row_still_matches_its_own_ingredient(self):
+        pantry = [{"item": "Peanut butter", "amount": "1", "unit": "ct"}]
+        assert find_match("creamy peanut butter", pantry)["item"] == "Peanut butter"
+
+    def test_no_match_returns_none(self):
+        pantry = [{"item": "flour", "amount": "1", "unit": "ct"}]
+        assert find_match("dragon fruit", pantry) is None
+
+    def test_empty_name_returns_none(self):
+        assert find_match("", [{"item": "flour", "amount": "1", "unit": "ct"}]) is None
 
 
 def test_split_no_match_returns_full_to_buy():

@@ -27,6 +27,7 @@ from lib.ingredient_aggregator import (
     parse_amount_to_float,
     unit_compatibility,
 )
+from lib.use_it_up import _covers, _ingredient_phrase, _phrase
 
 
 def _normalize(name: str) -> str:
@@ -103,17 +104,29 @@ def save_pantry(items: list[dict]) -> None:
 
 
 def find_match(item_name: str, pantry: list[dict]) -> Optional[dict]:
-    """Return the first pantry entry whose normalized item matches `item_name`."""
+    """The pantry entry naming the same food as `item_name`, or None.
+
+    Exact name first, then the head-noun matcher shared with Cook Now and Use
+    It Up. The old character-substring fallback is gone: it matched "lemon" to
+    "Lemon pepper seasoning" and every peanut-butter line to the "butter"
+    staple row, and 436597d already replaced it everywhere else. Ingredient
+    text is passed in raw, exactly as `cook_now` and `use_it_up` pass it:
+    normalizing first would strip the parentheses that carry a line's
+    alternatives ("almond butter (or peanut ...)") and lose real matches.
+    """
     target = _normalize(item_name)
     if not target:
         return None
     for entry in pantry:
         if _normalize(entry.get("item")) == target:
             return entry
-    # fallback: substring match (handles "all-purpose flour" vs "flour")
+
+    phrase = _ingredient_phrase(item_name)
+    if not phrase.tokens:
+        return None
     for entry in pantry:
-        pname = _normalize(entry.get("item"))
-        if pname and (pname in target or target in pname):
+        name = entry.get("item") or ""
+        if name and _covers(_phrase(name), phrase):
             return entry
     return None
 
