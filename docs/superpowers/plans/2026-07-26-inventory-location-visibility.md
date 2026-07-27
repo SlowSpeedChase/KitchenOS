@@ -1605,7 +1605,7 @@ def test_a_move_rehomes_the_row_into_its_new_block(live_server, page, page_error
 .venv/bin/pytest tests/e2e/test_location_visibility.py -m e2e -v
 ```
 
-Expected: 3 passed. Unlike the other tasks these are written *after* the behavior (Tasks 5-6 built it), so a green run proves nothing on its own — Step 3 falsifies them.
+Expected: 8 passed. Unlike the other tasks these are written *after* the behavior (Tasks 5-6 built it), so a green run proves nothing on its own — Step 3 falsifies them.
 
 - [ ] **Step 3: Prove the tests actually fail without the feature**
 
@@ -1630,7 +1630,7 @@ Expected: no output from `git status` — the template is back to the committed 
 - [ ] **Step 4: Run the tests once more to confirm they pass**
 
 Run: `.venv/bin/pytest tests/e2e/test_location_visibility.py -m e2e -v`
-Expected: 3 passed.
+Expected: 8 passed.
 
 Then confirm the default suite is unchanged: `.venv/bin/pytest -q`
 Expected: `2737 passed` — e2e tests stay deselected, so this task adds none to the default run.
