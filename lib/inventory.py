@@ -205,6 +205,17 @@ def _expiry_cell(expires: Optional[str], status: Optional[str]) -> str:
     return expires
 
 
+def _location_cell(location: str, source: Optional[str]) -> str:
+    """Location column text, marked '?' when nothing actually resolved it.
+
+    Same marker the `/review` page shows, so the two views agree about what is
+    known rather than one quietly presenting a guess as fact.
+    """
+    if normalize_location_source(source) == "default":
+        return f"{location}?"
+    return location
+
+
 def _expiry_warning_section(flagged: list[tuple[str, InventoryItem]]) -> str:
     """A '⚠️ Expiring Soon' list shown above the table (expired first)."""
     if not flagged:
@@ -238,7 +249,7 @@ def render_inventory_md(items: list[InventoryItem]) -> str:
             _format_quantity(it.quantity),
             it.unit,
             it.category,
-            it.location,
+            _location_cell(it.location, it.location_source),
             (it.for_recipe or "").replace("|", "\\|"),
             it.purchased or "",
             _expiry_cell(it.expires, status),

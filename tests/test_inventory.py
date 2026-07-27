@@ -182,8 +182,13 @@ class TestUpdateQuantity:
 
 class TestGeneratedView:
     def test_inventory_md_is_generated_view(self, tmp_vault, tmp_db):
+        # location_source is explicit so the Location cell renders bare: an
+        # unrecorded provenance is "default", which now renders "fridge?". This
+        # test is about the view's shape and banner, not the unsure marker —
+        # that's test_inventory_md_marks_an_unresolved_location.
         add_items([InventoryItem(name="Milk", quantity=1, unit="gal",
-                                 category="dairy", location="fridge")])
+                                 category="dairy", location="fridge",
+                                 location_source="manual")])
         content = inventory_path().read_text(encoding="utf-8")
         assert "| Milk | 1 | gal | dairy | fridge |" in content
         assert "generated" in content.lower()  # view banner present
@@ -1155,3 +1160,16 @@ def test_a_failed_override_write_still_commits_the_move(
     moved = move_item("oat milk", "fridge")
     assert moved.location == "fridge"
     assert moved.location_source == "manual"
+
+
+def test_inventory_md_marks_an_unresolved_location(tmp_db, tmp_vault):
+    from lib.inventory import render_inventory_md
+    md = render_inventory_md([
+        InventoryItem(name="psyllium husk", quantity=1,
+                      category="other", location="pantry",
+                      location_source="default"),
+        InventoryItem(name="kale", quantity=1, category="produce",
+                      location="fridge", location_source="category"),
+    ])
+    assert "| pantry? |" in md
+    assert "| fridge |" in md
