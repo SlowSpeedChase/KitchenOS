@@ -12,6 +12,7 @@ rank by leftover *quantity*, not just expiry.
 """
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import NamedTuple, Optional
 
@@ -49,6 +50,24 @@ _ATOMIC_FOODS: tuple[frozenset, ...] = tuple(
 )
 
 
+_TRAILER_RE = re.compile(r"\([^)]*\)")
+_OF_CHOICE_RE = re.compile(r"\bof choice\b", re.IGNORECASE)
+
+
+def _core_head(text: str, strict: bool, fallback: Optional[str]) -> Optional[str]:
+    """Head noun for the atomic-block test, ignoring trailing clauses.
+
+    ``_head_token`` takes the last content word, so "almond milk (or milk of
+    choice)" resolves to "choice" and the block that protects compound foods
+    never fires. Clean names are already trustworthy, so only ingredient text
+    is stripped.
+    """
+    if strict:
+        return fallback
+    cleaned = _OF_CHOICE_RE.sub(" ", _TRAILER_RE.sub(" ", text or ""))
+    return _head_token(cleaned) or fallback
+
+
 class Phrase(NamedTuple):
     """A food name reduced for matching: its content tokens plus its head noun.
 
@@ -56,15 +75,25 @@ class Phrase(NamedTuple):
     written as just the food. Recipe ingredient text is not clean ("unsalted
     butter, softened", "flour spooned and leveled, see notes"), so its trailing
     word is unreliable as a head noun and it is parsed non-strict.
+
+    ``core_head`` is the head noun used for the atomic-block test only: for
+    noisy ingredient text it is resolved from a version of the text with
+    trailing clauses (parentheticals, "of choice") stripped, since those can
+    hijack ``_head_token``'s last-word heuristic away from the real food. The
+    final strict-containment check in ``_covers`` keeps using ``head``, not
+    this field — it means something different there (the phrase's own head,
+    not a de-noised approximation).
     """
     tokens: frozenset
     head: Optional[str]
     strict: bool = True
+    core_head: Optional[str] = None
 
 
 def _phrase(text: str, strict: bool = True) -> Phrase:
     """Reduce a clean food name (inventory row, staple) to matchable form."""
-    return Phrase(_content_tokens(text), _head_token(text), strict)
+    head = _head_token(text)
+    return Phrase(_content_tokens(text), head, strict, _core_head(text, strict, head))
 
 
 def _ingredient_phrase(text: str) -> Phrase:
@@ -103,8 +132,10 @@ def _covers(a: Phrase, b: Phrase) -> bool:
         for core in implicated:
             # The compound IS this phrase's food (its head noun belongs to the
             # compound), so a name lacking the whole compound is a different
-            # food: "vanilla" is not "vanilla almond milk".
-            if longer.head is not None and longer.head in core:
+            # food: "vanilla" is not "vanilla almond milk". Use core_head, not
+            # head: a trailing clause ("... or milk of choice") can hijack
+            # head's last-word heuristic away from the real food noun.
+            if longer.core_head is not None and longer.core_head in core:
                 return False
             # The compound overlaps what the shorter name claims, so the shorter
             # name is an incomplete version of it: "butter" is not "peanut butter".
