@@ -2034,6 +2034,7 @@ def api_cook_now():
 
 
 @app.route('/api/cook', methods=['POST'])
+@require_token
 def api_cook():
     """Mark a recipe cooked: decrement its non-staple ingredients from inventory.
 

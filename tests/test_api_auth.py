@@ -53,3 +53,37 @@ def test_token_set_remote_correct_header_allowed(client, monkeypatch):
     monkeypatch.setenv("KITCHENOS_API_TOKEN", "secret")
     resp = client.get("/api/recipes", headers={"Authorization": "Bearer secret"}, **REMOTE)
     assert resp.status_code == 200
+
+
+def test_cook_remote_without_token_rejected(client, monkeypatch):
+    monkeypatch.setenv("KITCHENOS_API_TOKEN", "secret")
+    # Must not reach consume_recipe — this asserts the gate, not the cook path.
+    monkeypatch.setattr(
+        "lib.cook.consume_recipe",
+        lambda *a, **k: pytest.fail("consume_recipe reached without a token"))
+    resp = client.post("/api/cook", json={"recipe": "Anything"}, **REMOTE)
+    assert resp.status_code == 401
+
+
+def test_cook_localhost_exempt(client, monkeypatch):
+    monkeypatch.setenv("KITCHENOS_API_TOKEN", "secret")
+    monkeypatch.setattr(
+        "lib.cook.consume_recipe",
+        lambda *a, **k: {"recipe": "Anything", "consumed": [],
+                         "skipped_staples": [], "not_tracked": [],
+                         "use_recorded": []})
+    resp = client.post("/api/cook", json={"recipe": "Anything"})
+    assert resp.status_code == 200
+
+
+def test_cook_remote_with_valid_token_allowed(client, monkeypatch):
+    monkeypatch.setenv("KITCHENOS_API_TOKEN", "secret")
+    monkeypatch.setattr(
+        "lib.cook.consume_recipe",
+        lambda *a, **k: {"recipe": "Anything", "consumed": [],
+                         "skipped_staples": [], "not_tracked": [],
+                         "use_recorded": []})
+    resp = client.post(
+        "/api/cook", json={"recipe": "Anything"},
+        headers={"Authorization": "Bearer secret"}, **REMOTE)
+    assert resp.status_code == 200
