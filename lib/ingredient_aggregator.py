@@ -82,6 +82,14 @@ def unit_compatibility(pantry_unit: str, recipe_unit: str) -> Optional[str]:
     if p_family in ("volume", "weight") and p_family == get_unit_family(n):
         return "convert"
 
+    # Identical units are exact arithmetic regardless of any table — this is
+    # what the old apply_decisions did before unit_compatibility existed
+    # (e.g. pantry "3 jar" against a recipe's "1 jar" line). Restoring it here
+    # keeps the single-authority contract: same string in, same string out,
+    # no table lookup needed.
+    if p and p == n:
+        return "one_to_one"
+
     p_is_count = p in COUNT_UNITS or p == ""
     n_is_count = n in COUNT_UNITS or n == ""
     if p_is_count and n_is_count:

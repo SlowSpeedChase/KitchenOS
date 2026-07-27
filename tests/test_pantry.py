@@ -110,6 +110,28 @@ def test_apply_decisions_subtracts_within_family():
     assert updated[0]["amount"] == "4"
 
 
+def test_apply_decisions_whitespace_padded_unit_still_converts():
+    """Regression: get_unit_family/convert_to_base_unit only lowercase, they
+    don't strip. A padded pantry unit ("10 lb ") used to resolve to family
+    "other" inside apply_decisions's convert branch, which silently skipped
+    the base-unit conversion and subtracted the *raw* decision amount from
+    the *raw* pantry amount as if they were already the same unit — 100 g
+    off a "10 lb" row went straight to `max(0, 10 - 100)` and wiped the row
+    out entirely, instead of the correct ~9.78 lb remaining.
+
+    100 g (not 1 g, as in the originally reported repro) is used so the
+    visible amount isn't swallowed by format_amount's rounding: 10 lb - 1 g
+    rounds right back to "10".
+    """
+    pantry = [{"item": "t", "amount": "10", "unit": " lb "}]
+    updated = pantry_module.apply_decisions(
+        [{"item": "t", "amount": "100", "unit": "g"}], pantry)
+    assert updated, "row was wiped out — the pre-fix naive-subtraction bug"
+    remaining = parse_amount_to_float(updated[0]["amount"])
+    # Correct: 10 lb - 100 g ≈ 9.7795 lb → "9.78".
+    assert remaining == pytest.approx(9.78, abs=0.01)
+
+
 def test_apply_decisions_removes_when_depleted():
     pantry = [{"item": "flour", "amount": "1", "unit": "cup"}]
     decisions = [{"item": "flour", "amount": "1", "unit": "cup"}]
@@ -232,7 +254,10 @@ PARITY_UNITS = [
     "clove", "slice", "can", "bunch", "head", "package",  # specific count
     "cup", "tbsp", "tsp", "qt",                           # volume
     "oz", "lb", "g",                                      # weight
-    "a sprinkle", "loaf",                                 # unknown / garbage
+    " lb ",  # weight, whitespace-padded — covers the get_unit_family /
+             # convert_to_base_unit whitespace-desync regression (they
+             # lowercase but don't strip, unlike unit_compatibility)
+    "a sprinkle", "loaf", "jar", "bag", "box",            # unknown / garbage
 ]
 
 
@@ -248,10 +273,18 @@ _ALL_PARITY_PAIRS = list(itertools.product(PARITY_UNITS, PARITY_UNITS))
 # would just quietly drop that pair instead of failing a test. Mirroring the
 # classification here keeps the pair list, and therefore the assertion
 # below, independent of whether unit_compatibility is currently correct.
+#
+# Residual coupling: this oracle still reads COUNT_UNITS/VOLUME_UNITS/
+# WEIGHT_UNITS from the module under test (rebuilding those tables here
+# would be its own source of drift), so a regression that shrinks one of
+# those tables would partly mirror into these pair lists too — the
+# independence is about the *logic* (which branch fires, generic/equality
+# rules), not about the table contents.
 _GENERIC = {"", "whole", "ct", "count", "ea", "each", "piece", "pieces"}
 
 
 def _family(unit: str) -> str:
+    unit = (unit or "").lower().strip()
     if unit in VOLUME_UNITS:
         return "volume"
     if unit in WEIGHT_UNITS:
@@ -264,6 +297,11 @@ def _family(unit: str) -> str:
 def _should_be_compatible(p_unit: str, n_unit: str) -> bool:
     p_family, n_family = _family(p_unit), _family(n_unit)
     if p_family in ("volume", "weight") and p_family == n_family:
+        return True
+    # Identical units are exact arithmetic regardless of family/table —
+    # mirrors unit_compatibility's same-string shortcut (e.g. "jar" == "jar"
+    # is compatible even though "jar" is in no table at all).
+    if p_unit and p_unit == n_unit:
         return True
     if p_family == "count" and n_family == "count":
         return p_unit == n_unit or p_unit in _GENERIC or n_unit in _GENERIC
@@ -279,12 +317,27 @@ INCOMPATIBLE_PAIRS = [
 ]
 
 # Units the aggregator actually classifies into a family, as opposed to the
-# unrecognized/garbage units in PARITY_UNITS ("", "a sprinkle", "loaf").
+# unrecognized/garbage units in PARITY_UNITS ("", "a sprinkle", "loaf", "jar",
+# "bag", "box"). Note: "" is deliberately excluded from this set even though
+# _family() above treats it as generic count for compatibility purposes —
+# get_unit_family("") short-circuits to "other" (falsy-unit check), which is
+# the real behavior that drives the credit shape excluded below.
 RECOGNIZED_UNITS = COUNT_UNITS | set(VOLUME_UNITS) | set(WEIGHT_UNITS)
 
+# split_against_pantry has exactly one shape where an incompatible pair still
+# gets credited: pantry unit is volume-or-weight and the recipe unit is
+# unrecognized. In that case get_unit_family(recipe_unit) is "other", the
+# cross-family warning is skipped (it only fires when *both* families are
+# non-"other"), and the volume/weight branch runs anyway — convert_to_base_unit
+# no-ops on the unrecognized unit, so the pantry's (large, converted) amount
+# almost always covers the recipe's (small, unconverted) one. That's a
+# deliberate convenience ("you have flour, don't buy more"), not a bug —
+# apply_decisions still correctly refuses to *spend* across it (see
+# test_incompatible_units_are_never_spent). It's the only shape that would
+# fail this test, so it's the only shape excluded.
 RECOGNIZED_INCOMPATIBLE_PAIRS = [
     (p, n) for p, n in INCOMPATIBLE_PAIRS
-    if p in RECOGNIZED_UNITS and n in RECOGNIZED_UNITS
+    if not (_family(p) in ("volume", "weight") and n not in RECOGNIZED_UNITS)
 ]
 
 
@@ -340,15 +393,16 @@ def test_incompatible_units_are_never_spent(p_unit, n_unit):
 
 @pytest.mark.parametrize("p_unit,n_unit", RECOGNIZED_INCOMPATIBLE_PAIRS)
 def test_recognised_but_incompatible_units_are_not_credited(p_unit, n_unit):
-    """Among units the aggregator actually recognizes (count/volume/weight),
-    an incompatible pair must not be credited from the pantry either.
+    """An incompatible pair must not be credited from the pantry either.
 
-    Unrecognized units ("", "a sprinkle", "loaf") are deliberately excluded
-    from this pair list: split_against_pantry crediting an unrecognized
-    recipe unit against a recognized pantry unit ("you have flour, don't buy
-    more") is an intentional convenience, not a bug, even though
-    apply_decisions correctly refuses to spend it — that asymmetry is
-    exercised by test_incompatible_units_are_never_spent, not this test.
+    The only shape excluded from this pair list is pantry-unit-is-
+    volume-or-weight against an unrecognized recipe unit ("" / "a sprinkle" /
+    "loaf" / "jar" / "bag" / "box"): split_against_pantry crediting that combo
+    ("you have flour, don't buy more") is an intentional convenience, not a
+    bug, even though apply_decisions correctly refuses to spend it — that
+    asymmetry is exercised by test_incompatible_units_are_never_spent, not
+    this test. See RECOGNIZED_INCOMPATIBLE_PAIRS above for why only that one
+    shape needs excluding.
     """
     pantry = [{"item": "thing", "amount": "10", "unit": p_unit}]
     result = split_against_pantry("thing", "1", n_unit, pantry)

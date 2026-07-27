@@ -136,8 +136,13 @@ def split_against_pantry(item: str, amount, unit: str, pantry: list[dict]) -> di
     p_amt = parse_amount_to_float(pantry_entry.get("amount"))
     n_amt = parse_amount_to_float(amount)
     p_unit = pantry_entry.get("unit") or ""
-    p_family = get_unit_family(p_unit)
-    n_family = get_unit_family(unit)
+    # get_unit_family/convert_to_base_unit only lowercase, they don't strip —
+    # unit_compatibility does both. Normalize once here so family lookups and
+    # base-unit math agree with what unit_compatibility already decided.
+    p_unit_norm = p_unit.lower().strip()
+    unit_norm = (unit or "").lower().strip()
+    p_family = get_unit_family(p_unit_norm)
+    n_family = get_unit_family(unit_norm)
 
     # Pantry has the item but no parseable quantity → assume fully stocked.
     if p_amt is None:
@@ -156,14 +161,14 @@ def split_against_pantry(item: str, amount, unit: str, pantry: list[dict]) -> di
         }
 
     if p_family in ("volume", "weight"):
-        n_base = convert_to_base_unit(n_amt, unit, n_family)
-        p_base = convert_to_base_unit(p_amt, p_unit, p_family)
+        n_base = convert_to_base_unit(n_amt, unit_norm, n_family)
+        p_base = convert_to_base_unit(p_amt, p_unit_norm, p_family)
         if p_base >= n_base:
             return {"from_pantry": needed, "to_buy": None, "warning": None}
         # partial cover: pantry has p_base, need n_base; buy the rest in recipe's unit
         remaining_base = n_base - p_base
-        remaining_in_recipe_unit = convert_from_base_unit(remaining_base, unit, n_family)
-        pantry_in_recipe_unit = convert_from_base_unit(p_base, unit, n_family)
+        remaining_in_recipe_unit = convert_from_base_unit(remaining_base, unit_norm, n_family)
+        pantry_in_recipe_unit = convert_from_base_unit(p_base, unit_norm, n_family)
         return {
             "from_pantry": {"amount": format_amount(pantry_in_recipe_unit), "unit": unit},
             "to_buy": {"amount": format_amount(remaining_in_recipe_unit), "unit": unit},
@@ -175,7 +180,6 @@ def split_against_pantry(item: str, amount, unit: str, pantry: list[dict]) -> di
     # correct for almost every count ingredient (cloves, lemons, eggs, onions).
     # The rule lives in unit_compatibility so apply_decisions applies the same
     # one — they used to disagree.
-    p_unit_lower = (p_unit or "").lower()
     n_unit_lower = (unit or "").lower()
     if unit_compatibility(p_unit, unit) == "one_to_one":
         # Display in the recipe's unit if specified, else the pantry's.
@@ -225,14 +229,22 @@ def apply_decisions(decisions: list[dict], pantry: list[dict]) -> list[dict]:
 
             mode = unit_compatibility(p_unit, used_unit)
             if mode == "convert":
-                p_family = get_unit_family(p_unit)
-                p_base = convert_to_base_unit(p_amt, p_unit, p_family)
-                u_base = convert_to_base_unit(used_amt, used_unit, p_family)
+                # Same normalization as unit_compatibility (lower + strip) —
+                # get_unit_family/convert_to_base_unit only lowercase, so a
+                # padded unit ("10 lb " decremented by "1 g") would otherwise
+                # resolve to family "other" here and silently skip the base-
+                # unit conversion, subtracting raw amounts across mismatched
+                # units instead.
+                p_unit_norm = p_unit.lower().strip()
+                used_unit_norm = used_unit.lower().strip()
+                p_family = get_unit_family(p_unit_norm)
+                p_base = convert_to_base_unit(p_amt, p_unit_norm, p_family)
+                u_base = convert_to_base_unit(used_amt, used_unit_norm, p_family)
                 remaining_base = max(0.0, p_base - u_base)
                 if remaining_base <= 1e-9:
                     updated.pop(idx)
                 else:
-                    remaining_native = convert_from_base_unit(remaining_base, p_unit, p_family)
+                    remaining_native = convert_from_base_unit(remaining_base, p_unit_norm, p_family)
                     entry["amount"] = format_amount(remaining_native)
             elif mode == "one_to_one":
                 remaining = max(0.0, p_amt - used_amt)

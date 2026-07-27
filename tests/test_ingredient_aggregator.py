@@ -93,3 +93,15 @@ class TestUnitCompatibility:
         # Result must not depend on argument order for generic/specific count pairs.
         assert unit_compatibility("clove", "whole") == "one_to_one"
         assert unit_compatibility("whole", "clove") == "one_to_one"
+
+    def test_identical_units_outside_any_table_are_one_to_one(self):
+        # Regression: pantry "3 jar salsa" against recipe "1 jar salsa" used to
+        # be refused because "jar" is in none of the count/volume/weight
+        # tables. Identical units are exact arithmetic and invent nothing.
+        assert unit_compatibility("jar", "jar") == "one_to_one"
+        assert unit_compatibility("pinch", "pinch") == "one_to_one"
+
+    def test_identical_recognized_volume_units_still_convert(self):
+        # Same-family recognized units must keep taking the "convert" path
+        # (base-unit math) rather than the same-string equality shortcut.
+        assert unit_compatibility("cup", "cup") == "convert"
