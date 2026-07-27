@@ -1970,6 +1970,45 @@
             return card;
         }
 
+        // One renderer for both cook call sites. Previously each had its own
+        // copy that read only `consumed`, so a cook that decremented nothing —
+        // 234 of 236 recipes — showed a green "nothing tracked to decrement"
+        // while discarding the three lists that explained why.
+        function renderCookToast(r) {
+            const cap = (list, fmt) => {
+                const shown = list.slice(0, 4).map(fmt);
+                const extra = list.length - shown.length;
+                return shown.join(', ') + (extra > 0 ? ` +${extra} more` : '');
+            };
+
+            const consumed = r.consumed || [];
+            const used = r.use_recorded || [];
+            const untracked = r.not_tracked || [];
+            const staples = r.skipped_staples || [];
+
+            if (!consumed.length && !used.length && !untracked.length && !staples.length) {
+                showToast('Marked cooked — nothing tracked to decrement', 'success');
+                return;
+            }
+
+            const parts = [];
+            if (consumed.length) {
+                parts.push(cap(consumed, c => c.depleted
+                    ? `${c.item} — used up`
+                    : `${c.item} ${c.after}${c.unit ? ' ' + c.unit : ''} left`));
+            }
+            if (used.length) {
+                parts.push('used: ' + cap(used, u => u.item));
+            }
+            if (untracked.length) {
+                parts.push('not tracked: ' + cap(untracked, n => n));
+            }
+            if (staples.length) {
+                parts.push(`${staples.length} staple${staples.length === 1 ? '' : 's'} assumed`);
+            }
+            showToast(`Cooked — ${parts.join(' · ')}`, 'success');
+        }
+
         async function markCooked(recipe, servings, card) {
             if (!confirm(`Mark "${recipe}" cooked? This subtracts its ingredients from your inventory.`)) return;
             try {
@@ -1980,14 +2019,7 @@
                 });
                 const r = await resp.json();
                 if (r.error) { showToast(r.error, 'error'); return; }
-                const consumed = r.consumed || [];
-                if (!consumed.length) {
-                    showToast('Marked cooked — nothing tracked to decrement', 'success');
-                } else {
-                    const parts = consumed.slice(0, 4).map(c =>
-                        c.depleted ? `${c.item} (used up)` : `${c.item}: ${c.after}${c.unit ? ' ' + c.unit : ''} left`);
-                    showToast(`Cooked — ${parts.join(', ')}`, 'success');
-                }
+                renderCookToast(r);
                 loadUseItUp().catch(() => {});  // refresh the waste panel
 
                 // Record it in the serving ledger too. Marking a plan card cooked
@@ -2502,14 +2534,7 @@
                 if (r.error) {
                     showToast(r.error, 'error');
                 } else {
-                    const consumed = r.consumed || [];
-                    if (!consumed.length) {
-                        showToast('Marked cooked — nothing tracked to decrement', 'success');
-                    } else {
-                        const parts = consumed.slice(0, 4).map(c =>
-                            c.depleted ? `${c.item} (used up)` : `${c.item}: ${c.after}${c.unit ? ' ' + c.unit : ''} left`);
-                        showToast(`Cooked — ${parts.join(', ')}`, 'success');
-                    }
+                    renderCookToast(r);
                     loadUseItUp().catch(() => {});
                 }
             } catch (err) {
