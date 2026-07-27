@@ -588,3 +588,30 @@ def test_add_records_the_resolved_placement(client, tmp_db, tmp_vault):
     assert rows['PlacementTestHusk']['location_source'] == 'default'
     assert rows['PlacementTestPick']['location_source'] == 'manual'
     assert rows['PlacementTestPick']['location'] == 'counter'
+
+
+def test_review_page_shows_storage_location(client):
+    """The location, its glyphs, and the unsure marker ship in the page."""
+    html = client.get('/review').data
+    assert b'LOC_EMOJI' in html
+    assert b'locationLabel' in html
+    assert b'location_source' in html
+    # The freezer glyph must not be the category emoji for `frozen`.
+    assert '🥶'.encode() in html
+
+
+def test_review_page_shows_the_last_used_stamp(client):
+    """consume-on-cook writes last_used/use_count; this is the only view that
+    reads them. Without this the columns are write-only."""
+    html = client.get('/review').data
+    assert b'usedLabel' in html
+    assert b'last_used' in html
+
+
+def test_review_page_has_a_location_sort_mode(client):
+    """Location ordering and its group headers ship in the page."""
+    html = client.get('/review').data
+    assert b'value="location"' in html
+    assert b'groupHeader' in html
+    assert b'placeRows' in html
+    assert b'li.group' in html

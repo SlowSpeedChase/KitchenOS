@@ -230,8 +230,13 @@ def test_repeated_extend_taps_accumulate(live_server, page, page_errors):
         start + timedelta(days=14)
     ).isoformat(), "second tap was a no-op"
 
-    assert row.locator(".sub").inner_text().startswith(
+    # `in`, not `startswith`: the subline now leads with the storage location
+    # (see the inventory-location-visibility branch), so the expiry is no longer
+    # the first thing in it. What this asserts is unchanged — the row *displays*
+    # the accumulated date, not just stores it.
+    assert (
         "exp " + (start + timedelta(days=14)).isoformat()
+        in row.locator(".sub").inner_text()
     )
     assert page_errors == [], page_errors
 
