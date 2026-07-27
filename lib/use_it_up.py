@@ -38,6 +38,13 @@ _ATOMIC_FOODS: tuple[frozenset, ...] = tuple(
         "peanut butter", "almond butter", "cashew butter", "apple butter",
         "cocoa butter", "coconut milk", "almond milk", "oat milk", "soy milk",
         "coconut cream", "butter beans", "cream of tartar",
+        # A second class of compound: these do not lie about their head noun,
+        # but the inventory rows they collide with reduce to a single generic
+        # token ("shredded cheese" -> {cheese}, "Canned corn" -> {corn}), so
+        # plain containment matched every cheese and every corn product.
+        "cream cheese", "cottage cheese", "goat cheese", "feta cheese",
+        "corn syrup", "corn tortilla", "corn meal", "cornmeal",
+        "coconut yogurt", "cherry juice", "corn starch", "cornstarch",
     )
 )
 

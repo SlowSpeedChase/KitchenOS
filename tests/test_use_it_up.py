@@ -4,6 +4,7 @@ from datetime import date, timedelta
 
 from lib.inventory import InventoryItem
 from lib import use_it_up
+from lib.use_it_up import _covers, _ingredient_phrase, _phrase
 
 
 TODAY = date(2026, 6, 24)
@@ -172,6 +173,48 @@ class TestMatchPrecision:
     def test_ingredient_text_is_parsed_non_strict(self):
         assert use_it_up._ingredient_phrase("butter (melted)").strict is False
         assert use_it_up._phrase("Salted Butter").strict is True
+
+
+class TestCompoundFoodsDoNotMatchTheirHeadNoun:
+    """`_STOPWORDS` reduces 'shredded cheese' to {cheese} and 'Canned corn' to
+    {corn}, so without an atomic entry every cheese and every corn product
+    matches them. 436597d only closed the direction where the inventory name is
+    the longer phrase."""
+
+    def test_cream_cheese_is_not_shredded_cheese(self):
+        assert not _covers(_phrase("shredded cheese"),
+                           _ingredient_phrase("cream cheese"))
+
+    def test_cottage_cheese_is_not_shredded_cheese(self):
+        assert not _covers(_phrase("shredded cheese"),
+                           _ingredient_phrase("cottage cheese"))
+
+    def test_goat_cheese_is_not_shredded_cheese(self):
+        assert not _covers(_phrase("shredded cheese"),
+                           _ingredient_phrase("goat cheese"))
+
+    def test_corn_syrup_is_not_canned_corn(self):
+        assert not _covers(_phrase("Canned corn"),
+                           _ingredient_phrase("light corn syrup"))
+
+    def test_corn_tortillas_are_not_canned_corn(self):
+        assert not _covers(_phrase("Canned corn"),
+                           _ingredient_phrase("corn tortillas"))
+
+
+class TestCompoundExtensionKeepsTrueMatches:
+    def test_cornstarch_still_matches_a_noisy_ingredient_line(self):
+        assert _covers(_phrase("Cornstarch"),
+                       _ingredient_phrase("potato starch or cornstarch"))
+
+    def test_prep_note_variants_still_match(self):
+        assert _covers(_phrase("Basil"), _ingredient_phrase("basil leaves"))
+
+    def test_existing_atomic_foods_still_hold(self):
+        assert not _covers(_phrase("butter"),
+                           _ingredient_phrase("peanut butter"))
+        assert _covers(_phrase("peanut butter"),
+                       _ingredient_phrase("creamy peanut butter, softened"))
 
 
 class TestRender:
