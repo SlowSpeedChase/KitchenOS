@@ -429,6 +429,7 @@ function rowTarget(it, li){
   return {
     id: keyOf(it),
     location: it.location, category: it.category, expires: it.expires,
+    unsure: isUnsure(it),
     async run(action, params, errLabel){
       const item = await post(SINGLE[action],
         { name: it.name, location: it.location, ...params }, li, errLabel);
@@ -454,6 +455,9 @@ function bulkTarget(){
   return {
     id: '__bulk__',
     location: null, category: null, expires: null,
+    // A heterogeneous selection has no single provenance, and `location: null`
+    // already means no chip is treated as current, so every one is offered.
+    unsure: false,
     async run(action, params, errLabel){ await runBulk(action, params, errLabel); }
   };
 }
@@ -499,9 +503,17 @@ function openMenu(target, anchor){
   ml.textContent = 'Move to'; menu.appendChild(ml);
   const mc = document.createElement('div'); mc.className = 'chips';
   for (const loc of LOCATIONS){
-    if (loc === target.location) continue;
+    const isCurrent = loc === target.location;
+    // The row's own location is normally skipped — moving somewhere it already
+    // is would be a no-op. An *unsure* row is the exception: it needs a way to
+    // say "this shelf is right". Without it the guess marker can never be
+    // cleared on a correctly-placed row, and the only escape is moving away and
+    // back, which teaches a wrong override on the first tap. Confirming posts
+    // the same move, which stamps the row manual and teaches the right shelf.
+    if (isCurrent && !target.unsure) continue;
     const b = document.createElement('button');
-    b.textContent = loc;
+    b.textContent = isCurrent ? `✓ ${loc}` : loc;
+    if (isCurrent) b.title = "Confirm this is where it belongs";
     b.onclick = async () => {
       const t = menuTarget; closeMenu();
       await t.run('move', { to_location: loc }, "move");

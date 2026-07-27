@@ -133,8 +133,11 @@ def test_a_moved_row_lands_in_its_new_block(live_server, page, page_errors):
     row.locator(".kebab").click()
     page.wait_for_selector("#menu.show", timeout=5_000)
     chips = page.locator("#menu .chips").first.locator("button")
-    offered = [chips.nth(i).inner_text().strip().lower()
-               for i in range(chips.count())]
+    # Exclude the "✓ <loc>" confirm chip, which is offered on an unsure row and
+    # is not a destination — it re-asserts the row's current shelf.
+    offered = [t for t in (chips.nth(i).inner_text().strip().lower()
+                           for i in range(chips.count()))
+               if "✓" not in t]
     assert offered, "the row menu offered no location chips"
     dest = offered[0]
     assert dest not in before, (
@@ -186,4 +189,51 @@ def test_a_never_used_row_shows_no_stamp(live_server, page, page_errors):
     page.wait_for_selector("#list li", timeout=15_000)
     assert page.evaluate("() => usedLabel({last_used: null, use_count: 0})") == ""
     assert page.evaluate("() => usedLabel({})") == ""
+    assert page_errors == []
+
+
+def test_an_unsure_row_can_confirm_its_current_shelf(live_server, page, page_errors):
+    """Without this there is no way to clear the "?" on a row that is already in
+    the right place: the menu skips the row's own location, so the only escape is
+    moving it away and back — which teaches a wrong override on the first tap.
+    """
+    name = "E2E Confirm Shelf Eee"
+    _seed(live_server, [_item(name, category="other", location=None)])
+    _open_review(page, live_server)
+
+    row = _row(page, name)
+    row.scroll_into_view_if_needed()
+    assert "?" in row.locator(".sub").inner_text(), "row was not unsure to begin with"
+
+    row.locator(".kebab").click()
+    page.wait_for_selector("#menu.show", timeout=5_000)
+    # The current shelf is offered, marked as a confirmation rather than a move.
+    confirm = page.locator("#menu .chips").first.locator("button", has_text="✓")
+    assert confirm.count() == 1, "no confirm-current-shelf chip offered"
+    confirm.first.click()
+    page.wait_for_timeout(2000)
+
+    sub = _row(page, name).locator(".sub").inner_text()
+    assert "?" not in sub, f"still marked unsure after confirming: {sub!r}"
+    assert "pantry" in sub.lower()
+    assert page_errors == []
+
+
+def test_a_confirmed_row_offers_no_confirm_chip(live_server, page, page_errors):
+    """Only an unsure row needs the affordance; a settled row's own location
+    stays skipped so the menu doesn't fill with no-ops."""
+    name = "E2E Confirm Settled Fff"
+    _seed(live_server, [_item(name, location="counter")])  # explicit -> manual
+    _open_review(page, live_server)
+
+    row = _row(page, name)
+    row.scroll_into_view_if_needed()
+    assert "?" not in row.locator(".sub").inner_text()
+    row.locator(".kebab").click()
+    page.wait_for_selector("#menu.show", timeout=5_000)
+    chips = page.locator("#menu .chips").first
+    assert chips.locator("button", has_text="✓").count() == 0
+    labels = [chips.locator("button").nth(i).inner_text().strip().lower()
+              for i in range(chips.locator("button").count())]
+    assert "counter" not in labels, "a settled row offered its own location"
     assert page_errors == []
