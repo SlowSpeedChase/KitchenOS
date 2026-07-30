@@ -195,3 +195,34 @@ class TestGetRecipeIndexWithIngredients:
             )
             result = get_recipe_index(recipes_dir)
             assert "ingredient_items" not in result[0]
+
+
+class TestDisplayName:
+    """`name` is the identity; `display_name` is what a cramped surface renders.
+
+    Recipe names come from the extractor, which used to echo the video title, so
+    70 of 252 were over 32 characters. Renaming was not an option — `cooks.recipe`
+    is a name string and `task_extractor` hashes `recipe|day|slot|step`, so a
+    rename orphans planned cooks and resets task checkboxes. See lib/short_title.py.
+    """
+
+    def test_falls_back_to_the_name(self, tmp_path):
+        (tmp_path / "Beef Birria.md").write_text(
+            "---\ncuisine: Mexican\n---\n\nbody\n", encoding="utf-8")
+        entry = get_recipe_index(tmp_path)[0]
+        assert entry["name"] == "Beef Birria"
+        assert entry["short_title"] is None
+        assert entry["display_name"] == "Beef Birria"
+
+    def test_prefers_a_short_title_without_changing_the_name(self, tmp_path):
+        (tmp_path / "Maple Sweet Potato Salad - With Whipped Tahini.md").write_text(
+            "---\nshort_title: Maple Sweet Potato Salad\n---\n\nbody\n", encoding="utf-8")
+        entry = get_recipe_index(tmp_path)[0]
+        assert entry["name"] == "Maple Sweet Potato Salad - With Whipped Tahini"
+        assert entry["display_name"] == "Maple Sweet Potato Salad"
+
+    def test_an_unparseable_recipe_still_gets_a_display_name(self, tmp_path):
+        """Set after the except, so every consumer can render it unconditionally."""
+        (tmp_path / "Broken.md").write_text("---\n[not: valid: yaml\n", encoding="utf-8")
+        entry = get_recipe_index(tmp_path)[0]
+        assert entry["display_name"] == "Broken"

@@ -2473,6 +2473,16 @@
             });
         }
 
+        // A cook/board card carries the recipe *name* (the identity everywhere —
+        // cooks rows, meal plans, task-ID hashes). What a card should SHOW is the
+        // short title when the library has one, because a 104px card cannot render
+        // "Maple Sweet Potato Salad - With Whipped Tahini And Crispy Chickpeas".
+        // Falls back to the name, so a recipe missing from the index still reads.
+        function displayNameFor(name) {
+            const recipe = allRecipes.find(r => r.name === name);
+            return (recipe && recipe.display_name) || name;
+        }
+
         function setCardServings(card, s) {
             card.dataset.servings = s;
             const btn = card.querySelector('.servings-btn');
@@ -2717,7 +2727,8 @@
             const ageDays = Math.max(0, Math.round((Date.now() - Date.parse(entry.created_at)) / 86400000));
             const nameEl = document.createElement('span');
             nameEl.className = 'freezer-chip-name';
-            nameEl.textContent = entry.recipe;
+            nameEl.textContent = displayNameFor(entry.recipe);
+            nameEl.title = entry.recipe;
             const metaEl = document.createElement('span');
             metaEl.className = 'freezer-chip-meta';
             metaEl.textContent = `×${fmtMult(entry.count)} · ${ageDays}d`;
@@ -2746,7 +2757,8 @@
             const nameEl = document.createElement('a');
             nameEl.className = 'grid-card-name grid-card-name-link';
             nameEl.href = obsidianUrl;
-            nameEl.textContent = cook.recipe;
+            nameEl.textContent = displayNameFor(cook.recipe);
+            nameEl.title = cook.recipe;   // the full name is still one hover away
 
             const removeBtn = document.createElement('button');
             removeBtn.className = 'remove-btn';
@@ -2869,7 +2881,8 @@
 
                 const nameEl = document.createElement('span');
                 nameEl.className = 'unscheduled-row-name';
-                nameEl.textContent = cook.recipe;
+                nameEl.textContent = displayNameFor(cook.recipe);
+                nameEl.title = cook.recipe;
 
                 const metaEl = document.createElement('span');
                 metaEl.className = 'unscheduled-row-meta';
@@ -3606,7 +3619,7 @@
                 const obsidianUrl = `obsidian://open?vault=KitchenOS&file=${encodeURIComponent('Recipes/' + recipe.name)}`;
 
                 card.innerHTML = `
-                    <a href="${obsidianUrl}" class="recipe-name recipe-name-link">${escapeHtml(recipe.name)}</a>
+                    <a href="${obsidianUrl}" class="recipe-name recipe-name-link" title="${escapeHtml(recipe.name)}">${escapeHtml(recipe.display_name || recipe.name)}</a>
                     ${metaParts.length ? `<div class="recipe-meta">${escapeHtml(metaParts.join(' \u00b7 '))}</div>` : ''}
                     ${macroLine(recipe)}
                 `;
@@ -3917,6 +3930,8 @@
         function openCardSheet(card) {
             const actions = document.getElementById('card-sheet-actions');
             actions.innerHTML = '';
+            // The sheet has room, so it shows the full name — the short title
+            // exists for cards, not to hide what the recipe is actually called.
             document.getElementById('card-sheet-title').textContent = card.dataset.name;
 
             function addAction(label, fn, cssClass) {
@@ -4071,7 +4086,11 @@
             armedRecipe = card;
             card.classList.add('armed');
             document.querySelector('.app').classList.add('placing');
-            document.getElementById('assign-bar-name').textContent = card.dataset.name || 'recipe';
+            // The card you just tapped shows its display name, so the bar has to
+            // agree — naming the recipe differently in the confirmation than on
+            // the thing you touched reads as having grabbed the wrong one.
+            document.getElementById('assign-bar-name').textContent =
+                displayNameFor(card.dataset.name) || 'recipe';
             document.getElementById('assign-bar').hidden = false;
             setEmptyLabels('+ here');
         }
