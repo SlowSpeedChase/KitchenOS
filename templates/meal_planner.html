@@ -31,6 +31,18 @@
             --danger: #ff3b30;
             --drop-zone: #f0f0f2;
             --sidebar-width: 280px;
+            /* Height of the bottom library shelf below 1080px. Overwritten on
+               :root by initShelf() from localStorage, so CSS that has to clear
+               the shelf (.panel-dock) can read the live value.
+               44dvh is the largest default that still leaves the compressed
+               28-slot week fitting above it without scrolling on iPad Air/Pro
+               portrait (820x1180 and 834x1194) — measured across sizes, not
+               guessed, and pinned by test_planner_touch.py. 48dvh overflows
+               820x1180 by 7px. A 768x1024 iPad mini/classic overflows at any
+               shelf height once a slot holds a photo card, so it scrolls; the
+               shelf is proportional so it degrades rather than breaking. */
+            --shelf-h: 44dvh;
+            --shelf-collapsed-h: 52px;
         }
 
         * {
@@ -52,7 +64,12 @@
         /* --- Layout --- */
         .app {
             display: flex;
-            height: 100dvh;
+            /* Not a plain 100dvh: the injected Claude chrome bar is sticky at the
+               top of <body>, so .app starts ~60px down and a full-viewport height
+               runs its bottom off the screen. In the docked-rail layout that only
+               clipped some empty sidebar; with a bottom shelf it cut the shelf.
+               syncAppHeight() measures the real offset and sets --chrome-h. */
+            height: calc(100dvh - var(--chrome-h, 0px));
             width: 100vw;
         }
 
@@ -67,6 +84,45 @@
             height: 100dvh;
             z-index: 10;
             transition: transform 0.3s ease;
+        }
+
+        /* --- Shelf handle (portrait only) ---
+           Both the resize grip and the collapse control for the bottom shelf.
+           Hidden at >=1081px, where the sidebar is a docked rail and neither
+           gesture applies. */
+        .shelf-handle {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            flex-shrink: 0;
+            height: var(--shelf-collapsed-h);
+            padding: 0 16px;
+            border-bottom: 1px solid var(--border);
+            background: var(--card-bg);
+            cursor: row-resize;
+            touch-action: none;  /* we own the vertical drag */
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        .shelf-grip {
+            width: 36px;
+            height: 5px;
+            border-radius: 3px;
+            background: var(--border);
+            flex-shrink: 0;
+        }
+
+        .shelf-handle-label {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text);
+        }
+
+        .shelf-handle-hint {
+            margin-left: auto;
+            font-size: 13px;
+            color: var(--text-muted);
         }
 
         .sidebar-header {
@@ -644,7 +700,12 @@
             background: var(--drop-zone);
             border: 2px dashed var(--border);
             border-radius: 10px;
-            min-height: 80px;
+            /* 44px, not 80: an empty slot holds no information, so it should cost
+               no space (overview first — zoom on demand). 28 slots at the old
+               height overflowed the portrait grid area once the shelf took the
+               bottom 40dvh, which would have scrolled away the very big picture
+               the shelf exists to show. Still a legal 44pt tap target. */
+            min-height: 44px;
             padding: 6px;
             transition: border-color 0.15s ease, background 0.15s ease;
             position: relative;
@@ -662,13 +723,78 @@
             background: var(--card-bg);
         }
 
+        /* --- Tap-to-assign ---
+           WCAG 2.2 SC 2.5.7 requires a single-pointer alternative to dragging,
+           and a fingertip chasing a moving target is the worst case of an
+           already-precision-hostile interaction. Arm a recipe, tap a slot.
+           Chosen over a day/meal picker sheet because a sheet would have to
+           cover the week in order to ask which part of the week you meant. */
+        .recipe-card.armed,
+        .meal-card.armed {
+            outline: 3px solid var(--accent);
+            outline-offset: -1px;
+            box-shadow: 0 4px 14px rgba(0, 113, 227, 0.3);
+        }
+
+        .app.placing .grid-cell:not(.has-card) {
+            border-color: var(--accent);
+            background: rgba(0, 113, 227, 0.07);
+        }
+
+        .app.placing .grid-cell:not(.has-card) .empty-label {
+            color: var(--accent);
+            font-weight: 600;
+            font-size: 13px;
+        }
+
+        /* In the flow of .main rather than floating: it costs 48px only while
+           armed, and an overlay would have to out-stack both .panel-dock and the
+           injected chrome bar to stay clickable. */
+        .assign-bar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-shrink: 0;
+            padding: 8px 16px;
+            min-height: 56px;
+            background: var(--accent);
+            color: #fff;
+        }
+
+        .assign-bar[hidden] {
+            display: none;
+        }
+
+        .assign-bar-text {
+            font-size: 15px;
+            font-weight: 600;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .assign-bar-cancel {
+            margin-left: auto;
+            flex-shrink: 0;
+            min-height: 44px;
+            min-width: 44px;
+            padding: 0 16px;
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            border-radius: 10px;
+            background: transparent;
+            color: #fff;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
         .grid-cell .empty-label {
             display: flex;
             align-items: center;
             justify-content: center;
-            height: 100%;
-            min-height: 60px;
-            font-size: 12px;
+            height: auto;
+            min-height: 24px;
+            font-size: 15px;
             color: var(--border);
             pointer-events: none;
             user-select: none;
@@ -1237,38 +1363,75 @@
 
         /* --- Responsive ---
            1080px so iPad portrait (810-834px) AND classic-iPad landscape (1024px)
-           both get the off-canvas drawer; iPad Air/Pro landscape keeps the docked
-           sidebar with room for the board. */
+           share a breakpoint; iPad Air/Pro landscape (1180px) keeps the docked
+           left rail, which measures fine as-is.
+
+           Below 1080px the sidebar used to rip off-canvas behind a 56px FAB. That
+           hid the most-used surface in the app behind a tap while ~700px of the
+           portrait screen sat empty below the grid — and it left the week grid
+           advertising exactly one verb ("Drop recipe" x26), which is why dragging
+           was the only interaction that was ever found. So the axis rotates
+           instead: the library becomes a persistent bottom shelf, and the week and
+           the library are both on screen at once. */
         @media (max-width: 1080px) {
-            .sidebar {
-                position: fixed;
-                left: 0;
-                top: 0;
-                height: 100dvh;
-                transform: translateX(-100%);
-            }
-
-            .sidebar.open {
-                transform: translateX(0);
-            }
-
-            .sidebar-toggle {
-                display: flex;
-            }
-
-            .sidebar-backdrop.visible {
-                display: block;
+            .app {
+                flex-direction: column;
             }
 
             .main {
+                order: 1;
                 width: 100vw;
+                flex: 1 1 auto;
+                min-height: 0;  /* let .grid-container own the scroll, not .main */
+            }
+
+            .sidebar {
+                order: 2;
+                position: static;
+                transform: none;
+                width: 100%;
+                min-width: 0;
+                height: var(--shelf-h);
+                flex: 0 0 var(--shelf-h);
+                border-right: none;
+                border-top: 1px solid var(--border);
+                box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.06);
+                /* Collapsing clips the content rather than hiding each child, so
+                   the shelf has no per-element list to keep in sync. */
+                overflow: hidden;
+            }
+
+            .app.shelf-collapsed .sidebar {
+                height: var(--shelf-collapsed-h);
+                flex-basis: var(--shelf-collapsed-h);
+            }
+
+            .shelf-handle {
+                display: flex;
+            }
+
+            /* The shelf handle is the collapse control, so the FAB has nothing
+               left to open — one affordance, not two stacked on each other. */
+            .sidebar-toggle {
+                display: none;
+            }
+
+            /* Nothing is modal in shelf mode. */
+            .sidebar-backdrop,
+            .sidebar-backdrop.visible {
+                display: none;
             }
 
             /* div.panel-dock: outrank the base .panel-dock rule, which is
-               declared later in the stylesheet and would win a class-only tie */
+               declared later in the stylesheet and would win a class-only tie.
+               Sits above the shelf rather than on top of it. */
             div.panel-dock {
-                bottom: 92px; /* clear the 56px sidebar FAB at bottom:24 */
-                right: 24px;
+                bottom: calc(var(--shelf-h) + 12px);
+                right: 16px;
+            }
+
+            .app.shelf-collapsed div.panel-dock {
+                bottom: calc(var(--shelf-collapsed-h) + 12px);
             }
         }
 
@@ -1601,12 +1764,137 @@
         html.touch .grid-card .retry-btn {
             display: none; /* kept in the DOM — the action sheet drives their handlers */
         }
+
+        /* --- 44pt tap-target floor (touch only) ---
+           Apple's HIG floor is 44x44pt, and sub-44 targets measure a 25%+ miss
+           rate. Before this block, 526 of 859 interactive controls on this page
+           were under it and 477 were under 30pt — the card ⋮ was 17x20.
+           A mouse doesn't need the same floor, so this lives under html.touch
+           rather than in the base rules. tests/e2e/test_planner_touch.py fails
+           the build if any of it regresses. */
+        html.touch .scale-btn { width: 44px; height: 44px; font-size: 20px; }
+        html.touch .sort-select { min-height: 44px; }
+        html.touch .search-input { min-height: 44px; }
+        html.touch .nav-link-review,
+        html.touch .useitup-recipe-link {
+            display: inline-flex;
+            align-items: center;
+            min-height: 44px;
+            min-width: 44px;
+        }
+        html.touch .nav-link-review {
+            justify-content: center;
+            padding: 0 8px;
+        }
+
+        /* Under touch the *card* is the control — tapping it arms the recipe for
+           placement — so the title is not independently actionable and passes its
+           pointer events through. Left as a live element it would be 252 separate
+           sub-44 targets that merely duplicate what the card already does. On
+           desktop it stays a real obsidian:// link, which is the only place that
+           distinction has anywhere to go. */
+        html.touch .recipe-card .recipe-name-link {
+            pointer-events: none;
+        }
+
+        /* Same reasoning for the title on a *placed* card: under touch the grid
+           card opens the action sheet (which carries "Open recipe"), so its title
+           is not independently actionable either. Worth pinning because its height
+           is a function of how the name happens to wrap — 31px on a 13" where the
+           column fits two lines, over 44 on an 11" where the same name takes three.
+           Left live, the tap-target floor would depend on screen size and recipe
+           name length, which is why it read as passing until the 13" was measured. */
+        html.touch .grid-card .grid-card-name-link {
+            pointer-events: none;
+        }
+
+        /* The whole card already opens the action sheet under touch, so the
+           corner ⋮ is a redundant 17x20 target — drop it rather than inflate it,
+           exactly as the four buttons above. It stays for mouse users, where
+           tap-to-open is gated off by window.IS_TOUCH and the sheet (and so the
+           make-again verdict) would otherwise be unreachable. */
+        html.touch .grid-card .card-menu-btn { display: none; }
+
+        /* Preview ⓘ: grow the *hit area* to 44 while the glyph's disc stays 26px,
+           painted by a gradient rather than a wrapper element so the existing
+           markup and the has-image contrast variant both still work. Inflating
+           the disc itself would swallow the card's already-tight top row. */
+        html.touch .recipe-card .recipe-info-link {
+            width: 44px;
+            height: 44px;
+            top: 0;
+            right: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
+            background: radial-gradient(circle at center,
+                rgba(0, 0, 0, 0.06) 13px, transparent 13px);
+        }
+        html.touch .recipe-card.has-image .recipe-info-link {
+            background: radial-gradient(circle at center,
+                rgba(0, 0, 0, 0.45) 13px, transparent 13px);
+        }
+
+        /* --- Shelf density (portrait) ---
+           Declared after the html.touch block so it wins the source-order tie.
+           The shelf exists to show recipes, and at 40dvh the handle + header +
+           tabs + a 152px chip block left about 20px for the list — technically a
+           visible library, practically none. Filters are a zoom tool; the list is
+           the overview, so the list gets the room. */
+        @media (max-width: 1080px) {
+            html.touch .filter-chips,
+            .filter-chips {
+                /* ~one row of chips, still scrollable and still drag-resizable
+                   via #resize-handle for anyone who wants the whole filter wall. */
+                height: 56px;
+            }
+
+            .sidebar-header {
+                padding: 10px 16px;
+                /* Search and sort share a line here rather than stacking. The
+                   header was 167px of a 472px shelf — more than a third of the
+                   library spent on the controls for reading it. */
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                flex-wrap: wrap;
+            }
+
+            .sidebar-header .search-input {
+                flex: 1 1 160px;
+                min-width: 0;
+            }
+
+            .sidebar-header .sort-select {
+                flex: 0 1 auto;
+                width: auto;
+                margin-top: 0;
+            }
+
+            /* The shelf handle already reads "Recipes" a few pixels above, so the
+               title row keeps only the Review link and stops being a whole row. */
+            .sidebar-header-row {
+                order: 1;   /* trails search + sort rather than leading them */
+                margin-bottom: 0;
+            }
+
+            .sidebar-header h2 {
+                display: none;
+            }
+        }
     </style>
 </head>
 <body>
     <div class="app">
         <!-- Sidebar -->
         <aside class="sidebar" id="sidebar">
+            <div class="shelf-handle" id="shelf-handle" role="button" tabindex="0"
+                 aria-label="Resize or collapse the recipe shelf">
+                <div class="shelf-grip"></div>
+                <span class="shelf-handle-label">Recipes</span>
+                <span class="shelf-handle-hint" id="shelf-handle-hint">drag to resize</span>
+            </div>
             <div class="sidebar-header">
                 <div class="sidebar-header-row">
                     <h2 id="sidebar-title">Recipes</h2>
@@ -1643,6 +1931,10 @@
 
         <!-- Main Grid -->
         <main class="main">
+            <div class="assign-bar" id="assign-bar" hidden>
+                <span class="assign-bar-text">Placing <span id="assign-bar-name"></span> — tap a slot</span>
+                <button class="assign-bar-cancel" id="assign-bar-cancel">Cancel</button>
+            </div>
             <div class="grid-header">
                 <button class="nav-btn" id="prev-week" aria-label="Previous week">&larr;</button>
                 <div class="week-title">
@@ -1846,6 +2138,7 @@
         let weekBoard = null;           // { week, cooks, freezer, day_totals } from GET /api/week-board/<week>
         let boardMode = false;          // true when weekBoard.cooks.length > 0 — board wins over legacy grid cards
         let chipSortables = [];         // Sortable instances for the 'servings' chip-drag group
+        let armedRecipe = null;         // card awaiting a slot tap (tap-to-assign); null = idle
         let ledgerBusy = false;         // true while a board mutation is in flight — serializes rapid taps
         let boardLoadGen = 0;           // monotonically increasing — a stale loadWeekBoard response never renders over a newer one
         let boardStateUnknown = false;  // true when the last loadWeekBoard failed — legacy writes (save/suggest) must fail closed until a load succeeds
@@ -1997,11 +2290,18 @@
                     cell.className = 'grid-cell';
                     cell.dataset.day = day;
                     cell.dataset.meal = meal;
-                    cell.innerHTML = `<div class="meal-label">${MEAL_LABELS[meal]}</div><div class="empty-label">Drop recipe</div>`;
+                    // "+" rather than "Drop recipe": 26 of 28 cells are empty on a
+                    // fresh week, so the old label repeated the same instruction
+                    // 26 times and named drag as the only thing the screen could
+                    // do. The armed state relabels these to "+ here" in place.
+                    cell.innerHTML = `<div class="meal-label">${MEAL_LABELS[meal]}</div><div class="empty-label">+</div>`;
                     grid.appendChild(cell);
                     cell.addEventListener('click', function(e) {
                         // Only trigger on the empty area, not on cards
                         if (e.target === cell || e.target.classList.contains('empty-label') || e.target.classList.contains('meal-label')) {
+                            // A recipe waiting to be placed claims the tap; the
+                            // suggester only runs when nothing is armed.
+                            if (armedRecipe) { placeArmedRecipe(cell); return; }
                             suggestMeal(cell);
                         }
                     });
@@ -2052,8 +2352,17 @@
                 // backdrop otherwise sits over the grid and swallows the drop
                 // (Sortable hit-tests with elementFromPoint). The drag clone
                 // lives on <body> (fallbackOnBody), so it survives the close.
+                // No-ops in shelf mode, where there is no backdrop and nothing
+                // to close.
                 onStart: function() {
                     closeSidebar();
+                    // forceFallback still emits a click on the source card when a
+                    // drag ends, which would otherwise arm the card that was just
+                    // dropped. Same guard the grid cards already use.
+                    suppressCardTapUntil = Date.now() + 400;
+                },
+                onEnd: function() {
+                    suppressCardTapUntil = Date.now() + 400;
                 }
             };
 
@@ -3535,6 +3844,35 @@
             // Resize handle between filter chips and recipe list
             initResizeHandle();
 
+            // Bottom library shelf (portrait)
+            initShelf();
+
+            // Tap-to-assign: tap a library card to arm it, then tap a slot.
+            // Delegated so it survives every list re-render.
+            ['recipe-list', 'meals-list'].forEach(function(id) {
+                const list = document.getElementById(id);
+                if (!list) return;
+                list.addEventListener('click', function(e) {
+                    // The preview ⓘ and the meal edit pencil own their taps.
+                    if (e.target.closest('.recipe-info-link, .meal-edit-btn, .new-meal-btn')) return;
+                    // With a mouse the title stays a working obsidian:// link;
+                    // under touch it's pointer-events:none and never seen here.
+                    if (!window.IS_TOUCH && e.target.closest('.recipe-name-link')) return;
+                    const card = e.target.closest('.recipe-card, .meal-card');
+                    if (!card) return;
+                    // A drag that just ended also emits a click under
+                    // forceFallback; arming on it would re-arm what was dropped.
+                    if (Date.now() < suppressCardTapUntil) return;
+                    e.preventDefault();
+                    armRecipe(card);
+                });
+            });
+
+            document.getElementById('assign-bar-cancel').addEventListener('click', disarmRecipe);
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape' && armedRecipe) disarmRecipe();
+            });
+
             // Mobile sidebar toggle
             document.getElementById('sidebar-toggle').addEventListener('click', function() {
                 toggleSidebar();
@@ -3717,6 +4055,167 @@
             hideLoading();
         }
 
+        // --- Tap-to-assign ---
+        // Drag still works; this is the single-pointer path WCAG 2.2 SC 2.5.7
+        // requires, and the one that actually survives a fingertip. Both routes
+        // end in the same createCook() — two ways to ask, one way to do.
+
+        function setEmptyLabels(text) {
+            document.querySelectorAll('#grid .grid-cell .empty-label')
+                .forEach(el => { el.textContent = text; });
+        }
+
+        function armRecipe(card) {
+            if (armedRecipe === card) { disarmRecipe(); return; }  // tap again cancels
+            disarmRecipe();
+            armedRecipe = card;
+            card.classList.add('armed');
+            document.querySelector('.app').classList.add('placing');
+            document.getElementById('assign-bar-name').textContent = card.dataset.name || 'recipe';
+            document.getElementById('assign-bar').hidden = false;
+            setEmptyLabels('+ here');
+        }
+
+        function disarmRecipe() {
+            if (armedRecipe) armedRecipe.classList.remove('armed');
+            armedRecipe = null;
+            document.querySelector('.app').classList.remove('placing');
+            document.getElementById('assign-bar').hidden = true;
+            setEmptyLabels('+');
+        }
+
+        async function placeArmedRecipe(cell) {
+            const card = armedRecipe;
+            if (!card) return;
+            const name = card.dataset.name;
+            const isMeal = card.classList.contains('meal-card');
+            disarmRecipe();
+
+            if (isMeal) {
+                // Mirrors the meal branch of the grid Sortable's onAdd, including
+                // its board-mode limit.
+                if (boardMode) {
+                    showToast('Meal bundles aren\'t supported on the board yet — add individual recipes.', 'error');
+                    return;
+                }
+                cell.querySelectorAll('.grid-card').forEach(c => c.remove());
+                cell.appendChild(createMealGridCard(name, 1));
+                updateCellState(cell);
+                debounceSave();
+                return;
+            }
+
+            const recipe = allRecipes.find(r => r.name === name);
+            const baseServings = (recipe && recipe.servings) ? recipe.servings : 4;
+            await ensureLegacyImported();
+            await createCook(name, cell.dataset.day, cell.dataset.meal, 1.0, baseServings);
+        }
+
+        // --- Library shelf (portrait) ---
+        // Below 1080px the sidebar is a docked bottom shelf rather than a drawer,
+        // so the week and the library are both on screen. Height persists because
+        // how much library you want on screen is a standing preference, not a
+        // per-visit decision.
+
+        const SHELF_HEIGHT_KEY = 'planner.shelfHeight';
+        const SHELF_COLLAPSED_KEY = 'planner.shelfCollapsed';
+
+        function shelfMode() {
+            return window.matchMedia('(max-width: 1080px)').matches;
+        }
+
+        function clampShelf(px) {
+            // Floor leaves the search box reachable; ceiling keeps at least a
+            // few days of the week visible, which is the whole point.
+            return Math.max(96, Math.min(px, Math.round(window.innerHeight * 0.7)));
+        }
+
+        function applyShelfHeight(px) {
+            document.documentElement.style.setProperty('--shelf-h', px + 'px');
+        }
+
+        function updateShelfHint() {
+            const collapsed = document.querySelector('.app').classList.contains('shelf-collapsed');
+            document.getElementById('shelf-handle-hint').textContent =
+                collapsed ? 'tap to open' : 'drag to resize';
+        }
+
+        function setShelfCollapsed(collapsed) {
+            document.querySelector('.app').classList.toggle('shelf-collapsed', collapsed);
+            try { localStorage.setItem(SHELF_COLLAPSED_KEY, collapsed ? '1' : '0'); } catch (e) {}
+            updateShelfHint();
+        }
+
+        // Whatever chrome sits above .app (today: the injected Claude bar) is
+        // measured rather than assumed — it is not this template's markup, and a
+        // hardcoded height would silently start clipping the shelf if it changed.
+        function syncAppHeight() {
+            const app = document.querySelector('.app');
+            if (!app) return;
+            const top = Math.max(0, Math.round(app.getBoundingClientRect().top + window.scrollY));
+            document.documentElement.style.setProperty('--chrome-h', top + 'px');
+        }
+
+        function initShelf() {
+            const handle = document.getElementById('shelf-handle');
+            const sidebar = document.getElementById('sidebar');
+
+            syncAppHeight();
+            window.addEventListener('resize', syncAppHeight);
+            window.addEventListener('orientationchange', syncAppHeight);
+            let startY = 0, startH = 0, dragging = false, moved = false;
+
+            try {
+                const saved = parseInt(localStorage.getItem(SHELF_HEIGHT_KEY) || '', 10);
+                if (saved) applyShelfHeight(clampShelf(saved));
+                if (localStorage.getItem(SHELF_COLLAPSED_KEY) === '1') {
+                    document.querySelector('.app').classList.add('shelf-collapsed');
+                }
+            } catch (e) { /* private mode — defaults are fine */ }
+            updateShelfHint();
+
+            handle.addEventListener('pointerdown', function(e) {
+                if (!shelfMode()) return;
+                dragging = true;
+                moved = false;
+                startY = e.clientY;
+                startH = sidebar.offsetHeight;
+                handle.setPointerCapture(e.pointerId);
+            });
+
+            handle.addEventListener('pointermove', function(e) {
+                if (!dragging) return;
+                const delta = startY - e.clientY;   // drag up = taller shelf
+                if (Math.abs(delta) > 4) moved = true;
+                if (!moved) return;
+                document.querySelector('.app').classList.remove('shelf-collapsed');
+                applyShelfHeight(clampShelf(startH + delta));
+            });
+
+            function endShelfDrag() {
+                if (!dragging) return;
+                dragging = false;
+                if (moved) {
+                    try {
+                        localStorage.setItem(SHELF_HEIGHT_KEY, String(sidebar.offsetHeight));
+                        localStorage.setItem(SHELF_COLLAPSED_KEY, '0');
+                    } catch (e) {}
+                    updateShelfHint();
+                } else {
+                    // A tap on the handle, not a drag — toggle collapsed.
+                    setShelfCollapsed(!document.querySelector('.app').classList.contains('shelf-collapsed'));
+                }
+            }
+
+            handle.addEventListener('pointerup', endShelfDrag);
+            handle.addEventListener('pointercancel', endShelfDrag);
+            handle.addEventListener('keydown', function(e) {
+                if (e.key !== 'Enter' && e.key !== ' ') return;
+                e.preventDefault();
+                setShelfCollapsed(!document.querySelector('.app').classList.contains('shelf-collapsed'));
+            });
+        }
+
         // --- Mobile Sidebar ---
 
         function toggleSidebar() {
@@ -3735,6 +4234,11 @@
         }
 
         function closeSidebar() {
+            // In shelf mode the library is docked, not a drawer: there is no
+            // backdrop to get in a drop's way, and collapsing on every drop would
+            // hide the very thing the shelf exists to keep on screen.
+            if (shelfMode()) return;
+
             const sidebar = document.getElementById('sidebar');
             const backdrop = document.getElementById('sidebar-backdrop');
             const toggle = document.getElementById('sidebar-toggle');
