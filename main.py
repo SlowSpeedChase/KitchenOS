@@ -49,6 +49,44 @@ def youtube_parser(input_str):
     # Assume input is a video ID
     return {'video_id': input_str, 'is_short': False}
 
+
+def is_youtube_url(text):
+    """Check if text looks like a YouTube URL.
+
+    Note youtube_parser() cannot answer this: given a non-YouTube URL it falls
+    through to "assume input is a video ID" and hands back the whole URL, so it
+    never reports failure. Routing has to be decided before calling it.
+    """
+    if not text:
+        return False
+    return any(domain in text.strip().lower()
+               for domain in ('youtube.com', 'youtu.be'))
+
+
+def route_url(input_str):
+    """Classify an extraction input into a pipeline: 'instagram' | 'youtube' | 'web'.
+
+    Single source of truth for routing. extract_recipe.main() and batch_extract
+    both call this, because when they each carried their own copy of the rule
+    they drifted: batch grew a web branch and the CLI did not, so recipe-page
+    URLs were silently handed to the YouTube pipeline (2026-07-29 batch run).
+
+    A bare video ID (no scheme) stays on the YouTube path so the documented
+    `extract_recipe.py VIDEO_ID` form keeps working.
+    """
+    if not input_str or not input_str.strip():
+        return 'youtube'
+
+    text = input_str.strip()
+    if instagram_parser(text):
+        return 'instagram'
+    if is_youtube_url(text):
+        return 'youtube'
+    if text.lower().startswith(('http://', 'https://')):
+        return 'web'
+    return 'youtube'
+
+
 def print_virtual_env():
     if hasattr(sys, 'real_prefix') or (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix):
         print(f"Virtual environment: {sys.prefix}")
@@ -328,12 +366,56 @@ def _instagram_ydl_opts(base):
     return opts
 
 
-def get_instagram_metadata(reel_url):
-    """Fetch Instagram Reel metadata via yt-dlp.
+# yt-dlp wordings that all mean the same thing: Instagram wants a logged-in
+# session. Instagram serves these with no distinguishing error code, so the
+# message text is the only signal available.
+_INSTAGRAM_AUTH_MARKERS = (
+    'empty media response',
+    'login required',
+    'you need to log in',
+    'rate-limit reached',
+    'requested content is not available',
+    'cookies-from-browser',
+    'use --cookies',
+)
 
-    Returns the same dict shape as get_video_metadata():
-        {'title': str, 'channel': str, 'description': str, 'thumbnail_url': str}
-        or None on failure.
+
+def _diagnose_instagram_error(message):
+    """Turn a yt-dlp Instagram error into actionable advice, or None if unrelated.
+
+    The raw yt-dlp text already says "use --cookies-from-browser", but the
+    pipeline discarded it and reported a bare "Could not fetch Instagram Reel
+    metadata" — which is why the same one-line .env fix went unnoticed across
+    195 logged failures.
+    """
+    lowered = (message or '').lower()
+    if not any(marker in lowered for marker in _INSTAGRAM_AUTH_MARKERS):
+        return None
+
+    if INSTAGRAM_COOKIES_FROM_BROWSER:
+        return (
+            "Instagram refused the Reel even with cookies from "
+            f"'{INSTAGRAM_COOKIES_FROM_BROWSER}' — the session is likely expired. "
+            f"Re-authenticate: open Instagram in {INSTAGRAM_COOKIES_FROM_BROWSER}, "
+            "log in, then re-run."
+        )
+    if INSTAGRAM_COOKIES_FILE:
+        return (
+            f"Instagram refused the Reel even with cookies from {INSTAGRAM_COOKIES_FILE} "
+            "— that cookie file is likely stale. Export a fresh one and re-run."
+        )
+    return (
+        "Instagram requires a logged-in session for this Reel and no cookies are "
+        "configured. Set INSTAGRAM_COOKIES_FROM_BROWSER=chrome (or safari/firefox/edge/brave) "
+        "or INSTAGRAM_COOKIES_FILE=/path/to/cookies.txt in .env, then re-run."
+    )
+
+
+def get_instagram_metadata_with_diagnosis(reel_url):
+    """Fetch Instagram Reel metadata, returning (metadata, failure_reason).
+
+    Exactly one of the two is None. Prefer this over get_instagram_metadata()
+    anywhere the failure is terminal and gets reported to a human.
 
     'description' carries the reel caption (which often contains the full
     written recipe); 'channel' is the creator handle/name.
@@ -353,13 +435,26 @@ def get_instagram_metadata(reel_url):
                 'channel': info.get('channel', '') or info.get('uploader', '') or '',
                 'description': info.get('description', '') or '',
                 'thumbnail_url': info.get('thumbnail', '') or '',
-            }
+            }, None
     except yt_dlp.utils.DownloadError as e:
         print(f"yt-dlp error (Instagram): {e}", file=sys.stderr)
-        return None
+        return None, (
+            _diagnose_instagram_error(str(e))
+            or f"Could not fetch Instagram Reel metadata: {e}"
+        )
     except Exception as e:
         print(f"Unexpected error fetching Instagram metadata: {e}", file=sys.stderr)
-        return None
+        return None, f"Could not fetch Instagram Reel metadata: {e}"
+
+
+def get_instagram_metadata(reel_url):
+    """Fetch Instagram Reel metadata via yt-dlp.
+
+    Returns the same dict shape as get_video_metadata():
+        {'title': str, 'channel': str, 'description': str, 'thumbnail_url': str}
+        or None on failure.
+    """
+    return get_instagram_metadata_with_diagnosis(reel_url)[0]
 
 
 def download_instagram_audio(reel_url, reel_id):

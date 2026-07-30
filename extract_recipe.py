@@ -30,13 +30,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from main import (
     youtube_parser, get_video_metadata, get_transcript, get_first_comment, get_thumbnail_url,
-    instagram_parser, get_instagram_metadata, download_instagram_audio, transcribe_with_whisper_text,
+    instagram_parser, download_instagram_audio, transcribe_with_whisper_text,
+    get_instagram_metadata_with_diagnosis, route_url,
 )
 from prompts.recipe_extraction import SYSTEM_PROMPT, build_user_prompt
 from templates.recipe_template import format_recipe_markdown, generate_filename
 from recipe_sources import (
     find_recipe_link,
     scrape_recipe_from_url,
+    fetch_recipe_with_diagnosis,
     parse_recipe_from_description,
     extract_cooking_tips,
     search_creator_website,
@@ -578,9 +580,9 @@ def extract_single_instagram_recipe(url: str, dry_run: bool = False, force: bool
 
         # Fetch reel metadata (title, creator, caption, cover image)
         status("Fetching Reel metadata...")
-        metadata = get_instagram_metadata(reel_url)
+        metadata, fetch_error = get_instagram_metadata_with_diagnosis(reel_url)
         if not metadata:
-            result["error"] = "Could not fetch Instagram Reel metadata"
+            result["error"] = fetch_error or "Could not fetch Instagram Reel metadata"
             return result
 
         title = metadata['title']
@@ -782,9 +784,9 @@ def extract_single_web_recipe(url: str, dry_run: bool = False, on_status=None) -
 
         # Scrape recipe from URL
         status(f"Scraping recipe from {url}...")
-        recipe_data = scrape_recipe_from_url(url)
+        recipe_data, scrape_error = fetch_recipe_with_diagnosis(url)
         if not recipe_data:
-            result["error"] = "No structured recipe (JSON-LD) found on page"
+            result["error"] = scrape_error or "No structured recipe (JSON-LD) found on page"
             return result
 
         result["title"] = recipe_data.get('recipe_name', 'Unknown Recipe')
@@ -876,12 +878,15 @@ def extract_single_web_recipe(url: str, dry_run: bool = False, on_status=None) -
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Extract recipes from YouTube cooking videos or Instagram Reels"
+        description=(
+            "Extract recipes from YouTube cooking videos, Instagram Reels, "
+            "or recipe web pages"
+        )
     )
     parser.add_argument(
         'url',
         type=str,
-        help='YouTube video URL/ID or Instagram Reel URL'
+        help='YouTube video URL/ID, Instagram Reel URL, or recipe page URL'
     )
     parser.add_argument(
         '--dry-run',
@@ -895,12 +900,16 @@ def main():
     )
     args = parser.parse_args()
 
-    instagram = instagram_parser(args.url)
-    if instagram:
+    pipeline = route_url(args.url)
+    if pipeline == 'instagram':
+        instagram = instagram_parser(args.url)
         print(f"Fetching Instagram Reel data for: {instagram['reel_id']}")
         result = extract_single_instagram_recipe(
             args.url, dry_run=args.dry_run, force=args.force, on_status=print
         )
+    elif pipeline == 'web':
+        print(f"Fetching web recipe from: {args.url}")
+        result = extract_single_web_recipe(args.url, dry_run=args.dry_run, on_status=print)
     else:
         parsed = youtube_parser(args.url)
         video_id = parsed['video_id']

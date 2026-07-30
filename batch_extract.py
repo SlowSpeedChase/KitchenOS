@@ -34,7 +34,7 @@ from extract_recipe import (
     extract_single_web_recipe,
     extract_single_instagram_recipe,
 )
-from main import instagram_parser
+from main import route_url
 
 RUNS_LOG_DIR = Path(__file__).parent / "logs" / "runs"
 
@@ -119,14 +119,6 @@ def mark_reminder_complete(store, reminder):
     if not success and error:
         print(f"       Warning: Failed to save reminder: {error}", file=sys.stderr)
     return success
-
-
-def is_youtube_url(text):
-    """Check if text looks like a YouTube URL."""
-    if not text:
-        return False
-    text = text.strip().lower()
-    return any(domain in text for domain in ['youtube.com', 'youtu.be'])
 
 
 _URL_RE = re.compile(r'https?://[^\s<>"\')]+')
@@ -308,12 +300,11 @@ def main():
         if url != title:
             print(f"       → Resolved URL: {url}")
 
-        is_web_url = url.startswith('http://') or url.startswith('https://')
-
         try:
-            if is_youtube_url(url):
+            pipeline = route_url(url)
+            if pipeline == 'youtube':
                 result = extract_single_recipe(url, dry_run=args.dry_run, on_status=print_status)
-            elif instagram_parser(url):
+            elif pipeline == 'instagram':
                 print("       → Instagram Reel, routing to reel pipeline")
                 result = extract_single_instagram_recipe(url, dry_run=args.dry_run, on_status=print_status)
             else:
