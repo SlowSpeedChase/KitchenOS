@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Simple API server for iOS Shortcuts integration."""
 
-from flask import Flask, request, jsonify, send_file, redirect
+from flask import Flask, request, jsonify, send_file
 from markupsafe import escape
 from urllib.parse import quote
 from youtube_transcript_api import YouTubeTranscriptApi
@@ -1913,24 +1913,67 @@ def meal_planner():
     return html, 200, {'Content-Type': 'text/html'}
 
 
+def _current_week(explicit: str | None = None) -> str | None:
+    """The requested week, or the current ISO week. None if malformed."""
+    if explicit:
+        return explicit if re.match(r'^\d{4}-W\d{2}$', explicit) else None
+    iso = date.today().isocalendar()
+    return f"{iso[0]}-W{iso[1]:02d}"
+
+
+def _render_note_page(subdir: str, week: str, title: str, empty_html: str) -> str:
+    """Serve one generated vault note as a phone-readable page.
+
+    These two routes used to 302 to ``obsidian://open?vault=…``, which from a
+    phone browser dead-ends or ejects you into another app — so the week's plan
+    and its shopping list, the output of the workflow this project is built
+    around, could not be read on a phone at all. The Obsidian link is kept as a
+    footer for desktop use rather than being the only way in.
+    """
+    from lib import note_view
+
+    path = paths.vault_root() / subdir / f"{week}.md"
+    body = (note_view.render(path.read_text(encoding='utf-8'), week=week)
+            if path.exists() else empty_html)
+    encoded = quote(f"{subdir}/{week}", safe='')
+    obsidian = (f'<a href="obsidian://open?vault={paths.vault_root().name}'
+                f'&file={encoded}">Open in Obsidian ›</a>')
+    return _serve_page_with_claude_bar('note_view.html', [
+        ('<!--TITLE-->', title),
+        ('<!--SUB-->', f"Week {int(week.split('-W')[1])} · {week}"),
+        ('<!--BODY-->', body),
+        ('<!--OBSIDIAN-->', obsidian),
+    ])
+
+
 @app.route('/current/meal-plan', methods=['GET'])
-def current_meal_plan_redirect():
-    """Redirect to the current week's meal plan in Obsidian."""
-    today = date.today()
-    iso = today.isocalendar()
-    week = f"{iso[0]}-W{iso[1]:02d}"
-    encoded = quote(f"Meal Plans/{week}", safe='')
-    return redirect(f"obsidian://open?vault={paths.vault_root().name}&file={encoded}")
+def current_meal_plan_page():
+    """This week's meal plan, rendered for a phone."""
+    week = _current_week(request.args.get('week'))
+    if not week:
+        return error_page("Invalid week format (expected YYYY-WNN)"), 400
+    empty = ('<p class="empty">No plan for this week yet.</p>'
+             '<p><a class="gen" href="/plan-week?week=' + week + '">'
+             'Plan this week ›</a></p>')
+    return _render_note_page('Meal Plans', week, 'Meal plan', empty), 200, \
+        {'Content-Type': 'text/html'}
 
 
 @app.route('/current/shopping-list', methods=['GET'])
-def current_shopping_list_redirect():
-    """Redirect to the current week's shopping list in Obsidian."""
-    today = date.today()
-    iso = today.isocalendar()
-    week = f"{iso[0]}-W{iso[1]:02d}"
-    encoded = quote(f"Shopping Lists/{week}", safe='')
-    return redirect(f"obsidian://open?vault={paths.vault_root().name}&file={encoded}")
+def current_shopping_list_page():
+    """This week's shopping list, rendered for a phone — and generatable from it.
+
+    The only trigger for generating a list was an Obsidian ``kitchenos://``
+    button backed by a macOS helper app that no longer exists, so this gives the
+    workflow its first trigger that works from the device you shop with.
+    """
+    week = _current_week(request.args.get('week'))
+    if not week:
+        return error_page("Invalid week format (expected YYYY-WNN)"), 400
+    empty = ('<p class="empty">No shopping list for this week yet.</p>'
+             f'<button class="gen" data-week="{week}">Generate shopping list</button>')
+    return _render_note_page('Shopping Lists', week, 'Shopping list', empty), 200, \
+        {'Content-Type': 'text/html'}
 
 
 # ----- Meals (composite recipe bundles) -----
@@ -2905,14 +2948,46 @@ def receipt_paste_page():
     return _serve_page_with_claude_bar('receipt_paste.html')
 
 
+@app.route('/recent', methods=['GET'])
+def recent_page():
+    """Recipes newest-first by when they arrived — the extraction pipeline's out-tray.
+
+    Ordered by file birth time, not mtime: the nutrition resolver rewrites recipe
+    files long after they land, so an mtime ordering would reshuffle this list on
+    every backfill and stop meaning "recently added" at all.
+    """
+    from lib import kitchen_today
+
+    recipes = kitchen_today.recent_recipes()
+    newest = recipes[0]["added"] if recipes else None
+    sub = (f"{len(recipes)} most recent · newest "
+           f"{kitchen_today.arrival_word(newest, date.today()).lower()}"
+           if newest else "nothing extracted yet")
+    html = _serve_page_with_claude_bar('recent.html', [
+        ('<!--SUB-->', sub),
+        ('<!--RECENT-->', kitchen_today.render_recent_html(recipes)),
+    ])
+    return html, 200, {'Content-Type': 'text/html'}
+
+
 @app.route('/', methods=['GET'])
 def home_page():
-    """The web home page: every browsable KitchenOS page, from the registry."""
-    from lib import web_dashboard
+    """The web home page: live 'Kitchen Today' cards over the full page registry.
 
-    return _serve_page_with_claude_bar(
-        'home.html', [('<!--SECTIONS-->', web_dashboard.render_html())]
-    )
+    The cards lead because the home page's job is recall — a list of page names
+    can't remind you a feature exists, but "6 recipes need nothing you don't
+    have" does. The registry is still here in full, folded into 'All pages', so
+    nothing becomes unreachable.
+    """
+    from lib import kitchen_today, web_dashboard
+
+    today = date.today()
+    kicker = f"KitchenOS · {today.strftime('%a %b %-d')}"
+    return _serve_page_with_claude_bar('home.html', [
+        ('<!--KICKER-->', kicker),
+        ('<!--TODAY-->', kitchen_today.render_html()),
+        ('<!--SECTIONS-->', web_dashboard.render_html()),
+    ])
 
 
 if __name__ == '__main__':

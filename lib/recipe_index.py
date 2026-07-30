@@ -1,11 +1,31 @@
 """Recipe index — scan recipe files and extract frontmatter metadata."""
 
+from datetime import datetime
 from pathlib import Path
 
 from lib.recipe_parser import parse_recipe_file, parse_recipe_body
 
 FILTER_FIELDS = ("cuisine", "protein", "difficulty", "meal_occasion", "dish_type", "peak_months")
 NUTRITION_FIELDS = ("nutrition_calories", "nutrition_protein", "nutrition_carbs", "nutrition_fat")
+
+
+def _added_date(filepath: Path) -> str | None:
+    """When this recipe *arrived*, as an ISO date — birth time, not mtime.
+
+    Deliberately not mtime: the nutrition resolver rewrites recipe files long after
+    they land, so an mtime-ordered "recently added" list reshuffles itself every time
+    a backfill runs and stops meaning anything. macOS/BSD carry `st_birthtime`; Linux
+    generally doesn't, so fall back to mtime there rather than lose the field.
+    """
+    try:
+        st = filepath.stat()
+    except OSError:
+        return None
+    stamp = getattr(st, "st_birthtime", None) or st.st_mtime
+    try:
+        return datetime.fromtimestamp(stamp).date().isoformat()
+    except (OSError, OverflowError, ValueError):
+        return None
 
 
 def get_recipe_index(recipes_dir: Path, include_ingredients: bool = False) -> list[dict]:
@@ -18,7 +38,8 @@ def get_recipe_index(recipes_dir: Path, include_ingredients: bool = False) -> li
     Returns:
         List of dicts sorted by name, each with keys:
             name, cuisine, protein, difficulty, meal_occasion, dish_type, peak_months,
-            servings (frontmatter servings count, or None)
+            servings (frontmatter servings count, or None),
+            added (ISO date the file arrived, or None — see _added_date)
             Optionally includes ingredient_items (list of item strings) when include_ingredients=True
     """
     recipes = []
@@ -54,6 +75,11 @@ def get_recipe_index(recipes_dir: Path, include_ingredients: bool = False) -> li
             entry.setdefault("servings", None)
             if include_ingredients:
                 entry["ingredient_items"] = []
+
+        # Filesystem metadata, so it's set whether or not the parse above succeeded —
+        # a recipe that fails to parse still arrived on a date, and /recent should
+        # show it rather than silently drop the one file worth investigating.
+        entry["added"] = _added_date(filepath)
 
         # Check for matching image file
         images_dir = recipes_dir / "Images"

@@ -13,6 +13,22 @@ is a page that fails in exactly the situation it exists for.
 | File | Version | Source | sha256 |
 |------|---------|--------|--------|
 | `sortable.min.js` | 1.15.6 | `https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js` | `6d0a831fc19b4bae851797ad3393157e861afb7862459c11226359b27e2c4337` |
+| `tokens.css` | v1 (`~/Dev/design-system` @ `82d7ad4`) | `~/Dev/design-system/tokens.css` | `78107b36844d64f4fa5fe3a0c71cfec4fb1a1eddca8effb2acda5880c544d05b` |
+
+## `tokens.css`
+
+The personal design language (Ink dark / Dawn light, one accent per app —
+KitchenOS is 🍳 coral `#e8895f` / `#d1663b`). Copied from the `design-system`
+repo rather than imported, for the same offline reason as everything else here.
+
+It is a **copy, not a fork** — style through the variables and never edit the
+values locally, or KitchenOS drifts away from the other apps. To pull an
+update, re-run the copy below and refresh the row above.
+
+```bash
+cp ~/Dev/design-system/tokens.css static/tokens.css
+shasum -a 256 static/tokens.css
+```
 
 ## Why `sortable.min.js` is here rather than on a CDN
 

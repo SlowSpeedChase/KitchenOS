@@ -1,0 +1,98 @@
+/* ============================================================
+   Personal Design Language — tokens (v1, 2026-07-12)
+   Two moods, one family:
+     • Ink  (dark)  — crisp, precise, nerdy. NO texture.
+     • Dawn (light) — soft paper-grain on a medium dot grid. Cozy, warm.
+   Copy/import these tokens; style everything THROUGH the variables.
+   Web/Obsidian source of truth. Native apps mirror the same hex values.
+   ============================================================ */
+
+:root {
+  /* ---- Neutrals — Dawn (light) is the default ground ---- */
+  --bg:        #f4ede3;   /* warm cream, carries the dot grid */
+  --surface:   #fffdf9;   /* pressed-cotton card, carries paper grain */
+  --raised:    #fbf5ec;
+  --ink:       #2c2733;   /* warm near-black text */
+  --muted:     #8a7f8e;
+  --line:      #ece1d3;
+  --line-soft: #f1e8dc;
+
+  /* ---- Semantic (meaning) — light hex ---- */
+  --try:     #0d8ea3;  --done:    #3f8f2f;  --warning: #b7791f;
+  --alert:   #c0392b;  --info:    #2f7fd1;  --insight: #9a4fb5;  --next: #b26a2e;
+
+  /* ---- App accents (identity) — light hex ---- */
+  --app-kitchenos: #d1663b;  /* 🍳 coral   */
+  --app-selene:    #8a63d6;  /* 🌙 iris    */
+  --app-lumen:     #c0842a;  /* 🔆 amber   */
+  --app-journal:   #0f9d8c;  /* 📓 teal    */
+  --app-personal:  #d24d78;  /* 🌸 rose    */
+
+  /* text sitting ON an accent fill (buttons, chips) */
+  --text-on-accent: #fffdf9;
+
+  /* ---- Material ---- */
+  --dot-color: rgba(150,110,85,.20);          /* medium dot grid */
+  --dot-size: 19px;
+  --dots: radial-gradient(var(--dot-color) 1.3px, transparent 1.5px);
+  /* paper grain: fractal-noise SVG, ~5% opacity, tiled */
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)' opacity='0.05'/%3E%3C/svg%3E");
+  --radius: 15px;
+  --radius-box: 11px;
+  --shadow: 0 14px 30px -20px rgba(90,60,70,.5);
+
+  /* ---- Type ---- */
+  --font-display: ui-serif, "New York", Georgia, serif;      /* titles */
+  --font-body:    system-ui, -apple-system, sans-serif;      /* body/UI */
+  --font-mono:    ui-monospace, "SF Mono", Menlo, monospace; /* labels/data */
+}
+
+/* ============ Ink (dark) — clean, no texture ============ */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:#0f1116; --surface:#171a21; --raised:#1c2029;
+    --ink:#ededf2; --muted:#8a909c; --line:#23262e; --line-soft:#1b1e25;
+
+    --try:#56b6c2; --done:#98c379; --warning:#e5c07b;
+    --alert:#e06c75; --info:#61afef; --insight:#c678dd; --next:#d19a66;
+
+    --app-kitchenos:#e8895f; --app-selene:#b98ee6; --app-lumen:#e0a95e;
+    --app-journal:#3fd0bd; --app-personal:#eb6f92;
+    --text-on-accent:#0f1116;
+
+    --dots: none;     /* Ink stays clean — no dot grid */
+    --grain: none;    /* no paper grain in dark */
+    --shadow: 0 12px 26px -18px rgba(0,0,0,.7);
+  }
+}
+
+/* Explicit theme overrides (win over the media query in both directions) */
+:root[data-theme="light"], .theme-light {
+  --bg:#f4ede3; --surface:#fffdf9; --raised:#fbf5ec;
+  --ink:#2c2733; --muted:#8a7f8e; --line:#ece1d3; --line-soft:#f1e8dc;
+  --try:#0d8ea3; --done:#3f8f2f; --warning:#b7791f;
+  --alert:#c0392b; --info:#2f7fd1; --insight:#9a4fb5; --next:#b26a2e;
+  --app-kitchenos:#d1663b; --app-selene:#8a63d6; --app-lumen:#c0842a;
+  --app-journal:#0f9d8c; --app-personal:#d24d78;
+  --text-on-accent:#fffdf9;
+  --dots: radial-gradient(var(--dot-color) 1.3px, transparent 1.5px);
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)' opacity='0.05'/%3E%3C/svg%3E");
+  --shadow:0 14px 30px -20px rgba(90,60,70,.5);
+}
+:root[data-theme="dark"], .theme-dark {
+  --bg:#0f1116; --surface:#171a21; --raised:#1c2029;
+  --ink:#ededf2; --muted:#8a909c; --line:#23262e; --line-soft:#1b1e25;
+  --try:#56b6c2; --done:#98c379; --warning:#e5c07b;
+  --alert:#e06c75; --info:#61afef; --insight:#c678dd; --next:#d19a66;
+  --app-kitchenos:#e8895f; --app-selene:#b98ee6; --app-lumen:#e0a95e;
+  --app-journal:#3fd0bd; --app-personal:#eb6f92;
+  --text-on-accent:#0f1116;
+  --dots:none; --grain:none; --shadow:0 12px 26px -18px rgba(0,0,0,.7);
+}
+
+/* ---- Reusable surface helpers ---- */
+.dl-ground  { background-color:var(--bg); background-image:var(--dots);
+              background-size:var(--dot-size) var(--dot-size); }
+.dl-surface { background-color:var(--surface); background-image:var(--grain);
+              border:1px solid var(--line); border-radius:var(--radius);
+              box-shadow:var(--shadow); }
