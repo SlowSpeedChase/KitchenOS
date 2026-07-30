@@ -4,7 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>KitchenOS Meal Planner</title>
-    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
+    <!-- Vendored, not CDN. setupEventListeners() calls Sortable.create() before
+         init() reaches its first fetch, so if this script fails to load the whole
+         page dies before rendering anything — which is exactly what happened from
+         a phone. A local-first kitchen tool on a private tailnet must not need the
+         public internet to draw a page. See static/README.md to update. -->
+    <script src="/static/sortable.min.js"></script>
     <script>
         // Touch mode: real touch devices via pointer:coarse, or force with ?touch=1
         // (lets desktop Playwright exercise the touch UI). Gates the html.touch
