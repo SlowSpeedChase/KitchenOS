@@ -541,3 +541,34 @@ def test_print_week_missing_plan_404(client, tmp_vault):
     (tmp_vault / "Recipes").mkdir(parents=True, exist_ok=True)
     response = client.get('/print/week?week=2099-W01')
     assert response.status_code == 404
+
+
+# ---- Plan-week command center (Sunday shortcut) ----
+
+def test_plan_week_page_planned(client, tmp_vault):
+    (tmp_vault / "My Macros.md").write_text(
+        "---\ncalories: 2300\nprotein: 190\ncarbs: 228\nfat: 70\n---\n# My Macros\n")
+    recipes = tmp_vault / "Recipes"; recipes.mkdir(parents=True, exist_ok=True)
+    (recipes / "Beef Bowl.md").write_text(
+        '---\ntitle: "Beef Bowl"\nnutrition_calories: 650\nnutrition_protein: 48\n'
+        'nutrition_carbs: 30\nnutrition_fat: 12\nnutrition_coverage: 0.95\nservings: 2\n---\n# Beef Bowl\n')
+    plans = tmp_vault / "Meal Plans"; plans.mkdir(parents=True, exist_ok=True)
+    (plans / "2026-W31.md").write_text("## Monday (Jul 27)\n\n### dinner\n[[Beef Bowl]]\n\n")
+
+    response = client.get('/plan-week?week=2026-W31')
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Plan your week" in body
+    assert "/meal-planner?week=2026-W31" in body
+    assert "/print/week?week=2026-W31" in body
+
+
+def test_plan_week_unplanned_is_empty_state_not_404(client, tmp_vault):
+    (tmp_vault / "Recipes").mkdir(parents=True, exist_ok=True)
+    response = client.get('/plan-week?week=2099-W05')
+    assert response.status_code == 200  # empty state, not an error
+    assert "Plan your week" in response.get_data(as_text=True)
+
+
+def test_plan_week_invalid_week_400(client):
+    assert client.get('/plan-week?week=bogus').status_code == 400

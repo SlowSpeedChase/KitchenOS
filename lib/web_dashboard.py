@@ -41,6 +41,9 @@ SECTIONS = [
     (
         "Plan & cook",
         [
+            ("🗓️", "Plan your week", "/plan-week",
+             "the Sunday front door: one page, three steps — fill the week, "
+             "review nutrition, print it for the fridge"),
             ("🍳", "Meal Planner", "/meal-planner",
              "drag recipes onto the week, set cook scale, place servings in "
              "slots / freezer / trash, and read the daily macro totals row"),

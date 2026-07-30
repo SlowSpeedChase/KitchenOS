@@ -656,6 +656,36 @@ def recipe_detail_page(name):
     return html, 200, {'Content-Type': 'text/html'}
 
 
+@app.route('/plan-week', methods=['GET'])
+def plan_week_page():
+    """The Sunday-planning command center: one page, three steps (fill →
+    review → print). Defaults to next week; ?week= overrides.
+    """
+    from lib import plan_week, print_week
+
+    week = request.args.get('week')
+    if not week:
+        week = plan_week.default_week()
+    if not re.match(r'^\d{4}-W\d{2}$', week):
+        return error_page(f"Invalid week format: {week} (expected YYYY-WNN)"), 400
+
+    try:
+        packet = print_week.build_week_packet(
+            week, paths.vault_root(), _resolve_recipes_dir())
+        targets = packet["targets"]
+    except FileNotFoundError:
+        packet = None
+        from lib.print_week import _targets_dict
+        targets, _ = _targets_dict(paths.vault_root())
+
+    base = os.environ.get("KITCHENOS_API_BASE", "").rstrip("/")
+    body = plan_week.render_plan_center_html(
+        week, packet, targets, base,
+        plan_week.shift_week(week, -1), plan_week.shift_week(week, 1))
+    html = _serve_page_with_claude_bar('plan_week.html', [('<!--CENTER-->', body)])
+    return html, 200, {'Content-Type': 'text/html'}
+
+
 @app.route('/print/week', methods=['GET'])
 def print_week_page():
     """Printable one-page 'week packet': plan grid + macros vs targets +

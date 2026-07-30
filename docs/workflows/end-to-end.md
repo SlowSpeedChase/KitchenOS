@@ -90,6 +90,9 @@ Three ways meals land on a meal plan. Output is always `Meal Plans/<week>.md` wi
 - Creates an **empty** `Meal Plans/<week>.md` two weeks ahead so a blank slot is always waiting.
 - Template has Mon–Sun rows with Breakfast / Lunch / Snack / Dinner / Notes.
 
+### 2a′. Plan-week command center (the Sunday front door)
+- Open `/plan-week` (defaults to **next** week; `?week=` for another). One page: a glanceable per-day status (slots filled + protein vs target) and three big steps — **1** fill the week (opens the planner), **2** review nutrition, **3** print the week for the fridge. This is the single entry point for the weekly ritual, so you don't have to remember which of the five surfaces to open. Unplanned weeks show a "start here" empty state.
+
 ### 2b. Meal planner web UI (the main interface)
 - Open `http://localhost:5001/meal-planner` (or `100.103.114.106:5001` from iPad over Tailscale).
 - Layout: **left sidebar** = recipe library with search box + filter chips (cuisine, protein, dietary, seasonal); **right grid** = 7-day × 4-slot board for the selected ISO week.

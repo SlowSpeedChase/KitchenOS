@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Plan your week — KitchenOS</title>
+    <style>
+        :root { color-scheme: light dark; --accent: #3f9e4d; }
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            margin: 0; padding: 20px; background: Canvas; color: CanvasText;
+        }
+        .wrap { max-width: 560px; margin: 0 auto; }
+        h1 { font-size: 24px; margin: 0 0 10px; }
+        .weeknav { display: flex; justify-content: space-between; align-items: center;
+                   font-size: 14px; margin: 0 0 12px; }
+        .weeknav a { color: var(--accent); text-decoration: none; }
+        .weeknav .cur { font-weight: 700; }
+        .targets { color: GrayText; font-size: 14px; margin: 0 0 4px; }
+        .lead { font-size: 15px; margin: 0 0 16px; }
+        table.status { width: 100%; border-collapse: collapse; margin: 0 0 22px; font-size: 14px; }
+        table.status td { padding: 6px 4px; border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, Canvas); }
+        .status .day { font-weight: 600; width: 34%; }
+        .status .dots { letter-spacing: 3px; font-size: 15px; }
+        .status .dots.full { color: var(--accent); }
+        .status .dots.some { color: #c58a00; }
+        .status .dots.empty { color: GrayText; }
+        .status .macro { text-align: right; font-variant-numeric: tabular-nums; }
+        .status .p.ok { color: var(--accent); font-weight: 600; }
+        .status .p.low { color: #c58a00; }
+        .status .p.empty { color: GrayText; }
+        .empty-week { font-size: 15px; background: color-mix(in srgb, var(--accent) 10%, Canvas);
+                      border: 1px solid color-mix(in srgb, var(--accent) 40%, Canvas);
+                      border-radius: 10px; padding: 14px; margin: 0 0 22px; }
+        .actions { display: flex; flex-direction: column; gap: 12px; }
+        .action { display: grid; grid-template-columns: 40px 1fr; grid-template-rows: auto auto;
+                  gap: 0 12px; text-decoration: none; color: inherit;
+                  border: 1px solid color-mix(in srgb, CanvasText 16%, Canvas);
+                  border-radius: 12px; padding: 14px 16px; }
+        .action:active { background: color-mix(in srgb, var(--accent) 10%, Canvas); }
+        .action .n { grid-row: 1 / 3; align-self: center; justify-self: center;
+                     width: 30px; height: 30px; border-radius: 50%; background: var(--accent);
+                     color: #fff; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+        .action .t { font-size: 17px; font-weight: 600; }
+        .action .d { color: GrayText; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <!--CENTER-->
+    </div>
+</body>
+</html>
