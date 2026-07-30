@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from main import (
     youtube_parser, get_video_metadata, get_transcript, get_first_comment, get_thumbnail_url,
-    instagram_parser, get_instagram_metadata, download_instagram_audio, transcribe_with_whisper_text,
+    instagram_parser, download_instagram_audio, transcribe_with_whisper_text,
     get_instagram_metadata_with_diagnosis, route_url,
 )
 from prompts.recipe_extraction import SYSTEM_PROMPT, build_user_prompt

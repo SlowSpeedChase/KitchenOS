@@ -7,7 +7,7 @@ but the pipeline threw that away, so a one-line .env fix stayed invisible
 through 195 failures.
 """
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import yt_dlp
 

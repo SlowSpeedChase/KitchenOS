@@ -6,7 +6,6 @@ lacking a recipe. What actually happened: Imperva/Incapsula served a ~900-byte
 challenge page with HTTP 200 and zero JSON-LD. The recipe is there; we were
 blocked. A wrong diagnosis sends the next reader looking for a parser bug.
 """
-import pytest
 import requests
 from unittest.mock import patch, Mock
 

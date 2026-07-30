@@ -34,7 +34,7 @@ from extract_recipe import (
     extract_single_web_recipe,
     extract_single_instagram_recipe,
 )
-from main import instagram_parser, route_url
+from main import route_url
 
 RUNS_LOG_DIR = Path(__file__).parent / "logs" / "runs"
 
