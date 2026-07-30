@@ -226,23 +226,32 @@ class TestTapToAssign:
     """WCAG 2.2 SC 2.5.7: dragging needs a single-pointer alternative."""
 
     def test_tap_a_recipe_then_a_slot_assigns_it(self, live_server, page, page_errors):
+        """Also pins display-vs-identity: cards render `short_title` when a recipe
+        has one, but the cook is created under the real `name` — that is what
+        `cooks.recipe`, the meal plan and the task-ID hash are all keyed on."""
         _open(page, live_server, IPAD_PORTRAIT)
         card = page.locator("#recipe-list .recipe-card").first
         name = card.get_attribute("data-name")
+        shown = card.locator(".recipe-name").inner_text().strip()
 
         cell = page.locator('.grid-cell[data-day="Thursday"][data-meal="dinner"]')
         assert cell.locator(".grid-card").count() == 0, "starting from an empty slot"
 
         card.click()
         page.wait_for_selector("#assign-bar:not([hidden])")
-        assert name in page.inner_text("#assign-bar")
+        assert shown in page.inner_text("#assign-bar"), (
+            "the bar must name the recipe the way the tapped card did")
 
         cell.click()
         page.wait_for_selector(
             '.grid-cell[data-day="Thursday"][data-meal="dinner"] .grid-card',
             timeout=10000)
-        assert name in cell.inner_text()
+        assert shown in cell.inner_text(), "the placed card renders the display name"
         assert page.locator("#assign-bar").is_hidden(), "the bar clears after placing"
+
+        # ...while the identity written to the board is the real recipe name.
+        placed = cell.locator(".grid-card").first
+        assert placed.get_attribute("data-name") == name
         assert page_errors == []
 
     def test_the_armed_state_says_where_it_can_go(self, live_server, page):
@@ -292,8 +301,19 @@ class TestTapToAssign:
         suggestion: suggestMeal legitimately no-ops on a board-backed week
         (`weekBoard.cooks.length > 0`), so a week that any earlier test placed a
         cook into would make an outcome-based assertion vacuous.
+
+        Pinned to an empty far-future week for the same reason the fits-above-the-
+        shelf test is. The e2e vault is a *copy of the live one*, so "Friday lunch
+        is empty" was only ever true until someone planned a Friday lunch — and the
+        cell click only reaches the handler when the tap lands on empty space.
         """
-        _open(page, live_server, IPAD_PORTRAIT)
+        page.set_viewport_size(IPAD_PORTRAIT)
+        page.goto(live_server.url("/meal-planner?touch=1&week=2030-W20"),
+                  wait_until="domcontentloaded")
+        page.wait_for_selector(".recipe-card")
+        page.wait_for_selector(".grid-cell")
+        assert page.locator(".grid-cell.has-card").count() == 0, (
+            "this test needs an empty week — 2030-W20 should have no cooks")
         page.evaluate("""() => {
             window.__suggestedFor = null;
             window.suggestMeal = (cell) =>

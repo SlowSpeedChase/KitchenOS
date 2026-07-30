@@ -80,6 +80,21 @@ def _ollama_json(prompt: str, timeout: int = 60):
         return None
 
 
+def json_call(prompt: str, provider: str = "ollama"):
+    """Public entry point for the repo's JSON-mode LLM calls.
+
+    Exposed so the other constrained-LLM jobs (currently
+    ``scripts/backfill_short_titles.py``) reuse these exact clients instead of
+    growing a second copy that drifts on model, timeout or error handling.
+    Returns the parsed object, or None on any failure.
+    """
+    if provider == "claude":
+        return _claude_json(prompt)
+    if provider == "ollama":
+        return _ollama_json(prompt)
+    return None
+
+
 def _clamp_confidence(value, default: float = 0.5) -> float:
     try:
         return max(0.0, min(1.0, float(value)))

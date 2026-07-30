@@ -3,6 +3,7 @@
 from datetime import datetime
 from pathlib import Path
 
+from lib import short_title
 from lib.recipe_parser import parse_recipe_file, parse_recipe_body
 
 FILTER_FIELDS = ("cuisine", "protein", "difficulty", "meal_occasion", "dish_type", "peak_months")
@@ -39,6 +40,8 @@ def get_recipe_index(recipes_dir: Path, include_ingredients: bool = False) -> li
         List of dicts sorted by name, each with keys:
             name, cuisine, protein, difficulty, meal_occasion, dish_type, peak_months,
             servings (frontmatter servings count, or None),
+            short_title (frontmatter override, or None),
+            display_name (short_title or name — what a surface should render),
             added (ISO date the file arrived, or None — see _added_date)
             Optionally includes ingredient_items (list of item strings) when include_ingredients=True
     """
@@ -63,6 +66,7 @@ def get_recipe_index(recipes_dir: Path, include_ingredients: bool = False) -> li
             # surfaced here so the suggester can score without re-reading the file.
             entry["nutrition_coverage"] = fm.get("nutrition_coverage")
             entry["servings"] = fm.get("servings") or None
+            entry["short_title"] = fm.get("short_title") or None
             if include_ingredients:
                 body_data = parse_recipe_body(parsed["body"])
                 entry["ingredient_items"] = [ing["item"] for ing in body_data.get("ingredients", [])]
@@ -73,6 +77,7 @@ def get_recipe_index(recipes_dir: Path, include_ingredients: bool = False) -> li
                 entry.setdefault(field, None)
             entry.setdefault("nutrition_coverage", None)
             entry.setdefault("servings", None)
+            entry.setdefault("short_title", None)
             if include_ingredients:
                 entry["ingredient_items"] = []
 
@@ -80,6 +85,12 @@ def get_recipe_index(recipes_dir: Path, include_ingredients: bool = False) -> li
         # a recipe that fails to parse still arrived on a date, and /recent should
         # show it rather than silently drop the one file worth investigating.
         entry["added"] = _added_date(filepath)
+
+        # Set unconditionally, and after the except: every consumer can render
+        # display_name without knowing whether the parse succeeded or whether
+        # this recipe happens to carry an override. `name` stays the identity —
+        # cooks rows, meal plans and task-ID hashes are all keyed on it.
+        entry["display_name"] = short_title.display_name(name, entry.get("short_title"))
 
         # Check for matching image file
         images_dir = recipes_dir / "Images"

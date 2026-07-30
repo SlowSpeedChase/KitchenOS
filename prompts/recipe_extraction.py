@@ -1,10 +1,26 @@
 """Prompt templates for AI recipe extraction"""
 
+# Stated once and shared by both extraction prompts. The recipe name becomes the
+# FILENAME, which is the recipe's identity everywhere (cooks rows, meal plans,
+# task-ID hashes), so a video title landing here is not a cosmetic problem — it
+# is permanent. See lib/short_title.py for the display-side repair of names that
+# were captured before this rule existed.
+NAMING_RULE = """- recipe_name is the NAME OF THE DISH, not the title of the video. Video titles
+  carry things a dish name must not: channel names, "Recipe", "| EASY!", emoji,
+  "- YouTube", episode numbers, and clickbait ("You Won't Believe..."). Strip all
+  of it and write what you would call the dish on a menu.
+  Aim for under 30 characters; never exceed 60.
+  If the video title is not in English, name the dish in English
+  ("Korean Potato Cheese Bread", not the original title).
+  Keep a qualifier ONLY when it distinguishes this version from the plain dish
+  (e.g. "High-Protein", "Slow Cooker", "No-Bake") — those change what you cook."""
+
 SYSTEM_PROMPT = """You are a recipe extraction assistant. Given a YouTube video transcript
 and description about cooking, extract a structured recipe.
 
 Rules:
 - Extract ONLY what is shown/said in the video
+""" + NAMING_RULE + """
 - When inferring (timing, quantities, temperatures), mark with "(estimated)"
 - If a field cannot be determined, use null
 - Set needs_review: true if significant inference was required
@@ -15,7 +31,7 @@ Rules:
 
 Output valid JSON matching this schema:
 {
-  "recipe_name": "string",
+  "recipe_name": "string (the dish name, NOT the video title — see the naming rule)",
   "description": "string (1-2 sentences)",
   "prep_time": "string or null",
   "cook_time": "string or null",
@@ -77,6 +93,7 @@ The description contains a written recipe - parse it accurately.
 
 Rules:
 - Extract EXACTLY what is written (no inference needed)
+""" + NAMING_RULE + """
 - Parse quantities and ingredients precisely
 - Number the instructions in order
 - Set needs_review: false (this is explicit text)
@@ -86,7 +103,7 @@ Rules:
 
 Output valid JSON matching this schema:
 {
-  "recipe_name": "string",
+  "recipe_name": "string (the dish name, NOT the video title — see the naming rule)",
   "description": "string (1-2 sentences)",
   "prep_time": "string or null",
   "cook_time": "string or null",
@@ -109,6 +126,36 @@ Output valid JSON matching this schema:
   "needs_review": false,
   "confidence_notes": "Extracted from video description text."
 }"""
+
+SHORT_TITLE_PROMPT = """Shorten this recipe name so it fits on a small card.
+
+RECIPE NAME: {name}
+INGREDIENTS: {ingredients}
+
+Return the shortest name a cook would still recognise this dish by, at most
+{max_len} characters.
+
+Rules:
+- Drop only noise: "Recipe", "- YouTube", channel names, emoji, marketing words
+  ("Best", "Easy", "Viral", "Amazing"), ingredient counts ("5-Ingredient"),
+  calorie claims ("19 Calorie"), and trailing prose after a dash or "With".
+- Keep the remaining words IN THE ORDER THEY ALREADY APPEAR. You are deleting
+  words, not rewriting the name.
+- Never abbreviate. "Cauliflower" not "Cauli", "with" not "w/", "Chocolate" not
+  "Choc". A truncated word is harder to read than a longer name.
+- Never split a compound food name. "Cottage Cheese" is one ingredient — dropping
+  "Cheese" leaves "Cottage", which is not a food.
+- KEEP anything that distinguishes this from the plain version of the dish —
+  "High-Protein", "Slow Cooker", "No-Bake", "(Crouton)", a trailing "A"/"B".
+  Two recipes in this collection often differ by exactly one such word, and
+  dropping it makes them the same dish.
+- Do NOT rename the dish or introduce words that are not already in the name.
+  The one exception: if the name is not in English, translate it
+  ("Korean Potato Cheese Bread").
+- If the name is already short and clean, return it unchanged.
+
+Return ONLY a JSON object with exactly these keys:
+{{"short_title": "<the shortened name>", "confidence": <0.0 to 1.0>, "dropped": "<what you removed>"}}"""
 
 DESCRIPTION_USER_TEMPLATE = """Extract the recipe from this video description.
 
