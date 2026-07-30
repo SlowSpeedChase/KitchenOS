@@ -50,6 +50,9 @@ SECTIONS = [
             ("🥘", "Cook Now", "/cook-now",
              "what you could cook right now, ranked by how much you already "
              "have; filter by meal type to drop desserts"),
+            ("✨", "New recipes", "/recent",
+             "what the extraction pipeline has landed lately, newest first, "
+             "grouped by the day it arrived"),
             ("📅", "This week's meal plan", "/current/meal-plan",
              "the rendered weekly plan"),
             ("🛒", "This week's shopping list", "/current/shopping-list",

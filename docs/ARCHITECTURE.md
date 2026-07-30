@@ -75,6 +75,29 @@ remote (non-localhost) callers of the Siri-facing endpoints (`/api/recipes`,
 `/api/recipes/<name>`, `/api/meal-plan/<week>`, `/api/suggest-meal`) must
 send `Authorization: Bearer <token>`; localhost is always exempt.
 
+The browsable pages are phone-first, reached over the tailnet from an iPhone.
+Two modules serve that:
+
+- **`lib/kitchen_today.py`** — the `/` home page's live state. It computes four
+  cards (cookable now, recently added, expiring, the week's plan), each a fact
+  that doubles as a workflow entry point. It exists because the home page's job
+  is *recall*: a directory of page names cannot remind you a feature exists.
+  It loads the inventory and recipe index once and injects them into `cook_now`
+  and `use_it_up`, which each re-parse the whole recipe library when called
+  bare. Every card is computed under a `_safe` wrapper and degrades to a plain
+  link, so no single failing query can take the home page down.
+- **`lib/note_view.py`** — renders the generated meal-plan and shopping-list
+  notes as HTML for `/current/*`. Deliberately **not** a general Markdown
+  renderer: it handles only the syntax those two generators emit, because
+  adding a Markdown dependency to display two files we write ourselves is a bad
+  trade in a project with one runtime dependency. Unknown syntax falls through
+  as escaped text rather than vanishing.
+
+Styling comes from `static/tokens.css`, a **copy** of the personal design
+language in `~/Dev/design-system` (Ink dark / Dawn light, KitchenOS's accent is
+coral). Vendored, like everything in `static/`, because these pages are opened
+over a private tailnet from devices that may have no route to the internet.
+
 For the full route list and per-route contracts, see `docs/API.md`.
 
 ## Background services
