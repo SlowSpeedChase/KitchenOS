@@ -217,18 +217,35 @@ class TestPreview:
 
     def test_a_recipe_without_servings_says_whole_recipe(self, live_server, page,
                                                          page_errors):
-        """The same honesty rule as the sidebar — these are batch totals."""
-        _open(page, live_server)
-        name = self._first_with(
-            page, "!parseServings(r.servings) && r.nutrition_calories != null")
-        if not name:
-            pytest.skip("every recipe has a servings count in the current library")
-        page.evaluate(f"openPreview({name!r})")
-        page.wait_for_selector(".preview-basis")
+        """The same honesty rule as the sidebar — these are batch totals.
 
+        Driven off a synthetic payload rather than whichever recipe currently
+        lacks a count: the rendering rule is what's under test, and it must stay
+        covered now that every recipe in the vault has been given a servings
+        number. An earlier version of this depended on the data and went vacuous
+        the moment that gap was filled.
+        """
+        _open(page, live_server)
+        page.evaluate("""() => renderPreview('Synthetic Batch', {
+            title: 'Synthetic Batch', servings: null,
+            nutrition: {calories: 1339, protein: 19, carbs: 207, fat: 52},
+            ingredients: [{amount: '1', unit: 'cup', item: 'yogurt'}],
+        })""")
         basis = page.locator(".preview-basis").inner_text()
         assert "whole recipe" in basis
         assert "per serving" not in basis
+        assert page_errors == []
+
+    def test_an_implausible_figure_is_marked_not_presented_as_fact(
+            self, live_server, page, page_errors):
+        _open(page, live_server)
+        page.evaluate("""() => renderPreview('Synthetic Absurd', {
+            title: 'Synthetic Absurd', servings: 4,
+            nutrition: {calories: 18245, protein: 267, carbs: 162, fat: 1837},
+            ingredients: [],
+        })""")
+        basis = page.locator(".preview-basis").inner_text()
+        assert "looks wrong" in basis
         assert page_errors == []
 
     def test_escape_closes(self, live_server, page, page_errors):
@@ -296,9 +313,8 @@ class TestDragStillWorks:
 
 
 class TestCardMacros:
-    def test_every_card_states_its_basis(self, live_server, page, page_errors):
-        """A per-serving figure, a whole-batch total, and an implausible one must
-        not look alike."""
+    def test_every_real_card_states_its_basis(self, live_server, page, page_errors):
+        """Whatever the library holds, no card may misstate what its number is."""
         _open(page, live_server)
         rows = page.evaluate("""() => [...document.querySelectorAll('.recipe-card')]
             .map(e => {
@@ -307,7 +323,7 @@ class TestCardMacros:
                 return [r.name, parseServings(r.servings), r.nutrition_calories,
                         m ? m.innerText : null];
             })""")
-        seen_batch = False
+        assert rows, "no cards rendered"
         for name, servings, cal, text in rows:
             if cal is None:
                 assert text is None, f"{name} has no calories but rendered {text!r}"
@@ -315,10 +331,39 @@ class TestCardMacros:
             assert text, f"{name} has calories but no macro line"
             if servings < 1:
                 assert "whole batch" in text, f"{name}: {text!r} hides that it's a batch"
-                seen_batch = True
             elif not (50 <= cal <= 2500):
                 assert "implausible" in text, f"{name}: {text!r} presents {cal} as fact"
             else:
                 assert "srv" in text
-        assert seen_batch, "no whole-batch recipe present — this assertion went vacuous"
+        assert page_errors == []
+
+    def test_each_basis_renders_distinctly(self, live_server, page, page_errors):
+        """The three states must not look alike — asserted against synthetic rows.
+
+        This used to read the three cases off the live library and fail loudly if
+        one wasn't present. That guard did its job: it fired the moment the last
+        recipe missing a servings count was given one. But the rule belongs to the
+        renderer, not to the data, so it's now exercised directly and stays
+        covered however clean the vault gets.
+        """
+        _open(page, live_server)
+        got = page.evaluate("""() => ({
+            per_serving: macroLine({servings: 4, nutrition_calories: 412,
+                                    nutrition_protein: 18, nutrition_carbs: 52,
+                                    nutrition_fat: 14}),
+            whole_batch: macroLine({servings: null, nutrition_calories: 1339,
+                                    nutrition_protein: 19, nutrition_carbs: 207,
+                                    nutrition_fat: 52}),
+            implausible: macroLine({servings: 4, nutrition_calories: 18245,
+                                    nutrition_protein: 267, nutrition_carbs: 162,
+                                    nutrition_fat: 1837}),
+            no_data:     macroLine({servings: 4, nutrition_calories: null}),
+        })""")
+        assert "4 srv" in got["per_serving"] and "412 kcal" in got["per_serving"]
+        assert "whole batch" not in got["per_serving"]
+        assert "whole batch" in got["whole_batch"] and "no servings" in got["whole_batch"]
+        assert "implausible" in got["implausible"]
+        assert got["no_data"] == ""
+        # And they're genuinely different renderings, not three copies.
+        assert len({got["per_serving"], got["whole_batch"], got["implausible"]}) == 3
         assert page_errors == []
