@@ -105,7 +105,7 @@ struct InventoryView: View {
         catch { status = "Error: \(error)" }
     }
 
-    private func add(_ item: InventoryItem) async {
+    private func add(_ item: NewInventoryItem) async {
         do { try await client.addInventory([item]); await load() }
         catch { status = "Add failed: \(error)" }
     }
@@ -125,14 +125,18 @@ struct InventoryView: View {
 
 /// Sheet to add a new inventory item.
 private struct InventoryAddSheet: View {
-    let onAdd: (InventoryItem) -> Void
+    let onAdd: (NewInventoryItem) -> Void
     @Environment(\.dismiss) private var dismiss
 
     @State private var name = ""
     @State private var quantity = 1.0
     @State private var unit = "ct"
     @State private var category = "other"
-    @State private var location = "pantry"
+    // nil = Auto. This MUST default to nil: a pre-selected shelf the user never
+    // touched used to be sent as an explicit location, which the server records as
+    // a placement you confirmed — so app-added rows could never show the unsure
+    // marker that /review and Inventory.md show. Only a deliberate pick is explicit.
+    @State private var location: String? = nil
 
     private let categories = ["produce", "dairy", "meat", "seafood", "pantry",
                               "frozen", "bakery", "beverages", "household", "other"]
@@ -152,7 +156,13 @@ private struct InventoryAddSheet: View {
                     ForEach(categories, id: \.self) { Text($0.capitalized).tag($0) }
                 }
                 Picker("Location", selection: $location) {
-                    ForEach(locations, id: \.self) { Text($0.capitalized).tag($0) }
+                    Text("Auto").tag(String?.none)
+                    ForEach(locations, id: \.self) { Text($0.capitalized).tag(String?.some($0)) }
+                }
+                if location == nil {
+                    Text("Auto files it from your storage rules, and marks it unsure if there's no rule yet — so you get asked instead of it guessing silently.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("Add Item")
@@ -162,8 +172,9 @@ private struct InventoryAddSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add") {
-                        onAdd(InventoryItem(name: name, quantity: quantity, unit: unit,
-                                            category: category, location: location, source: "manual"))
+                        onAdd(NewInventoryItem(name: name, quantity: quantity, unit: unit,
+                                               category: category, location: location,
+                                               source: "manual"))
                         dismiss()
                     }
                     .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
