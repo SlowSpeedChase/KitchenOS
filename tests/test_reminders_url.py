@@ -8,6 +8,7 @@ ZREMCDBASELIST, ZREMCDOBJECT attachment rows), so they don't depend on a live
 Reminders database.
 """
 
+import logging
 import sqlite3
 
 import pytest
@@ -118,3 +119,71 @@ def test_find_stores_lists_sqlite_files(tmp_path):
     stores = find_stores(tmp_path)
     assert len(stores) == 1
     assert stores[0].name == "Data-a.sqlite"
+
+
+# --- Diagnostics: every degradation path returns {} rather than raising, which
+# once let batch_extract resolve nothing for three weeks with no signal at all.
+# Silence is the bug; each failure mode must say why. ---
+
+
+def test_missing_stores_dir_warns_with_the_path(tmp_path, caplog):
+    missing = tmp_path / "nope"
+    with caplog.at_level(logging.WARNING, logger="lib.reminders_url"):
+        urls_by_identifier(list_name=LIST, stores_dir=missing)
+    assert str(missing) in caplog.text
+
+
+def test_empty_stores_dir_warns_about_full_disk_access(tmp_path, caplog):
+    # The TCC signature, confirmed by probing a launchd context: the directory
+    # stats fine and its listing comes back empty — no exception to catch. A
+    # bare "no stores found" reads as "nothing to do"; name the real cause.
+    with caplog.at_level(logging.WARNING, logger="lib.reminders_url"):
+        urls = urls_by_identifier(list_name=LIST, stores_dir=tmp_path)
+    assert urls == {}
+    assert "Full Disk Access" in caplog.text
+
+
+def test_unreadable_store_warns_with_the_store_name(tmp_path, caplog):
+    # A file that is named like a store but isn't a database — the same shape a
+    # permission denial takes, since sqlite reports both as "unable to open".
+    (tmp_path / "Data-broken.sqlite").write_bytes(b"not a database")
+    with caplog.at_level(logging.WARNING, logger="lib.reminders_url"):
+        urls = urls_by_identifier(list_name=LIST, stores_dir=tmp_path)
+    assert urls == {}
+    assert "Data-broken.sqlite" in caplog.text
+
+
+def test_schema_mismatch_warns_with_the_missing_column(tmp_path, caplog):
+    # Core Data column names are private; a macOS upgrade can rename them.
+    con = sqlite3.connect(str(tmp_path / "Data-schema.sqlite"))
+    con.executescript(
+        """
+        CREATE TABLE ZREMCDBASELIST (Z_PK INTEGER PRIMARY KEY, ZNAME TEXT);
+        CREATE TABLE ZREMCDREMINDER (Z_PK INTEGER PRIMARY KEY, ZCKIDENTIFIER TEXT);
+        CREATE TABLE ZREMCDOBJECT (Z_PK INTEGER PRIMARY KEY, ZREMINDER2 INTEGER);
+        """
+    )
+    con.commit()
+    con.close()
+    with caplog.at_level(logging.WARNING, logger="lib.reminders_url"):
+        urls = urls_by_identifier(list_name=LIST, stores_dir=tmp_path)
+    assert urls == {}
+    assert "ZURL" in caplog.text
+
+
+def test_recovering_nothing_from_readable_stores_warns(tmp_path, caplog):
+    _make_store(tmp_path / "Data-a.sqlite")
+    with caplog.at_level(logging.WARNING, logger="lib.reminders_url"):
+        urls = urls_by_identifier(list_name="No Such List", stores_dir=tmp_path)
+    assert urls == {}
+    assert "No Such List" in caplog.text
+
+
+def test_successful_recovery_reports_the_count(tmp_path, caplog):
+    _make_store(tmp_path / "Data-a.sqlite")
+    with caplog.at_level(logging.INFO, logger="lib.reminders_url"):
+        urls = urls_by_identifier(list_name=LIST, stores_dir=tmp_path)
+    assert len(urls) == 2
+    assert "2" in caplog.text
+    # A good run must not look like a broken one.
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]

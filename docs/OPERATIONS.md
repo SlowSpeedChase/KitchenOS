@@ -392,8 +392,19 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.batch-extract.plist
 Requires **Full Disk Access** for the `.venv` python (System Settings →
 Privacy & Security → Full Disk Access) so `lib/reminders_url.py` can read the
 Reminders SQLite store directly to recover share-sheet rich-link URLs.
-Without it the read fails silently and reminders fall back to their title
-(no crash).
+Grant it to the interpreter itself (`/Users/chaseeasterling/Dev/KitchenOS/.venv/bin/python`,
+reachable in the file picker with ⇧⌘G) — the grant does not follow the repo, so
+it has to be redone after a machine rebuild or a recreated `.venv`.
+
+Without it, a share-sheet reminder resolves no URL, is reported as an invalid
+URL, and is left unchecked to be retried forever. **The denial does not raise:**
+TCC hands a launchd job an empty directory listing, so the code sees "no stores"
+rather than an error. `lib/reminders_url.py` now logs a warning naming Full Disk
+Access whenever that happens — check `logs/batch_extract.log` for
+`No Reminders store files` before assuming the list is simply full of junk
+entries. Run `.venv/bin/python batch_extract.py` from a terminal to confirm:
+an interactive run inherits the terminal's access and resolves the same
+reminders the LaunchAgent cannot.
 
 ### com.kitchenos.calendar-sync
 
