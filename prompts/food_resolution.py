@@ -25,7 +25,18 @@ Return ONLY a JSON object with exactly these keys:
 {{"choice_index": <integer index of the best candidate>, "confidence": <0.0 to 1.0>, "reason": "<short>"}}
 If none match well, pick the closest and use a low confidence."""
 
-PORTION_GRAMS_PROMPT = """Estimate the weight, in grams, of ONE "{unit}" of "{item}" as used in cooking.
+PORTION_GRAMS_PROMPT = """Estimate the weight, in grams, of ONE "{unit}" of "{item}" \
+as a single recipe would use it.
 {portion_hint}
+Estimate the AMOUNT A RECIPE CALLS FOR, never the size of the package it is sold in.
+
+This matters most when the unit is "whole", which this pipeline also emits when a
+recipe stated no amount at all. "One whole olive oil" is not a 1-litre bottle,
+"one whole flour" is not a 1 kg bag, and "one whole honey" is not a full jar — for
+anything poured, spooned or scooped, answer with a normal cooking quantity (a
+tablespoon of oil, a cup of flour) even though "one whole" of it is not really a
+thing. Reserve large weights for items that genuinely come as one countable piece:
+a whole chicken, a block of tofu, a head of romaine.
+
 Return ONLY a JSON object with exactly these keys:
 {{"grams_per_unit": <number of grams for a single {unit}>, "confidence": <0.0 to 1.0>, "basis": "<short>"}}"""
