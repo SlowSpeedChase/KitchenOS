@@ -21,10 +21,11 @@ CLI (`extract_recipe.py`) — the `/extract` and `/reprocess` API routes do
 return once it exits. Flow:
 
 ```
-YouTube/Instagram URL → extract_recipe.py
+YouTube/Instagram/web URL → extract_recipe.py
     ↓
-main.py (fetch metadata + transcript + first comment; Instagram routes via
-          instagram_parser to extract_single_instagram_recipe)
+main.py: route_url() picks the pipeline — 'instagram' → extract_single_instagram_recipe,
+          'web' → extract_single_web_recipe, 'youtube' (also bare video IDs) →
+          extract_single_recipe, which fetches metadata + transcript + first comment
     ↓
 recipe_sources.py:
   1. find_recipe_link() → scrape_recipe_from_url()

@@ -10,6 +10,28 @@ from pathlib import Path
 FAILURES_DIR_NAME = "failures"
 
 # Error classification patterns
+# Instagram and blocked are checked first: they are the most specific, and both
+# were previously swallowed by broader rules — Instagram auth failures fell all
+# the way through to "unknown" (195 of them across the logs in failures/), and
+# the heb.com bot wall matched _PARSING_PATTERNS on the "JSON" in "JSON-LD",
+# which pointed the analysis agent at a parser that was working fine.
+_INSTAGRAM_PATTERNS = [
+    "instagram",
+    "empty media response",
+    "instagram_cookies",
+]
+_BLOCKED_PATTERNS = [
+    "anti-bot",
+    "challenge page",
+    "incapsula",
+    "cloudflare",
+    "captcha",
+    "http 403",
+    "http 429",
+    "http 451",
+    "was blocked",
+    "request was blocked",
+]
 _OLLAMA_PATTERNS = ["localhost:11434", "ollama", "model", "11434"]
 _YOUTUBE_PATTERNS = ["video unavailable", "private", "transcript", "video is", "no captions", "subtitles"]
 _NETWORK_PATTERNS = ["connection refused", "timed out", "timeout", "dns", "unreachable", "connection error"]
@@ -32,17 +54,25 @@ _EXCEPTION_CATEGORIES = {
 def classify_error(error_message: str, exception_type: type = Exception) -> str:
     """Classify an error into a category for the analysis agent.
 
-    Categories: network, ollama, youtube, parsing, io, unknown
+    Categories: network, ollama, youtube, instagram, blocked, parsing, io, unknown
 
     Args:
         error_message: The error message string
         exception_type: The exception class (e.g., ConnectionError, KeyError)
 
     Returns:
-        One of: "network", "ollama", "youtube", "parsing", "io", "unknown"
+        One of: "network", "ollama", "youtube", "instagram", "blocked",
+        "parsing", "io", "unknown"
     """
     msg_lower = error_message.lower()
     exc_name = exception_type.__name__
+
+    # Instagram/blocked first — both are actionable (add cookies, or stop
+    # retrying a site that walls us) and both were previously misfiled.
+    if any(p in msg_lower for p in _INSTAGRAM_PATTERNS):
+        return "instagram"
+    if any(p in msg_lower for p in _BLOCKED_PATTERNS):
+        return "blocked"
 
     # Ollama errors (check before network since Ollama connection errors are specific)
     if any(p in msg_lower for p in _OLLAMA_PATTERNS):

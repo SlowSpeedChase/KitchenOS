@@ -4,6 +4,7 @@ import json
 import re
 from pathlib import Path
 from typing import Optional, Dict, Any, List
+from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -368,17 +369,80 @@ def has_recipe_in_description(description: str) -> bool:
     return has_ingredients and (has_method or has_quantities)
 
 
-def scrape_recipe_from_url(url: str) -> Optional[Dict[str, Any]]:
-    """Fetch a URL and extract recipe data from JSON-LD."""
+# Fingerprints of anti-bot interstitials, which are served with HTTP 200 and no
+# JSON-LD — indistinguishable from a recipe-less page unless you look for these.
+# Deliberately specific (vendor resource paths and element IDs, not prose like
+# "access denied") so an article that merely discusses captchas isn't flagged.
+_BOT_WALL_MARKERS = (
+    "_incapsula_resource",              # Imperva/Incapsula — heb.com
+    "cf-browser-verification",          # Cloudflare
+    "/cdn-cgi/challenge-platform",      # Cloudflare
+    "<title>just a moment",             # Cloudflare interstitial
+    "captcha-delivery.com",             # DataDome
+    "_pxhd",                            # PerimeterX
+    "distil_r_captcha",                 # Distil
+)
+
+# Status codes that mean "we were refused", not "this page has no recipe".
+_BLOCKED_STATUS_CODES = (401, 403, 429, 451)
+
+
+def looks_like_bot_wall(html: Optional[str]) -> bool:
+    """True if HTML is an anti-bot challenge page rather than real content.
+
+    A marker alone is not enough. Cloudflare injects its challenge-platform
+    script into ordinary pages, so allrecipes.com and bonappetit.com both carry
+    the marker on working 500KB recipe pages. Requiring the absence of
+    structured data is what separates "we were stopped at the door" from "this
+    site sits behind Cloudflare" — a real wall has no content to offer.
+    """
+    if not html:
+        return False
+    lowered = html.lower()
+    if not any(marker in lowered for marker in _BOT_WALL_MARKERS):
+        return False
+    return "application/ld+json" not in lowered
+
+
+def fetch_recipe_with_diagnosis(
+    url: str,
+) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Fetch a URL and extract JSON-LD recipe data, explaining any failure.
+
+    Returns (recipe, failure_reason); exactly one is None.
+
+    Use this wherever the failure is terminal and reported to a human.
+    "No structured recipe found" is only true when we actually got the page —
+    saying it after a bot wall or a 403 blames the site for our own blocked
+    request and sends the next reader hunting a parser bug (2026-07-29, heb.com).
+    """
+    domain = urlparse(url).netloc or url
+
     try:
         response = requests.get(url, timeout=10, headers={
             "User-Agent": "Mozilla/5.0 (compatible; KitchenOS/1.0)"
         })
+    except requests.exceptions.RequestException as e:
+        print(f"  -> Failed to fetch {url}: {e}")
+        return None, f"Could not reach {domain}: {e}"
+
+    status = getattr(response, "status_code", None)
+    if isinstance(status, int) and status in _BLOCKED_STATUS_CODES:
+        print(f"  -> {domain} refused the request (HTTP {status})")
+        return None, (
+            f"{domain} returned HTTP {status} — the request was blocked, so the "
+            "page was never read."
+        )
+
+    try:
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
         print(f"  -> Failed to fetch {url}: {e}")
-        return None
+        return None, f"Could not reach {domain}: {e}"
 
+    # Parse before diagnosing. A page that yields a recipe was plainly not
+    # blocked, whatever vendor scripts it carries — checking the wall first
+    # would discard real recipes from every Cloudflare-fronted site.
     soup = BeautifulSoup(response.text, "html.parser")
     scripts = soup.find_all("script", type="application/ld+json")
 
@@ -389,8 +453,28 @@ def scrape_recipe_from_url(url: str) -> Optional[Dict[str, Any]]:
             continue
         recipe = _find_recipe_in_json_ld(data)
         if recipe:
-            return parse_json_ld_recipe(recipe)
-    return None
+            return parse_json_ld_recipe(recipe), None
+
+    # Nothing found — now work out whether the page was empty or we were refused.
+    if looks_like_bot_wall(response.text):
+        print(f"  -> {domain} served an anti-bot challenge page")
+        return None, (
+            f"{domain} served an anti-bot challenge page instead of the recipe, so "
+            "the request was blocked before any content loaded. Scraping it needs a "
+            "real browser session."
+        )
+
+    return None, "No structured recipe (JSON-LD) found on page"
+
+
+def scrape_recipe_from_url(url: str) -> Optional[Dict[str, Any]]:
+    """Fetch a URL and extract recipe data from JSON-LD.
+
+    Returns None on any failure. Callers that try several candidate links in
+    sequence rely on that; use fetch_recipe_with_diagnosis() when the failure is
+    terminal and needs an explanation.
+    """
+    return fetch_recipe_with_diagnosis(url)[0]
 
 
 # Ollama configuration (same as extract_recipe.py)

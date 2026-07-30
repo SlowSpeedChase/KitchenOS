@@ -141,3 +141,47 @@ def test_cleanup_old_failure_logs_handles_missing_dir():
         missing = Path(tmpdir) / "nonexistent"
         removed = cleanup_old_failure_logs(missing)
         assert removed == 0
+
+
+# --- Categories added after the 2026-07-29 batch run -------------------------
+# 195 Instagram auth failures across 190 logs all landed in "unknown", and the
+# heb.com bot wall landed in "parsing" because its message contained "JSON".
+# Both sent the analysis agent looking for a parser bug that did not exist.
+
+def test_classify_error_instagram_auth():
+    """Instagram auth failures get their own category, not 'unknown'"""
+    msg = ("Instagram requires a logged-in session for this Reel. "
+           "Set INSTAGRAM_COOKIES_FROM_BROWSER=chrome in .env")
+    assert classify_error(msg, Exception) == "instagram"
+
+
+def test_classify_error_instagram_empty_media():
+    """The raw yt-dlp wording classifies too"""
+    assert classify_error(
+        "Instagram sent an empty media response", Exception
+    ) == "instagram"
+
+
+def test_classify_error_instagram_generic_metadata():
+    """The historical message must stop being 'unknown'"""
+    assert classify_error(
+        "Could not fetch Instagram Reel metadata", Exception
+    ) == "instagram"
+
+
+def test_classify_error_blocked_bot_wall():
+    """An anti-bot challenge page is 'blocked', not 'parsing'"""
+    msg = ("heb.com served an anti-bot challenge page instead of the recipe "
+           "(Imperva/Incapsula)")
+    assert classify_error(msg, Exception) == "blocked"
+
+
+def test_classify_error_blocked_http_403():
+    assert classify_error("example.com returned HTTP 403", Exception) == "blocked"
+
+
+def test_classify_error_missing_json_ld_is_still_parsing():
+    """A genuinely recipe-less page is still a parsing outcome"""
+    assert classify_error(
+        "No structured recipe (JSON-LD) found on page", Exception
+    ) == "parsing"
