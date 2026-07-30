@@ -106,14 +106,14 @@ but the backfill was run with Claude.
 
 Run against all 252 with `--provider claude`:
 
-- **69 short titles written**, 1 rejected after 6 attempts
+- **69 short titles written** across two passes, 1 rejected after 6 attempts
 - **2 written by hand** afterwards, through the same validator — `Chocolate Peanut Butter
   Protein Pancake Bowl` came back as `Chocolate Peanut Butter Protein`, which passes every
   rule and names no dish (the head noun is not reliably last, so this is not a rule the
   validator can carry), and `Ham Cheddar + Chive Protein Biscuits` never got under 33
 - **Zero display-name collisions** across all 252
 - **Every rendered title now ≤ 32 chars** (max 32, verified in the browser)
-- All 71 carry `short_title_inferred: true` — same honesty rule as `servings_inferred`
+- All 70 carry `short_title_inferred: true` — same honesty rule as `servings_inferred`
 
 **A data bug surfaced:** `Roasted Chicken & Mediterranean Avocado Sala` is truncated *at
 the source* — the recipe's own name is missing the "d" in "Salad". Its short title
