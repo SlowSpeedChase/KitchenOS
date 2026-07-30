@@ -1,6 +1,9 @@
 """Tests for the inventory module."""
+import json
 
-from lib import inventory_db
+import pytest
+
+from lib import inventory_db, storage_locations
 from lib.inventory import (
     InventoryItem,
     add_items,
@@ -179,8 +182,13 @@ class TestUpdateQuantity:
 
 class TestGeneratedView:
     def test_inventory_md_is_generated_view(self, tmp_vault, tmp_db):
+        # location_source is explicit so the Location cell renders bare: an
+        # unrecorded provenance is "default", which now renders "fridge?". This
+        # test is about the view's shape and banner, not the unsure marker —
+        # that's test_inventory_md_marks_an_unresolved_location.
         add_items([InventoryItem(name="Milk", quantity=1, unit="gal",
-                                 category="dairy", location="fridge")])
+                                 category="dairy", location="fridge",
+                                 location_source="manual")])
         content = inventory_path().read_text(encoding="utf-8")
         assert "| Milk | 1 | gal | dairy | fridge |" in content
         assert "generated" in content.lower()  # view banner present
@@ -567,13 +575,45 @@ class TestMoveItem:
         assert items[0].quantity == 3.0
         assert items[0].location == "freezer"
 
-    def test_move_to_same_location_is_noop(self, tmp_vault, tmp_db):
+    def test_move_to_same_location_confirms_an_unsure_row(
+        self, tmp_vault, tmp_db, empty_storage_table
+    ):
+        """Not a no-op any more. The row is where it belongs but nothing
+        resolved it, so the tap is the user confirming: stamp `manual`, write,
+        and teach. A no-op that leaves a visible "?" reads as a broken button —
+        the same reasoning as test_repeated_extends_accumulate.
+        """
         add_items([InventoryItem(name="Bread", quantity=1, unit="loaf",
                                  location="pantry")])
         item = move_item("Bread", "pantry", location="pantry")
         assert item is not None
         assert item.location == "pantry"
+        assert item.location_source == "manual"
         assert len(read_inventory()) == 1
+        assert read_inventory()[0].location_source == "manual", "not persisted"
+        assert _taught(empty_storage_table) == {"bread": "pantry"}
+
+    def test_move_to_same_location_is_a_true_noop_once_confirmed(
+        self, tmp_vault, tmp_db, empty_storage_table, monkeypatch
+    ):
+        """An already-`manual` row has nothing to confirm, so it must not write
+        — that's what keeps the churn-avoidance the early return was added for.
+        """
+        from lib import inventory_db
+        add_items([InventoryItem(name="Bread", quantity=1, unit="loaf",
+                                 location="pantry",
+                                 location_source="manual")])
+
+        writes = []
+        real = inventory_db.replace_inventory_rows
+        monkeypatch.setattr(inventory_db, "replace_inventory_rows",
+                            lambda rows: writes.append(rows) or real(rows))
+        item = move_item("Bread", "pantry", location="pantry")
+
+        assert item is not None
+        assert item.location_source == "manual"
+        assert writes == [], "an already-confirmed no-op still wrote to the DB"
+        assert _taught(empty_storage_table) == {}, "and it taught the table"
 
     def test_returns_none_when_not_found(self, tmp_vault, tmp_db):
         assert move_item("Nonexistent", "freezer") is None
@@ -727,11 +767,17 @@ class TestPureMutators:
         assert out[0].quantity == 3.0
         assert out[0].location == "freezer"
 
-    def test_apply_move_to_same_location_is_a_noop(self):
+    def test_apply_move_to_same_location_keeps_the_row_but_stamps_it(self):
+        """`out == [items[0]]` was trivially true — it's the same object
+        _apply_move just mutated. Assert the identity and the stamp separately,
+        so the confirmation behaviour is actually defended.
+        """
         from lib.inventory import _apply_move
         items = self._items()
         out = _apply_move(items, [items[0]], "pantry")
-        assert out == [items[0]]
+        assert out[0] is items[0]
+        assert out[0].location == "pantry"
+        assert out[0].location_source == "manual"
         assert len(items) == 3
 
     def test_apply_freeze_moves_sets_category_and_clears_expiry(self):
@@ -1008,3 +1054,177 @@ class TestUseStamps:
         item = read_inventory()[0]
         assert item.last_used == "2026-07-26T10:00:00"
         assert item.use_count == 1
+
+
+def test_location_source_round_trips_through_the_db(tmp_db, tmp_vault):
+    write_inventory([
+        InventoryItem(name="kale", quantity=1, category="produce",
+                      location="fridge", location_source="manual"),
+    ])
+    [got] = read_inventory()
+    assert got.location_source == "manual"
+
+
+def test_an_unrecognised_location_source_reads_as_default():
+    """The safety net: anything not in the vocabulary must surface for review
+    rather than pose as confirmed. Fail toward being asked."""
+    from lib.inventory import normalize_location_source
+    assert normalize_location_source(None) == "default"
+    assert normalize_location_source("") == "default"
+    assert normalize_location_source("  ") == "default"
+    assert normalize_location_source("bogus") == "default"
+    assert normalize_location_source("MANUAL") == "manual"
+
+
+def test_a_null_location_source_is_healed_rather_than_left_unsure(tmp_db, tmp_vault):
+    """A row inserted with no provenance gets classified on the next connect.
+
+    The normalizer would read the NULL as `default`, but leaving it there means a
+    row shows "?" forever with nothing to resolve it. The self-healing backfill
+    is what makes that a transient state instead of a permanent one.
+    """
+    conn = inventory_db.connect()
+    conn.execute(
+        "INSERT INTO inventory (name, quantity, category, location)"
+        " VALUES ('mystery', 1, 'produce', 'fridge')"
+    )
+    conn.commit()
+    conn.close()
+
+    [got] = read_inventory()
+    # produce -> fridge is a real by_category rule, and the row is already there.
+    assert got.location_source == "category"
+
+
+def test_merge_keeps_the_stronger_source(tmp_db, tmp_vault):
+    """Restocking a hand-placed row must not downgrade it back to a guess."""
+    write_inventory([
+        InventoryItem(name="oat milk", quantity=1, unit="ct",
+                      category="dairy", location="fridge",
+                      location_source="manual"),
+    ])
+    add_items([
+        InventoryItem(name="oat milk", quantity=2, unit="ct",
+                      category="dairy", location="fridge",
+                      location_source="category"),
+    ])
+    [got] = read_inventory()
+    assert got.quantity == 3
+    assert got.location_source == "manual"
+
+
+def test_merge_upgrades_a_weaker_source(tmp_db, tmp_vault):
+    write_inventory([
+        InventoryItem(name="oat milk", quantity=1, unit="ct",
+                      category="dairy", location="fridge",
+                      location_source="default"),
+    ])
+    add_items([
+        InventoryItem(name="oat milk", quantity=1, unit="ct",
+                      category="dairy", location="fridge",
+                      location_source="item"),
+    ])
+    [got] = read_inventory()
+    assert got.location_source == "item"
+
+
+def test_seeded_staples_are_not_flagged_for_review(tmp_db, tmp_vault):
+    """pantry_staples.json is hand-authored, so its rows are curated, not guesses."""
+    seed_pantry_staples({"olive oil"})
+    [got] = read_inventory()
+    assert got.name == "olive oil"
+    assert got.location_source == "item"
+
+
+@pytest.fixture
+def empty_storage_table(monkeypatch, tmp_path):
+    """An isolated, empty storage-locations table. Yields its path.
+
+    Without this, teaching would write to the real config/storage_locations.json.
+    """
+    table = tmp_path / "storage_locations.json"
+    table.write_text(json.dumps({"by_item": {}, "by_category": {}}))
+    monkeypatch.setenv("KITCHENOS_STORAGE_TABLE", str(table))
+    return table
+
+
+def _taught(table):
+    return json.loads(table.read_text())["by_item"]
+
+
+def test_move_confirms_the_row_and_teaches_the_table(
+    tmp_db, tmp_vault, empty_storage_table
+):
+    write_inventory([
+        InventoryItem(name="oat milk", quantity=1, unit="ct",
+                      category="dairy", location="pantry",
+                      location_source="default"),
+    ])
+    moved = move_item("oat milk", "fridge")
+    assert moved.location == "fridge"
+    assert moved.location_source == "manual"
+    assert _taught(empty_storage_table) == {"oat milk": "fridge"}
+
+
+def test_freeze_confirms_the_row_but_teaches_nothing(
+    tmp_db, tmp_vault, empty_storage_table
+):
+    """Freezing rescues one item from spoiling; it does not say where bread lives."""
+    write_inventory([
+        InventoryItem(name="sourdough loaf", quantity=1, unit="ct",
+                      category="bakery", location="counter",
+                      location_source="category"),
+    ])
+    frozen = freeze_item("sourdough loaf")
+    assert frozen.location == "freezer"
+    assert frozen.location_source == "manual"
+    assert _taught(empty_storage_table) == {}
+
+
+def test_bulk_move_teaches_every_item(tmp_db, tmp_vault, empty_storage_table):
+    from lib.inventory import bulk_apply
+    write_inventory([
+        InventoryItem(name="peas", quantity=1, unit="ct",
+                      category="produce", location="fridge"),
+        InventoryItem(name="corn", quantity=1, unit="ct",
+                      category="produce", location="fridge"),
+    ])
+    result = bulk_apply(
+        "move",
+        [{"name": "peas", "unit": "ct", "location": "fridge"},
+         {"name": "corn", "unit": "ct", "location": "fridge"}],
+        to_location="freezer",
+    )
+    assert result["applied"] == 2
+    assert all(it.location_source == "manual" for it in result["items"])
+    assert _taught(empty_storage_table) == {"peas": "freezer", "corn": "freezer"}
+
+
+def test_a_failed_override_write_still_commits_the_move(
+    tmp_db, tmp_vault, empty_storage_table, monkeypatch
+):
+    """The row is the user's intent; the lesson is a side effect."""
+    def boom(*args, **kwargs):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(storage_locations, "save_item_override", boom)
+    write_inventory([
+        InventoryItem(name="oat milk", quantity=1, unit="ct",
+                      category="dairy", location="pantry"),
+    ])
+    moved = move_item("oat milk", "fridge")
+    assert moved.location == "fridge"
+    assert moved.location_source == "manual"
+
+
+def test_inventory_md_marks_an_unresolved_location(tmp_db, tmp_vault):
+    from lib.inventory import render_inventory_md
+    md = render_inventory_md([
+        InventoryItem(name="psyllium husk", quantity=1,
+                      category="other", location="pantry",
+                      location_source="default"),
+        InventoryItem(name="kale", quantity=1, category="produce",
+                      location="fridge", location_source="category"),
+    ])
+    assert "| pantry? |" in md
+    assert "| fridge |" in md

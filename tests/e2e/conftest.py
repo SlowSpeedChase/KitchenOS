@@ -62,6 +62,13 @@ def live_server(tmp_path_factory) -> LiveServer:
     )
     db = root / "kitchenos.db"
     shutil.copy2(REPO / "data" / "kitchenos.db", db)
+    # A move teaches the storage table, so the server *writes* this file. Copied
+    # rather than pointed at the real one: otherwise the browser tests rewrite
+    # the developer's config/storage_locations.json — observed, they injected
+    # their fixture item names and reordered by_category. Copied rather than
+    # left empty because plenty of routing depends on its real contents.
+    storage_table = root / "storage_locations.json"
+    shutil.copy2(REPO / "config" / "storage_locations.json", storage_table)
 
     port = _free_port()
     log = root / "server.log"
@@ -69,6 +76,7 @@ def live_server(tmp_path_factory) -> LiveServer:
         **os.environ,
         "KITCHENOS_VAULT": str(vault),
         "KITCHENOS_DB": str(db),
+        "KITCHENOS_STORAGE_TABLE": str(storage_table),
         "PORT": str(port),
         # Never let a test hit the paid APIs or a live LLM.
         "ANTHROPIC_API_KEY": "",

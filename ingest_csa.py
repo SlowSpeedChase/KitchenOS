@@ -29,7 +29,7 @@ from lib import csa_parser  # noqa: E402
 from lib.email_fetcher import fetch_emails  # noqa: E402
 from lib.inventory import InventoryItem, add_items  # noqa: E402
 from lib.inventory_db import record_trip, trip_exists  # noqa: E402
-from lib.storage_locations import resolve_location  # noqa: E402
+from lib.storage_locations import place_item  # noqa: E402
 
 
 def _delivery_date(payload: dict) -> str:
@@ -83,19 +83,20 @@ def process_newsletter(payload: dict, config: dict, dry_run: bool = False) -> di
         return {"status": "duplicate", "week": parsed["week"], "items": parsed["items"]}
 
     purchased = _delivery_date(payload)
-    items = [
-        InventoryItem(
+    items = []
+    for name in parsed["items"]:
+        placement = place_item(name, category)
+        items.append(InventoryItem(
             name=name,
             quantity=1,
             unit="ct",
             category=category,
-            location=resolve_location(name, category),
+            location=placement.location,
+            location_source=placement.source,
             purchased=purchased,
             source="csa",
             notes=f"CSA Week {parsed['week']}" if parsed["week"] else "CSA share",
-        )
-        for name in parsed["items"]
-    ]
+        ))
 
     if dry_run:
         return {"status": "ingested", "week": parsed["week"],

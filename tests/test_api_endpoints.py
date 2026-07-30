@@ -572,3 +572,46 @@ def test_plan_week_unplanned_is_empty_state_not_404(client, tmp_vault):
 
 def test_plan_week_invalid_week_400(client):
     assert client.get('/plan-week?week=bogus').status_code == 400
+
+
+def test_add_records_the_resolved_placement(client, tmp_db, tmp_vault):
+    """A resolved location carries its tier; an explicit one is the caller's call."""
+    client.post('/api/inventory/add', json={'items': [
+        {'name': 'PlacementTestMilk', 'quantity': 1, 'category': 'dairy'},
+        {'name': 'PlacementTestHusk', 'quantity': 1, 'category': 'other'},
+        {'name': 'PlacementTestPick', 'quantity': 1, 'category': 'dairy',
+         'location': 'counter'},
+    ], 'match_plan': False})
+
+    rows = {i['name']: i for i in client.get('/api/inventory').get_json()}
+    assert rows['PlacementTestMilk']['location_source'] == 'category'
+    assert rows['PlacementTestHusk']['location_source'] == 'default'
+    assert rows['PlacementTestPick']['location_source'] == 'manual'
+    assert rows['PlacementTestPick']['location'] == 'counter'
+
+
+def test_review_page_shows_storage_location(client):
+    """The location, its glyphs, and the unsure marker ship in the page."""
+    html = client.get('/review').data
+    assert b'LOC_EMOJI' in html
+    assert b'locationLabel' in html
+    assert b'location_source' in html
+    # The freezer glyph must not be the category emoji for `frozen`.
+    assert '🥶'.encode() in html
+
+
+def test_review_page_shows_the_last_used_stamp(client):
+    """consume-on-cook writes last_used/use_count; this is the only view that
+    reads them. Without this the columns are write-only."""
+    html = client.get('/review').data
+    assert b'usedLabel' in html
+    assert b'last_used' in html
+
+
+def test_review_page_has_a_location_sort_mode(client):
+    """Location ordering and its group headers ship in the page."""
+    html = client.get('/review').data
+    assert b'value="location"' in html
+    assert b'groupHeader' in html
+    assert b'placeRows' in html
+    assert b'li.group' in html

@@ -26,6 +26,15 @@ CATEGORIES = (
 LOCATIONS = ("fridge", "freezer", "pantry", "counter", "other")
 SOURCES = ("receipt", "manual", "claude", "csa", "staple")
 
+# How a row's `location` was decided. Ordered weakest-last; see _SOURCE_RANK.
+LOCATION_SOURCES = ("manual", "item", "category", "default")
+
+# Suffix marking a location nothing actually resolved. Rendered by
+# `_location_cell` into Inventory.md and mirrored on `/review`. Anything that
+# *parses* a location cell must strip it and must not read a marked cell as a
+# confirmed choice — `lib/receipt_paster.py` is the one such consumer.
+UNSURE_MARKER = "?"
+
 HEADER = "| Item | Quantity | Unit | Category | Location | For Recipe | Purchased | Expires | Source | Notes |"
 SEPARATOR = "|------|----------|------|----------|----------|------------|-----------|---------|--------|-------|"
 
@@ -47,6 +56,9 @@ class InventoryItem:
     # which is DELETE-all + re-INSERT.
     last_used: Optional[str] = None
     use_count: int = 0
+    # How `location` was decided. Provenance, deliberately not part of
+    # merge_key() — adding it there would fragment rows.
+    location_source: str = "default"
 
     def merge_key(self) -> tuple[str, str, str]:
         return (
@@ -82,6 +94,19 @@ def normalize_source(src: Optional[str]) -> str:
         return "manual"
     s = src.lower().strip()
     return s if s in SOURCES else "manual"
+
+
+def normalize_location_source(src: Optional[str]) -> str:
+    """Normalize provenance, defaulting to ``"default"``.
+
+    A NULL from a pre-migration row, or anything not in the vocabulary, reads
+    as ``"default"`` — the failure direction is always toward being asked
+    again, never toward posing as confirmed.
+    """
+    if not src:
+        return "default"
+    s = src.lower().strip()
+    return s if s in LOCATION_SOURCES else "default"
 
 
 def _format_quantity(q: float) -> str:
@@ -152,6 +177,7 @@ def read_inventory() -> list[InventoryItem]:
             expires=r["expires"] or None,
             last_used=r["last_used"] or None,
             use_count=int(r["use_count"] or 0),
+            location_source=normalize_location_source(r["location_source"]),
         )
         for r in inventory_db.fetch_inventory_rows()
     ]
@@ -183,6 +209,17 @@ def _expiry_cell(expires: Optional[str], status: Optional[str]) -> str:
     if status == "soon":
         return f"🟡 {expires}"
     return expires
+
+
+def _location_cell(location: str, source: Optional[str]) -> str:
+    """Location column text, marked '?' when nothing actually resolved it.
+
+    Same marker the `/review` page shows, so the two views agree about what is
+    known rather than one quietly presenting a guess as fact.
+    """
+    if normalize_location_source(source) == "default":
+        return f"{location}{UNSURE_MARKER}"
+    return location
 
 
 def _expiry_warning_section(flagged: list[tuple[str, InventoryItem]]) -> str:
@@ -218,7 +255,7 @@ def render_inventory_md(items: list[InventoryItem]) -> str:
             _format_quantity(it.quantity),
             it.unit,
             it.category,
-            it.location,
+            _location_cell(it.location, it.location_source),
             (it.for_recipe or "").replace("|", "\\|"),
             it.purchased or "",
             _expiry_cell(it.expires, status),
@@ -341,6 +378,9 @@ def seed_pantry_staples(staples: Optional[set] = None) -> dict:
         write_inventory(existing + [
             InventoryItem(name=name, quantity=1, unit="ct", category="pantry",
                           location="pantry", source="staple",
+                          # Hand-authored in pantry_staples.json, so these are
+                          # curated placements — not guesses to review.
+                          location_source="item",
                           notes="always on hand")
             for name in added
         ])
@@ -373,6 +413,17 @@ def prune_expired(today: Optional[date] = None,
     return removed
 
 
+# Strongest wins when two rows merge. A hand-placed row must never be
+# downgraded to a guess by a restock that happened to resolve weakly.
+_SOURCE_RANK = {"manual": 3, "item": 2, "category": 1, "default": 0}
+
+
+def _stronger_source(a: Optional[str], b: Optional[str]) -> str:
+    """The more trustworthy of two provenances."""
+    a, b = normalize_location_source(a), normalize_location_source(b)
+    return a if _SOURCE_RANK[a] >= _SOURCE_RANK[b] else b
+
+
 # TODO(receipt-ingestion plan, task 9): read→merge→replace can lose updates
 # with concurrent writers (Flask threads + ingest LaunchAgent). Switch to
 # INSERT ... ON CONFLICT(name, unit, location) DO UPDATE SET
@@ -402,6 +453,9 @@ def add_items(new_items: list[InventoryItem]) -> dict:
                 cur.notes = new.notes
             if new.category != "other":
                 cur.category = new.category
+            cur.location_source = _stronger_source(
+                cur.location_source, new.location_source
+            )
             cur.for_recipe = _merge_recipes(cur.for_recipe, new.for_recipe)
             # Keep the earliest expiry so warnings fire for the oldest stock.
             cur.expires = _earliest_expiry(cur.expires, new.expires)
@@ -589,6 +643,22 @@ def _apply_set_category(
     return list(matches)
 
 
+def _teach_location(name: str, to_location: str) -> None:
+    """Remember a hand-correction so future purchases of this item file right.
+
+    Never lets a config-write failure sink the move: the row is already
+    committed and the lesson is a side effect. ``save_item_override`` writes
+    tmp+replace, so a failure leaves the previous table intact.
+    """
+    from lib import storage_locations
+
+    try:
+        storage_locations.save_item_override(name, to_location)
+    except OSError as e:
+        print(f"⚠️  Couldn't record storage override for {name}: {e}",
+              file=sys.stderr)
+
+
 def _apply_move(
     items: list[InventoryItem], matches: list[InventoryItem], to_location: str
 ) -> list[InventoryItem]:
@@ -632,6 +702,11 @@ def _apply_move(
         if id(r) not in seen:
             seen.add(id(r))
             unique.append(r)
+    # A move is the user asserting where this belongs — including the case where
+    # it was already there. Stamped here rather than in the callers so freeze
+    # (which moves to the freezer) is confirmed too, without also teaching.
+    for r in unique:
+        r.location_source = "manual"
     return unique
 
 
@@ -745,11 +820,18 @@ def bulk_apply(action: str, refs: list[dict], **params) -> dict:
         elif action == "set-category":
             updated = _apply_set_category(items, matches, category)
         elif action == "move":
+            # Captured before the move: a colliding row is dropped from `items`,
+            # so reading names off the result would miss the merged-away source.
+            moved_names = [m.name for m in matches]
             updated = _apply_move(items, matches, to_location)
         elif action == "freeze":
             updated = _apply_freeze(items, matches)
 
         write_inventory(items)
+
+        if action == "move":
+            for moved_name in moved_names:
+                _teach_location(moved_name, to_location)
 
     return {
         "applied": len(matches),
@@ -805,12 +887,21 @@ def move_item(
     matches = _match_by_name(items, name, location)[:1]
     if not matches:
         return None
-    # Already there: return without a write, so a no-op move doesn't churn the
-    # DB and regenerate Inventory.md / Cook Now.md for nothing.
+    # Already there. Normally a no-op, so we return without a write rather than
+    # churning the DB and regenerating two vault notes for nothing — but if the
+    # row's placement was only ever a guess, the tap is the user confirming it,
+    # which is worth the write and worth teaching.
     if matches[0].location == normalize_location(to_location):
+        if matches[0].location_source == "manual":
+            return matches[0]
+        matches[0].location_source = "manual"
+        write_inventory(items)
+        _teach_location(name, to_location)
         return matches[0]
     result = _apply_move(items, matches, to_location)
     write_inventory(items)
+    # After the write: a config failure must not precede a failed DB write.
+    _teach_location(name, to_location)
     return result[0]
 
 

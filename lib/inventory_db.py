@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS inventory (
     notes TEXT NOT NULL DEFAULT '',
     for_recipe TEXT,
     expires TEXT,
+    location_source TEXT,
     UNIQUE(name, unit, location)
 );
 CREATE TABLE IF NOT EXISTS food_cache (
@@ -116,6 +117,7 @@ _INVENTORY_COLS = (
     "name", "quantity", "unit", "category",
     "location", "purchased", "source", "notes", "for_recipe", "expires",
     "last_used", "use_count",
+    "location_source",
 )
 
 # Columns added after the original schema shipped. ``connect()`` adds any that
@@ -125,6 +127,10 @@ _MIGRATIONS = {
         ("for_recipe", "TEXT"), ("expires", "TEXT"),
         # Set when a cook uses a row it cannot safely decrement (a container).
         ("last_used", "TEXT"), ("use_count", "INTEGER NOT NULL DEFAULT 0"),
+        # Nullable on purpose: normalize_location_source reads NULL as
+        # "default", which is the fail-toward-being-asked direction. A NOT NULL
+        # here would also need a _NOT_NULL_FALLBACKS entry.
+        ("location_source", "TEXT"),
     ),
     "purchases": (("for_recipe", "TEXT"),),
     "cooks": (("make_again", "INTEGER"), ("cook_note", "TEXT")),
@@ -185,7 +191,50 @@ def _migrate(conn: sqlite3.Connection) -> None:
         for col, decl in columns:
             if col not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+    # Classify rows with no provenance yet. Triggered by the NULLs rather than by
+    # having just added the column, because those two are not atomic: ALTER TABLE
+    # commits on its own, while the backfill UPDATEs commit at the end of this
+    # function. A crash in between left the column present and every row NULL,
+    # and a creation-triggered backfill then never ran again — permanently
+    # stranding the whole table on "default", with no migration script to rerun.
+    # Probing for a NULL is self-healing, also covers two processes racing the
+    # first migration, and costs a short-circuiting LIMIT 1 against a table
+    # `connect()` already runs executescript + three PRAGMAs over.
+    if conn.execute(
+        "SELECT 1 FROM inventory WHERE location_source IS NULL LIMIT 1"
+    ).fetchone():
+        _backfill_location_source(conn)
     conn.commit()
+
+
+def _backfill_location_source(conn: sqlite3.Connection) -> None:
+    """Derive provenance for rows that predate the column.
+
+    Only touches NULLs, so it never re-derives a placement the user has since
+    confirmed by hand. Imported lazily: ``storage_locations`` imports
+    ``lib.inventory``, which would be a cycle at module scope.
+    """
+    from lib.storage_locations import place_item
+
+    rows = conn.execute(
+        "SELECT id, name, category, location FROM inventory"
+        " WHERE location_source IS NULL"
+    ).fetchall()
+    for r in rows:
+        placement = place_item(r["name"], r["category"])
+        # If the row is not where the router would put it, the router did not put
+        # it there — a person did, and that is `manual`. Stamping the router's
+        # own tier would claim a curated override chose this shelf while that
+        # override names a different one: `frozen bananas` sits in the freezer,
+        # but by_item["bananas"] says counter. Five live rows are like this.
+        stored = (r["location"] or "").lower().strip()
+        source = (placement.source
+                  if placement.location.lower().strip() == stored
+                  else "manual")
+        conn.execute(
+            "UPDATE inventory SET location_source = ? WHERE id = ?",
+            (source, r["id"]),
+        )
 
 
 def trip_exists(source_id: str) -> bool:

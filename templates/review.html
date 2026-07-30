@@ -65,6 +65,13 @@
   @keyframes moved { from { background: #4a90d955; } to { background: transparent; } }
   li.moved { animation: moved 1.4s ease-out; }
   @media (prefers-reduced-motion: reduce) { li.moved { animation: none; } }
+  .loc { white-space: nowrap; }
+  .loc[title] { border-bottom: 1px dotted currentColor; }
+  .used { white-space: nowrap; opacity: .75; }
+  .used[title] { border-bottom: 1px dotted currentColor; }
+  li.group { display: block; padding: 10px 12px 4px; font-weight: 600;
+             opacity: .7; font-size: .85em; text-transform: capitalize;
+             border-bottom: none; }
 </style>
 </head>
 <body>
@@ -74,6 +81,7 @@
   <select id="sortby" aria-label="Sort by">
     <option value="expiry">Expiry</option>
     <option value="added">Added</option>
+    <option value="location">Location</option>
   </select>
   <button id="refresh" aria-label="Refresh">↻</button>
 </header>
@@ -97,6 +105,10 @@ const EMOJI = { produce:"🥬", dairy:"🥛", meat:"🥩", seafood:"🐟", pantr
 const CATEGORIES = ["produce","dairy","meat","seafood","pantry","frozen",
   "bakery","beverages","household","other"];
 const LOCATIONS = ["fridge","freezer","pantry","counter","other"];
+// Location glyphs, deliberately disjoint from the category EMOJI map above —
+// `frozen` already owns 🧊, and a frozen item in the freezer must not render
+// the same glyph twice.
+const LOC_EMOJI = { fridge:"❄️", freezer:"🥶", pantry:"🫙", counter:"🧺", other:"📍" };
 const RANK = { expired:0, soon:1, ok:2 };
 const list = document.getElementById('list');
 const empty = document.getElementById('empty');
@@ -126,6 +138,8 @@ function selectedEntries(){
 function rankOf(it){
   const r = RANK[it.expiry_status]; return r === undefined ? 3 : r;
 }
+const LOC_ORDER = {};
+LOCATIONS.forEach((l, i) => { LOC_ORDER[l] = i; });
 const SORTS = {
   expiry(a, b){
     const dr = rankOf(a) - rankOf(b); if (dr) return dr;
@@ -142,6 +156,17 @@ const SORTS = {
     if (ax !== bx) return ax > bx ? -1 : 1;
     return (a.name||"").localeCompare(b.name||"");
   },
+  location(a, b){
+    // Vocab order, so the blocks always appear fridge → freezer → pantry →
+    // counter → other rather than alphabetically or by whatever arrived first.
+    const dl = (LOC_ORDER[a.location] ?? 99) - (LOC_ORDER[b.location] ?? 99);
+    if (dl) return dl;
+    // Unsure first: the point of this order is to open each block on the rows
+    // that actually want a decision.
+    const du = (isUnsure(a) ? 0 : 1) - (isUnsure(b) ? 0 : 1);
+    if (du) return du;
+    return SORTS.expiry(a, b);
+  },
 };
 let sortMode = "expiry";
 try { sortMode = localStorage.getItem('reviewSort') || "expiry"; } catch(e){}
@@ -149,17 +174,72 @@ if (!SORTS[sortMode]) sortMode = "expiry";
 function sortItems(items){
   return items.slice().sort(SORTS[sortMode]);
 }
+function groupHeader(loc, sorted){
+  const li = document.createElement('li');
+  li.className = 'group';
+  const inBlock = sorted.filter(i => i.location === loc);
+  const unsure = inBlock.filter(isUnsure).length;
+  li.textContent = `${LOC_EMOJI[loc] || "📍"} ${loc} — ${inBlock.length}`
+    + (unsure ? ` · ${unsure} unsure` : "");
+  return li;
+}
+function placeRows(sorted){
+  // The single placement path, shared by load() and resort(), so headers can
+  // never drift out of sync with the rows they label. Headers are rebuilt from
+  // scratch each time: a move changes a row's block, and its counts too.
+  for (const h of [...list.querySelectorAll('li.group')]) h.remove();
+  let current = null;
+  for (const it of sorted){
+    if (sortMode === "location" && it.location !== current){
+      current = it.location;
+      list.appendChild(groupHeader(current, sorted));
+    }
+    const entry = rows.get(keyOf(it));
+    if (entry) list.appendChild(entry.li);
+  }
+}
 function badge(it){
   if (it.expiry_status === "expired") return ` <span class="badge-expired">🔴 expired</span>`;
   if (it.expiry_status === "soon") return ` <span class="badge-soon">🟡 soon</span>`;
   return "";
+}
+function isUnsure(it){
+  // A missing source reads as unsure: fail toward being asked, never toward
+  // posing as confirmed.
+  return (it.location_source || "default") === "default";
+}
+function locationLabel(it){
+  const loc = it.location || "other";
+  const unsure = isUnsure(it);
+  const hint = unsure
+    ? ' title="Nothing matched — this location is a guess"' : '';
+  return `<span class="loc"${hint}>${LOC_EMOJI[loc] || "📍"} ${loc}`
+       + `${unsure ? "?" : ""}</span>`;
+}
+function usedLabel(it){
+  // consume-on-cook stamps a row it used but could not safely decrement (a
+  // package). Surfacing it is what makes "marked cooked" visible at all for the
+  // ~95% of rows that are containers — otherwise the write is invisible.
+  if (!it.last_used) return "";
+  const days = Math.floor((Date.now() - Date.parse(it.last_used)) / 86400000);
+  const when = !Number.isFinite(days) ? "recently"
+             : days <= 0 ? "today"
+             : days === 1 ? "yesterday"
+             : `${days}d ago`;
+  const n = it.use_count || 0;
+  // The count is a tooltip, not inline: on a shelf you want "did I use this",
+  // and the tally only matters when you're wondering why a jar is empty.
+  const tally = n > 1 ? ` title="used ${n} times"` : '';
+  return `<span class="used"${tally}>· used ${when}</span>`;
 }
 function subline(it){
   const exp = it.expires ? "exp " + it.expires : "no expiry";
   // Show the date being sorted on, otherwise the "Added" order looks arbitrary.
   const add = sortMode === "added"
     ? " · added " + (it.purchased || "unknown") : "";
-  return exp + add + badge(it);
+  const used = usedLabel(it);
+  return locationLabel(it) + " · " + exp + add
+       + (used ? " " + used : "") + badge(it);
 }
 async function load(){
   list.innerHTML = "";
@@ -169,13 +249,13 @@ async function load(){
   catch(e){ empty.hidden = false; empty.textContent = "Couldn't load inventory. Tap ↻ to retry."; return; }
   empty.hidden = items.length > 0;
   const live = new Set();
-  for (const it of sortItems(items)){
+  const sorted = sortItems(items);
+  for (const it of sorted){
     const key = keyOf(it);
     live.add(key);
-    const li = row(it, key);
-    rows.set(key, { it, li });
-    list.appendChild(li);
+    rows.set(key, { it, li: row(it, key) });
   }
+  placeRows(sorted);
   // Drop selections whose rows no longer exist.
   for (const k of [...selected]) if (!live.has(k)) selected.delete(k);
   renderBulk();
@@ -328,12 +408,12 @@ function applyUpdate(it, li, item){
   li.querySelector('.sub').innerHTML = subline(it);
 }
 function resort(){
-  // Re-place rows in expiry order after an edit moved one between groups —
-  // otherwise a row you just rescued stays pinned in the expired block and the
-  // tap reads as having done nothing. Moves the existing <li> nodes instead of
-  // re-fetching, so checkbox selection and the scroll position survive.
-  for (const it of sortItems([...rows.values()].map(e => e.it)))
-    list.appendChild(rows.get(keyOf(it)).li);
+  // Re-place rows after an edit moved one between groups — otherwise a row you
+  // just rescued stays pinned in the expired block and the tap reads as having
+  // done nothing. Moves the existing <li> nodes instead of re-fetching, so
+  // checkbox selection and the scroll position survive. Shares placeRows with
+  // load(), so group headers can't drift from the rows they label.
+  placeRows(sortItems([...rows.values()].map(e => e.it)));
 }
 function flash(li){
   // Restart the animation even if the row is still mid-flash from a prior tap.
@@ -349,9 +429,23 @@ function rowTarget(it, li){
   return {
     id: keyOf(it),
     location: it.location, category: it.category, expires: it.expires,
+    unsure: isUnsure(it),
     async run(action, params, errLabel){
-      applyUpdate(it, li, await post(SINGLE[action],
-        { name: it.name, location: it.location, ...params }, li, errLabel));
+      const item = await post(SINGLE[action],
+        { name: it.name, location: it.location, ...params }, li, errLabel);
+      if (!item) return;
+      if (action === 'move' || action === 'freeze'){
+        // Location is part of the row key, so the row's identity just changed —
+        // and in Location order so did its block. Patching in place would leave
+        // the rows Map under the stale pre-move key, which is the bug the bulk
+        // path already sidesteps by reloading. Take the same path, then flash
+        // the row where it landed.
+        await load();
+        const entry = rows.get(keyOf(item));
+        if (entry) flash(entry.li);
+        return;
+      }
+      applyUpdate(it, li, item);
     }
   };
 }
@@ -361,6 +455,9 @@ function bulkTarget(){
   return {
     id: '__bulk__',
     location: null, category: null, expires: null,
+    // A heterogeneous selection has no single provenance, and `location: null`
+    // already means no chip is treated as current, so every one is offered.
+    unsure: false,
     async run(action, params, errLabel){ await runBulk(action, params, errLabel); }
   };
 }
@@ -406,9 +503,17 @@ function openMenu(target, anchor){
   ml.textContent = 'Move to'; menu.appendChild(ml);
   const mc = document.createElement('div'); mc.className = 'chips';
   for (const loc of LOCATIONS){
-    if (loc === target.location) continue;
+    const isCurrent = loc === target.location;
+    // The row's own location is normally skipped — moving somewhere it already
+    // is would be a no-op. An *unsure* row is the exception: it needs a way to
+    // say "this shelf is right". Without it the guess marker can never be
+    // cleared on a correctly-placed row, and the only escape is moving away and
+    // back, which teaches a wrong override on the first tap. Confirming posts
+    // the same move, which stamps the row manual and teaches the right shelf.
+    if (isCurrent && !target.unsure) continue;
     const b = document.createElement('button');
-    b.textContent = loc;
+    b.textContent = isCurrent ? `✓ ${loc}` : loc;
+    if (isCurrent) b.title = "Confirm this is where it belongs";
     b.onclick = async () => {
       const t = menuTarget; closeMenu();
       await t.run('move', { to_location: loc }, "move");

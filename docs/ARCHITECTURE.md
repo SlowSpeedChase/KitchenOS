@@ -140,6 +140,23 @@ Items enter inventory via five paths, condensed from `CLAUDE.md`'s
 5. **Markdown paste** — a pasted markdown table is preview-then-committed via
    `lib/receipt_paster.py` / `POST /api/inventory/paste`.
 
+**All five route through one placement router.**
+`lib/storage_locations.place_item(name, category)` returns a `Placement` of
+`(location, source)` — the location *and* which tier decided it: a hand-curated
+`by_item` override, a `by_category` rule, or nothing (`default`).
+`resolve_location()` is a thin wrapper for the callers that only want the
+location. The tier is stored per row as `inventory.location_source`, so a
+machine guess stays distinguishable from a placement the user confirmed; both
+`/review` and the generated `Inventory.md` mark a `default` row as unsure. A
+hand-correction (`move_item`, or a bulk move) stamps the row `manual` *and*
+teaches `config/storage_locations.json`, so the same wrong guess stops
+recurring — freezing deliberately teaches nothing, since it rescues one item
+rather than declaring where that food lives. The table's path honours
+`KITCHENOS_STORAGE_TABLE`, which is how the out-of-process e2e server avoids
+writing the real config. Longest matching `by_item` key wins, because teaching
+grows that table and a first-match would let a taught `milk` capture
+`milk chocolate chips`.
+
 **Design principle — additive, not another chore.** Inventory must never
 become something the user has to maintain:
 - **Auto-add, auto-age-out.** Items enter automatically from receipts;

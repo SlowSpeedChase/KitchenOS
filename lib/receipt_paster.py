@@ -13,13 +13,14 @@ aliases (Qty/Quantity, Loc/Location, Expiry/Expires, …).
 from __future__ import annotations
 
 from lib.inventory import (
+    UNSURE_MARKER,
     InventoryItem,
     _parse_quantity,
     normalize_category,
     normalize_location,
 )
 from lib.expiry import compute_expires
-from lib.storage_locations import resolve_location
+from lib.storage_locations import place_item
 
 # Header label -> canonical field name.
 _COLUMN_ALIASES = {
@@ -82,11 +83,22 @@ def parse_inventory_table(markdown: str) -> dict:
             continue  # blank/spacer row
 
         category = normalize_category(row.get("category"))
-        location = (
-            normalize_location(row["location"])
-            if row.get("location")
-            else resolve_location(name, category)
-        )
+        # `Inventory.md` renders an unresolved location as "pantry?", and people
+        # paste that view back. Without stripping the marker, normalize_location
+        # rejects "pantry?" and files the row under `other` — the wrong shelf —
+        # while the non-empty cell also records it as a confirmed choice. So:
+        # keep the shelf, drop the confidence.
+        raw_location = (row.get("location") or "").strip()
+        marked = raw_location.endswith(UNSURE_MARKER)
+        raw_location = raw_location.rstrip(UNSURE_MARKER).strip()
+        if not raw_location:
+            placement = place_item(name, category)
+            location, location_source = placement.location, placement.source
+        elif marked:
+            location, location_source = normalize_location(raw_location), "default"
+        else:
+            # An explicit, unmarked location is the caller's stated choice.
+            location, location_source = normalize_location(raw_location), "manual"
         purchased = (row.get("purchased") or "").strip() or None
         expires = (row.get("expires") or "").strip() or compute_expires(purchased, name, category)
 
@@ -97,6 +109,7 @@ def parse_inventory_table(markdown: str) -> dict:
                 unit=(row.get("unit") or "ct").strip() or "ct",
                 category=category,
                 location=location,
+                location_source=location_source,
                 purchased=purchased,
                 source="claude",
                 notes=(row.get("notes") or "").strip(),

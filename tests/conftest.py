@@ -38,3 +38,34 @@ def _isolate_db(request, monkeypatch, tmp_path):
     if "tmp_db" in request.fixturenames:
         return
     monkeypatch.setenv("KITCHENOS_DB", str(tmp_path / "autouse_kitchenos.db"))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_storage_table(monkeypatch, tmp_path):
+    """Never let a test write the real config/storage_locations.json.
+
+    Since a move teaches the table, *any* test that moves, freezes or bulk-moves
+    a row now writes an override — and `save_table` rewrites the whole file with
+    sorted keys. Without this, the ordinary move tests rewrote the developer's
+    real config: they flipped `bread` from counter to pantry, injected their
+    fixture item names, and reordered `by_category`, which then broke
+    `test_category_fallback` on the next run.
+
+    The real table is *copied* rather than replaced with empty tiers, because
+    some tests legitimately depend on its contents. Reads see the real data;
+    writes land on the copy. Tests wanting a known table monkeypatch TABLE_PATH
+    themselves — their patch is applied after this one and wins.
+
+    Sets the env var rather than patching the attribute, because
+    `table_path()` checks the env var *first*: patching only the attribute would
+    leave a stray KITCHENOS_STORAGE_TABLE in the environment silently overriding
+    this fixture. Using the same knob also means any subprocess a future test
+    spawns inherits the isolation, not just in-process code.
+    """
+    from lib import storage_locations
+
+    real = storage_locations.TABLE_PATH
+    copy = tmp_path / "storage_locations.json"
+    if real.exists():
+        copy.write_bytes(real.read_bytes())
+    monkeypatch.setenv("KITCHENOS_STORAGE_TABLE", str(copy))
