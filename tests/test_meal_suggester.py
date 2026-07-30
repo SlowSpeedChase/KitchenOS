@@ -456,6 +456,7 @@ class TestProfileInjection:
         rendered = SUGGEST_PROMPT.format(
             profile="## Their food system\nLowering LDL.\n",
             planned_meals="- Mon dinner: Chili",
+            macro_block="",
             candidates="- Tacos",
             day="Tuesday", meal="dinner")
         assert "Lowering LDL" in rendered
@@ -473,3 +474,321 @@ class TestProfileInjection:
         monkeypatch.setattr(profile_mod, "load_profile",
                             lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
         assert meal_suggester._profile_block() == ""
+
+
+class TestMacroRanking:
+    """Macro-aware ranking in rank_candidates (Stage 1)."""
+
+    def _cand(self, name, items, *, cal=None, protein=0, carbs=0, fat=0,
+              coverage=None, servings=None):
+        return {
+            "name": name,
+            "ingredient_items": items,
+            "nutrition_calories": cal,
+            "nutrition_protein": protein,
+            "nutrition_carbs": carbs,
+            "nutrition_fat": fat,
+            "nutrition_coverage": coverage,
+            "servings": servings,
+        }
+
+    def test_macro_fit_prefers_gap_filler(self):
+        """With a protein gap, the high-protein eligible recipe wins even when a
+        rival has higher ingredient overlap."""
+        candidates = [
+            # higher overlap with the plan, but low protein
+            self._cand("Overlap Salad", ["chicken", "rice"],
+                       cal=300, protein=8, coverage=0.95, servings=2),
+            # lower overlap, but closes the protein gap
+            self._cand("Protein Bowl", ["beef", "quinoa"],
+                       cal=650, protein=48, coverage=0.95, servings=3),
+        ]
+        planned_items = {"chicken", "rice"}
+        ranked = rank_candidates(
+            candidates, planned_items, set(),
+            macro_gap={"protein": 50, "calories": 700},
+        )
+        assert ranked[0]["name"] == "Protein Bowl"
+        assert ranked[0]["macro_fit"] > ranked[1]["macro_fit"]
+        assert ranked[0]["nutrition"]["protein"] == 48
+
+    def test_ineligible_recipe_scores_zero_but_stays(self):
+        """Low coverage / missing servings → macro_fit 0, nutrition_unknown, still present."""
+        candidates = [
+            self._cand("Low Coverage", ["beef"],
+                       cal=600, protein=45, coverage=0.4, servings=3),
+            self._cand("No Servings", ["pork"],
+                       cal=600, protein=45, coverage=0.95, servings=None),
+        ]
+        ranked = rank_candidates(
+            candidates, set(), set(),
+            macro_gap={"protein": 50, "calories": 700},
+        )
+        names = {r["name"] for r in ranked}
+        assert names == {"Low Coverage", "No Servings"}
+        for r in ranked:
+            assert r["macro_fit"] == 0.0
+            assert r["nutrition_unknown"] is True
+
+    def test_degradation_identity_no_gap(self):
+        """macro_gap=None ranks identically to the pre-macro (waste, overlap) order,
+        even with nutrition present on the candidates."""
+        candidates = [
+            self._cand("A", ["salmon", "lemon"], cal=700, protein=50, coverage=0.95, servings=2),
+            self._cand("B", ["chicken", "rice", "soy sauce"], cal=200, protein=5, coverage=0.95, servings=2),
+            self._cand("C", ["chicken", "yogurt"], cal=200, protein=5, coverage=0.95, servings=2),
+        ]
+        planned_items = {"chicken", "yogurt", "rice"}
+        ranked = rank_candidates(candidates, planned_items, set(), macro_gap=None)
+        # Pure overlap order: C (1.0) > B (0.67) > A (0.0)
+        assert [r["name"] for r in ranked] == ["C", "B", "A"]
+        assert all(r["macro_fit"] == 0.0 for r in ranked)
+
+    def test_waste_still_wins_over_macro_fit(self):
+        """A waste-using recipe outranks a better macro fit — never waste food."""
+        from lib.recipe_matcher import _content_tokens
+
+        candidates = [
+            self._cand("Great Macros", ["beef", "quinoa"],
+                       cal=650, protein=48, coverage=0.95, servings=3),
+            self._cand("Uses Spinach", ["spinach", "eggs"],
+                       cal=200, protein=12, coverage=0.95, servings=2),
+        ]
+        at_risk = [("spinach", _content_tokens("spinach"))]
+        ranked = rank_candidates(
+            candidates, set(), set(),
+            at_risk=at_risk, macro_gap={"protein": 50, "calories": 700},
+        )
+        assert ranked[0]["name"] == "Uses Spinach"
+        assert ranked[0]["waste_uses"] == ["spinach"]
+
+
+class TestMacroTier:
+    """The macro tier in suggest_meal (Stage 2)."""
+
+    def _make_recipes_dir(self, tmpdir, recipes):
+        """Write recipe files carrying nutrition frontmatter.
+
+        recipes: {name: {"items": [...], "cal", "protein", "coverage", "servings"}}
+        """
+        recipes_dir = Path(tmpdir)
+        for name, spec in recipes.items():
+            rows = "".join(f"| 1 | whole | {item} |\n" for item in spec["items"])
+            fm = (
+                f'---\ntitle: "{name}"\ncuisine: "test"\nprotein: "test"\n'
+                f'nutrition_calories: {spec["cal"]}\n'
+                f'nutrition_protein: {spec["protein"]}\n'
+                f'nutrition_carbs: 20\nnutrition_fat: 10\n'
+                f'nutrition_coverage: {spec["coverage"]}\n'
+                f'servings: {spec["servings"]}\n---\n\n'
+            )
+            content = (
+                fm + f"# {name}\n\n## Ingredients\n\n"
+                f"| Amount | Unit | Ingredient |\n|--------|------|------------|\n{rows}"
+            )
+            (recipes_dir / f"{name}.md").write_text(content)
+        return recipes_dir
+
+    @patch("lib.meal_suggester.anthropic_client", None)
+    def test_macro_tier_picks_protein_filler(self):
+        """With a protein gap, a high-protein eligible recipe is surfaced with a
+        macro reason, beating a higher-overlap low-protein recipe."""
+        from lib.meal_suggester import suggest_meal
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = self._make_recipes_dir(tmpdir, {
+                "Overlap Rice Bowl": {"items": ["chicken", "rice"],
+                                      "cal": 300, "protein": 6,
+                                      "coverage": 0.95, "servings": 2},
+                "Beef Protein Bowl": {"items": ["beef", "quinoa"],
+                                      "cal": 650, "protein": 48,
+                                      "coverage": 0.95, "servings": 3},
+            })
+            planned = [
+                {"day": "Tuesday", "meal": "lunch", "name": "Salad",
+                 "ingredients": ["chicken", "rice"]},
+            ]
+            result = suggest_meal(
+                recipes_dir=recipes_dir, planned_meals=planned,
+                day="Tuesday", meal="dinner", at_risk=[],
+                macro_gap={"protein": 50, "calories": 700},
+            )
+            assert result is not None
+            assert result["name"] == "Beef Protein Bowl"
+            assert "protein" in result["reason"].lower()
+            assert result["nutrition"]["protein"] == 48
+            assert result["nutrition_unknown"] is False
+
+    @patch("lib.meal_suggester.anthropic_client", None)
+    def test_no_macro_gap_uses_overlap_tier(self):
+        """macro_gap=None → the old overlap tier wins (high-overlap pick),
+        unchanged from pre-macro behaviour."""
+        from lib.meal_suggester import suggest_meal
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = self._make_recipes_dir(tmpdir, {
+                "Overlap Rice Bowl": {"items": ["chicken", "rice"],
+                                      "cal": 300, "protein": 6,
+                                      "coverage": 0.95, "servings": 2},
+                "Beef Protein Bowl": {"items": ["beef", "quinoa"],
+                                      "cal": 650, "protein": 48,
+                                      "coverage": 0.95, "servings": 3},
+            })
+            planned = [
+                {"day": "Tuesday", "meal": "lunch", "name": "Salad",
+                 "ingredients": ["chicken", "rice"]},
+            ]
+            result = suggest_meal(
+                recipes_dir=recipes_dir, planned_meals=planned,
+                day="Tuesday", meal="dinner", at_risk=[], macro_gap=None,
+            )
+            assert result is not None
+            assert result["name"] == "Overlap Rice Bowl"  # 1.0 overlap wins
+
+    @patch("lib.meal_suggester.anthropic_client", None)
+    def test_ineligible_top_does_not_trigger_macro_tier(self):
+        """A high-protein but low-coverage recipe must not be surfaced by the
+        macro tier (nutrition_unknown guard)."""
+        from lib.meal_suggester import suggest_meal
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = self._make_recipes_dir(tmpdir, {
+                "Untrusted Protein": {"items": ["beef", "quinoa"],
+                                      "cal": 650, "protein": 48,
+                                      "coverage": 0.3, "servings": 3},
+                "Overlap Rice Bowl": {"items": ["chicken", "rice"],
+                                      "cal": 300, "protein": 6,
+                                      "coverage": 0.95, "servings": 2},
+            })
+            planned = [
+                {"day": "Tuesday", "meal": "lunch", "name": "Salad",
+                 "ingredients": ["chicken", "rice"]},
+            ]
+            result = suggest_meal(
+                recipes_dir=recipes_dir, planned_meals=planned,
+                day="Tuesday", meal="dinner", at_risk=[],
+                macro_gap={"protein": 50, "calories": 700},
+            )
+            # Falls through to the overlap tier, not the untrusted protein bomb.
+            assert result["name"] == "Overlap Rice Bowl"
+
+
+class TestDayMacroGap:
+    """day_macro_gap() — summing the planned day against targets (Stage 3)."""
+
+    def _make_recipes_dir(self, tmpdir, recipes):
+        recipes_dir = Path(tmpdir)
+        for name, spec in recipes.items():
+            content = (
+                f'---\ntitle: "{name}"\n'
+                f'nutrition_calories: {spec["cal"]}\n'
+                f'nutrition_protein: {spec["protein"]}\n'
+                f'nutrition_carbs: {spec.get("carbs", 0)}\n'
+                f'nutrition_fat: {spec.get("fat", 0)}\n'
+                f'nutrition_coverage: 0.95\nservings: 2\n---\n\n# {name}\n'
+            )
+            (recipes_dir / f"{name}.md").write_text(content)
+        return recipes_dir
+
+    def test_none_targets_returns_none(self):
+        from lib.meal_suggester import day_macro_gap
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = self._make_recipes_dir(tmpdir, {})
+            assert day_macro_gap([], "Monday", None, recipes_dir) is None
+
+    def test_sums_only_target_day_and_clamps(self):
+        from lib.meal_suggester import day_macro_gap
+        from lib.nutrition import NutritionData
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = self._make_recipes_dir(tmpdir, {
+                "Mon Meal": {"cal": 500, "protein": 40},
+                "Tue Meal": {"cal": 900, "protein": 70},
+            })
+            planned = [
+                {"day": "Monday", "name": "Mon Meal", "servings": 1},
+                {"day": "Tuesday", "name": "Tue Meal", "servings": 1},
+            ]
+            targets = NutritionData(calories=2000, protein=150, carbs=200, fat=65)
+            gap = day_macro_gap(planned, "Monday", targets, recipes_dir)
+            assert gap["current"]["protein"] == 40      # only Monday counted
+            assert gap["remaining"]["protein"] == 110    # 150 - 40
+            assert gap["remaining"]["calories"] == 1500  # 2000 - 500
+            assert gap["target"]["protein"] == 150
+
+    def test_servings_multiplier_scales_current(self):
+        from lib.meal_suggester import day_macro_gap
+        from lib.nutrition import NutritionData
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = self._make_recipes_dir(tmpdir, {
+                "Big Batch": {"cal": 400, "protein": 30},
+            })
+            planned = [{"day": "Monday", "name": "Big Batch", "servings": 2}]
+            targets = NutritionData(calories=2000, protein=150, carbs=200, fat=65)
+            gap = day_macro_gap(planned, "Monday", targets, recipes_dir)
+            assert gap["current"]["protein"] == 60   # 30 * 2
+            assert gap["remaining"]["protein"] == 90  # 150 - 60
+
+    def test_overshoot_clamps_to_zero(self):
+        from lib.meal_suggester import day_macro_gap
+        from lib.nutrition import NutritionData
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = self._make_recipes_dir(tmpdir, {
+                "Huge": {"cal": 3000, "protein": 200},
+            })
+            planned = [{"day": "Monday", "name": "Huge", "servings": 1}]
+            targets = NutritionData(calories=2000, protein=150, carbs=200, fat=65)
+            gap = day_macro_gap(planned, "Monday", targets, recipes_dir)
+            assert gap["remaining"]["protein"] == 0
+            assert gap["remaining"]["calories"] == 0
+
+
+class TestClaudeMacroPrompt:
+    """Stage 4: the low-overlap Claude tier reasons about macros."""
+
+    def test_macro_block_present_when_gap(self):
+        from lib.meal_suggester import _macro_block
+        block = _macro_block({"protein": 40, "calories": 500})
+        assert "40 g" in block and "500 kcal" in block
+        assert "protein first" in block
+
+    def test_macro_block_empty_without_gap(self):
+        from lib.meal_suggester import _macro_block
+        assert _macro_block(None) == ""
+        assert _macro_block({"protein": 0, "calories": 0}) == ""
+
+    def test_candidate_line_includes_macros_when_known(self):
+        from lib.meal_suggester import _candidate_line
+        line = _candidate_line({
+            "name": "X", "score": 0.5, "shared_ingredients": ["a"],
+            "nutrition": {"protein": 30, "calories": 400}, "nutrition_unknown": False,
+        })
+        assert "30g protein" in line and "400 kcal" in line
+
+    def test_candidate_line_omits_macros_when_unknown(self):
+        from lib.meal_suggester import _candidate_line
+        line = _candidate_line({
+            "name": "X", "score": 0.5, "shared_ingredients": ["a"],
+            "nutrition": None, "nutrition_unknown": True,
+        })
+        assert "protein" not in line
+
+    def test_suggest_with_claude_sends_macro_gap(self):
+        from lib import meal_suggester
+        mock_client = MagicMock()
+        msg = MagicMock()
+        msg.content = [MagicMock(text='{"name":"Beef Bowl","reason":"protein","is_new_idea":false,"new_ingredients_needed":[]}')]
+        mock_client.messages.create.return_value = msg
+        with patch("lib.meal_suggester.anthropic_client", mock_client):
+            candidates = [{
+                "name": "Beef Bowl", "score": 0.2, "shared_ingredients": [],
+                "nutrition": {"protein": 48, "calories": 650}, "nutrition_unknown": False,
+            }]
+            res = meal_suggester.suggest_with_claude(
+                [{"day": "Mon", "meal": "dinner", "name": "X", "ingredients": ["a"]}],
+                candidates, "Tue", "dinner",
+                macro_gap={"protein": 50, "calories": 700},
+            )
+        assert res["name"] == "Beef Bowl"
+        sent = mock_client.messages.create.call_args.kwargs["messages"][0]["content"]
+        assert "Remaining macro gap" in sent
+        assert "48g protein" in sent

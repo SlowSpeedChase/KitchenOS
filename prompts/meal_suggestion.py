@@ -17,7 +17,7 @@ SUGGEST_PROMPT = """You are a meal planning assistant. The user is planning meal
 {profile}
 ## Already planned this week:
 {planned_meals}
-
+{macro_block}
 ## Candidate recipes (ranked by ingredient overlap with planned meals):
 {candidates}
 
@@ -25,7 +25,9 @@ Pick the best candidate for {day} {meal} considering:
 1. Can leftovers from an earlier meal be directly reused? (e.g., roast chicken → chicken soup)
 2. Which candidate adds the fewest NEW ingredients to the shopping list?
 3. Does it make sense for the position in the week? (batch cook early, use leftovers later)
-4. Does it work with their food system above, if one is given? Their health
+4. If a remaining macro gap is shown above, prefer candidates that help close it —
+   protein first — without wildly overshooting the calorie budget.
+5. Does it work with their food system above, if one is given? Their health
    goals are real constraints, not preferences to override — but do not lecture
    or moralize, and never refuse a candidate purely for being indulgent.
 

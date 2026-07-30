@@ -656,6 +656,117 @@ def recipe_detail_page(name):
     return html, 200, {'Content-Type': 'text/html'}
 
 
+@app.route('/plan-week', methods=['GET'])
+def plan_week_page():
+    """The Sunday-planning command center: one page, three steps (fill →
+    review → print). Defaults to next week; ?week= overrides.
+    """
+    from lib import plan_week, print_week
+
+    week = request.args.get('week')
+    if not week:
+        week = plan_week.default_week()
+    if not re.match(r'^\d{4}-W\d{2}$', week):
+        return error_page(f"Invalid week format: {week} (expected YYYY-WNN)"), 400
+
+    try:
+        packet = print_week.build_week_packet(
+            week, paths.vault_root(), _resolve_recipes_dir())
+        targets = packet["targets"]
+    except FileNotFoundError:
+        packet = None
+        from lib.print_week import _targets_dict
+        targets, _ = _targets_dict(paths.vault_root())
+
+    base = os.environ.get("KITCHENOS_API_BASE", "").rstrip("/")
+    body = plan_week.render_plan_center_html(
+        week, packet, targets, base,
+        plan_week.shift_week(week, -1), plan_week.shift_week(week, 1))
+    html = _serve_page_with_claude_bar('plan_week.html', [('<!--CENTER-->', body)])
+    return html, 200, {'Content-Type': 'text/html'}
+
+
+@app.route('/print/week', methods=['GET'])
+def print_week_page():
+    """Printable one-page 'week packet': plan grid + macros vs targets +
+    shopping list + do-ahead prep. Defaults to the current ISO week; ?week=
+    overrides, ?tasks=1 regenerates prep (an LLM call) instead of read-only cache.
+    """
+    from lib import print_week
+
+    week = request.args.get('week')
+    if not week:
+        iso = date.today().isocalendar()
+        week = f"{iso[0]}-W{iso[1]:02d}"
+    if not re.match(r'^\d{4}-W\d{2}$', week):
+        return error_page(f"Invalid week format: {week} (expected YYYY-WNN)"), 400
+
+    include_tasks = request.args.get('tasks') in ('1', 'true', 'yes')
+    try:
+        packet = print_week.build_week_packet(
+            week, paths.vault_root(), _resolve_recipes_dir(),
+            include_tasks=include_tasks)
+    except FileNotFoundError:
+        return error_page(f"No meal plan for {week} yet — plan a week first."), 404
+
+    base = os.environ.get("KITCHENOS_API_BASE", "").rstrip("/")
+    body = print_week.render_packet_html(packet, base_url=base)
+    html = _serve_page_with_claude_bar('print_week.html', [('<!--PACKET-->', body)])
+    return html, 200, {'Content-Type': 'text/html'}
+
+
+@app.route('/recipe-card/<name>', methods=['GET'])
+def recipe_card_page(name):
+    """Serve a printable 'grid' (Cooking-for-Engineers matrix) recipe card.
+
+    The step grouping is AI-inferred (cached in a <recipe>.grid.json sidecar);
+    ?force=1 recomputes it. The recipe's own extracted steps are never altered.
+    """
+    from html import escape as _escape
+    from lib import recipe_grid, serving_ledger
+    from lib.recipe_parser import parse_recipe_file, parse_recipe_body
+
+    recipes_dir = _resolve_recipes_dir()
+    filepath = (recipes_dir / f"{name}.md").resolve()
+    if not filepath.is_relative_to(recipes_dir.resolve()) or not filepath.exists():
+        return error_page(f"Recipe not found: {name}"), 404
+
+    force = request.args.get('force') in ('1', 'true', 'yes')
+    parsed = parse_recipe_file(filepath.read_text(encoding="utf-8"))
+    fm = parsed["frontmatter"]
+    ingredients = parse_recipe_body(parsed["body"]).get("ingredients", [])
+
+    spec = recipe_grid.build_grid(name, recipes_dir, force=force)
+    grid_html = recipe_grid.render_grid_html(spec, ingredients)
+
+    title = _escape(str(fm.get("title") or name))
+    meta_parts = []
+    servings = fm.get("servings")
+    if servings:
+        meta_parts.append(f"Serves <strong>{_escape(str(servings))}</strong>")
+    macros = serving_ledger.recipe_macros(name, recipes_dir)
+    if macros:
+        meta_parts.append(
+            f"<strong>{macros['protein']} g</strong> protein · "
+            f"<strong>{macros['calories']}</strong> kcal per serving")
+    meta = " &nbsp;·&nbsp; ".join(meta_parts) or "—"
+
+    review = ""
+    if spec.get("needs_review"):
+        src = _escape(str(spec.get("source", "AI")))
+        review = ("<div class='review-note'>⚠️ The step grouping below is "
+                  f"AI-suggested ({src}) — sanity-check it against the recipe. "
+                  "Your recipe's own steps are unchanged.</div>")
+
+    html = _serve_page_with_claude_bar('recipe_card.html', [
+        ('__CARD_TITLE__', title),
+        ('__CARD_META__', meta),
+        ('__REVIEW_NOTE__', review),
+        ('<!--GRID-->', grid_html),
+    ])
+    return html, 200, {'Content-Type': 'text/html'}
+
+
 @app.route('/images/<path:filename>', methods=['GET'])
 def serve_recipe_image(filename):
     """Serve recipe images from Obsidian vault."""
@@ -1423,9 +1534,17 @@ def api_suggest_meal():
                         "meal": meal_type,
                         "name": entry.name,
                         "ingredients": ingredients,
+                        "servings": getattr(entry, "servings", 1) or 1,
                     })
 
-    from lib.meal_suggester import suggest_meal
+    from lib.meal_suggester import suggest_meal, day_macro_gap
+    from lib.macro_targets import load_macro_targets
+
+    # The target day's remaining macro gap steers the suggestion toward the
+    # user's daily protein/calorie targets. None (no My Macros.md) => the
+    # suggester falls back to its ingredient-overlap behaviour unchanged.
+    targets = load_macro_targets(paths.vault_root())
+    macro_gap = day_macro_gap(planned_meals, day, targets, OBSIDIAN_RECIPES_PATH)
 
     result = suggest_meal(
         recipes_dir=OBSIDIAN_RECIPES_PATH,
@@ -1433,12 +1552,23 @@ def api_suggest_meal():
         day=day,
         meal=meal,
         skip_index=skip_index,
+        macro_gap=(macro_gap or {}).get("remaining") if macro_gap else None,
     )
 
     if result is None:
-        return jsonify({"suggestion": None, "message": "No suggestions available"})
+        return jsonify({"suggestion": None, "message": "No suggestions available",
+                        "macro_context": macro_gap})
 
-    return jsonify({"suggestion": result})
+    # macro_context describes the day's target/current/remaining plus what this
+    # suggestion would add — additive, so pre-macro clients keep working.
+    if macro_gap and result.get("nutrition"):
+        projected = {
+            k: macro_gap["current"][k] + result["nutrition"].get(k, 0)
+            for k in ("protein", "calories", "carbs", "fat")
+        }
+        macro_gap = {**macro_gap, "projected_with_suggestion": projected}
+
+    return jsonify({"suggestion": result, "macro_context": macro_gap})
 
 
 # ----- Add to Meal Plan (recipe button) -----

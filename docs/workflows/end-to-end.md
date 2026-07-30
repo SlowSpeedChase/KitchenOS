@@ -90,12 +90,15 @@ Three ways meals land on a meal plan. Output is always `Meal Plans/<week>.md` wi
 - Creates an **empty** `Meal Plans/<week>.md` two weeks ahead so a blank slot is always waiting.
 - Template has Mon–Sun rows with Breakfast / Lunch / Snack / Dinner / Notes.
 
+### 2a′. Plan-week command center (the Sunday front door)
+- Open `/plan-week` (defaults to **next** week; `?week=` for another). One page: a glanceable per-day status (slots filled + protein vs target) and three big steps — **1** fill the week (opens the planner), **2** review nutrition, **3** print the week for the fridge. This is the single entry point for the weekly ritual, so you don't have to remember which of the five surfaces to open. Unplanned weeks show a "start here" empty state.
+
 ### 2b. Meal planner web UI (the main interface)
 - Open `http://localhost:5001/meal-planner` (or `100.103.114.106:5001` from iPad over Tailscale).
 - Layout: **left sidebar** = recipe library with search box + filter chips (cuisine, protein, dietary, seasonal); **right grid** = 7-day × 4-slot board for the selected ISO week.
 - Drag a recipe from the sidebar onto a slot → auto-saves via `PUT /api/meal-plan/<week>`.
 - Week selector buttons jump weeks; URL is `?week=2026-W18` so refreshes stick.
-- Empty slots have a **"suggest"** affordance → `POST /api/suggest-meal` ranks recipes by ingredient overlap with what's already on the plan + what's seasonal.
+- Empty slots have a **"suggest"** affordance → `POST /api/suggest-meal`. Ranking priority: use-up-expiring-food (waste) → **macro-gap fit** (when `My Macros.md` targets exist, it prefers recipes that close the day's remaining protein/calorie gap, protein first) → ingredient overlap with what's already planned. The suggested card shows the recipe's per-serving protein/calories; recipes with untrustworthy nutrition (low coverage or no `servings`) still surface but are flagged, never trusted for the macro tier.
 - Composite meals (`[[Meal: Salmon Dinner]]`) render as a single block; the parser keeps the meal name, and downstream consumers (shopping, nutrition, prep) flatten via `flatten_to_recipes()`.
 - **Servings multiplier:** type `[[Recipe Name]] x2` to scale (the `xN` lives outside the wikilink so Obsidian links still resolve).
 
@@ -156,6 +159,8 @@ Calendar reminders for prep ride along with the meal-plan calendar (Stage 5).
 ## 5. Cook — at the stove
 
 - **Calendar** — `com.kitchenos.calendar-sync` runs daily at 6:05 AM, regenerating `meal_calendar.ics` from every meal plan. Apple Calendar (or Obsidian Full Calendar plugin) subscribes to `http://localhost:5001/calendar.ics`.
+- **Print the whole week** — open `/print/week` (defaults to the current week; `?week=` for another) for a one-page fridge packet: the plan grid with each day's macros vs your targets, the consolidated shopping list, and the do-ahead prep. Recipe names link to their grid cards. Read-only (prep comes from the cached tasks sidecar; `?tasks=1` regenerates). It reads whichever week model owns the week (ledger cooks or the markdown plan), branching off the shopping-list generator's `source`.
+- **Printable grid card** — open `/recipe-card/<name>` for a one-page, print-ready "grid" view (ingredients with gram weights on the left; a staircase of merged cells on the right showing what combines with what, in order). Tap **Print** for a fridge/binder card. The step grouping is AI-inferred (cached in a `<recipe>.grid.json` sidecar; `?force=1` recomputes) and marked for review — the recipe's own steps are never changed.
 - **Re-render or re-extract** — the per-recipe buttons:
   - **Refresh template** (`/refresh`) — re-renders from existing extracted data. Use after editing the template.
   - **Reprocess** (`/reprocess`) — full re-extraction from YouTube. **Preserves the `## My Notes` section.** Use when the AI got something wrong.

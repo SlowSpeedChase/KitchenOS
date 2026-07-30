@@ -220,6 +220,27 @@ pass or after editing the profile note.
 Skips already-tagged recipes unless `--force`, so it's cheap to re-run. Each
 rewritten note gets a timestamped `.history/` backup.
 
+### Backfill missing `servings` (review aid)
+
+A recipe with no `servings` has its per-serving macros divided by 1, so the
+whole-batch numbers masquerade as one serving — and the macro-aware suggester
+and the print-week macros skip or flag it. `scripts/backfill_servings.py`
+estimates a plausible count from the whole-batch calories already in the file
+(`servings ≈ batch_kcal / anchor(dish_type)` — no vault DB / USDA / LLM needed).
+
+**It's an estimate, not a measurement** — every write is flagged
+`servings_inferred: true` + `servings_needs_review: true`, and it's dry-run by
+default.
+
+```bash
+.venv/bin/python scripts/backfill_servings.py            # preview table, writes nothing
+.venv/bin/python scripts/backfill_servings.py --apply    # write inferred servings (+ .history backup)
+.venv/bin/python backfill_nutrition.py --force           # recompute per-serving macros from the new counts
+```
+
+Then review the recipes flagged `servings_needs_review` and correct any that
+look off — the anchor is a heuristic, not the truth.
+
 ### Generate the On Track view
 
 Writes `Dashboards/On Track.md` — what you actually cooked (from the serving

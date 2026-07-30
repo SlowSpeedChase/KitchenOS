@@ -404,3 +404,171 @@ def test_review_page_has_a_sort_control(client):
     assert b'id="sortby"' in html
     assert b'value="expiry"' in html
     assert b'value="added"' in html
+
+
+# ---- Macro-aware suggest-meal (Stage 3) ----
+
+def _write_recipe(recipes_dir, name, *, cal, protein, coverage, servings, items):
+    rows = "".join(f"| 1 | whole | {it} |\n" for it in items)
+    content = (
+        f'---\ntitle: "{name}"\ncuisine: "test"\nprotein: "test"\n'
+        f'nutrition_calories: {cal}\nnutrition_protein: {protein}\n'
+        f'nutrition_carbs: 20\nnutrition_fat: 10\n'
+        f'nutrition_coverage: {coverage}\nservings: {servings}\n---\n\n'
+        f"# {name}\n\n## Ingredients\n\n"
+        f"| Amount | Unit | Ingredient |\n|--------|------|------------|\n{rows}"
+    )
+    (recipes_dir / f"{name}.md").write_text(content)
+
+
+def test_suggest_meal_includes_macro_context(client, tmp_vault, tmp_path, monkeypatch):
+    """With My Macros.md + a planned day, the response carries macro_context and
+    the suggestion carries per-serving nutrition."""
+    (tmp_vault / "My Macros.md").write_text(
+        "---\ncalories: 2300\nprotein: 190\ncarbs: 228\nfat: 70\n---\n\n# My Macros\n"
+    )
+    recipes_dir = tmp_path / "Recipes"
+    recipes_dir.mkdir()
+    _write_recipe(recipes_dir, "Small Salad", cal=200, protein=6,
+                  coverage=0.95, servings=4, items=["lettuce", "cucumber"])
+    _write_recipe(recipes_dir, "Beef Power Bowl", cal=650, protein=48,
+                  coverage=0.95, servings=3, items=["beef", "quinoa"])
+    plans_dir = tmp_path / "Meal Plans"
+    plans_dir.mkdir()
+    (plans_dir / "2026-W31.md").write_text(
+        "## Thursday (Jul 31)\n\n### lunch\n[[Small Salad]]\n\n### dinner\n\n"
+    )
+    monkeypatch.setattr("api_server.OBSIDIAN_RECIPES_PATH", recipes_dir)
+    monkeypatch.setattr("api_server.MEAL_PLANS_PATH", plans_dir)
+
+    response = client.post('/api/suggest-meal', json={
+        "week": "2026-W31", "day": "Thursday", "meal": "dinner",
+    })
+    assert response.status_code == 200
+    data = response.get_json()
+    ctx = data["macro_context"]
+    assert ctx is not None
+    assert ctx["target"]["protein"] == 190
+    assert ctx["current"]["protein"] == 6          # Small Salad, 1 serving
+    assert ctx["remaining"]["protein"] == 184
+    # A suggestion was made and it carries per-serving nutrition.
+    assert data["suggestion"] is not None
+    assert data["suggestion"]["nutrition"]["protein"] == 48
+    assert data["suggestion"]["name"] == "Beef Power Bowl"
+
+
+def test_suggest_meal_no_targets_null_macro_context(client, tmp_vault, tmp_path, monkeypatch):
+    """No My Macros.md → macro_context null; endpoint still responds 200."""
+    recipes_dir = tmp_path / "Recipes"
+    recipes_dir.mkdir()
+    plans_dir = tmp_path / "Meal Plans"
+    plans_dir.mkdir()
+    monkeypatch.setattr("api_server.OBSIDIAN_RECIPES_PATH", recipes_dir)
+    monkeypatch.setattr("api_server.MEAL_PLANS_PATH", plans_dir)
+
+    response = client.post('/api/suggest-meal', json={
+        "week": "2026-W31", "day": "Thursday", "meal": "dinner",
+    })
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["macro_context"] is None
+
+
+# ---- Grid recipe card (Phase 2a) ----
+
+def test_recipe_card_renders_grid(client, tmp_path, monkeypatch):
+    """The card page renders the recipe's grid matrix; heuristic path (no LLM)."""
+    from lib import recipe_grid
+    monkeypatch.setattr(recipe_grid, "_anthropic_client", None)
+    monkeypatch.setattr(recipe_grid, "_group_with_ollama", lambda prompt: None)
+
+    recipes_dir = tmp_path / "Recipes"
+    recipes_dir.mkdir()
+    (recipes_dir / "Brownies.md").write_text(
+        '---\ntitle: "Brownies"\nservings: 9\n'
+        'nutrition_calories: 180\nnutrition_protein: 3\n'
+        'nutrition_carbs: 24\nnutrition_fat: 9\nnutrition_coverage: 0.9\n---\n\n'
+        "# Brownies\n\n## Ingredients\n\n| Amount | Unit | Ingredient |\n"
+        "|--------|------|------------|\n| 4 | oz | butter |\n| 1 | cup | sugar |\n\n"
+        "## Instructions\n\n1. Melt butter\n2. Stir in sugar\n3. Bake\n"
+    )
+    monkeypatch.setattr("api_server.OBSIDIAN_RECIPES_PATH", recipes_dir)
+
+    response = client.get('/recipe-card/Brownies')
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Brownies" in body
+    assert "recipe-grid" in body            # the matrix table rendered
+    assert "Serves" in body and "protein" in body  # macro/servings header
+    assert "AI-suggested" in body           # honest review banner
+
+
+def test_recipe_card_missing_returns_404(client, tmp_path, monkeypatch):
+    recipes_dir = tmp_path / "Recipes"
+    recipes_dir.mkdir()
+    monkeypatch.setattr("api_server.OBSIDIAN_RECIPES_PATH", recipes_dir)
+    response = client.get('/recipe-card/DoesNotExist')
+    assert response.status_code == 404
+
+
+# ---- Print my week (Phase 2b) ----
+
+def test_print_week_page_renders(client, tmp_vault):
+    """GET /print/week renders the packet: grid + shopping + prep, for a week."""
+    (tmp_vault / "My Macros.md").write_text(
+        "---\ncalories: 2300\nprotein: 190\ncarbs: 228\nfat: 70\n---\n\n# My Macros\n")
+    recipes = tmp_vault / "Recipes"; recipes.mkdir(parents=True, exist_ok=True)
+    (recipes / "Beef Bowl.md").write_text(
+        '---\ntitle: "Beef Bowl"\nnutrition_calories: 650\nnutrition_protein: 48\n'
+        'nutrition_carbs: 30\nnutrition_fat: 12\nnutrition_coverage: 0.95\nservings: 2\n---\n# Beef Bowl\n')
+    plans = tmp_vault / "Meal Plans"; plans.mkdir(parents=True, exist_ok=True)
+    (plans / "2026-W31.md").write_text("## Monday (Jul 27)\n\n### dinner\n[[Beef Bowl]]\n\n")
+
+    response = client.get('/print/week?week=2026-W31')
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "week-grid" in body
+    assert "Shopping list" in body and "Get ahead" in body
+    assert "Print this week" in body  # the on-screen print button
+
+
+def test_print_week_invalid_week_400(client):
+    response = client.get('/print/week?week=nope')
+    assert response.status_code == 400
+
+
+def test_print_week_missing_plan_404(client, tmp_vault):
+    (tmp_vault / "Recipes").mkdir(parents=True, exist_ok=True)
+    response = client.get('/print/week?week=2099-W01')
+    assert response.status_code == 404
+
+
+# ---- Plan-week command center (Sunday shortcut) ----
+
+def test_plan_week_page_planned(client, tmp_vault):
+    (tmp_vault / "My Macros.md").write_text(
+        "---\ncalories: 2300\nprotein: 190\ncarbs: 228\nfat: 70\n---\n# My Macros\n")
+    recipes = tmp_vault / "Recipes"; recipes.mkdir(parents=True, exist_ok=True)
+    (recipes / "Beef Bowl.md").write_text(
+        '---\ntitle: "Beef Bowl"\nnutrition_calories: 650\nnutrition_protein: 48\n'
+        'nutrition_carbs: 30\nnutrition_fat: 12\nnutrition_coverage: 0.95\nservings: 2\n---\n# Beef Bowl\n')
+    plans = tmp_vault / "Meal Plans"; plans.mkdir(parents=True, exist_ok=True)
+    (plans / "2026-W31.md").write_text("## Monday (Jul 27)\n\n### dinner\n[[Beef Bowl]]\n\n")
+
+    response = client.get('/plan-week?week=2026-W31')
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Plan your week" in body
+    assert "/meal-planner?week=2026-W31" in body
+    assert "/print/week?week=2026-W31" in body
+
+
+def test_plan_week_unplanned_is_empty_state_not_404(client, tmp_vault):
+    (tmp_vault / "Recipes").mkdir(parents=True, exist_ok=True)
+    response = client.get('/plan-week?week=2099-W05')
+    assert response.status_code == 200  # empty state, not an error
+    assert "Plan your week" in response.get_data(as_text=True)
+
+
+def test_plan_week_invalid_week_400(client):
+    assert client.get('/plan-week?week=bogus').status_code == 400
