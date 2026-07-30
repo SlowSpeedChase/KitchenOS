@@ -1,4 +1,5 @@
 """Tests for recipe template"""
+import pytest
 from templates.recipe_template import (
     format_recipe_markdown,
     generate_tools_callout,
@@ -64,6 +65,9 @@ class TestNutritionSection:
             "nutrition_protein": 25,
             "nutrition_carbs": 45,       # was "carbs"
             "nutrition_fat": 18,         # was "fat"
+            # Load-bearing: the heading follows this. Without it the macros are
+            # whole-batch totals (the engine divided by 1) and the section says so.
+            "servings": 4,
             "serving_size": "1 cup",
             "nutrition_source": "nutritionix",
         }
@@ -77,6 +81,28 @@ class TestNutritionSection:
         assert "| 18g" in result
         assert "*Serving size: 1 cup" in result
         assert "Nutritionix" in result
+
+    @pytest.mark.parametrize("servings", [None, "null", "none", "", 0, "__absent__"])
+    def test_no_servings_is_labelled_whole_recipe(self, servings):
+        """Without a servings count the engine divided by 1, so these are totals.
+
+        Printing "(per serving)" over them isn't vague, it's false — it read a
+        1,339-calorie tray of yogurt pops as one serving.
+        """
+        recipe_data = {
+            "nutrition_calories": 1339,
+            "nutrition_protein": 19,
+            "nutrition_carbs": 207,
+            "nutrition_fat": 52,
+            "nutrition_source": "fdc",
+        }
+        if servings != "__absent__":
+            recipe_data["servings"] = servings
+        result = generate_nutrition_section(recipe_data)
+
+        assert "## Nutrition (whole recipe)" in result
+        assert "(per serving)" not in result
+        assert "no servings count" in result
 
     def test_generate_nutrition_section_without_data(self):
         """Nutrition section should return empty string when no calories"""

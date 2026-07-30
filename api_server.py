@@ -2842,6 +2842,59 @@ def _recompute_and_write(recipe_name: str):
     return result, None
 
 
+@app.route('/api/recipes/<name>/servings', methods=['POST'])
+@require_token
+def api_set_servings(name):
+    """Set a recipe's servings count and recompute its nutrition per serving.
+
+    This is the fix for the worst ambiguity on a recipe page. The engine derives
+    per-serving macros as ``total / servings``; when ``servings`` is missing it
+    falls back to 1 and publishes the **whole-batch** total, which the page then
+    displays under the same heading as every genuinely per-serving recipe. A
+    tray of yogurt pops reads as a 1,339-calorie serving.
+
+    A count typed by a human is a measurement, not an inference, so any
+    ``servings_inferred`` / ``servings_needs_review`` flag left by
+    ``scripts/backfill_servings.py`` is cleared — the same rule that script uses
+    for a yield the recipe states outright.
+    """
+    from lib import frontmatter
+
+    data = request.get_json(force=True, silent=True) or {}
+    raw = data.get("servings")
+    try:
+        servings = int(raw)
+    except (TypeError, ValueError):
+        return jsonify({"error": "'servings' must be a whole number"}), 400
+    if servings < 1 or servings > 200:
+        return jsonify({"error": "'servings' must be between 1 and 200"}), 400
+
+    recipes_dir = paths.recipes_dir()
+    filepath = (recipes_dir / f"{name}.md").resolve()
+    if not filepath.is_relative_to(recipes_dir.resolve()) or not filepath.exists():
+        return jsonify({"error": f"Recipe not found: {name}"}), 404
+
+    create_backup(filepath)
+    content = filepath.read_text(encoding="utf-8")
+    new = frontmatter.apply(
+        content, {"servings": servings},
+        ("servings", "servings_inferred", "servings_needs_review"),
+        ("servings_inferred", "servings_needs_review"),
+    )
+    if new is None:
+        return jsonify({"error": "Could not update the recipe's frontmatter"}), 500
+    filepath.write_text(new, encoding="utf-8")
+
+    # Stored macros were computed against the old servings count, so they are
+    # wrong the instant this changes. Recompute rather than leave the page
+    # showing batch totals under a now-correct "per serving" label.
+    result, error = _recompute_and_write(name)
+    if result is None:
+        return jsonify({"servings": servings, "nutrition": None,
+                        "warning": error or "nutrition could not be recomputed"})
+    return jsonify({"servings": servings, **_result_summary(result)})
+
+
 @app.route('/api/nutrition-review/resolve', methods=['POST'])
 @require_token
 def api_nutrition_review_resolve():

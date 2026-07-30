@@ -145,6 +145,26 @@
             color: var(--text-muted);
         }
 
+        /* Which of the two things the macros are. Never let this be implicit —
+           whole-batch numbers under a per-serving heading is the bug this fixes. */
+        .basis { font-size: 0.8rem; font-weight: 500; color: #666; }
+        .basis-warn { color: #b7791f; }
+        .warn-line { font-size: 0.85rem; color: #b7791f; margin: 0 0 .5rem; }
+        .servings-form {
+            display: flex; flex-wrap: wrap; align-items: center; gap: .5rem;
+            margin-bottom: .75rem; font-size: 0.9rem;
+        }
+        .servings-form input {
+            /* 16px keeps iOS Safari from zooming the page on focus. */
+            font-size: 16px; padding: .5rem; width: 5.5rem;
+            border: 1px solid #ccc; border-radius: 8px;
+        }
+        .servings-form button {
+            font: inherit; font-weight: 600; min-height: 44px; padding: 0 1rem;
+            border: none; border-radius: 8px; background: #0071e3; color: #fff;
+        }
+        .servings-form button[disabled] { opacity: .55; }
+        .servings-form .bad { color: #c0392b; }
         .badge {
             display: inline-block;
             padding: 1px 8px;
@@ -221,7 +241,21 @@
         </div>
 
         <div class="card" id="nutrition-card" style="display:none">
-            <h2>Nutrition <span id="coverage-badge"></span></h2>
+            <h2>Nutrition <span id="serving-basis"></span> <span id="coverage-badge"></span></h2>
+            <!-- Without a servings count the engine divides the batch by 1, so
+                 these are whole-recipe totals wearing a per-serving label. Say so,
+                 and offer the one input that fixes it. -->
+            <div id="whole-batch-note" style="display:none">
+                <p class="warn-line">These are totals for the <strong>whole recipe</strong> — this
+                   recipe has no servings count, so they can't be divided yet.</p>
+                <form id="servings-form" class="servings-form">
+                    <label for="servings-input">How many servings does it make?</label>
+                    <input type="number" id="servings-input" min="1" max="200" step="1"
+                           inputmode="numeric" placeholder="e.g. 6">
+                    <button type="submit" id="servings-save">Save</button>
+                    <span id="servings-msg"></span>
+                </form>
+            </div>
             <table>
                 <thead>
                     <tr><th>Calories</th><th>Protein</th><th>Carbs</th><th>Fat</th></tr>
@@ -321,6 +355,18 @@
                 return;
             }
             card.style.display = '';
+
+            // The single most important thing on this card: which of the two
+            // things the numbers are. `servings` missing means the engine
+            // divided by 1, so what's shown is the whole batch.
+            const servings = parseFloat(recipeData.servings);
+            const known = Number.isFinite(servings) && servings >= 1;
+            document.getElementById('serving-basis').textContent =
+                known ? `· per serving (of ${servings})` : '· whole recipe';
+            document.getElementById('serving-basis').className =
+                known ? 'basis' : 'basis basis-warn';
+            document.getElementById('whole-batch-note').style.display = known ? 'none' : '';
+
             document.getElementById('macro-calories').textContent = nutrition.calories != null ? nutrition.calories : '—';
             document.getElementById('macro-protein').textContent = nutrition.protein != null ? `${nutrition.protein}g` : '—';
             document.getElementById('macro-carbs').textContent = nutrition.carbs != null ? `${nutrition.carbs}g` : '—';
@@ -340,6 +386,49 @@
                 badge.textContent = '';
                 badge.className = '';
             }
+        }
+
+        // Telling the app how many servings a recipe makes turns whole-batch
+        // totals into real per-serving macros — the server rewrites the
+        // frontmatter and recomputes, so the numbers and the label change together.
+        function wireServingsForm() {
+            const form = document.getElementById('servings-form');
+            if (!form) return;
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const input = document.getElementById('servings-input');
+                const btn = document.getElementById('servings-save');
+                const msg = document.getElementById('servings-msg');
+                const value = parseInt(input.value, 10);
+                if (!Number.isFinite(value) || value < 1 || value > 200) {
+                    msg.textContent = 'Enter a whole number between 1 and 200.';
+                    msg.className = 'bad';
+                    return;
+                }
+                btn.disabled = true;
+                msg.className = '';
+                msg.textContent = 'Saving…';
+                try {
+                    const resp = await fetch(
+                        `/api/recipes/${encodeURIComponent(recipeName)}/servings`,
+                        { method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ servings: value }) });
+                    const data = await resp.json();
+                    if (!resp.ok) throw new Error(data.error || 'failed');
+                    msg.textContent = data.warning
+                        ? `Saved ${value} — but ${data.warning}`
+                        : `Saved — recalculating…`;
+                    // Reload rather than patch in place: servings drives the
+                    // scale control and the cook-logging payload too, not just
+                    // this card.
+                    location.reload();
+                } catch (err) {
+                    msg.textContent = `Could not save: ${err.message}`;
+                    msg.className = 'bad';
+                    btn.disabled = false;
+                }
+            });
         }
 
         function renderBodyMarkdown() {
@@ -444,6 +533,7 @@
                 renderIngredients();
                 renderInstructions();
                 renderNutrition();
+                wireServingsForm();
                 renderBodyMarkdown();
             } catch (err) {
                 document.getElementById('recipe-title').textContent = 'Failed to load recipe';

@@ -173,13 +173,25 @@ def generate_nutrition_section(recipe_data: dict) -> str:
     confidence = recipe_data.get("nutrition_confidence")
     conf_str = f" • Confidence: {confidence}" if confidence is not None else ""
 
-    return f"""## Nutrition (per serving)
+    # The heading has to follow the data. The engine derives per-serving macros as
+    # total/servings, and with no `servings` it divides by 1 — so these become
+    # whole-batch numbers. Printing "(per serving)" over them is not a vague label
+    # but a false one: it read a 1,339-calorie tray of pops as a single serving.
+    servings = recipe_data.get("servings")
+    per_serving = bool(servings) and str(servings).strip().lower() not in ("none", "null")
+    heading = "## Nutrition (per serving)" if per_serving else "## Nutrition (whole recipe)"
+    footer = (f"*Serving size: {serving_size} • Source: {source.title()}{conf_str}*"
+              if per_serving else
+              f"*Whole-recipe totals — no servings count, so these can't be divided "
+              f"yet • Source: {source.title()}{conf_str}*")
+
+    return f"""{heading}
 
 | Calories | Protein | Carbs | Fat |
 |----------|---------|-------|-----|
 | {calories}      | {nutrition_protein}g     | {carbs}g   | {fat}g |
 
-*Serving size: {serving_size} • Source: {source.title()}{conf_str}*
+{footer}
 
 """
 
