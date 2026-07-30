@@ -224,22 +224,29 @@ rewritten note gets a timestamped `.history/` backup.
 
 A recipe with no `servings` has its per-serving macros divided by 1, so the
 whole-batch numbers masquerade as one serving — and the macro-aware suggester
-and the print-week macros skip or flag it. `scripts/backfill_servings.py`
-estimates a plausible count from the whole-batch calories already in the file
-(`servings ≈ batch_kcal / anchor(dish_type)` — no vault DB / USDA / LLM needed).
+and the print-week macros skip or flag it. `scripts/backfill_servings.py` fills
+the count in from what's already in the file — no vault DB / USDA / LLM needed.
 
-**It's an estimate, not a measurement** — every write is flagged
-`servings_inferred: true` + `servings_needs_review: true`, and it's dry-run by
-default.
+It reads each recipe two ways, and the distinction matters:
+
+| Source | How | Written as |
+|--------|-----|------------|
+| **Stated** — the recipe says "Serves 4" / "Makes 24 cookies" | read from the body | plain fact: **no** review flag, and not capped at 12 |
+| **Estimated** — nothing stated | `servings ≈ batch_kcal / anchor(dish_type)`, clamped 1–12 | `servings_inferred: true` + `servings_needs_review: true` |
+
+A stated yield is a measurement, so it wins outright and isn't flagged. An
+estimate is a heuristic and always is. Measure nouns disqualify a stated match —
+"Makes 2 cups of sauce" is a batch volume, not two servings. Dry-run by default.
 
 ```bash
 .venv/bin/python scripts/backfill_servings.py            # preview table, writes nothing
-.venv/bin/python scripts/backfill_servings.py --apply    # write inferred servings (+ .history backup)
+.venv/bin/python scripts/backfill_servings.py --apply    # write the counts (+ .history backup)
 .venv/bin/python backfill_nutrition.py --force           # recompute per-serving macros from the new counts
 ```
 
-Then review the recipes flagged `servings_needs_review` and correct any that
-look off — the anchor is a heuristic, not the truth.
+The preview table's `status` column tells you which is which. Then review the
+recipes flagged `servings_needs_review` and correct any that look off — the
+anchor is a heuristic, not the truth.
 
 ### Generate the On Track view
 
