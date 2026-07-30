@@ -13,7 +13,12 @@ public extension KitchenOSClient {
         return try await getJSON(comps.url!)
     }
 
-    func addInventory(_ items: [InventoryItem]) async throws {
+    /// Takes ``NewInventoryItem`` rather than ``InventoryItem`` deliberately: the
+    /// read model's `location` is non-optional, so passing one here could only ever
+    /// send a location — including one the user never chose, which the server records
+    /// as a confirmed placement. Leave `location` nil to let the placement router
+    /// decide and report honest provenance.
+    func addInventory(_ items: [NewInventoryItem]) async throws {
         try await postJSON(path: "/api/inventory/add", body: ["items": items])
     }
 

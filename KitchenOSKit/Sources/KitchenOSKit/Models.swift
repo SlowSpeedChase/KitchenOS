@@ -215,6 +215,49 @@ public struct InventoryItem: Codable, Sendable, Hashable, Identifiable {
     }
 }
 
+/// An item being *created*, which is a different shape from one being read.
+///
+/// `InventoryItem.location` is non-optional because a row coming back from
+/// `/api/inventory` always has one. On the way in it must be possible to say
+/// "I don't know, you decide" — and the only way to say that over the wire is to
+/// **omit the key**, because `/api/inventory/add` branches on
+/// `if raw.get('location')` and stamps anything explicit as `manual`, meaning
+/// "a placement the user confirmed".
+///
+/// That distinction is why this type exists rather than a default parameter. The
+/// app previously sent `location: "pantry"` from an untouched SwiftUI Picker
+/// default, so every app-added row claimed to be a confirmed placement, the
+/// storage-table router was never consulted, and the unsure `?` marker could
+/// never appear for those rows — the one direction `CLAUDE.md` forbids.
+///
+/// `location` is the only optional here on purpose: the server has sane fallbacks
+/// for the rest, but none of them lie about provenance.
+public struct NewInventoryItem: Encodable, Sendable, Hashable {
+    public var name: String
+    public var quantity: Double
+    public var unit: String
+    public var category: String
+    /// `nil` means "let the placement router decide" and is encoded by omission.
+    /// Set it only when the user genuinely chose a shelf.
+    public var location: String?
+    public var source: String
+    public var notes: String
+    public var expires: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name, quantity, unit, category, location, source, notes, expires
+    }
+
+    public init(name: String, quantity: Double, unit: String = "ct",
+                category: String = "other", location: String? = nil,
+                source: String = "manual", notes: String = "",
+                expires: String? = nil) {
+        self.name = name; self.quantity = quantity; self.unit = unit
+        self.category = category; self.location = location
+        self.source = source; self.notes = notes; self.expires = expires
+    }
+}
+
 /// Pantry line as returned by `GET /api/pantry` (`{item, amount, unit}`).
 public struct PantryItem: Codable, Sendable, Hashable {
     public let item: String

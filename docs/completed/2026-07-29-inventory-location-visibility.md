@@ -77,13 +77,14 @@ now writes; and two isolation layers silently overrode each other.
 ## Not Done — carried forward
 Four findings were deliberately left out of scope. The first is the significant one:
 
-1. **The iOS app stamps every added row `manual` from a Picker default, so the branch's central
-   promise is false for app-added rows.** `KitchenOSSiri/.../InventoryView.swift` has
-   `@State private var location = "pantry"` and always serialises it, so `/api/inventory/add`
-   always takes the explicit branch and never consults the router — recording a form default the
-   user never touched as a *confirmed* placement, the one direction `CLAUDE.md` forbids. The server
-   can't detect this without breaking the web/MCP contract, so the fix is client-side: make
-   `location` optional with an "Auto" default that omits the key. Swift work, and it should be next.
+1. ~~**The iOS app stamps every added row `manual` from a Picker default, so the branch's central
+   promise is false for app-added rows.**~~ **RESOLVED 2026-07-29** — see
+   `docs/completed/2026-07-29-ios-auto-location.md`. `KitchenOSSiri/.../InventoryView.swift` had
+   `@State private var location = "pantry"` and always serialised it, so `/api/inventory/add`
+   always took the explicit branch and never consulted the router — recording a form default the
+   user never touched as a *confirmed* placement, the one direction `CLAUDE.md` forbids. Fixed
+   client-side as predicted: the Picker gained an **Auto** default and the add path now uses a
+   `NewInventoryItem` whose `location` is `String?`, encoded by omission.
 2. **`KitchenOSKit` doesn't decode `location_source`**, so the native inventory screen can't render
    the `?` that `/review` and `Inventory.md` both show. Not a regression, but three views now
    disagree about what is known.
