@@ -1,6 +1,6 @@
 # Planner Shelf & Tap-to-Assign Design
 
-**Status:** Done
+**Status:** Done (merged)
 **Created:** 2026-07-30
 **Updated:** 2026-07-30
 **Branch:** `planner-shelf-tap-assign`

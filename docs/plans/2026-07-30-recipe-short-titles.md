@@ -1,6 +1,6 @@
 # Recipe Short Titles Design
 
-**Status:** Done
+**Status:** Done (merged)
 **Created:** 2026-07-30
 **Updated:** 2026-07-30
 **Branch:** `recipe-short-titles`
