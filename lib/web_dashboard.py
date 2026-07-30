@@ -51,6 +51,9 @@ SECTIONS = [
              "the rendered weekly plan"),
             ("🛒", "This week's shopping list", "/current/shopping-list",
              "consolidated, inventory-aware, grouped by store aisle"),
+            ("🖨️", "Print this week", "/print/week",
+             "one printable page — the week's plan, macros vs targets, shopping "
+             "list, and do-ahead prep, for the fridge"),
         ],
     ),
     (

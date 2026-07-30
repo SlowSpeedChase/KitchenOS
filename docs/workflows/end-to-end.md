@@ -156,6 +156,7 @@ Calendar reminders for prep ride along with the meal-plan calendar (Stage 5).
 ## 5. Cook — at the stove
 
 - **Calendar** — `com.kitchenos.calendar-sync` runs daily at 6:05 AM, regenerating `meal_calendar.ics` from every meal plan. Apple Calendar (or Obsidian Full Calendar plugin) subscribes to `http://localhost:5001/calendar.ics`.
+- **Print the whole week** — open `/print/week` (defaults to the current week; `?week=` for another) for a one-page fridge packet: the plan grid with each day's macros vs your targets, the consolidated shopping list, and the do-ahead prep. Recipe names link to their grid cards. Read-only (prep comes from the cached tasks sidecar; `?tasks=1` regenerates). It reads whichever week model owns the week (ledger cooks or the markdown plan), branching off the shopping-list generator's `source`.
 - **Printable grid card** — open `/recipe-card/<name>` for a one-page, print-ready "grid" view (ingredients with gram weights on the left; a staircase of merged cells on the right showing what combines with what, in order). Tap **Print** for a fridge/binder card. The step grouping is AI-inferred (cached in a `<recipe>.grid.json` sidecar; `?force=1` recomputes) and marked for review — the recipe's own steps are never changed.
 - **Re-render or re-extract** — the per-recipe buttons:
   - **Refresh template** (`/refresh`) — re-renders from existing extracted data. Use after editing the template.

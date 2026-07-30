@@ -509,3 +509,35 @@ def test_recipe_card_missing_returns_404(client, tmp_path, monkeypatch):
     monkeypatch.setattr("api_server.OBSIDIAN_RECIPES_PATH", recipes_dir)
     response = client.get('/recipe-card/DoesNotExist')
     assert response.status_code == 404
+
+
+# ---- Print my week (Phase 2b) ----
+
+def test_print_week_page_renders(client, tmp_vault):
+    """GET /print/week renders the packet: grid + shopping + prep, for a week."""
+    (tmp_vault / "My Macros.md").write_text(
+        "---\ncalories: 2300\nprotein: 190\ncarbs: 228\nfat: 70\n---\n\n# My Macros\n")
+    recipes = tmp_vault / "Recipes"; recipes.mkdir(parents=True, exist_ok=True)
+    (recipes / "Beef Bowl.md").write_text(
+        '---\ntitle: "Beef Bowl"\nnutrition_calories: 650\nnutrition_protein: 48\n'
+        'nutrition_carbs: 30\nnutrition_fat: 12\nnutrition_coverage: 0.95\nservings: 2\n---\n# Beef Bowl\n')
+    plans = tmp_vault / "Meal Plans"; plans.mkdir(parents=True, exist_ok=True)
+    (plans / "2026-W31.md").write_text("## Monday (Jul 27)\n\n### dinner\n[[Beef Bowl]]\n\n")
+
+    response = client.get('/print/week?week=2026-W31')
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "week-grid" in body
+    assert "Shopping list" in body and "Get ahead" in body
+    assert "Print this week" in body  # the on-screen print button
+
+
+def test_print_week_invalid_week_400(client):
+    response = client.get('/print/week?week=nope')
+    assert response.status_code == 400
+
+
+def test_print_week_missing_plan_404(client, tmp_vault):
+    (tmp_vault / "Recipes").mkdir(parents=True, exist_ok=True)
+    response = client.get('/print/week?week=2099-W01')
+    assert response.status_code == 404

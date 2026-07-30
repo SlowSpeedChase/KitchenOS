@@ -656,6 +656,35 @@ def recipe_detail_page(name):
     return html, 200, {'Content-Type': 'text/html'}
 
 
+@app.route('/print/week', methods=['GET'])
+def print_week_page():
+    """Printable one-page 'week packet': plan grid + macros vs targets +
+    shopping list + do-ahead prep. Defaults to the current ISO week; ?week=
+    overrides, ?tasks=1 regenerates prep (an LLM call) instead of read-only cache.
+    """
+    from lib import print_week
+
+    week = request.args.get('week')
+    if not week:
+        iso = date.today().isocalendar()
+        week = f"{iso[0]}-W{iso[1]:02d}"
+    if not re.match(r'^\d{4}-W\d{2}$', week):
+        return error_page(f"Invalid week format: {week} (expected YYYY-WNN)"), 400
+
+    include_tasks = request.args.get('tasks') in ('1', 'true', 'yes')
+    try:
+        packet = print_week.build_week_packet(
+            week, paths.vault_root(), _resolve_recipes_dir(),
+            include_tasks=include_tasks)
+    except FileNotFoundError:
+        return error_page(f"No meal plan for {week} yet — plan a week first."), 404
+
+    base = os.environ.get("KITCHENOS_API_BASE", "").rstrip("/")
+    body = print_week.render_packet_html(packet, base_url=base)
+    html = _serve_page_with_claude_bar('print_week.html', [('<!--PACKET-->', body)])
+    return html, 200, {'Content-Type': 'text/html'}
+
+
 @app.route('/recipe-card/<name>', methods=['GET'])
 def recipe_card_page(name):
     """Serve a printable 'grid' (Cooking-for-Engineers matrix) recipe card.
