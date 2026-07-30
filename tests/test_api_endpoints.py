@@ -404,3 +404,71 @@ def test_review_page_has_a_sort_control(client):
     assert b'id="sortby"' in html
     assert b'value="expiry"' in html
     assert b'value="added"' in html
+
+
+# ---- Macro-aware suggest-meal (Stage 3) ----
+
+def _write_recipe(recipes_dir, name, *, cal, protein, coverage, servings, items):
+    rows = "".join(f"| 1 | whole | {it} |\n" for it in items)
+    content = (
+        f'---\ntitle: "{name}"\ncuisine: "test"\nprotein: "test"\n'
+        f'nutrition_calories: {cal}\nnutrition_protein: {protein}\n'
+        f'nutrition_carbs: 20\nnutrition_fat: 10\n'
+        f'nutrition_coverage: {coverage}\nservings: {servings}\n---\n\n'
+        f"# {name}\n\n## Ingredients\n\n"
+        f"| Amount | Unit | Ingredient |\n|--------|------|------------|\n{rows}"
+    )
+    (recipes_dir / f"{name}.md").write_text(content)
+
+
+def test_suggest_meal_includes_macro_context(client, tmp_vault, tmp_path, monkeypatch):
+    """With My Macros.md + a planned day, the response carries macro_context and
+    the suggestion carries per-serving nutrition."""
+    (tmp_vault / "My Macros.md").write_text(
+        "---\ncalories: 2300\nprotein: 190\ncarbs: 228\nfat: 70\n---\n\n# My Macros\n"
+    )
+    recipes_dir = tmp_path / "Recipes"
+    recipes_dir.mkdir()
+    _write_recipe(recipes_dir, "Small Salad", cal=200, protein=6,
+                  coverage=0.95, servings=4, items=["lettuce", "cucumber"])
+    _write_recipe(recipes_dir, "Beef Power Bowl", cal=650, protein=48,
+                  coverage=0.95, servings=3, items=["beef", "quinoa"])
+    plans_dir = tmp_path / "Meal Plans"
+    plans_dir.mkdir()
+    (plans_dir / "2026-W31.md").write_text(
+        "## Thursday (Jul 31)\n\n### lunch\n[[Small Salad]]\n\n### dinner\n\n"
+    )
+    monkeypatch.setattr("api_server.OBSIDIAN_RECIPES_PATH", recipes_dir)
+    monkeypatch.setattr("api_server.MEAL_PLANS_PATH", plans_dir)
+
+    response = client.post('/api/suggest-meal', json={
+        "week": "2026-W31", "day": "Thursday", "meal": "dinner",
+    })
+    assert response.status_code == 200
+    data = response.get_json()
+    ctx = data["macro_context"]
+    assert ctx is not None
+    assert ctx["target"]["protein"] == 190
+    assert ctx["current"]["protein"] == 6          # Small Salad, 1 serving
+    assert ctx["remaining"]["protein"] == 184
+    # A suggestion was made and it carries per-serving nutrition.
+    assert data["suggestion"] is not None
+    assert data["suggestion"]["nutrition"]["protein"] == 48
+    assert data["suggestion"]["name"] == "Beef Power Bowl"
+
+
+def test_suggest_meal_no_targets_null_macro_context(client, tmp_vault, tmp_path, monkeypatch):
+    """No My Macros.md → macro_context null; endpoint still responds 200."""
+    recipes_dir = tmp_path / "Recipes"
+    recipes_dir.mkdir()
+    plans_dir = tmp_path / "Meal Plans"
+    plans_dir.mkdir()
+    monkeypatch.setattr("api_server.OBSIDIAN_RECIPES_PATH", recipes_dir)
+    monkeypatch.setattr("api_server.MEAL_PLANS_PATH", plans_dir)
+
+    response = client.post('/api/suggest-meal', json={
+        "week": "2026-W31", "day": "Thursday", "meal": "dinner",
+    })
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["macro_context"] is None

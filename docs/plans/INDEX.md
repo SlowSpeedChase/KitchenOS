@@ -32,7 +32,7 @@ Templates: [`templates/DESIGN-DOC-TEMPLATE.md`](../../templates/DESIGN-DOC-TEMPL
 
 | Date | Doc | Branch | Notes |
 |---|---|---|---|
-| 2026-07-08 | [macro-meal-planner — design](2026-07-08-macro-meal-planner-design.md) · [plan](2026-07-08-macro-meal-planner-plan.md) | `macro-planner-phase-1/servings-backfill` | **PARKED.** Phase 1 (servings backfill) blocked: servings labels are not reliably inferable (see design-doc "Phase 1 finding"). Tooling/estimator built & committed on the branch; resume after grams coverage improves. |
+| 2026-07-08 | [macro-meal-planner — design](2026-07-08-macro-meal-planner-design.md) · [plan](2026-07-08-macro-meal-planner-plan.md) | `macro-planner-phase-1/servings-backfill` | **PARTIALLY DELIVERED (2026-07-30).** The single-slot **macro-aware suggester** now ships (`suggest` ranks by waste → macro-gap fit → overlap; new `lib/nutrition_quality.py:macro_eligible` gate; `/api/suggest-meal` returns `macro_context`). This is the narrow, unblocked slice of the parked design — grams coverage was fixed by nutrition-batch-ledger (0.43→0.93). Still parked: the full weekly bin-packing planner + servings backfill (servings labels remain unreliable; ineligible recipes just fall back to overlap). |
 
 ## Done
 

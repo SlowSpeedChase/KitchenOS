@@ -1423,9 +1423,17 @@ def api_suggest_meal():
                         "meal": meal_type,
                         "name": entry.name,
                         "ingredients": ingredients,
+                        "servings": getattr(entry, "servings", 1) or 1,
                     })
 
-    from lib.meal_suggester import suggest_meal
+    from lib.meal_suggester import suggest_meal, day_macro_gap
+    from lib.macro_targets import load_macro_targets
+
+    # The target day's remaining macro gap steers the suggestion toward the
+    # user's daily protein/calorie targets. None (no My Macros.md) => the
+    # suggester falls back to its ingredient-overlap behaviour unchanged.
+    targets = load_macro_targets(paths.vault_root())
+    macro_gap = day_macro_gap(planned_meals, day, targets, OBSIDIAN_RECIPES_PATH)
 
     result = suggest_meal(
         recipes_dir=OBSIDIAN_RECIPES_PATH,
@@ -1433,12 +1441,23 @@ def api_suggest_meal():
         day=day,
         meal=meal,
         skip_index=skip_index,
+        macro_gap=(macro_gap or {}).get("remaining") if macro_gap else None,
     )
 
     if result is None:
-        return jsonify({"suggestion": None, "message": "No suggestions available"})
+        return jsonify({"suggestion": None, "message": "No suggestions available",
+                        "macro_context": macro_gap})
 
-    return jsonify({"suggestion": result})
+    # macro_context describes the day's target/current/remaining plus what this
+    # suggestion would add — additive, so pre-macro clients keep working.
+    if macro_gap and result.get("nutrition"):
+        projected = {
+            k: macro_gap["current"][k] + result["nutrition"].get(k, 0)
+            for k in ("protein", "calories", "carbs", "fat")
+        }
+        macro_gap = {**macro_gap, "projected_with_suggestion": projected}
+
+    return jsonify({"suggestion": result, "macro_context": macro_gap})
 
 
 # ----- Add to Meal Plan (recipe button) -----

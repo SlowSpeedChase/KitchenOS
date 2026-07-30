@@ -38,6 +38,9 @@ def get_recipe_index(recipes_dir: Path, include_ingredients: bool = False) -> li
                 entry[field] = fm.get(field)
             for field in NUTRITION_FIELDS:
                 entry[field] = fm.get(field)
+            # Coverage gates the macro-eligibility predicate (lib/nutrition_quality.py);
+            # surfaced here so the suggester can score without re-reading the file.
+            entry["nutrition_coverage"] = fm.get("nutrition_coverage")
             entry["servings"] = fm.get("servings") or None
             if include_ingredients:
                 body_data = parse_recipe_body(parsed["body"])
@@ -47,6 +50,7 @@ def get_recipe_index(recipes_dir: Path, include_ingredients: bool = False) -> li
                 entry.setdefault(field, None)
             for field in NUTRITION_FIELDS:
                 entry.setdefault(field, None)
+            entry.setdefault("nutrition_coverage", None)
             entry.setdefault("servings", None)
             if include_ingredients:
                 entry["ingredient_items"] = []

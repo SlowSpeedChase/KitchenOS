@@ -965,6 +965,26 @@
             pointer-events: none;
         }
 
+        /* Per-serving macros on a suggested card (protein · calories). */
+        .grid-card .macro-chip {
+            position: absolute;
+            bottom: 4px;
+            left: 4px;
+            background: rgba(33, 33, 33, 0.78);
+            color: #ffffff;
+            font-size: 10px;
+            font-weight: 600;
+            line-height: 1;
+            padding: 3px 6px;
+            border-radius: 10px;
+            z-index: 3;
+            pointer-events: none;
+        }
+        .grid-card .macro-chip.macro-unknown {
+            background: rgba(120, 120, 120, 0.7);
+            font-weight: 500;
+        }
+
         /* --- Toast --- */
         .toast {
             position: fixed;
@@ -3794,6 +3814,21 @@
                 badge.textContent = '♻️ use it up';
                 badge.title = 'Uses ' + suggestion.waste_uses.join(', ');
                 card.appendChild(badge);
+            }
+
+            // Show per-serving macros so the pick's protein/calorie contribution
+            // is visible at a glance. Grey chip when the recipe's nutrition isn't
+            // trustworthy (low coverage / no servings), so it never reads as fact.
+            if (suggestion.nutrition) {
+                const chip = document.createElement('span');
+                chip.className = 'macro-chip';
+                const n = suggestion.nutrition;
+                chip.textContent = `${n.protein || 0}g P · ${n.calories || 0} kcal`;
+                if (suggestion.nutrition_unknown) {
+                    chip.classList.add('macro-unknown');
+                    chip.title = 'Nutrition unverified — low coverage or no servings set';
+                }
+                card.appendChild(chip);
             }
 
             // Add retry button

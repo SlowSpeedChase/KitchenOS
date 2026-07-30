@@ -95,7 +95,7 @@ Three ways meals land on a meal plan. Output is always `Meal Plans/<week>.md` wi
 - Layout: **left sidebar** = recipe library with search box + filter chips (cuisine, protein, dietary, seasonal); **right grid** = 7-day × 4-slot board for the selected ISO week.
 - Drag a recipe from the sidebar onto a slot → auto-saves via `PUT /api/meal-plan/<week>`.
 - Week selector buttons jump weeks; URL is `?week=2026-W18` so refreshes stick.
-- Empty slots have a **"suggest"** affordance → `POST /api/suggest-meal` ranks recipes by ingredient overlap with what's already on the plan + what's seasonal.
+- Empty slots have a **"suggest"** affordance → `POST /api/suggest-meal`. Ranking priority: use-up-expiring-food (waste) → **macro-gap fit** (when `My Macros.md` targets exist, it prefers recipes that close the day's remaining protein/calorie gap, protein first) → ingredient overlap with what's already planned. The suggested card shows the recipe's per-serving protein/calories; recipes with untrustworthy nutrition (low coverage or no `servings`) still surface but are flagged, never trusted for the macro tier.
 - Composite meals (`[[Meal: Salmon Dinner]]`) render as a single block; the parser keeps the meal name, and downstream consumers (shopping, nutrition, prep) flatten via `flatten_to_recipes()`.
 - **Servings multiplier:** type `[[Recipe Name]] x2` to scale (the `xN` lives outside the wikilink so Obsidian links still resolve).
 

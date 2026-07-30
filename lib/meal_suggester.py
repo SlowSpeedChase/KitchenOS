@@ -24,6 +24,16 @@ CLAUDE_MAX_TOKENS = 200
 
 OVERLAP_THRESHOLD = 0.5
 
+# Macro-aware ranking. When a day's remaining macro gap is passed to the ranker,
+# recipes are scored on how much of that gap one serving closes — protein is
+# weighted over calories because it's the user's priority and the hardest macro
+# to hit. macro_fit is a secondary sort axis *below* waste (never waste food) and
+# *above* ingredient overlap. With no gap passed, macro_fit is 0 for every recipe
+# and the sort collapses to the original (waste, overlap) order.
+MACRO_PROTEIN_WEIGHT = 0.7
+MACRO_CALORIE_WEIGHT = 0.3
+MACRO_FIT_THRESHOLD = 0.5
+
 # Layer 3 (waste-aware planning): using up food you already have that's about to
 # spoil is the primary ranking axis — recipes are sorted by how many at-risk
 # items they use first, then by planned-meal overlap as the tiebreak. This bonus
@@ -123,6 +133,37 @@ def normalize_ingredient(item: str) -> str:
     return " ".join(filtered) if filtered else item
 
 
+def _candidate_macros(recipe: dict) -> Optional[dict]:
+    """Per-serving macros off a recipe-index candidate dict, or None.
+
+    Reads the ``nutrition_*`` keys already surfaced by ``get_recipe_index`` — no
+    file I/O. Returns None when the recipe has no calorie figure (the same
+    presence gate ``serving_ledger.recipe_macros`` uses).
+    """
+    if recipe.get("nutrition_calories") is None:
+        return None
+    return {
+        "calories": int(recipe.get("nutrition_calories") or 0),
+        "protein": int(recipe.get("nutrition_protein") or 0),
+        "carbs": int(recipe.get("nutrition_carbs") or 0),
+        "fat": int(recipe.get("nutrition_fat") or 0),
+    }
+
+
+def _gap_fit(macros: dict, gap: dict) -> float:
+    """How much of the day's remaining protein+calorie gap one serving closes.
+
+    Each term is capped at 1.0 (``min``) so an oversized recipe cannot outscore a
+    right-sized one, and a macro whose gap is already met (``<= 0``) contributes
+    nothing. Protein is weighted over calories per the user's priority.
+    """
+    gap_p = gap.get("protein") or 0
+    gap_c = gap.get("calories") or 0
+    fill_p = min(macros["protein"], gap_p) / gap_p if gap_p > 0 else 0.0
+    fill_c = min(macros["calories"], gap_c) / gap_c if gap_c > 0 else 0.0
+    return round(MACRO_PROTEIN_WEIGHT * fill_p + MACRO_CALORIE_WEIGHT * fill_c, 3)
+
+
 def score_overlap(
     recipe_items: list[str],
     planned_items: set[str],
@@ -156,6 +197,7 @@ def rank_candidates(
     limit: int = 10,
     exclude_names: set[str] | None = None,
     at_risk: list[tuple[str, frozenset]] | None = None,
+    macro_gap: dict | None = None,
 ) -> list[dict]:
     """Rank recipe candidates by ingredient overlap, biased toward using waste.
 
@@ -168,12 +210,23 @@ def rank_candidates(
         at_risk: Optional ``(name, token_set)`` pairs for inventory that's
             expiring soon (from :func:`load_at_risk_index`). Recipes that use
             these get a ``WASTE_BONUS`` per item, so the plan fights food waste.
+        macro_gap: Optional ``{"protein": g, "calories": kcal}`` remaining-gap
+            dict for the target day. When given, eligible recipes are scored on
+            how much of the gap one serving closes (``macro_fit``), which becomes
+            a sort axis between waste and overlap. When ``None`` every recipe gets
+            ``macro_fit == 0.0`` and the ordering is identical to the old
+            (waste, overlap) behaviour.
 
     Returns:
         Sorted list of dicts with 'name', 'score', 'shared_ingredients',
-        'waste_uses' and 'rank_score' (overlap + waste bonus) added. Sorted by
-        'rank_score' — identical to the old score order when ``at_risk`` is empty.
+        'waste_uses', 'rank_score' (overlap + waste bonus), plus 'nutrition'
+        (per-serving macros or None), 'macro_fit' (0.0–1.0) and
+        'nutrition_unknown' (True when the recipe's macros aren't trustworthy).
+        Sorted by (waste count, macro_fit, overlap) — identical to the old score
+        order when ``at_risk`` and ``macro_gap`` are both empty.
     """
+    from lib.nutrition_quality import macro_eligible
+
     exclude = exclude_names or set()
     at_risk = at_risk or []
     scored = []
@@ -188,6 +241,14 @@ def rank_candidates(
         score, shared = score_overlap(items, planned_items, pantry)
         waste_uses = _waste_uses(items, at_risk)
         rank_score = round(score + WASTE_BONUS * len(waste_uses), 3)
+
+        eligible, _reasons = macro_eligible(recipe)
+        macros = _candidate_macros(recipe)
+        if macro_gap and eligible and macros:
+            macro_fit = _gap_fit(macros, macro_gap)
+        else:
+            macro_fit = 0.0
+
         scored.append({
             "name": recipe["name"],
             "score": round(score, 3),
@@ -195,11 +256,19 @@ def rank_candidates(
             "waste_uses": waste_uses,
             "rank_score": rank_score,
             "ingredient_items": items,
+            "nutrition": macros,
+            "macro_fit": macro_fit,
+            "nutrition_unknown": not eligible,
         })
 
-    # Waste count is the primary axis; overlap is the tiebreak. Identical to the
-    # old pure-overlap order when no recipe uses an at-risk item.
-    scored.sort(key=lambda r: (len(r["waste_uses"]), r["score"]), reverse=True)
+    # Waste count is the primary axis; macro-fit (bucketed to 2dp so overlap stays
+    # a meaningful tiebreak within a fit band) is second; overlap is the tiebreak.
+    # Identical to the old pure-overlap order when nothing is at risk and no macro
+    # gap is supplied (every macro_fit is 0.0).
+    scored.sort(
+        key=lambda r: (len(r["waste_uses"]), round(r["macro_fit"], 2), r["score"]),
+        reverse=True,
+    )
     return scored[:limit]
 
 
@@ -240,11 +309,39 @@ def normalize_ingredients_ollama(items: list[str]) -> list[str]:
         return [normalize_ingredient(item) for item in items]
 
 
+def _macro_block(macro_gap: dict | None) -> str:
+    """The remaining-macro-gap section for the Claude prompt, or '' if no gap.
+
+    Always safe to interpolate: no gap yields an empty string, so the prompt
+    degrades to the pre-macro wording rather than showing an empty header.
+    """
+    if not macro_gap:
+        return ""
+    p = macro_gap.get("protein") or 0
+    c = macro_gap.get("calories") or 0
+    if p <= 0 and c <= 0:
+        return ""
+    return ("\n## Remaining macro gap for the day "
+            "(prefer candidates that help close it, protein first):\n"
+            f"- Protein: {p} g left\n- Calories: {c} kcal left\n")
+
+
+def _candidate_line(c: dict) -> str:
+    """A candidate bullet for the Claude prompt, with macros when known."""
+    line = (f"- **{c['name']}** (overlap: {c['score']:.0%}, "
+            f"shared: {', '.join(c['shared_ingredients'])})")
+    n = c.get("nutrition")
+    if n and not c.get("nutrition_unknown"):
+        line += f" — {n.get('protein', 0)}g protein, {n.get('calories', 0)} kcal"
+    return line
+
+
 def suggest_with_claude(
     planned_meals: list[dict],
     candidates: list[dict],
     day: str,
     meal: str,
+    macro_gap: dict | None = None,
 ) -> Optional[dict]:
     """Ask Claude to pick the best candidate or suggest a new idea.
 
@@ -253,6 +350,8 @@ def suggest_with_claude(
         candidates: Ranked list from rank_candidates()
         day: Target day (e.g., "Tuesday")
         meal: Target meal (e.g., "dinner")
+        macro_gap: Optional ``{"protein", "calories"}`` remaining gap; when given,
+            the prompt asks Claude to prefer candidates that help close it.
 
     Returns:
         Dict with name, reason, is_new_idea, new_ingredients_needed, or None on failure
@@ -267,14 +366,12 @@ def suggest_with_claude(
         for m in planned_meals
     )
 
-    candidate_text = "\n".join(
-        f"- **{c['name']}** (overlap: {c['score']:.0%}, shared: {', '.join(c['shared_ingredients'])})"
-        for c in candidates[:10]
-    )
+    candidate_text = "\n".join(_candidate_line(c) for c in candidates[:10])
 
     prompt = SUGGEST_PROMPT.format(
         profile=_profile_block(),
         planned_meals=planned_text,
+        macro_block=_macro_block(macro_gap),
         candidates=candidate_text,
         day=day,
         meal=meal,
@@ -372,6 +469,83 @@ def _waste_reason(top: dict) -> str:
     return reason
 
 
+def _macro_reason(top: dict, macro_gap: dict) -> str:
+    """Reason string explaining how this recipe closes the day's macro gap."""
+    nutrition = top.get("nutrition") or {}
+    gap_p = (macro_gap or {}).get("protein") or 0
+    if gap_p > 0:
+        return (f"Adds {nutrition.get('protein', 0)}g protein toward your "
+                f"remaining {gap_p}g today")
+    gap_c = (macro_gap or {}).get("calories") or 0
+    return (f"Adds {nutrition.get('calories', 0)} kcal toward your "
+            f"remaining {gap_c} kcal today")
+
+
+def _attach_macros(result: dict, source: dict | None) -> dict:
+    """Copy the macro display fields from a ranked candidate onto ``result``.
+
+    Keeps the returned suggestion carrying ``nutrition``/``macro_fit``/
+    ``nutrition_unknown`` regardless of which tier produced it. Defaults are
+    conservative (no nutrition, unknown) when the source isn't a ranked dict.
+    """
+    result.setdefault("nutrition", (source or {}).get("nutrition"))
+    result.setdefault("macro_fit", (source or {}).get("macro_fit", 0.0))
+    result.setdefault("nutrition_unknown",
+                      (source or {}).get("nutrition_unknown", True))
+    return result
+
+
+def day_macro_gap(
+    planned_meals: list[dict],
+    day: str,
+    targets,
+    recipes_dir: Path,
+) -> Optional[dict]:
+    """The target day's remaining macro gap, or None when there are no targets.
+
+    Sums the per-serving macros of every recipe already placed on ``day`` (scaled
+    by each entry's ``servings`` multiplier) and subtracts from the daily target.
+    Reads per-recipe macros from frontmatter via ``serving_ledger.recipe_macros``.
+    Computed from the markdown plan on purpose: the suggester only runs on
+    non-ledger weeks, where ``serving_ledger.day_totals`` is empty.
+
+    Args:
+        planned_meals: dicts with ``day``, ``name`` and optional ``servings``.
+        day: the target day name to sum.
+        targets: a ``NutritionData`` (daily target) or None.
+        recipes_dir: Recipes folder, for per-recipe macro lookups.
+
+    Returns:
+        ``{"target": {...}, "current": {...}, "remaining": {...}}`` with
+        ``protein/calories/carbs/fat`` keys (``remaining`` clamped at 0), or None.
+    """
+    if targets is None:
+        return None
+
+    from lib.serving_ledger import recipe_macros
+
+    keys = ("protein", "calories", "carbs", "fat")
+    current = {k: 0.0 for k in keys}
+    for m in planned_meals:
+        if m.get("day") != day:
+            continue
+        macros = recipe_macros(m["name"], recipes_dir)
+        if not macros:
+            continue
+        mult = float(m.get("servings", 1) or 1)
+        for k in keys:
+            current[k] += macros[k] * mult
+
+    target = {
+        "protein": targets.protein,
+        "calories": targets.calories,
+        "carbs": targets.carbs,
+        "fat": targets.fat,
+    }
+    remaining = {k: max(0, target[k] - current[k]) for k in keys}
+    return {"target": target, "current": current, "remaining": remaining}
+
+
 def suggest_meal(
     recipes_dir: Path,
     planned_meals: list[dict],
@@ -379,6 +553,7 @@ def suggest_meal(
     meal: str,
     skip_index: int = 0,
     at_risk: list[tuple[str, frozenset]] | None = None,
+    macro_gap: dict | None = None,
 ) -> Optional[dict]:
     """Top-level orchestrator: suggest a meal for an empty slot.
 
@@ -387,10 +562,12 @@ def suggest_meal(
     2. Collect planned ingredient names
     3. Load recipe library with ingredients
     4. Score and rank candidates, boosting recipes that use at-risk inventory
+       and (when ``macro_gap`` is given) that help close the day's macro gap
     5. If the top candidate uses expiring food -> return it directly (waste wins)
-    6. Else if top candidate score >= threshold -> return it directly
-    7. Else -> ask Claude to pick from candidates
-    8. skip_index allows cycling through candidates (for "try another")
+    6. Else if it's a strong macro fit -> return it directly (macro tier)
+    7. Else if top candidate score >= threshold -> return it directly
+    8. Else -> ask Claude to pick from candidates
+    9. skip_index allows cycling through candidates (for "try another")
 
     Args:
         recipes_dir: Path to Obsidian Recipes folder
@@ -400,9 +577,14 @@ def suggest_meal(
         skip_index: Skip this many top candidates (for retry)
         at_risk: Optional at-risk ``(name, token_set)`` pairs; loaded from live
             inventory when omitted so suggestions help use food before it spoils.
+        macro_gap: Optional ``{"protein": g, "calories": kcal}`` remaining-gap
+            dict for the target day (from :func:`day_macro_gap`). When omitted the
+            macro tier is skipped and behaviour is identical to the pre-macro
+            suggester.
 
     Returns:
-        Dict with name, score, reason, shared_ingredients, is_new_idea, or None
+        Dict with name, score, reason, shared_ingredients, is_new_idea,
+        nutrition, macro_fit, nutrition_unknown; or None
     """
     from lib.recipe_index import get_recipe_index
 
@@ -422,10 +604,21 @@ def suggest_meal(
         waste_ranked = rank_candidates(
             all_recipes, set(), pantry,
             limit=20, exclude_names=planned_names, at_risk=at_risk,
+            macro_gap=macro_gap,
         )
         waste_top = waste_ranked[skip_index] if skip_index < len(waste_ranked) else None
         if waste_top and waste_top["waste_uses"]:
             waste_top["reason"] = _waste_reason(waste_top)
+            waste_top["is_new_idea"] = False
+            waste_top["new_ingredients_needed"] = []
+            return waste_top
+
+        # Macro tier -- nothing planned yet, so the whole day's target is open;
+        # if the best-ranked recipe is a strong, trustworthy macro fit, lead with
+        # it rather than asking Claude for a generic starter.
+        if (macro_gap and waste_top and not waste_top["nutrition_unknown"]
+                and waste_top["macro_fit"] >= MACRO_FIT_THRESHOLD):
+            waste_top["reason"] = _macro_reason(waste_top, macro_gap)
             waste_top["is_new_idea"] = False
             waste_top["new_ingredients_needed"] = []
             return waste_top
@@ -438,6 +631,9 @@ def suggest_meal(
         if claude_result:
             claude_result["score"] = 0.0
             claude_result["shared_ingredients"] = []
+            match = next((r for r in waste_ranked
+                          if r["name"] == claude_result["name"]), None)
+            _attach_macros(claude_result, match)
         return claude_result
 
     # Collect all planned ingredient names (normalized)
@@ -446,10 +642,12 @@ def suggest_meal(
         for item in m.get("ingredients", []):
             planned_items.add(normalize_ingredient(item))
 
-    # Score and rank (waste-using recipes are boosted to the top)
+    # Score and rank (waste-using recipes are boosted to the top; when a macro
+    # gap is supplied, strong macro fits rank above plain overlap)
     ranked = rank_candidates(
         all_recipes, planned_items, pantry,
         limit=20, exclude_names=planned_names, at_risk=at_risk,
+        macro_gap=macro_gap,
     )
 
     if not ranked:
@@ -464,6 +662,16 @@ def suggest_meal(
     # Waste tier -- the top pick uses food about to spoil; surface it directly.
     if top["waste_uses"]:
         top["reason"] = _waste_reason(top)
+        top["is_new_idea"] = False
+        top["new_ingredients_needed"] = []
+        return top
+
+    # Macro tier -- the ranker already floated the best macro fit to the top, so
+    # when it's a trustworthy, strong fit, surface it without asking Claude. Only
+    # fires when a macro gap was supplied (guard keeps no-target behaviour intact).
+    if (macro_gap and not top["nutrition_unknown"]
+            and top["macro_fit"] >= MACRO_FIT_THRESHOLD):
+        top["reason"] = _macro_reason(top, macro_gap)
         top["is_new_idea"] = False
         top["new_ingredients_needed"] = []
         return top
@@ -483,7 +691,8 @@ def suggest_meal(
         return top
 
     # Low overlap -- try Claude
-    claude_result = suggest_with_claude(planned_meals, ranked[skip_index:], day, meal)
+    claude_result = suggest_with_claude(
+        planned_meals, ranked[skip_index:], day, meal, macro_gap=macro_gap)
     if claude_result:
         match = next((r for r in ranked if r["name"] == claude_result["name"]), None)
         if match:
@@ -492,6 +701,7 @@ def suggest_meal(
         else:
             claude_result["score"] = 0.0
             claude_result["shared_ingredients"] = []
+        _attach_macros(claude_result, match)
         return claude_result
 
     # Claude unavailable -- fall back to top scored candidate
