@@ -472,3 +472,40 @@ def test_suggest_meal_no_targets_null_macro_context(client, tmp_vault, tmp_path,
     assert response.status_code == 200
     data = response.get_json()
     assert data["macro_context"] is None
+
+
+# ---- Grid recipe card (Phase 2a) ----
+
+def test_recipe_card_renders_grid(client, tmp_path, monkeypatch):
+    """The card page renders the recipe's grid matrix; heuristic path (no LLM)."""
+    from lib import recipe_grid
+    monkeypatch.setattr(recipe_grid, "_anthropic_client", None)
+    monkeypatch.setattr(recipe_grid, "_group_with_ollama", lambda prompt: None)
+
+    recipes_dir = tmp_path / "Recipes"
+    recipes_dir.mkdir()
+    (recipes_dir / "Brownies.md").write_text(
+        '---\ntitle: "Brownies"\nservings: 9\n'
+        'nutrition_calories: 180\nnutrition_protein: 3\n'
+        'nutrition_carbs: 24\nnutrition_fat: 9\nnutrition_coverage: 0.9\n---\n\n'
+        "# Brownies\n\n## Ingredients\n\n| Amount | Unit | Ingredient |\n"
+        "|--------|------|------------|\n| 4 | oz | butter |\n| 1 | cup | sugar |\n\n"
+        "## Instructions\n\n1. Melt butter\n2. Stir in sugar\n3. Bake\n"
+    )
+    monkeypatch.setattr("api_server.OBSIDIAN_RECIPES_PATH", recipes_dir)
+
+    response = client.get('/recipe-card/Brownies')
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Brownies" in body
+    assert "recipe-grid" in body            # the matrix table rendered
+    assert "Serves" in body and "protein" in body  # macro/servings header
+    assert "AI-suggested" in body           # honest review banner
+
+
+def test_recipe_card_missing_returns_404(client, tmp_path, monkeypatch):
+    recipes_dir = tmp_path / "Recipes"
+    recipes_dir.mkdir()
+    monkeypatch.setattr("api_server.OBSIDIAN_RECIPES_PATH", recipes_dir)
+    response = client.get('/recipe-card/DoesNotExist')
+    assert response.status_code == 404

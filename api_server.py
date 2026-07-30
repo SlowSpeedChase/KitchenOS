@@ -656,6 +656,58 @@ def recipe_detail_page(name):
     return html, 200, {'Content-Type': 'text/html'}
 
 
+@app.route('/recipe-card/<name>', methods=['GET'])
+def recipe_card_page(name):
+    """Serve a printable 'grid' (Cooking-for-Engineers matrix) recipe card.
+
+    The step grouping is AI-inferred (cached in a <recipe>.grid.json sidecar);
+    ?force=1 recomputes it. The recipe's own extracted steps are never altered.
+    """
+    from html import escape as _escape
+    from lib import recipe_grid, serving_ledger
+    from lib.recipe_parser import parse_recipe_file, parse_recipe_body
+
+    recipes_dir = _resolve_recipes_dir()
+    filepath = (recipes_dir / f"{name}.md").resolve()
+    if not filepath.is_relative_to(recipes_dir.resolve()) or not filepath.exists():
+        return error_page(f"Recipe not found: {name}"), 404
+
+    force = request.args.get('force') in ('1', 'true', 'yes')
+    parsed = parse_recipe_file(filepath.read_text(encoding="utf-8"))
+    fm = parsed["frontmatter"]
+    ingredients = parse_recipe_body(parsed["body"]).get("ingredients", [])
+
+    spec = recipe_grid.build_grid(name, recipes_dir, force=force)
+    grid_html = recipe_grid.render_grid_html(spec, ingredients)
+
+    title = _escape(str(fm.get("title") or name))
+    meta_parts = []
+    servings = fm.get("servings")
+    if servings:
+        meta_parts.append(f"Serves <strong>{_escape(str(servings))}</strong>")
+    macros = serving_ledger.recipe_macros(name, recipes_dir)
+    if macros:
+        meta_parts.append(
+            f"<strong>{macros['protein']} g</strong> protein · "
+            f"<strong>{macros['calories']}</strong> kcal per serving")
+    meta = " &nbsp;·&nbsp; ".join(meta_parts) or "—"
+
+    review = ""
+    if spec.get("needs_review"):
+        src = _escape(str(spec.get("source", "AI")))
+        review = ("<div class='review-note'>⚠️ The step grouping below is "
+                  f"AI-suggested ({src}) — sanity-check it against the recipe. "
+                  "Your recipe's own steps are unchanged.</div>")
+
+    html = _serve_page_with_claude_bar('recipe_card.html', [
+        ('__CARD_TITLE__', title),
+        ('__CARD_META__', meta),
+        ('__REVIEW_NOTE__', review),
+        ('<!--GRID-->', grid_html),
+    ])
+    return html, 200, {'Content-Type': 'text/html'}
+
+
 @app.route('/images/<path:filename>', methods=['GET'])
 def serve_recipe_image(filename):
     """Serve recipe images from Obsidian vault."""
