@@ -7,13 +7,17 @@ divided by 1 — i.e. the whole-batch numbers masquerade as one serving (a
 suggester and the print-week macros skip or flag them. Filling in a plausible
 `servings` widens how much of the library the macro features can use.
 
-**This is an estimate, not a measurement.** Automatic servings inference is
+**Mostly an estimate, not a measurement.** Automatic servings inference is
 unreliable (the parked macro-planner work plateaued around 50% within ±1), so
 this tool:
-  - estimates from data already in the file — no vault DB, USDA, or LLM needed:
-    a recipe missing `servings` currently stores WHOLE-BATCH `nutrition_calories`
-    (the engine defaulted servings→1), so `servings ≈ batch_kcal / anchor(dish_type)`;
-  - writes every estimate flagged `servings_inferred: true` +
+  - prefers a yield the recipe *states* ("Serves 4", "Makes 24 cookies") — that
+    is a measurement, so it is written as plain fact with no review flag and is
+    NOT clamped to `SERVINGS_MAX` (a 24-cookie batch is a real yield);
+  - otherwise estimates from data already in the file — no vault DB, USDA, or LLM
+    needed: a recipe missing `servings` currently stores WHOLE-BATCH
+    `nutrition_calories` (the engine defaulted servings→1), so
+    `servings ≈ batch_kcal / anchor(dish_type)`;
+  - writes every *estimate* flagged `servings_inferred: true` +
     `servings_needs_review: true` (never presented as fact);
   - is **dry-run by default** — it prints a review table and writes nothing
     unless you pass `--apply`.
@@ -30,6 +34,7 @@ look off — the anchor is a heuristic, not the truth.
 """
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -49,7 +54,57 @@ DISH_ANCHOR_KCAL = {
 DEFAULT_ANCHOR_KCAL = 500
 SERVINGS_MIN, SERVINGS_MAX = 1, 12
 
+# A yield stated in the recipe text is a measurement, so it gets a far looser
+# bound than the anchor estimate: clamping "Makes 24 cookies" to SERVINGS_MAX
+# would corrupt a count the recipe told us outright.
+STATED_MIN, STATED_MAX = 1, 200
+
+# "Makes 2 cups" is a batch volume, not a yield. Since a stated count is written
+# as fact with no review flag, a measure noun following the number has to
+# disqualify the match — otherwise a 2-cup sauce silently becomes 2 servings.
+_MEASURE_NOUN = (
+    r"cups?|tbsp|tablespoons?|tsp|teaspoons?|ml|milliliters?|l|liters?|litres?|"
+    r"oz|ounces?|g|grams?|kg|kilograms?|lbs?|pounds?|quarts?|qt|pints?|pt|"
+    r"gallons?|gal|inch(?:es)?|cm"
+)
+
+# Yield patterns, tried in order; each captures the count in group 1.
+_BODY_PATTERNS = [
+    re.compile(r"(?:serves|feeds)\s+(?:about\s+)?(\d+)", re.IGNORECASE),
+    # The \b after the digits is load-bearing: without it the group backtracks
+    # to a shorter number to escape the exclusion, and "Makes 500 g" matches 50.
+    re.compile(rf"(?:makes|yields?)\b[:\s]+(?:about\s+)?(\d+)\b"
+               rf"(?!\s*(?:{_MEASURE_NOUN})\b)", re.IGNORECASE),
+    re.compile(r"(\d+)\s+servings?\b", re.IGNORECASE),
+]
+
 _MANAGED = ("servings", "servings_inferred", "servings_needs_review")
+# Cleared when a stated yield supersedes an earlier anchor estimate — `rewrite`
+# only de-duplicates managed keys, so a stale flag has to be removed explicitly.
+_INFERENCE_FLAGS = ("servings_inferred", "servings_needs_review")
+
+
+def servings_from_body(body) -> int | None:
+    """An explicit yield stated in the recipe text, or None if none is stated."""
+    if not body:
+        return None
+    for pattern in _BODY_PATTERNS:
+        m = pattern.search(body)
+        if m:
+            n = int(m.group(1))
+            if STATED_MIN <= n <= STATED_MAX:
+                return n
+    return None
+
+
+def _per_serving_kcal(batch, servings) -> int | None:
+    """Per-serving kcal, or None when either figure is unusable."""
+    if not servings:
+        return None
+    try:
+        return round(int(batch) / servings)
+    except (TypeError, ValueError):
+        return None
 
 
 def _has_servings(fm: dict) -> bool:
@@ -92,36 +147,48 @@ def plan_backfill(recipes_dir: Path) -> list[dict]:
     rows = []
     for filepath in sorted(recipes_dir.glob("*.md")):
         try:
-            fm = parse_recipe_file(filepath.read_text(encoding="utf-8"))["frontmatter"]
+            parsed = parse_recipe_file(filepath.read_text(encoding="utf-8"))
         except Exception:
             continue
+        fm = parsed["frontmatter"]
         if _has_servings(fm):
             continue
-        est, anchor = estimate_servings(fm)
         batch = fm.get("nutrition_calories")
+        # A stated yield wins outright — it is what the recipe says it makes,
+        # so it never goes through the kcal anchor.
+        stated = servings_from_body(parsed.get("body"))
+        if stated is not None:
+            servings, anchor, status = stated, _anchor_for(fm), "stated"
+        else:
+            servings, anchor = estimate_servings(fm)
+            status = "estimated" if servings else "needs-nutrition-first"
         rows.append({
             "file": filepath,
             "name": filepath.stem,
             "dish_type": str(fm.get("dish_type") or "—"),
             "batch_kcal": batch,
             "anchor": anchor,
-            "servings": est,
-            "per_serving_kcal": round(int(batch) / est) if (est and batch) else None,
-            "status": "estimated" if est else "needs-nutrition-first",
+            "servings": servings,
+            "per_serving_kcal": _per_serving_kcal(batch, servings),
+            "status": status,
         })
     return rows
 
 
 def apply_row(row: dict) -> None:
-    """Write the inferred servings (+ review flags) into the recipe file."""
+    """Write the servings count, flagging it for review only if it was inferred."""
     filepath: Path = row["file"]
     backup.create_backup(filepath)
     content = filepath.read_text(encoding="utf-8")
-    new = frontmatter.apply(content, {
-        "servings": row["servings"],
-        "servings_inferred": "true",
-        "servings_needs_review": "true",
-    }, _MANAGED)
+    updates = {"servings": row["servings"]}
+    remove: tuple = ()
+    if row["status"] == "stated":
+        # The recipe stated it, so drop any flag an earlier estimate left behind.
+        remove = _INFERENCE_FLAGS
+    else:
+        updates["servings_inferred"] = "true"
+        updates["servings_needs_review"] = "true"
+    new = frontmatter.apply(content, updates, _MANAGED, remove)
     if new is not None:
         filepath.write_text(new, encoding="utf-8")
 
@@ -130,7 +197,7 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--apply", action="store_true",
-                        help="Write inferred servings (default: preview only)")
+                        help="Write the servings counts (default: preview only)")
     parser.add_argument("--limit", type=int, help="Process at most N recipes")
     parser.add_argument("--recipes-dir", type=Path, default=None,
                         help="Override the Recipes dir (default: vault Recipes)")
@@ -138,17 +205,20 @@ def main(argv=None) -> int:
 
     recipes_dir = args.recipes_dir or paths.recipes_dir()
     rows = plan_backfill(recipes_dir)
-    estimatable = [r for r in rows if r["status"] == "estimated"]
+    stated = [r for r in rows if r["status"] == "stated"]
+    estimated = [r for r in rows if r["status"] == "estimated"]
+    unusable = [r for r in rows if r["status"] == "needs-nutrition-first"]
+    writable = stated + estimated
     if args.limit is not None:
-        estimatable = estimatable[:args.limit]
+        writable = writable[:args.limit]
 
     if not rows:
         print("Every recipe already has a servings count. Nothing to do.")
         return 0
 
     print(f"{len(rows)} recipe(s) missing servings "
-          f"({len(estimatable)} estimatable, "
-          f"{len(rows) - len([r for r in rows if r['status'] == 'estimated'])} need nutrition first):\n")
+          f"({len(stated)} stated in the recipe, {len(estimated)} estimated, "
+          f"{len(unusable)} need nutrition first):\n")
     print(f"{'recipe':<34} {'dish':<10} {'batch':>7} {'serv':>5} {'per':>6}  status")
     print("-" * 78)
     for r in rows:
@@ -156,16 +226,20 @@ def main(argv=None) -> int:
               f"{str(r['batch_kcal'] or '—'):>7} {str(r['servings'] or '—'):>5} "
               f"{str(r['per_serving_kcal'] or '—'):>6}  {r['status']}")
 
+    n_stated = len([r for r in writable if r["status"] == "stated"])
+    n_estimated = len(writable) - n_stated
+
     if not args.apply:
         print(f"\nDRY RUN — nothing written. Re-run with --apply to write "
-              f"{len(estimatable)} inferred servings (each flagged "
-              f"servings_needs_review).")
+              f"{len(writable)} servings count(s): {n_stated} stated as fact, "
+              f"{n_estimated} estimated and flagged servings_needs_review.")
         return 0
 
-    for r in estimatable:
+    for r in writable:
         apply_row(r)
-    print(f"\nWrote inferred servings to {len(estimatable)} recipe(s) "
-          f"(flagged servings_inferred + servings_needs_review; backups in .history/).")
+    print(f"\nWrote servings to {len(writable)} recipe(s): {n_stated} stated by the "
+          f"recipe itself, {n_estimated} flagged servings_inferred + "
+          f"servings_needs_review (backups in .history/).")
     print("Next: .venv/bin/python backfill_nutrition.py --force   "
           "# recompute per-serving macros")
     print("Then review the recipes flagged servings_needs_review and fix any that look off.")
