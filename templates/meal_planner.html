@@ -116,6 +116,35 @@
             box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.15);
         }
 
+        .sort-select {
+            width: 100%;
+            margin-top: 6px;
+            /* 16px stops iOS Safari zooming the page when this gets focus. */
+            font-size: 16px;
+            padding: 7px 8px;
+            border: 1px solid var(--border, #d8d8dc);
+            border-radius: 8px;
+            background: #fff;
+            color: inherit;
+        }
+        /* Macro numbers on the card: tabular so the columns line up while scanning. */
+        .recipe-macros {
+            font-size: 11px;
+            opacity: .8;
+            font-variant-numeric: tabular-nums;
+            margin-top: 2px;
+        }
+        /* A recipe with no servings count carries whole-batch macros, which are
+           not comparable with everything else — say so rather than let it sort
+           and filter as if it were one portion. */
+        .recipe-macros .batch { color: #b7791f; font-weight: 600; }
+        .chip.macro.active { background: #b7791f; border-color: #b7791f; color: #fff; }
+        .chip.meal-type.active { background: #0071e3; border-color: #0071e3; color: #fff; }
+        .filter-note {
+            font-size: 11px;
+            opacity: .7;
+            padding: 0 12px 4px;
+        }
         .filter-chips {
             display: flex;
             flex-wrap: wrap;
@@ -299,6 +328,7 @@
         }
 
         .recipe-card.has-image .recipe-name,
+        .recipe-card.has-image .recipe-macros,
         .recipe-card.has-image .recipe-meta {
             position: relative;
             z-index: 1;
@@ -306,7 +336,16 @@
             text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
         }
 
-        .recipe-card.has-image .recipe-meta {
+        .recipe-card.has-image .recipe-macros {
+            /* The base rule dims this with opacity, which on a photo compounds
+               with the overlay until the numbers are unreadable. */
+            opacity: 1;
+        }
+        /* Amber on a dark photo is mud — lighten the warning to stay legible
+           without losing that it's a warning. */
+        .recipe-card.has-image .recipe-macros .batch { color: #f0c274; }
+        .recipe-card.has-image .recipe-meta,
+        .recipe-card.has-image .recipe-macros {
             color: rgba(255, 255, 255, 0.85);
         }
 
@@ -1465,6 +1504,13 @@
                     <a class="nav-link-review" href="/nutrition-review">Review</a>
                 </div>
                 <input type="text" class="search-input" id="search-input" placeholder="Search..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+                <select class="sort-select" id="sort-select" aria-label="Sort recipes">
+                    <option value="name">Sort: A–Z</option>
+                    <option value="added">Sort: Recently added</option>
+                    <option value="cal-asc">Sort: Fewest calories</option>
+                    <option value="cal-desc">Sort: Most calories</option>
+                    <option value="protein-desc">Sort: Most protein</option>
+                </select>
             </div>
             <div class="sidebar-tabs">
                 <button class="sidebar-tab active" data-tab="recipes" id="tab-recipes">Recipes</button>
@@ -1472,6 +1518,7 @@
                 <button class="sidebar-tab" data-tab="freezer" id="tab-freezer">Freezer</button>
             </div>
             <div class="filter-chips" id="filter-chips"></div>
+            <div class="filter-note" id="filter-note"></div>
             <div class="resize-handle" id="resize-handle"></div>
             <div class="recipe-list" id="recipe-list"></div>
             <div class="meals-list" id="meals-list">
@@ -1593,6 +1640,81 @@
         let activeTab = 'recipes';  // 'recipes' or 'meals'
         let activeFilters = {};  // { cuisine: Set, protein: Set, meal_occasion: Set }
         let seasonFilterActive = false;
+        let sortMode = 'name';
+        const activeDishGroups = new Set();   // meal-type chips (Mains, Breakfast, …)
+        const activeMacroKeys = new Set();    // macro bucket chips
+
+        // Mirrors DISH_TYPE_GROUPS in lib/cook_now.py — the closed vocabulary is
+        // enforced there, and a dish_type with no group is a test failure. Kept in
+        // the same order so the chips read the same on both pages.
+        const DISH_GROUPS = {
+            'Mains':     ['main', 'sandwich', 'soup'],
+            'Breakfast': ['breakfast'],
+            'Sides':     ['side', 'salad', 'bread', 'sauce'],
+            'Snacks':    ['snack', 'appetizer', 'dip'],
+            'Desserts':  ['dessert'],
+            'Drinks':    ['drink'],
+        };
+        // An unknown/missing dish_type falls back to Mains rather than vanishing —
+        // the filter must never make a cookable recipe unreachable over a data gap.
+        const DEFAULT_DISH_GROUP = 'Mains';
+        const GROUP_FOR_DISH_TYPE = {};
+        for (const [g, types] of Object.entries(DISH_GROUPS)) {
+            for (const t of types) GROUP_FOR_DISH_TYPE[t] = g;
+        }
+        function dishGroupOf(recipe) {
+            return GROUP_FOR_DISH_TYPE[recipe.dish_type] || DEFAULT_DISH_GROUP;
+        }
+
+        // Preset buckets rather than sliders: one thumb tap, and they compose with
+        // the meal-type chips.
+        const MACRO_FILTERS = {
+            'kcal ≤ 400':  r => r.nutrition_calories <= 400,
+            'kcal ≤ 600':  r => r.nutrition_calories <= 600,
+            'protein 30g+': r => r.nutrition_protein >= 30,
+            'carbs ≤ 30g': r => r.nutrition_carbs <= 30,
+        };
+
+        /** Mirror of nutrition_engine._parse_servings: 0 when unusable.
+         *
+         * `servings` is raw frontmatter, and the extractor puts prose in it —
+         * "4-6", "4-6 servings (estimated)", "6-8 as a side dish" are all in the
+         * library today. A bare Number() yields NaN for those, which would have
+         * mislabelled real per-serving recipes as whole-batch and hidden them from
+         * every macro filter.
+         */
+        function parseServings(value) {
+            if (typeof value === 'number') return value >= 1 ? Math.floor(value) : 0;
+            if (typeof value !== 'string') return 0;
+            const range = value.match(/(\d+)\s*(?:-|–|—|to)\s*(\d+)/);
+            if (range) return parseInt(range[1], 10) || 0;   // low end, as the engine does
+            const single = value.match(/\d+/);
+            return single ? (parseInt(single[0], 10) || 0) : 0;
+        }
+
+        // Per-serving macros only mean something when we know the serving count.
+        // Without it the engine divided the batch by 1, so these numbers are
+        // whole-recipe totals — not comparable with the rest of the library, and
+        // they would dominate any "most calories" sort (a 3,867-kcal Iced Thai Tea)
+        // and slip through every "under 400" filter for the wrong reason.
+        //
+        // Mirrors nutrition_engine.KCAL_SANITY_RANGE. 42 recipes store a
+        // per-serving figure above this ceiling, led by an 18,245-kcal "serving" —
+        // sorting by calories without excluding them returns a leaderboard of data
+        // errors rather than of rich food.
+        //
+        // Deliberately NOT keyed on `nutrition_needs_review`: that flag is set on
+        // 146 of 252 recipes, and 106 of those have entirely plausible calories
+        // (it fires for ingredient-coverage gaps too). Excluding on it would hide
+        // well over half the library before any filter did real work. It means
+        // "a human should look", not "this number is wrong".
+        const KCAL_SANITY = [50, 2500];
+        function plausibleCalories(cal) {
+            return cal != null && cal >= KCAL_SANITY[0] && cal <= KCAL_SANITY[1];
+        }
+        function hasPerServingMacros(r) {
+            return parseServings(r.servings) >= 1 && plausibleCalories(r.nutrition_calories);
+        }
         let sidebarSortable = null;
         let gridSortables = [];
         let saveTimeout = null;
@@ -2858,6 +2980,56 @@
 
         // --- Recipes Sidebar ---
 
+        /** The macro line under a card — or an honest marker when it can't be one. */
+        function macroLine(recipe) {
+            if (recipe.nutrition_calories == null) return '';
+            const cal = Math.round(recipe.nutrition_calories);
+            const p = recipe.nutrition_protein, c = recipe.nutrition_carbs,
+                  f = recipe.nutrition_fat;
+            const macros = [p, c, f].every(v => v != null)
+                ? ` · ${Math.round(p)}p/${Math.round(c)}c/${Math.round(f)}f` : '';
+            const srv = parseServings(recipe.servings);
+
+            // Three states, and they must not look alike: a real per-serving
+            // figure, a whole-batch total wearing one, and a figure outside the
+            // range the engine considers possible for one serving.
+            if (srv >= 1 && !plausibleCalories(recipe.nutrition_calories)) {
+                return `<div class="recipe-macros"><span class="batch">⚠ ${cal} kcal ` +
+                       `× ${srv} srv — implausible</span></div>`;
+            }
+            if (srv < 1) {
+                return `<div class="recipe-macros"><span class="batch">${cal} kcal whole batch</span>` +
+                       `${macros} · no servings</div>`;
+            }
+            return `<div class="recipe-macros">${cal} kcal${macros} · ${srv} srv</div>`;
+        }
+
+        /** allRecipes in the order the sort control asks for. Never mutates it. */
+        function sortedRecipes() {
+            const list = allRecipes.slice();
+            const byName = (a, b) => a.name.localeCompare(b.name);
+            // Recipes whose macros are whole-batch aren't comparable on a macro
+            // sort, so they sink to the bottom instead of topping "most calories"
+            // with a number that means something else entirely.
+            const macroSort = (key, dir) => (a, b) => {
+                const ok = [hasPerServingMacros(a), hasPerServingMacros(b)];
+                if (ok[0] !== ok[1]) return ok[0] ? -1 : 1;
+                if (!ok[0]) return byName(a, b);
+                const av = a[key] ?? 0, bv = b[key] ?? 0;
+                return av === bv ? byName(a, b) : (av - bv) * dir;
+            };
+            switch (sortMode) {
+                case 'added':
+                    // Undated sorts last; ISO dates compare lexicographically.
+                    return list.sort((a, b) =>
+                        (b.added || '').localeCompare(a.added || '') || byName(a, b));
+                case 'cal-asc':      return list.sort(macroSort('nutrition_calories', 1));
+                case 'cal-desc':     return list.sort(macroSort('nutrition_calories', -1));
+                case 'protein-desc': return list.sort(macroSort('nutrition_protein', -1));
+                default:             return list.sort(byName);
+            }
+        }
+
         function renderRecipes() {
             const list = document.getElementById('recipe-list');
             list.innerHTML = '';
@@ -2865,8 +3037,9 @@
             const searchTerm = (document.getElementById('search-input').value || '').toLowerCase();
 
             let visibleCount = 0;
+            let batchHidden = 0;
 
-            allRecipes.forEach(recipe => {
+            sortedRecipes().forEach(recipe => {
                 const card = document.createElement('div');
                 card.className = 'recipe-card';
                 card.dataset.name = recipe.name;
@@ -2880,6 +3053,7 @@
                 const metaParts = [];
                 if (recipe.cuisine) metaParts.push(recipe.cuisine);
                 if (recipe.protein) metaParts.push(recipe.protein);
+                if (sortMode === 'added' && recipe.added) metaParts.push(`added ${recipe.added}`);
 
                 // Apply background image if available
                 if (recipe.image) {
@@ -2892,6 +3066,7 @@
                 card.innerHTML = `
                     <a href="${obsidianUrl}" class="recipe-name recipe-name-link">${escapeHtml(recipe.name)}</a>
                     ${metaParts.length ? `<div class="recipe-meta">${escapeHtml(metaParts.join(' \u00b7 '))}</div>` : ''}
+                    ${macroLine(recipe)}
                 `;
 
                 // Detail-page link \u2014 a real <a> (not innerHTML text) so we
@@ -2915,6 +3090,11 @@
 
                 if (!matchesSearch || !matchesFilters) {
                     card.classList.add('hidden');
+                    // Count the ones a macro filter had to exclude for lack of a
+                    // servings count, so "0 results" is never a silent mystery.
+                    if (matchesSearch && activeMacroKeys.size && !hasPerServingMacros(recipe)) {
+                        batchHidden++;
+                    }
                 } else {
                     visibleCount++;
                 }
@@ -2924,6 +3104,10 @@
 
             document.getElementById('sidebar-count').textContent =
                 `${visibleCount} of ${allRecipes.length} recipes`;
+            const note = document.getElementById('filter-note');
+            note.textContent = batchHidden
+                ? `${batchHidden} hidden — no servings count, or calories outside a believable range`
+                : '';
 
             // Re-init sidebar sortable after rebuilding list
             initSidebarSortable();
@@ -2935,6 +3119,23 @@
                 const months = (recipe.peak_months || []).map(m => parseInt(m));
                 const currentMonth = new Date().getMonth() + 1;
                 if (!months.includes(currentMonth)) return false;
+            }
+
+            // Meal type — chips are OR'd within the group, as with the other rows.
+            if (activeDishGroups.size && !activeDishGroups.has(dishGroupOf(recipe))) {
+                return false;
+            }
+
+            // Macro buckets are AND'ed: "kcal ≤ 400" + "protein 30g+" means both.
+            // A recipe whose macros are whole-batch can't answer these questions,
+            // so it is excluded rather than judged against the wrong unit —
+            // renderRecipes reports how many that hid.
+            if (activeMacroKeys.size) {
+                if (!hasPerServingMacros(recipe)) return false;
+                for (const key of activeMacroKeys) {
+                    const pred = MACRO_FILTERS[key];
+                    if (pred && !pred(recipe)) return false;
+                }
             }
 
             for (const [field, values] of Object.entries(activeFilters)) {
@@ -2968,6 +3169,36 @@
                 renderRecipes();
             });
             chipsContainer.appendChild(seasonChip);
+
+            // Meal type, then macro buckets — both ahead of the auto-generated
+            // cuisine/protein chips, which run long and would bury them.
+            activeDishGroups.clear();
+            for (const group of Object.keys(DISH_GROUPS)) {
+                const chip = document.createElement('button');
+                chip.className = 'chip meal-type';
+                chip.textContent = group;
+                chip.addEventListener('click', function() {
+                    if (activeDishGroups.has(group)) activeDishGroups.delete(group);
+                    else activeDishGroups.add(group);
+                    chip.classList.toggle('active', activeDishGroups.has(group));
+                    renderRecipes();
+                });
+                chipsContainer.appendChild(chip);
+            }
+
+            activeMacroKeys.clear();
+            for (const label of Object.keys(MACRO_FILTERS)) {
+                const chip = document.createElement('button');
+                chip.className = 'chip macro';
+                chip.textContent = label;
+                chip.addEventListener('click', function() {
+                    if (activeMacroKeys.has(label)) activeMacroKeys.delete(label);
+                    else activeMacroKeys.add(label);
+                    chip.classList.toggle('active', activeMacroKeys.has(label));
+                    renderRecipes();
+                });
+                chipsContainer.appendChild(chip);
+            }
 
             const chipData = [];
 
@@ -3026,6 +3257,23 @@
         function setupEventListeners() {
             // Search
             document.getElementById('search-input').addEventListener('input', function() {
+                renderRecipes();
+            });
+
+            // Sort. Persisted, because the useful ordering depends on what you're
+            // doing (planning a week vs. reviewing what just came in), and having
+            // to re-pick it on every load is exactly the friction this removes.
+            const sortSelect = document.getElementById('sort-select');
+            try {
+                const saved = localStorage.getItem('kitchenos.planner.sort');
+                if (saved && sortSelect.querySelector(`option[value="${saved}"]`)) {
+                    sortMode = saved;
+                    sortSelect.value = saved;
+                }
+            } catch (e) { /* private mode — sorting still works for this session */ }
+            sortSelect.addEventListener('change', function() {
+                sortMode = sortSelect.value;
+                try { localStorage.setItem('kitchenos.planner.sort', sortMode); } catch (e) {}
                 renderRecipes();
             });
 
