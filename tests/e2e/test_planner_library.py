@@ -166,6 +166,135 @@ class TestFilters:
         assert page_errors == []
 
 
+class TestPreview:
+    """Looking up what a recipe is must not cost you the week on screen."""
+
+    def _first_with(self, page, predicate):
+        """A recipe name from the live library matching a JS predicate."""
+        return page.evaluate(
+            f"() => (allRecipes.filter(r => {predicate})[0] || {{}}).name")
+
+    def test_backdrop_is_hidden_until_asked_for(self, live_server, page, page_errors):
+        _open(page, live_server)
+        assert page.locator("#preview-backdrop").is_hidden()
+        assert page_errors == []
+
+    def test_info_button_opens_the_preview_without_navigating(
+            self, live_server, page, page_errors):
+        _open(page, live_server)
+        before = page.url
+        page.locator(".recipe-card:not(.hidden) .recipe-info-link").first.click()
+        page.wait_for_selector("#preview-title")
+
+        assert page.url == before, "the preview navigated away instead of overlaying"
+        assert page.locator(".recipe-card").count() > 0, "planner unmounted"
+        assert page_errors == []
+
+    def test_preview_shows_ingredients_and_a_way_to_the_full_recipe(
+            self, live_server, page, page_errors):
+        _open(page, live_server)
+        name = self._first_with(page, "r.servings")
+        page.evaluate(f"openPreview({name!r})")
+        page.wait_for_selector("#preview-title")
+
+        assert page.locator(".preview-ing li").count() > 0
+        href = page.locator("a.preview-open").get_attribute("href")
+        assert href.startswith("/recipe/")
+        assert page_errors == []
+
+    def test_a_recipe_with_servings_reads_per_serving(self, live_server, page,
+                                                      page_errors):
+        _open(page, live_server)
+        name = self._first_with(
+            page,
+            "parseServings(r.servings) >= 1 && plausibleCalories(r.nutrition_calories)")
+        page.evaluate(f"openPreview({name!r})")
+        page.wait_for_selector(".preview-basis")
+
+        basis = page.locator(".preview-basis").inner_text()
+        assert "per serving" in basis and "makes" in basis
+        assert page_errors == []
+
+    def test_a_recipe_without_servings_says_whole_recipe(self, live_server, page,
+                                                         page_errors):
+        """The same honesty rule as the sidebar — these are batch totals."""
+        _open(page, live_server)
+        name = self._first_with(
+            page, "!parseServings(r.servings) && r.nutrition_calories != null")
+        if not name:
+            pytest.skip("every recipe has a servings count in the current library")
+        page.evaluate(f"openPreview({name!r})")
+        page.wait_for_selector(".preview-basis")
+
+        basis = page.locator(".preview-basis").inner_text()
+        assert "whole recipe" in basis
+        assert "per serving" not in basis
+        assert page_errors == []
+
+    def test_escape_closes(self, live_server, page, page_errors):
+        _open(page, live_server)
+        page.locator(".recipe-card:not(.hidden) .recipe-info-link").first.click()
+        page.wait_for_selector("#preview-title")
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(150)
+
+        assert page.locator("#preview-backdrop").is_hidden()
+        assert page_errors == []
+
+    def test_backdrop_closes_but_the_card_itself_does_not(self, live_server, page,
+                                                          page_errors):
+        _open(page, live_server)
+        page.locator(".recipe-card:not(.hidden) .recipe-info-link").first.click()
+        page.wait_for_selector("#preview-title")
+
+        # A click inside the card must not dismiss what you're reading.
+        page.locator("#preview-title").click()
+        page.wait_for_timeout(150)
+        assert page.locator("#preview-backdrop").is_visible()
+
+        page.locator("#preview-backdrop").click(position={"x": 5, "y": 5})
+        page.wait_for_timeout(150)
+        assert page.locator("#preview-backdrop").is_hidden()
+        assert page_errors == []
+
+    def test_closing_restores_page_scrolling(self, live_server, page, page_errors):
+        """The overlay locks body scroll; failing to release it strands the page."""
+        _open(page, live_server)
+        page.locator(".recipe-card:not(.hidden) .recipe-info-link").first.click()
+        page.wait_for_selector("#preview-title")
+        assert page.evaluate("document.body.style.overflow") == "hidden"
+
+        page.locator("#preview-close").click()
+        page.wait_for_timeout(150)
+        assert page.evaluate("document.body.style.overflow") == ""
+        assert page_errors == []
+
+    def test_a_failed_load_offers_the_full_page_instead(self, live_server, page,
+                                                        page_errors):
+        _open(page, live_server)
+        page.route("**/api/recipes/*", lambda r: r.fulfill(status=500, body="nope"))
+        page.evaluate("openPreview('Anything At All')")
+        page.wait_for_selector(".preview-error")
+
+        err = page.locator(".preview-error")
+        assert "Could not load" in err.inner_text()
+        assert err.locator("a").get_attribute("href").startswith("/recipe/")
+
+
+class TestDragStillWorks:
+    """The preview shares the sidebar with SortableJS; it must not disarm it."""
+
+    def test_sortable_is_live_and_still_excludes_the_info_button(
+            self, live_server, page, page_errors):
+        _open(page, live_server)
+        assert page.evaluate("typeof sidebarSortable !== 'undefined' && !!sidebarSortable")
+        # If the info button ever stopped being filtered, tapping it would start a
+        # drag instead of opening the preview.
+        assert page.evaluate(
+            "sidebarSortable.option('filter').includes('recipe-info-link')")
+        assert page_errors == []
+
+
 class TestCardMacros:
     def test_every_card_states_its_basis(self, live_server, page, page_errors):
         """A per-serving figure, a whole-batch total, and an implausible one must
