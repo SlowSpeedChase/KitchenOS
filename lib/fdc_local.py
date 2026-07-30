@@ -148,6 +148,24 @@ _UNIT_ML = {"cup": 236.588, "tbsp": 14.79, "tsp": 4.93, "fl oz": 29.57,
 _UNIT_KCAL_MAX = {"tsp": 90, "tbsp": 220, "cup": 1400, "fl oz": 120}
 _MAX_PORTION_GRAMS = 2000
 
+# Substances you cannot have "one whole" of — they are poured, spooned or scooped,
+# and are sold in packages. `whole` is the unit the extractor emits when a recipe
+# stated NO amount, so asking an LLM for "one whole olive oil" invites the answer
+# "a bottle": the ledger held olive oil at 965 g, all-purpose flour at 1000 g and
+# honey at 800 g, and one such line contributed 8,685 kcal to a single recipe.
+#
+# A deterministic check can't tell "a whole chicken" (legitimately 1400 g) from "a
+# whole bottle of oil" by weight alone, so the discrimination is lexical and
+# explicit here, in the same spirit as the controlled vocabularies in
+# normalizer.py. Anything not on this list keeps the old, looser treatment.
+_BULK_SUBSTANCES = (
+    "oil", "water", "flour", "honey", "syrup", "mayo", "mayonnaise", "sauce",
+    "milk", "cream", "juice", "vinegar", "broth", "stock", "yogurt", "sugar",
+    "salt", "powder", "mustard", "ketchup", "butter", "granola", "rice",
+)
+# A recipe line that states no amount should not out-weigh a main protein.
+_MAX_WHOLE_BULK_GRAMS = 300.0
+
 
 def ensure_schema(conn) -> None:
     """Create the local FDC tables if absent (idempotent)."""
@@ -170,6 +188,13 @@ def validate_portion_grams(item: str, unit: str, grams_per_unit: float,
     if g > _MAX_PORTION_GRAMS:
         return False, f"gram weight {g:.0f} implausibly large"
     u = (unit or "").strip().lower()
+    if u == "whole" and g > _MAX_WHOLE_BULK_GRAMS:
+        low = (item or "").lower()
+        hit = next((w for w in _BULK_SUBSTANCES
+                    if re.search(rf"\b{re.escape(w)}\b", low)), None)
+        if hit:
+            return False, (f"{g:.0f} g for one 'whole' {hit} is a package, "
+                           f"not a recipe amount")
     ml = _UNIT_ML.get(u)
     if ml:
         density = g / ml
