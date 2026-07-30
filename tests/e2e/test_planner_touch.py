@@ -301,8 +301,19 @@ class TestTapToAssign:
         suggestion: suggestMeal legitimately no-ops on a board-backed week
         (`weekBoard.cooks.length > 0`), so a week that any earlier test placed a
         cook into would make an outcome-based assertion vacuous.
+
+        Pinned to an empty far-future week for the same reason the fits-above-the-
+        shelf test is. The e2e vault is a *copy of the live one*, so "Friday lunch
+        is empty" was only ever true until someone planned a Friday lunch — and the
+        cell click only reaches the handler when the tap lands on empty space.
         """
-        _open(page, live_server, IPAD_PORTRAIT)
+        page.set_viewport_size(IPAD_PORTRAIT)
+        page.goto(live_server.url("/meal-planner?touch=1&week=2030-W20"),
+                  wait_until="domcontentloaded")
+        page.wait_for_selector(".recipe-card")
+        page.wait_for_selector(".grid-cell")
+        assert page.locator(".grid-cell.has-card").count() == 0, (
+            "this test needs an empty week — 2030-W20 should have no cooks")
         page.evaluate("""() => {
             window.__suggestedFor = null;
             window.suggestMeal = (cell) =>
