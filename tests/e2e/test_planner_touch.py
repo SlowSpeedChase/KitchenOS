@@ -15,8 +15,26 @@ import pytest
 
 pytestmark = pytest.mark.e2e
 
-IPAD_PORTRAIT = {"width": 820, "height": 1180}
-IPAD_LANDSCAPE = {"width": 1180, "height": 820}
+# The only iPads this is used on are the 11" and 13" — point sizes, not pixels.
+# Every 11"/13" portrait width is <=1080, so portrait gets the bottom shelf and
+# landscape keeps the docked rail; that is the breakpoint's whole job. Smaller
+# iPads (768x1024 mini/classic) are deliberately not a target.
+IPADS_PORTRAIT = [
+    ({"width": 820, "height": 1180}, "air-11"),      # Air 11 M2, Air 4/5
+    ({"width": 834, "height": 1210}, "pro-11"),      # Pro 11 M4
+    ({"width": 1024, "height": 1366}, "air-13"),     # Air 13 M2, Pro 12.9
+    ({"width": 1032, "height": 1376}, "pro-13"),     # Pro 13 M4
+]
+IPADS_LANDSCAPE = [
+    ({"width": 1180, "height": 820}, "air-11"),
+    ({"width": 1210, "height": 834}, "pro-11"),
+    ({"width": 1366, "height": 1024}, "air-13"),
+    ({"width": 1376, "height": 1032}, "pro-13"),
+]
+
+# The canonical case for tests that only need one viewport.
+IPAD_PORTRAIT = IPADS_PORTRAIT[0][0]
+IPAD_LANDSCAPE = IPADS_LANDSCAPE[0][0]
 
 # Apple HIG's floor, and the threshold below which measured tap error rates climb
 # past 25%. It is a minimum, not a target.
@@ -71,7 +89,9 @@ class TestTapTargets:
     """Before this suite: 526 of 607 visible controls were under 44 pt, 477 under 30."""
 
     @pytest.mark.parametrize("viewport,name", [
-        (IPAD_PORTRAIT, "portrait"), (IPAD_LANDSCAPE, "landscape")])
+        *((v, f"{n}-portrait") for v, n in IPADS_PORTRAIT),
+        *((v, f"{n}-landscape") for v, n in IPADS_LANDSCAPE),
+    ])
     def test_no_control_is_below_the_floor(self, live_server, page, page_errors,
                                            viewport, name):
         _open(page, live_server, viewport)
@@ -123,17 +143,14 @@ class TestShelf:
         assert state["cards"] > 0, "and it actually has recipes in it"
         assert page_errors == []
 
-    @pytest.mark.parametrize("viewport", [
-        IPAD_PORTRAIT,                    # iPad Air / Pro 11"
-        {"width": 834, "height": 1194},   # iPad Pro 11" (older)
-    ])
-    def test_the_whole_week_fits_above_the_shelf(self, live_server, page, viewport):
+    @pytest.mark.parametrize("viewport,name", IPADS_PORTRAIT)
+    def test_the_whole_week_fits_above_the_shelf(self, live_server, page,
+                                                 viewport, name):
         """The shelf only delivers an overview if the week still fits beside it.
 
-        Not asserted at 768x1024 (iPad mini / classic portrait): once any slot
-        holds a photo card the grid is taller than that viewport at *any* shelf
-        height, so it scrolls there by design rather than by regression. The
-        shelf is sized in dvh so it shrinks with the screen instead of breaking.
+        Asserted on every 11" and 13" iPad in portrait. The shelf is sized in dvh,
+        so a 13" gets a proportionally taller shelf (601px vs 519px) and more of
+        the library, without the week ever losing a slot.
 
         Pinned to an empty far-future week on purpose. The claim under test is
         that the *compressed empty grid* fits; a slot holding a photo card is
@@ -168,9 +185,10 @@ class TestShelf:
         assert state["onscreen"] == 28, (
             f"only {state['onscreen']}/28 slots visible — the big picture is cut off")
 
-    def test_landscape_keeps_its_docked_rail(self, live_server, page):
+    @pytest.mark.parametrize("viewport,name", IPADS_LANDSCAPE)
+    def test_landscape_keeps_its_docked_rail(self, live_server, page, viewport, name):
         """Landscape measured fine before this work; the change must not touch it."""
-        _open(page, live_server, IPAD_LANDSCAPE)
+        _open(page, live_server, viewport)
         state = page.evaluate("""() => {
           const sb = document.getElementById('sidebar').getBoundingClientRect();
           const mn = document.querySelector('.main').getBoundingClientRect();

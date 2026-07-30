@@ -1797,6 +1797,17 @@
             pointer-events: none;
         }
 
+        /* Same reasoning for the title on a *placed* card: under touch the grid
+           card opens the action sheet (which carries "Open recipe"), so its title
+           is not independently actionable either. Worth pinning because its height
+           is a function of how the name happens to wrap — 31px on a 13" where the
+           column fits two lines, over 44 on an 11" where the same name takes three.
+           Left live, the tap-target floor would depend on screen size and recipe
+           name length, which is why it read as passing until the 13" was measured. */
+        html.touch .grid-card .grid-card-name-link {
+            pointer-events: none;
+        }
+
         /* The whole card already opens the action sheet under touch, so the
            corner ⋮ is a redundant 17x20 target — drop it rather than inflate it,
            exactly as the four buttons above. It stays for mouse users, where

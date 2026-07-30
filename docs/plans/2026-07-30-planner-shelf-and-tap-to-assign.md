@@ -109,10 +109,27 @@ Instead, at ≤1080 px the axis rotates:
   `syncAppHeight()` measures the offset rather than hardcoding it, because that bar
   is not this template's markup. Caught by `test_collapsing_leaves_the_handle_reachable`.
 - **44 dvh** is the largest default at which the compressed 28-slot week still fits
-  above the shelf. Measured: 48 dvh overflows 820×1180 by 7 px; 44 dvh clears both
-  820×1180 and 834×1194. A 768×1024 iPad mini overflows at *any* shelf height once a
-  slot holds a photo card, so it scrolls by design — the shelf is sized in `dvh`, so
-  it degrades proportionally rather than breaking.
+  above the shelf. Measured: 48 dvh overflows 820×1180 by 7 px; 44 dvh clears every
+  target device. Being proportional, it also *scales the right way* — a 13" gets a
+  601 px shelf against an 11"'s 519 px, so the bigger screen buys more library
+  rather than more whitespace.
+
+### Target devices
+
+Only the **11" and 13" iPads**. Every one of their portrait widths is ≤ 1080, so the
+breakpoint lands exactly right: portrait gets the shelf, landscape keeps the rail.
+Smaller iPads (768 × 1024 mini/classic) are not a target and are not asserted.
+
+| Device | Portrait | Landscape |
+|---|---|---|
+| Air 11 M2 / Air 4–5 | 820 × 1180 | 1180 × 820 |
+| Pro 11 M4 | 834 × 1210 | 1210 × 834 |
+| Air 13 M2 / Pro 12.9 | 1024 × 1366 | 1366 × 1024 |
+| Pro 13 M4 | 1032 × 1376 | 1376 × 1032 |
+
+All eight verified: zero grid overflow, 28/28 slots on screen, zero sub-44 pt
+controls. Portrait shelves run 519–605 px (2–3 recipe cards visible); landscape
+rails give 372–584 px of list (4–6 cards).
 
 **Shelf density.** The shelf only pays off if the list gets the room. As first built,
 `shelf-handle` + a 167 px `sidebar-header` + tabs + a 152 px chip block left **83 px**
@@ -178,10 +195,17 @@ the better answer wherever it applies:
   sheet — so it goes, exactly as `remove`/`servings`/`cooked`/`retry` already did. It
   stays for mouse, where tap-to-open is gated off by `IS_TOUCH` and the sheet (and so
   the make-again verdict) would otherwise be unreachable.
-- The **title link** becomes `pointer-events: none` under touch. The card owns the tap
-  now (it arms the recipe), so the title is not independently actionable; left live it
-  would be 252 sub-44 "targets" that merely duplicate the card. It stays a real
-  `obsidian://` link on desktop, the only place that distinction has anywhere to go.
+- The **title links** — both `.recipe-name-link` in the shelf and `.grid-card-name-link`
+  on a placed card — become `pointer-events: none` under touch. The card owns the tap
+  now (arming the recipe, or opening the action sheet), so the titles are not
+  independently actionable; left live they would be 252 sub-44 "targets" duplicating
+  the card. They stay real `obsidian://` links on desktop, the only place that
+  distinction has anywhere to go.
+
+  The grid-card one is the reason it was worth testing four device sizes rather than
+  one: its height is a function of how the recipe name *wraps*, so it measured 31 px
+  on a 13" (wide column, two lines) and over 44 on an 11" (three lines). It read as
+  passing until the 13" was in the matrix.
 - The **preview ⓘ** keeps its 26 px disc but grows its *hit area* to 44, painted with a
   `radial-gradient` rather than a wrapper element so the existing markup and the
   `has-image` contrast variant both keep working. Inflating the disc itself would
@@ -236,9 +260,9 @@ column-direction shelf) fails 4 tests, so it is not vacuous.
 
 ### Acceptance Criteria
 
-- [x] At 820 × 1180 (iPad portrait) the recipe library is visible **without any tap**
-- [x] At 820 × 1180 all 7 days × 4 meals are visible **without scrolling the grid**
-      (28/28 on screen; also holds at 834 × 1194)
+- [x] In portrait the recipe library is visible **without any tap**
+- [x] All 7 days × 4 meals visible **without scrolling the grid** — 28/28 on every
+      11" and 13" iPad, both orientations
 - [x] Tapping a recipe then a slot assigns it, with no drag
 - [x] Drag-to-assign still works — `test_planner_library.py` stays green
 - [x] **Zero** interactive controls below 44 × 44 pt at both iPad orientations
@@ -246,7 +270,7 @@ column-direction shelf) fails 4 tests, so it is not vacuous.
 - [x] Shelf height survives a reload
 - [x] Landscape (1180 × 820) layout is unchanged from today
 
-**Verified:** 2996 unit tests pass, 79 e2e pass (63 + 16 new), zero new ruff errors
+**Verified:** 2996 unit tests pass, 90 e2e pass (63 + 27 new), zero new ruff errors
 (`api_server.py`'s 2 pre-date this branch).
 
 ### ADHD Design Check
