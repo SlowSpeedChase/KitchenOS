@@ -15,12 +15,20 @@
           opacity: .45; }
   .chip[aria-pressed="true"] { opacity: 1; font-weight: 600; }
   #hidden-note { font-size: .85rem; opacity: .7; margin: 0 0 1rem; }
-  .recipe { padding: .6rem 0; border-bottom: 1px solid rgba(128,128,128,.25); }
-  .recipe-head { display: flex; justify-content: space-between; gap: 1rem; }
+  /* The whole row is the link to the recipe — on a phone a tappable name alone
+     is a small target, and the coverage/missing text is part of "what is this". */
+  .recipe { display: block; padding: .7rem 0; min-height: 44px;
+            border-bottom: 1px solid rgba(128,128,128,.25);
+            color: inherit; text-decoration: none; }
+  .recipe:active { opacity: .6; }
+  .recipe-head { display: flex; justify-content: space-between; gap: 1rem;
+                 align-items: baseline; }
   .name { font-weight: 600; }
   .cov { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .chev { opacity: .45; margin-left: .35rem; }
   .missing { font-size: .85rem; opacity: .75; margin-top: .2rem; }
   .group-tag { font-size: .75rem; opacity: .6; margin-left: .4rem; }
+  @media (hover: hover) { .recipe:hover .name { text-decoration: underline; } }
 </style>
 </head>
 <body>
@@ -100,9 +108,13 @@ function renderList() {
   list.innerHTML = "";
   for (const r of shown) {
     const pct = Math.round(r.coverage * 100);
-    const div = document.createElement("div");
+    // An <a>, so the row opens the recipe — seeing "83%" tells you nothing about
+    // whether you want to eat it. encodeURIComponent matters here: real names
+    // carry "+", "(", "!" (e.g. "Ham Cheddar + Chive Protein Biscuits").
+    const div = document.createElement("a");
     div.className = "recipe";
     div.dataset.group = r.group;
+    div.href = "/recipe/" + encodeURIComponent(r.recipe);
 
     const head = document.createElement("div");
     head.className = "recipe-head";
@@ -116,6 +128,11 @@ function renderList() {
     const cov = document.createElement("span");
     cov.className = "cov";
     cov.textContent = `${pct}% (${r.have}/${r.total})`;
+    const chev = document.createElement("span");
+    chev.className = "chev";
+    chev.setAttribute("aria-hidden", "true");
+    chev.textContent = "›";
+    cov.appendChild(chev);
     head.append(name, cov);
     div.appendChild(head);
 
