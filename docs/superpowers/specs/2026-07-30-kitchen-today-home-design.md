@@ -1,6 +1,6 @@
 # Kitchen Today — a state-first phone home page
 
-**Status:** Ready
+**Status:** Done
 **Created:** 2026-07-30
 **Updated:** 2026-07-30
 
@@ -156,16 +156,16 @@ Adding an HTML route without registering it in `SECTIONS` fails
 
 ### Acceptance Criteria
 
-- [ ] `/` shows four cards, each with a live number, above a collapsed All pages section
-- [ ] The page renders with **no horizontal scroll and no zoom** at a 390pt viewport
-- [ ] Home page responds in **< 300 ms** warm, parsing the recipe index **once**
-- [ ] A failing card degrades to a plain link; the page still returns 200
-- [ ] `/recent` lists recipes newest-first by **birth time**, linking to recipe cards
-- [ ] `/current/meal-plan` and `/current/shopping-list` return HTML, not an `obsidian://`
+- [x] `/` shows four cards, each with a live number, above a collapsed All pages section
+- [x] The page renders with **no horizontal scroll and no zoom** at a 390pt viewport
+- [x] Home page responds in **< 300 ms** warm, parsing the recipe index **once**
+- [x] A failing card degrades to a plain link; the page still returns 200
+- [x] `/recent` lists recipes newest-first by **birth time**, linking to recipe cards
+- [x] `/current/meal-plan` and `/current/shopping-list` return HTML, not an `obsidian://`
       redirect, and still offer an Open in Obsidian link
-- [ ] A shopping list can be generated for the current week **from the phone**, over HTTP
-- [ ] Every page previously in `SECTIONS` is still reachable
-- [ ] Full unit + e2e suites stay green; `ruff` no worse than main
+- [x] A shopping list can be generated for the current week **from the phone**, over HTTP
+- [x] Every page previously in `SECTIONS` is still reachable
+- [x] Full unit + e2e suites stay green; `ruff` no worse than main
 
 ### ADHD Design Check
 
@@ -183,4 +183,5 @@ Adding an HTML route without registering it in `SECTIONS` fails
 ## Links
 
 - **Branch:** `feat/kitchen-today-home`
-- **PR:** (added when complete)
+- **PR:** [#41](https://github.com/SlowSpeedChase/KitchenOS/pull/41) — merged 2026-07-30 as `82757d0`
+- **Archive:** [`docs/completed/2026-07-30-kitchen-today-home.md`](../../completed/2026-07-30-kitchen-today-home.md)
