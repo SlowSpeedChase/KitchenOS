@@ -57,10 +57,16 @@ with two different flag vocabularies (`needs_review` vs `servings_needs_review`)
   PR onto the real one — which surfaced a genuine conflict in `tests/test_api_endpoints.py`
   (additive on both sides: bulk-inventory tests vs macro-suggest tests; both kept).
 - Full suite green after rebase + graft: **2794 passed, 32 deselected**.
-- 28 tests on `scripts/backfill_servings.py`, including the stated-yield reader. Two of them
-  caught real regex bugs in the graft: greedy `(\d+)` backtracked to escape the measure-noun
-  exclusion, so `Makes 500 g of granola` matched **50** and `Yield: 12 oz` matched **1**. Fixed
-  with a `\b` after the digit group.
+- 32 tests on `scripts/backfill_servings.py`, including the stated-yield reader. Three defects in
+  the graft were caught and fixed, two by unit tests and one only by running it for real:
+  - Greedy `(\d+)` backtracked to escape the measure-noun exclusion, so `Makes 500 g of granola`
+    matched **50** and `Yield: 12 oz` matched **1**. Fixed with a `\b` after the digit group.
+  - **The bare `(\d+)\s+servings?` pattern matched our own generated nutrition footer** —
+    `*Serving size: 1 serving • Source: Fdc*` — and since stated counts write *unflagged*, it
+    would have stamped `servings: 1` onto batch recipes as fact, manufacturing the exact
+    corruption this tool repairs. It hit **3 of 3** candidate recipes in the real vault. Every
+    pattern now requires a human-sounding statement of yield ("Serves 4", "Makes 24 cookies",
+    "Cut into 6 servings"); a bare "N serving(s)" no longer matches anything.
 - `com.kitchenos.api` reloaded (it holds `lib/*` in memory and this PR rewrote three `lib`
   modules) — health `{"status":"ok"}`, and `/`, `/plan-week`, `/print/week`, `/cook-now`,
   `/review`, `/meal-planner` all 200 on the tailnet at `100.111.6.10:5001`.
@@ -70,8 +76,12 @@ with two different flag vocabularies (`needs_review` vs `servings_needs_review`)
 
 ## Not Done
 - **The weekly bin-packing planner stays parked** — this is the single-slot suggester only.
-- **`backfill_servings.py` has not been run against the vault.** It is dry-run by default and
-  nothing has been applied yet; the ~103 recipes missing `servings` are still uncorrected.
+- **`backfill_servings.py` has not been applied.** The dry run was executed (that is how the
+  footer defect surfaced) but nothing was written. **The real backlog is 6 recipes, not the ~103
+  the 2026-07-08 design doc cites** — that figure is stale, and the corpus was largely repaired in
+  the interim by the batch-ledger work. Of the 6: 4 are estimatable, 2 need nutrition data first,
+  and **0 state a yield**, so the grafted reader currently buys nothing on this corpus. It is
+  still the right precedence for recipes added later; it just isn't the win the design doc implied.
 - `fit_heart` / `fit_steady` remain uncomputable (no fibre or saturated fat in `NutritionData`
   or `fdc_foods`) — unchanged by this work.
 
@@ -88,3 +98,9 @@ with two different flag vocabularies (`needs_review` vs `servings_needs_review`)
 - **A calibration gate is only worth having if you let it kill the work.** The parked branch's
   ≥80% gate did its job — it correctly refused to ship a 50%-accurate inference. The mistake would
   have been merging around it rather than taking the simpler heuristic that flags everything.
+- **The unflagged path is where a scraper has to be paranoid.** Every unit test for the yield
+  reader passed, and the tool was still wrong on 3 of 3 real recipes, because the corpus contains
+  *our own generated text* — `*Serving size: 1 serving*` — that reads exactly like a yield. Writing
+  a value as "fact" removes the safety net that made the estimate path forgiving, so it has to earn
+  a much narrower pattern. **Running it for real against the vault is what caught this; no test I
+  thought to write would have.**

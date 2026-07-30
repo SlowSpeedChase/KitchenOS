@@ -235,8 +235,17 @@ It reads each recipe two ways, and the distinction matters:
 | **Estimated** — nothing stated | `servings ≈ batch_kcal / anchor(dish_type)`, clamped 1–12 | `servings_inferred: true` + `servings_needs_review: true` |
 
 A stated yield is a measurement, so it wins outright and isn't flagged. An
-estimate is a heuristic and always is. Measure nouns disqualify a stated match —
-"Makes 2 cups of sauce" is a batch volume, not two servings. Dry-run by default.
+estimate is a heuristic and always is. Dry-run by default.
+
+Two guards keep the unflagged path honest, and both exist because they failed once:
+
+- **Measure nouns disqualify a match** — "Makes 2 cups of sauce" is a batch volume,
+  not two servings.
+- **Only a human-sounding *statement* counts** ("Serves 4", "Makes 24 cookies",
+  "Cut into 6 servings") — never a bare "N serving(s)". Our own generated nutrition
+  footer reads `*Serving size: 1 serving • Source: Fdc*`, and a bare pattern scraped
+  `servings: 1` off it in **3 of 3** candidate recipes — writing the batch-as-one-serving
+  corruption this tool repairs, as unflagged fact.
 
 ```bash
 .venv/bin/python scripts/backfill_servings.py            # preview table, writes nothing

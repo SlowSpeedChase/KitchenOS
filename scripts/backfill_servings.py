@@ -68,14 +68,20 @@ _MEASURE_NOUN = (
     r"gallons?|gal|inch(?:es)?|cm"
 )
 
-# Yield patterns, tried in order; each captures the count in group 1.
+# Every pattern must require a human-sounding STATEMENT of yield, never the bare
+# phrase "N serving(s)". Our own generated nutrition footer reads
+# "*Serving size: 1 serving • Source: Fdc*", so a bare match scraped `servings: 1`
+# off machine provenance — and wrote it unflagged as fact, manufacturing the exact
+# batch-as-one-serving corruption this tool exists to repair. It hit 3 of 3
+# candidate recipes in the real vault. See TestStatedYield for the regression.
 _BODY_PATTERNS = [
     re.compile(r"(?:serves|feeds)\s+(?:about\s+)?(\d+)", re.IGNORECASE),
     # The \b after the digits is load-bearing: without it the group backtracks
     # to a shorter number to escape the exclusion, and "Makes 500 g" matches 50.
     re.compile(rf"(?:makes|yields?)\b[:\s]+(?:about\s+)?(\d+)\b"
                rf"(?!\s*(?:{_MEASURE_NOUN})\b)", re.IGNORECASE),
-    re.compile(r"(\d+)\s+servings?\b", re.IGNORECASE),
+    re.compile(r"(?:cut|divided?|portion(?:ed)?)\s+into\s+(?:about\s+)?(\d+)"
+               r"\s+servings?\b", re.IGNORECASE),
 ]
 
 _MANAGED = ("servings", "servings_inferred", "servings_needs_review")

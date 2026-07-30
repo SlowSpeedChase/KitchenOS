@@ -85,6 +85,15 @@ class TestStatedYield:
         ("Yields 24 cookies", 24),
         ("Makes 4 servings", 4),
         ("Cut into 6 servings", 6),
+        ("Divided into 8 servings", 8),
+        # Our OWN generated nutrition footer. A bare "N serving(s)" pattern
+        # scraped `servings: 1` off this and wrote it unflagged as fact — the
+        # exact batch-as-one-serving corruption the tool repairs. 3/3 real
+        # vault recipes hit this. Never match machine provenance.
+        ("| 814 | 48g | 152g | 5g |\n\n*Serving size: 1 serving • Source: Fdc "
+         "• Confidence: 0.84*\n\n## Instructions", None),
+        ("*Serving size: 1 serving • Source: Ai*", None),
+        ("Nutrition per 1 serving", None),
         # Measures are batch sizes, not yields — these must NOT be read as counts.
         ("This makes 2 cups of sauce", None),
         ("Yield: 12 oz of dough", None),
