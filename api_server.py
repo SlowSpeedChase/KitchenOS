@@ -867,8 +867,13 @@ def generate_shopping_list_endpoint():
 
 @app.route('/send-to-reminders', methods=['POST'])
 def send_to_reminders_endpoint():
-    """Send shopping list items to Apple Reminders."""
-    from lib.reminders import add_to_reminders, create_reminders_list
+    """Send this week's unchecked shopping-list items to Apple Reminders.
+
+    Reachable from the phone since the shopping-list page's Send to Reminders
+    button became plain HTTP; its Obsidian ``kitchenos://`` original is handled by
+    a macOS helper app that no longer exists.
+    """
+    from lib.reminders import add_to_reminders
 
     data = request.get_json(force=True, silent=True) or {}
     week = data.get('week')
@@ -890,14 +895,14 @@ def send_to_reminders_endpoint():
             'message': 'No unchecked items to send'
         })
 
-    # Send to Reminders
+    # Send to Reminders. add_to_reminders creates the list if it's missing, so a
+    # separate create call would just be another ~0.4s round-trip.
     try:
-        create_reminders_list("Shopping")
-        add_to_reminders(result['items'], "Shopping")
+        sent = add_to_reminders(result['items'], "Shopping")
 
         return jsonify({
             'success': True,
-            'items_sent': len(result['items']),
+            'items_sent': sent,
             'items_skipped': result['skipped']
         })
     except Exception as e:

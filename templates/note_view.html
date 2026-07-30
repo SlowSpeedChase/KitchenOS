@@ -97,22 +97,28 @@
             white-space: pre-wrap;
         }
 
-        button.gen, a.gen {
+        button.gen, a.gen, button.remind {
             display: inline-block;
             font: inherit;
             font-weight: 600;
             font-size: 15px;
             background: var(--app-kitchenos);
             color: var(--text-on-accent);
-            border: none;
+            border: 1px solid var(--app-kitchenos);
             border-radius: var(--radius-box);
             padding: 14px 20px;
             min-height: 48px;
             cursor: pointer;
-            margin: 6px 0;
+            margin: 6px 6px 6px 0;
             text-decoration: none;
         }
-        button.gen[disabled] { opacity: .55; }
+        /* Secondary: sending to Reminders is a follow-on to having a list, not
+           the primary thing to do on this page. */
+        button.remind {
+            background: transparent;
+            color: var(--app-kitchenos);
+        }
+        button[disabled] { opacity: .55; }
 
         .empty { color: var(--muted); font-size: 15px; }
         .footer { margin-top: 18px; font-size: 14px; }
@@ -133,32 +139,61 @@
     <div class="footer"><!--OBSIDIAN--></div>
 
     <script>
-    // The one button that matters: generating a shopping list over plain HTTP.
-    // The vault note's own button uses a kitchenos:// scheme handled by a macOS
-    // helper app, so it has never worked from a phone.
+    // The vault note's own buttons use a kitchenos:// scheme handled by a macOS
+    // helper app that no longer exists — and being macOS-only, they never worked
+    // from a phone at all. These are the plain-HTTP equivalents.
+    const ACTIONS = {
+        gen: {
+            url: '/generate-shopping-list',
+            pending: 'Generating…',
+            // A new list changes the whole page, so reload to show it.
+            done: (d) => ({text: `${d.item_count} items — reloading…`, reload: true}),
+        },
+        remind: {
+            url: '/send-to-reminders',
+            pending: 'Sending…',
+            done: (d) => ({
+                text: d.items_sent
+                    ? `Sent ${d.items_sent} item${d.items_sent === 1 ? '' : 's'} to Reminders`
+                        + (d.items_skipped ? ` (${d.items_skipped} already checked off)` : '')
+                    : (d.message || 'Nothing left to send'),
+                reload: false,
+            }),
+        },
+    };
+
     document.addEventListener('click', async (e) => {
-        const btn = e.target.closest('button.gen');
+        const btn = e.target.closest('button.gen, button.remind');
         if (!btn) return;
-        const week = btn.dataset.week;
-        btn.disabled = true;
+        const action = ACTIONS[btn.classList.contains('gen') ? 'gen' : 'remind'];
         const label = btn.textContent;
-        btn.textContent = 'Generating…';
-        const msg = document.createElement('div');
+        btn.disabled = true;
+        btn.textContent = action.pending;
+
+        let msg = btn.parentElement.querySelector(':scope > .msg');
+        if (!msg) {
+            msg = document.createElement('div');
+            msg.className = 'msg';
+            btn.parentElement.append(msg);
+        }
         msg.className = 'msg';
-        btn.after(msg);
+        msg.textContent = '';
+
         try {
-            const r = await fetch('/generate-shopping-list', {
+            const r = await fetch(action.url, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({week})
+                body: JSON.stringify({week: btn.dataset.week})
             });
             const d = await r.json();
             if (!r.ok || d.success === false) throw new Error(d.error || 'failed');
-            msg.textContent = `${d.item_count} items — reloading…`;
-            location.reload();
+            const {text, reload} = action.done(d);
+            msg.textContent = text;
+            btn.textContent = label;
+            if (reload) location.reload(); else btn.disabled = false;
         } catch (err) {
             msg.className = 'msg bad';
-            msg.textContent = `Could not generate: ${err.message}`;
+            msg.textContent = `Failed: ${err.message}`;
             btn.disabled = false;
             btn.textContent = label;
         }

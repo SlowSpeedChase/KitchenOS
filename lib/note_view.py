@@ -134,25 +134,43 @@ def render(markdown: str, week: Optional[str] = None) -> str:
     return "\n".join(html)
 
 
-def _render_fence(kind: str, lines: list[str], week: Optional[str]) -> str:
-    """Render a fenced block. ``button`` blocks become working HTML buttons.
+# Obsidian button actions we can honour in a browser, mapped to the HTTP endpoint
+# that does the same job. Both are `kitchenos://` URLs handled by a macOS helper app
+# that no longer exists after the machine rebuild — and being macOS-only, neither
+# ever worked from a phone. These are the dead triggers this renderer revives.
+_BUTTON_ACTIONS = {
+    "generate-shopping-list": ("gen", "Generate shopping list"),
+    "send-to-reminders": ("remind", "Send to Reminders"),
+}
 
-    The meal-plan note carries an Obsidian ``button`` block whose action is
-    ``kitchenos://generate-shopping-list?week=…``. That custom scheme is handled by
-    a macOS helper app which no longer exists after the machine rebuild — and being
-    macOS-only, it never worked from a phone at all. That single dead trigger is why
-    no shopping list has been generated since W27. Rendered here it becomes a plain
-    HTTP button that works from any device.
+_ACTION = re.compile(r"kitchenos://([a-z-]+)\?week=([\w-]+)")
+
+
+def _render_fence(kind: str, lines: list[str], week: Optional[str]) -> str:
+    """Render a fenced block. Known ``button`` actions become working HTML buttons.
+
+    Dispatch is on the action the block actually declares — never on the page's own
+    week. An earlier version fell back to "generate shopping list" whenever it
+    couldn't parse an action, which made the shopping list's *three* buttons render
+    as three identical Generate buttons, including the Obsidian ``type command``
+    one that has no web equivalent at all.
+
+    A button we can't honour renders as nothing. It would be a `QuickAdd:` command
+    or another Obsidian-only action, and a dead control is worse than an absent one.
     """
-    if kind == "button":
-        action = ""
-        for ln in lines:
-            if ln.strip().startswith("action "):
-                action = ln.strip()[len("action "):].strip()
-        m = re.search(r"generate-shopping-list\?week=([\w-]+)", action)
-        wk = m.group(1) if m else (week or "")
-        if wk:
-            return (f'<button class="gen" data-week="{escape(wk)}">'
-                    f'Generate shopping list</button>')
+    if kind != "button":
+        return f"<pre>{escape(chr(10).join(lines))}</pre>"
+
+    action = ""
+    for ln in lines:
+        if ln.strip().startswith("action "):
+            action = ln.strip()[len("action "):].strip()
+
+    m = _ACTION.search(action)
+    if not m:
         return ""
-    return f"<pre>{escape(chr(10).join(lines))}</pre>"
+    verb, wk = m.group(1), m.group(2)
+    if verb not in _BUTTON_ACTIONS:
+        return ""
+    cls, label = _BUTTON_ACTIONS[verb]
+    return f'<button class="{cls}" data-week="{escape(wk)}">{label}</button>'

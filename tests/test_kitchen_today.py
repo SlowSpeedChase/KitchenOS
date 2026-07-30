@@ -206,6 +206,44 @@ class TestNoteView:
         assert "kitchenos://" not in html
         assert '<button class="gen" data-week="2026-W31">' in html
 
+    def test_dead_send_to_reminders_button_becomes_an_http_button(self):
+        md = ("```button\nname Send to Reminders\ntype link\n"
+              "action kitchenos://send-to-reminders?week=2026-W31\n```\n")
+        html = note_view.render(md, week="2026-W31")
+        assert "kitchenos://" not in html
+        assert '<button class="remind" data-week="2026-W31">' in html
+
+    def test_obsidian_only_button_renders_as_nothing(self):
+        # A QuickAdd command has no web equivalent; a dead control is worse than
+        # an absent one.
+        md = ("```button\nname Add Ingredients\ntype command\n"
+              "action QuickAdd: Add Ingredients to Shopping List\n```\n")
+        assert note_view.render(md, week="2026-W31").strip() == ""
+
+    def test_each_button_keeps_its_own_action(self):
+        """Regression: all three buttons once rendered as 'Generate shopping list'.
+
+        Dispatch used to fall back to the *page's* week whenever it couldn't parse
+        an action, so every button in a note collapsed into the same one.
+        """
+        md = ("```button\nname Add Ingredients\ntype command\n"
+              "action QuickAdd: Add Ingredients to Shopping List\n```\n\n"
+              "```button\nname Send to Reminders\ntype link\n"
+              "action kitchenos://send-to-reminders?week=2026-W31\n```\n")
+        html = note_view.render(md, week="2026-W31")
+        assert html.count("<button") == 1
+        assert 'class="remind"' in html
+        assert "Generate shopping list" not in html
+
+    def test_unknown_kitchenos_action_is_dropped(self):
+        md = "```button\naction kitchenos://self-destruct?week=2026-W31\n```\n"
+        assert note_view.render(md, week="2026-W31").strip() == ""
+
+    def test_button_week_comes_from_the_action_not_the_page(self):
+        md = ("```button\naction kitchenos://send-to-reminders?week=2026-W25\n```\n")
+        html = note_view.render(md, week="2026-W31")
+        assert 'data-week="2026-W25"' in html
+
     def test_wikilinks_become_recipe_links(self):
         html = note_view.render("[[Chili Garlic Noodles]] x1")
         assert 'href="/recipe/Chili%20Garlic%20Noodles"' in html
