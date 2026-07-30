@@ -6,26 +6,23 @@ surface first, with the still-missing ingredients listed so a near-miss ("you
 have everything but buttermilk") is obvious at a glance.
 
 This is the coverage-ranked complement to ``use_it_up`` (which ranks by *expiry
-urgency*). It reuses that module's matching machinery wholesale: normalized
-token-containment (``recipe_matcher._content_tokens`` + ``use_it_up._matches``),
-staple detection (staples are assumed always on hand — never "missing", never
-penalize coverage), and the at-risk expiry window (to flag recipes that would
-also use up something expiring soon). Matching is presence-only, not
-quantity-aware, consistent with ``use_it_up``.
+urgency*). The coverage calculation itself lives in ``use_it_up`` as
+``recipe_coverage`` — both modules rank by it, this one across the whole library
+and that one within each at-risk item, so it is written once rather than twice.
+
+Staples are assumed always on hand: never "missing", never penalizing coverage.
+Matching is presence-only, not quantity-aware.
 """
 from __future__ import annotations
 
 from datetime import date
 from typing import Optional
 
-from lib.recipe_matcher import _content_tokens
 from lib.use_it_up import (
-    _is_staple,
-    _matches,
-    _ingredient_phrase,
     _phrase,
     _staple_phrases,
     at_risk_items,
+    recipe_coverage,
 )
 
 # The 13-value stored vocabulary collapsed into the 6 chips the page shows.
@@ -96,19 +93,11 @@ def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
         if not ingredients:
             continue
 
-        missing = []
-        at_risk = False
-        for ing in ingredients:
-            ing_phrase = _ingredient_phrase(ing)
-            on_hand = (_is_staple(ing_phrase, staple_sets)
-                       or _matches(ing_phrase, inv_phrases))
-            if not on_hand:
-                missing.append(ing)
-            if _matches(ing_phrase, at_risk_sets):
-                at_risk = True
+        # Shared with use_it_up.suggest, which ranks each at-risk item's recipes
+        # by the same coverage — one calculation, not two that can drift.
+        have, total, missing, at_risk = recipe_coverage(
+            ingredients, inv_phrases, staple_sets, at_risk_sets)
 
-        total = len(ingredients)
-        have = total - len(missing)
         recipes.append({
             "recipe": recipe["name"],
             "image": recipe.get("image"),

@@ -1428,10 +1428,14 @@
             div.panel-dock {
                 bottom: calc(var(--shelf-h) + 12px);
                 right: 16px;
+                /* Also clear of the shelf, not just the chrome bar. */
+                max-height: calc(100dvh - var(--chrome-h, 0px) - var(--shelf-h) - 24px);
             }
 
             .app.shelf-collapsed div.panel-dock {
                 bottom: calc(var(--shelf-collapsed-h) + 12px);
+                max-height: calc(100dvh - var(--chrome-h, 0px)
+                                 - var(--shelf-collapsed-h) - 24px);
             }
         }
 
@@ -1527,6 +1531,12 @@
             align-items: flex-end;
             gap: 8px;
             z-index: 50;
+            /* The dock is anchored at the bottom and grows UP, so without a cap
+               its top runs off the screen — which is how opening Use It Up
+               pushed Today's Prep out of view. Each panel caps its own height,
+               but nothing capped the pair. */
+            max-height: calc(100dvh - var(--chrome-h, 0px) - 32px);
+            overflow-y: auto;
         }
         .prep-panel {
             width: 320px;
@@ -4490,25 +4500,51 @@
             const body = document.getElementById('useitup-body');
             if (!body) return;
             const atRisk = (data && data.at_risk) || [];
-            const suggestions = (data && data.suggestions) || [];
             if (!atRisk.length) {
                 body.innerHTML = '<div class="prep-section">Nothing expiring soon — your fridge is in good shape. ✅</div>';
                 return;
             }
-            const risk = atRisk.map(r => {
+            // One section per item, with that item's recipes under it. A single
+            // "Cook these" list could not say which item a row was for — with
+            // two items at risk it rendered ten lime recipes and nothing for the
+            // ham, and an item with no options could only be shown by omission.
+            body.innerHTML = atRisk.map(r => {
                 const mark = r.status === 'expired' ? '🔴' : '🟡';
-                return `<div class="prep-task"><span>${mark}</span><span>${r.name}<span class="meta"> · ${r.location} · exp ${r.expires}</span></span></div>`;
-            }).join('');
-            const cook = suggestions.length
-                ? suggestions.map(s => {
-                    const used = escapeHtml(s.uses.map(u => u.name).join(', '));
+                const head =
+                    `<h4>${mark} ${escapeHtml(r.name)}` +
+                    `<span class="meta"> · ${escapeHtml(r.location || '')} · exp ${escapeHtml(r.expires || '')}</span></h4>`;
+
+                const recipes = r.recipes || [];
+                if (!recipes.length) {
+                    return `<div class="prep-section">${head}` +
+                           `<div class="prep-task"><span class="meta">Nothing in your library uses this — time to improvise.</span></div>` +
+                           `</div>`;
+                }
+
+                const rows = recipes.map(s => {
                     const href = `/recipe/${encodeURIComponent(s.recipe)}`;
-                    return `<div class="prep-task"><span>🍽️</span><span><a class="useitup-recipe-link" href="${href}">${escapeHtml(s.recipe)}</a><span class="meta"> · uses ${used}</span></span></div>`;
-                  }).join('')
-                : '<div class="prep-task"><span class="meta">No recipes in your library use these — time to improvise.</span></div>';
-            body.innerHTML =
-                `<div class="prep-section"><h4>At risk (${atRisk.length})</h4>${risk}</div>` +
-                `<div class="prep-section"><h4>Cook these</h4>${cook}</div>`;
+                    const pct = Math.round((s.coverage || 0) * 100);
+                    // What's missing is the deciding fact — "you have everything"
+                    // and "you're short five things" are different answers.
+                    const gap = s.missing && s.missing.length
+                        ? `need ${s.missing.length}: ` + escapeHtml(
+                              s.missing.slice(0, 2).map(m => m.split(',')[0].trim()).join(', ')) +
+                          (s.missing.length > 2 ? '…' : '')
+                        : 'have everything';
+                    const also = (s.uses || []).map(u => u.name).filter(n => n !== r.name);
+                    const alsoTxt = also.length ? ` · ♻️ ${escapeHtml(also.join(', '))}` : '';
+                    return `<div class="prep-task"><span>${pct === 100 ? '✅' : '🍽️'}</span>` +
+                           `<span><a class="useitup-recipe-link" href="${href}" title="${escapeHtml(s.recipe)}">` +
+                           `${escapeHtml(s.display_name || s.recipe)}</a>` +
+                           `<span class="meta"> · ${pct}% · ${gap}${alsoTxt}</span></span></div>`;
+                }).join('');
+
+                const hidden = (r.match_count || recipes.length) - recipes.length;
+                const more = hidden > 0
+                    ? `<div class="prep-task"><span class="meta">+${hidden} more with less on hand</span></div>`
+                    : '';
+                return `<div class="prep-section">${head}${rows}${more}</div>`;
+            }).join('');
         }
 
         // --- Today's Prep panel ---
