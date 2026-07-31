@@ -46,7 +46,6 @@ THEME_COLOR_LITERALS = {"#f4ede3", "#0f1116"}
 # mechanism; Task 4 converted it and removed its entry here.
 UNCONVERTED: set[str] = {
     "meal_planner.html",
-    "recipe_detail.html",
 }
 
 # One representative route per template, for the browser test. None means the
