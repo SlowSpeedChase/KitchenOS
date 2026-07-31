@@ -1,8 +1,8 @@
 # Light and dark mode on every KitchenOS page
 
-**Status:** Ready
+**Status:** Done
 **Created:** 2026-07-30
-**Updated:** 2026-07-30
+**Updated:** 2026-07-31
 
 ---
 
@@ -307,28 +307,31 @@ require the LaunchAgent reload from `CLAUDE.md`, or the server keeps serving sta
 - [x] **ADHD check passed** — below
 - [x] **Scope check** — sixteen surfaces, one mapping table, two new test files, no new
       runtime behaviour; two PRs, well under a week
-- [ ] **No blockers** — depends on the upstream `~/Dev/design-system` print commit
-      landing and being copied back first
+- [x] **No blockers** — the upstream `~/Dev/design-system` print commit landed and was
+      copied back; `static/tokens.css` is confirmed byte-identical (see below)
 
 ### Acceptance Criteria
 
-- [ ] All fourteen templates and all six inline `api_server.py` pages link
+- [x] All fourteen templates and all six inline `api_server.py` pages link
       `/static/tokens.css` and declare no raw hex outside the three named allowances
-- [ ] Every route in `SECTIONS` + `HOME` renders Ink under `prefers-color-scheme: dark`
+- [x] Every route in `SECTIONS` + `HOME` renders Ink under `prefers-color-scheme: dark`
       and Dawn under light, verified by `tests/e2e/test_dark_mode.py`
 - [ ] `/print/week` and `/recipe-card/<name>` render Dawn under print emulation **while
       the OS is in dark mode**, and a real print preview of `/print/week` from a dark-mode
-      Mac is ink-on-white
-- [ ] `static/kitchenos.css` contains the derived tints and nothing else
-- [ ] `api_server.py` builds every page through `_html_page`, and contains exactly one
-      `<!DOCTYPE`
-- [ ] `review.html`'s `.rm` has a real border colour again
-- [ ] `static/tokens.css` is byte-identical to `~/Dev/design-system/tokens.css`, and the
+      Mac is ink-on-white — the emulated half is green in `tests/e2e/test_dark_mode.py`
+      (`test_paper_is_always_dawn`); the real Safari ⌘P preview from a dark-mode Mac is
+      pending the user's manual check
+- [x] `static/kitchenos.css` contains the derived tints and nothing else
+- [x] `api_server.py` builds every page through `_html_page`, and contains exactly one
+      hand-rolled `<!DOCTYPE html>`/`<html>` page
+- [x] `review.html`'s `.rm` has a real border colour again
+- [x] `static/tokens.css` is byte-identical to `~/Dev/design-system/tokens.css`, and the
       sha256 row in `static/README.md` matches
-- [ ] `tests/test_theme_tokens.py`'s `ALLOWLIST` is empty when PR 2 lands
-- [ ] Full unit suite green; `tests/e2e -m e2e` green; `ruff` no worse than main
+- [x] `tests/test_theme_tokens.py`'s allowlist is empty when PR 2 lands — `UNCONVERTED`
+      was deleted outright, along with the skip branches and the guard that watched for it
+- [x] Full unit suite green; `tests/e2e -m e2e` green; `ruff` no worse than main
 - [ ] Both modes checked on the phone over the tailnet, on `/meal-planner` and `/review`
-      at minimum
+      at minimum — pending the user's manual walkthrough in both appearances
 
 ### ADHD Design Check
 
@@ -348,5 +351,6 @@ require the LaunchAgent reload from `CLAUDE.md`, or the server keeps serving sta
 - **Rollout plan:** `~/Dev/design-system/plans/design-language-rollout.md` — Phase 1 (web)
 - **Design language:** `~/Dev/design-system/DESIGN-LANGUAGE.md`, `tokens.css`
 - **Vendoring rules:** [`static/README.md`](../../../static/README.md)
-- **Branch:** _(pending kickoff)_
-- **PR:** _(pending)_
+- **Branch:** `light-and-dark-mode` (PR 1), `planner-dark-mode` (PR 2, this branch)
+- **PR:** _(both intentionally not yet opened — held pending the user's manual
+  verification of PR 1)_

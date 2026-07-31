@@ -1,12 +1,10 @@
-"""The one shrinking list that drives the light/dark conversion.
+"""Shared machinery for the light/dark theme guard tests.
 
 Two tests read this module: ``tests/test_theme_tokens.py`` (static) and
-``tests/e2e/test_dark_mode.py`` (browser). A template in ``UNCONVERTED``
-is exempt from both. Every conversion commit removes exactly one entry,
-and the work is finished when the set is empty — at which point the
-``test_allowlist_is_temporary`` guard below stops being skipped.
-
-Do not add an entry to buy time. The set only ever shrinks.
+``tests/e2e/test_dark_mode.py`` (browser). Every template and every
+inline ``api_server.py`` page is themed, so there is no exemption list
+left to grant — this module now holds only the colour-literal regexes
+and the route table both tests share.
 """
 from __future__ import annotations
 
@@ -39,14 +37,6 @@ SYSTEM_COLOR = re.compile(r'\b(?:CanvasText|Canvas|GrayText)\b')
 # `<meta name="theme-color">` cannot hold a var(), so these two literals are
 # permanently legal — but only on a theme-color line.
 THEME_COLOR_LITERALS = {"#f4ede3", "#0f1116"}
-
-# Surfaces not yet converted. SHRINKS TO EMPTY.
-#
-# api_server.py held the Claude bar and six inline pages under the same
-# mechanism; Task 4 converted it and removed its entry here.
-UNCONVERTED: set[str] = {
-    "meal_planner.html",
-}
 
 # One representative route per template, for the browser test. None means the
 # template is not reachable as a standalone page.

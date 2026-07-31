@@ -4,6 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>KitchenOS Meal Planner</title>
+    <meta name="theme-color" content="#f4ede3" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#0f1116" media="(prefers-color-scheme: dark)">
+    <link rel="stylesheet" href="/static/tokens.css">
+    <link rel="stylesheet" href="/static/kitchenos.css">
     <!-- Vendored, not CDN. setupEventListeners() calls Sortable.create() before
          init() reaches its first fetch, so if this script fails to load the whole
          page dies before rendering anything — which is exactly what happened from
@@ -20,16 +24,17 @@
     </script>
     <style>
         :root {
-            --bg: #f5f5f7;
-            --card-bg: #ffffff;
-            --border: #e5e5e7;
-            --text: #1d1d1f;
-            --text-muted: #86868b;
-            --accent: #0071e3;
-            --accent-hover: #0077ED;
-            --success: #34c759;
-            --danger: #ff3b30;
-            --drop-zone: #f0f0f2;
+            /* Local names aliased onto the design language. --bg is a token
+               name already and is deliberately not redeclared. */
+            --card-bg:      var(--surface);
+            --border:       var(--line);
+            --text:         var(--ink);
+            --text-muted:   var(--muted);
+            --accent:       var(--app-kitchenos);
+            --success:      var(--done);
+            --danger:       var(--alert);
+            --drop-zone:    var(--raised);
+
             --sidebar-width: 280px;
             /* Height of the bottom library shelf below 1080px. Overwritten on
                :root by initShelf() from localStorage, so CSS that has to clear
@@ -55,6 +60,8 @@
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
             background: var(--bg);
+            background-image: var(--dots);
+            background-size: var(--dot-size) var(--dot-size);
             color: var(--text);
             overflow: hidden;
             height: 100dvh;
@@ -169,7 +176,7 @@
 
         .search-input:focus {
             border-color: var(--accent);
-            box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.15);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
         }
 
         /* --- Recipe preview overlay --- */
@@ -189,7 +196,7 @@
         .preview-backdrop[hidden] { display: none; }
         .preview-card {
             position: relative;
-            background: #fff;
+            background: var(--card-bg);
             border-radius: 16px;
             box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.5);
             width: min(560px, 100%);
@@ -206,7 +213,7 @@
             height: 44px;
             border: none;
             border-radius: 22px;
-            background: rgba(255, 255, 255, 0.92);
+            background: color-mix(in srgb, var(--surface) 92%, transparent);
             box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
             font-size: 17px;
             line-height: 1;
@@ -228,27 +235,27 @@
             line-height: 1.25;
             margin: 0 44px 6px 0;   /* clear of the close button */
         }
-        .preview-sub { font-size: 13px; color: #666; margin-bottom: 12px; }
+        .preview-sub { font-size: 13px; color: var(--text-muted); margin-bottom: 12px; }
         .preview-macros {
             display: flex;
             flex-wrap: wrap;
             gap: 14px;
             padding: 12px 14px;
-            background: #f6f6f8;
+            background: var(--raised);
             border-radius: 10px;
             margin-bottom: 14px;
             font-variant-numeric: tabular-nums;
         }
         .preview-macro-num { font-size: 17px; font-weight: 700; }
-        .preview-macro-lbl { font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: .04em; }
-        .preview-basis { font-size: 12px; color: #666; width: 100%; }
-        .preview-basis.batch { color: #b7791f; font-weight: 600; }
+        .preview-macro-lbl { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+        .preview-basis { font-size: 12px; color: var(--text-muted); width: 100%; }
+        .preview-basis.batch { color: var(--warning); font-weight: 600; }
         .preview-section-title {
             font-size: 11px;
             font-weight: 700;
             text-transform: uppercase;
             letter-spacing: .06em;
-            color: #666;
+            color: var(--text-muted);
             margin: 16px 0 6px;
         }
         .preview-ing { list-style: none; margin: 0; padding: 0; }
@@ -256,11 +263,11 @@
             display: flex;
             gap: 10px;
             padding: 6px 0;
-            border-bottom: 1px solid #f0f0f2;
+            border-bottom: 1px solid var(--line-soft);
             font-size: 14px;
         }
         .preview-ing li:last-child { border-bottom: none; }
-        .preview-amt { flex: none; min-width: 78px; color: #444; font-variant-numeric: tabular-nums; }
+        .preview-amt { flex: none; min-width: 78px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
         .preview-actions { display: flex; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
         .preview-actions a {
             flex: 1 1 auto;
@@ -272,10 +279,10 @@
             font-weight: 600;
             font-size: 14px;
         }
-        .preview-open { background: #0071e3; color: #fff; }
-        .preview-obsidian { border: 1px solid #d8d8dc; color: inherit; }
-        .preview-loading, .preview-error { padding: 26px 4px; color: #666; font-size: 14px; }
-        .preview-error { color: #c0392b; }
+        .preview-open { background: var(--accent); color: var(--text-on-accent); }
+        .preview-obsidian { border: 1px solid var(--border); color: inherit; }
+        .preview-loading, .preview-error { padding: 26px 4px; color: var(--text-muted); font-size: 14px; }
+        .preview-error { color: var(--danger); }
         @media (max-width: 640px) {
             .preview-backdrop { padding: 0; align-items: flex-end; }
             .preview-card { border-radius: 16px 16px 0 0; max-height: 92vh; }
@@ -287,9 +294,9 @@
             /* 16px stops iOS Safari zooming the page when this gets focus. */
             font-size: 16px;
             padding: 7px 8px;
-            border: 1px solid var(--border, #d8d8dc);
+            border: 1px solid var(--border);
             border-radius: 8px;
-            background: #fff;
+            background: var(--card-bg);
             color: inherit;
         }
         /* Macro numbers on the card: tabular so the columns line up while scanning. */
@@ -302,9 +309,9 @@
         /* A recipe with no servings count carries whole-batch macros, which are
            not comparable with everything else — say so rather than let it sort
            and filter as if it were one portion. */
-        .recipe-macros .batch { color: #b7791f; font-weight: 600; }
-        .chip.macro.active { background: #b7791f; border-color: #b7791f; color: #fff; }
-        .chip.meal-type.active { background: #0071e3; border-color: #0071e3; color: #fff; }
+        .recipe-macros .batch { color: var(--warning); font-weight: 600; }
+        .chip.macro.active { background: var(--warning); border-color: var(--warning); color: var(--text-on-accent); }
+        .chip.meal-type.active { background: var(--accent); border-color: var(--accent); color: var(--text-on-accent); }
         .filter-note {
             font-size: 11px;
             opacity: .7;
@@ -366,7 +373,7 @@
 
         .chip.active {
             background: var(--accent);
-            color: #ffffff;
+            color: var(--text-on-accent);
             border-color: var(--accent);
         }
 
@@ -377,7 +384,7 @@
 
         .chip.season.active {
             background: var(--success);
-            color: #ffffff;
+            color: var(--text-on-accent);
             border-color: var(--success);
         }
 
@@ -434,7 +441,7 @@
 
         .recipe-card.has-image .recipe-info-link {
             background: rgba(0, 0, 0, 0.35);
-            color: #fff;
+            color: rgb(255, 255, 255);
         }
 
         .recipe-card:active {
@@ -497,7 +504,7 @@
         .recipe-card.has-image .recipe-meta {
             position: relative;
             z-index: 1;
-            color: #ffffff;
+            color: rgb(255, 255, 255);
             text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
         }
 
@@ -508,7 +515,7 @@
         }
         /* Amber on a dark photo is mud — lighten the warning to stay legible
            without losing that it's a warning. */
-        .recipe-card.has-image .recipe-macros .batch { color: #f0c274; }
+        .recipe-card.has-image .recipe-macros .batch { color: rgb(240, 194, 116); }
         .recipe-card.has-image .recipe-meta,
         .recipe-card.has-image .recipe-macros {
             color: rgba(255, 255, 255, 0.85);
@@ -544,7 +551,7 @@
         .grid-card.has-image .grid-card-name {
             position: relative;
             z-index: 1;
-            color: #ffffff;
+            color: rgb(255, 255, 255);
             text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
         }
 
@@ -556,7 +563,7 @@
             z-index: 1;
             background: rgba(0, 0, 0, 0.4);
             border-color: rgba(255, 255, 255, 0.3);
-            color: #ffffff;
+            color: rgb(255, 255, 255);
         }
 
         .grid-card .grid-card-name-link {
@@ -620,7 +627,7 @@
 
         .nav-btn:active {
             background: var(--accent);
-            color: #ffffff;
+            color: var(--text-on-accent);
         }
 
         .week-title {
@@ -714,7 +721,7 @@
         .grid-cell.sortable-drag-over,
         .grid-cell:has(.sortable-ghost) {
             border-color: var(--accent);
-            background: rgba(0, 113, 227, 0.05);
+            background: color-mix(in srgb, var(--accent) 5%, transparent);
         }
 
         .grid-cell.has-card {
@@ -733,12 +740,12 @@
         .meal-card.armed {
             outline: 3px solid var(--accent);
             outline-offset: -1px;
-            box-shadow: 0 4px 14px rgba(0, 113, 227, 0.3);
+            box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 30%, transparent);
         }
 
         .app.placing .grid-cell:not(.has-card) {
             border-color: var(--accent);
-            background: rgba(0, 113, 227, 0.07);
+            background: color-mix(in srgb, var(--accent) 7%, transparent);
         }
 
         .app.placing .grid-cell:not(.has-card) .empty-label {
@@ -758,7 +765,7 @@
             padding: 8px 16px;
             min-height: 56px;
             background: var(--accent);
-            color: #fff;
+            color: var(--text-on-accent);
         }
 
         .assign-bar[hidden] {
@@ -779,10 +786,10 @@
             min-height: 44px;
             min-width: 44px;
             padding: 0 16px;
-            border: 1px solid rgba(255, 255, 255, 0.5);
+            border: 1px solid color-mix(in srgb, var(--text-on-accent) 50%, transparent);
             border-radius: 10px;
             background: transparent;
-            color: #fff;
+            color: var(--text-on-accent);
             font-size: 15px;
             font-weight: 600;
             cursor: pointer;
@@ -843,7 +850,7 @@
             height: 22px;
             border: none;
             background: var(--danger);
-            color: #ffffff;
+            color: var(--text-on-accent);
             border-radius: 50%;
             font-size: 13px;
             line-height: 1;
@@ -878,7 +885,7 @@
 
         .grid-card .servings-btn:active {
             background: var(--accent);
-            color: #ffffff;
+            color: var(--text-on-accent);
             border-color: var(--accent);
         }
 
@@ -900,7 +907,7 @@
         .grid-card .cooked-btn:hover,
         .grid-card .cooked-btn:active {
             background: var(--accent);
-            color: #ffffff;
+            color: var(--text-on-accent);
             border-color: var(--accent);
         }
 
@@ -925,7 +932,7 @@
         .grid-card .card-menu-btn:hover,
         .grid-card .card-menu-btn:active {
             background: var(--accent);
-            color: #ffffff;
+            color: var(--text-on-accent);
             border-color: var(--accent);
         }
 
@@ -983,7 +990,7 @@
             height: 22px;
             border: none;
             background: var(--accent);
-            color: #ffffff;
+            color: var(--text-on-accent);
             border-radius: 50%;
             font-size: 13px;
             line-height: 1;
@@ -1002,7 +1009,7 @@
 
         .grid-card.has-image .retry-btn {
             z-index: 1;
-            background: rgba(0, 113, 227, 0.7);
+            background: color-mix(in srgb, var(--accent) 70%, transparent);
         }
 
         /* --- Cook cards (serving-ledger board mode) --- */
@@ -1037,7 +1044,7 @@
 
         .scale-btn:active {
             background: var(--accent);
-            color: #ffffff;
+            color: var(--text-on-accent);
             border-color: var(--accent);
         }
 
@@ -1200,7 +1207,7 @@
             height: 60px;
             border-radius: 50%;
             background: var(--danger);
-            color: #ffffff;
+            color: var(--text-on-accent);
             display: none;
             align-items: center;
             justify-content: center;
@@ -1215,7 +1222,7 @@
 
         #trash-target.sortable-drag-over,
         #trash-target:has(.sortable-ghost) {
-            background: #b8291f;
+            background: color-mix(in srgb, var(--danger) 85%, var(--ink));
             transform: scale(1.12);
         }
 
@@ -1234,7 +1241,7 @@
             top: 4px;
             left: 4px;
             background: rgba(76, 175, 80, 0.92);
-            color: #ffffff;
+            color: rgb(255, 255, 255);
             font-size: 10px;
             font-weight: 600;
             line-height: 1;
@@ -1250,7 +1257,7 @@
             bottom: 4px;
             left: 4px;
             background: rgba(33, 33, 33, 0.78);
-            color: #ffffff;
+            color: rgb(255, 255, 255);
             font-size: 10px;
             font-weight: 600;
             line-height: 1;
@@ -1274,7 +1281,7 @@
             border-radius: 20px;
             font-size: 14px;
             font-weight: 500;
-            color: #ffffff;
+            color: var(--text-on-accent);
             z-index: 1000;
             opacity: 0;
             transition: all 0.3s ease;
@@ -1298,7 +1305,7 @@
         .loading-overlay {
             position: fixed;
             inset: 0;
-            background: rgba(245, 245, 247, 0.85);
+            background: color-mix(in srgb, var(--bg) 85%, transparent);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -1343,12 +1350,12 @@
             height: 56px;
             border-radius: 50%;
             background: var(--accent);
-            color: #ffffff;
+            color: var(--text-on-accent);
             border: none;
             font-size: 24px;
             cursor: pointer;
             z-index: 20;
-            box-shadow: 0 4px 12px rgba(0, 113, 227, 0.4);
+            box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 40%, transparent);
             align-items: center;
             justify-content: center;
         }
@@ -1472,9 +1479,9 @@
         .recipe-list.hidden-tab { display: none !important; }
 
         .meal-card {
-            background: #fff;
+            background: var(--card-bg);
             border: 1px solid var(--border);
-            border-left: 3px solid #ff9500;
+            border-left: 3px solid var(--warning);
             border-radius: 10px;
             padding: 10px 12px;
             cursor: grab;
@@ -1495,7 +1502,7 @@
             margin: 8px;
             padding: 10px;
             background: var(--accent);
-            color: white;
+            color: var(--text-on-accent);
             border: none;
             border-radius: 8px;
             font-weight: 600;
@@ -1504,17 +1511,17 @@
 
         /* --- Meal slot (composite recipe in grid) --- */
         .grid-card.is-meal {
-            border-left: 3px solid #ff9500;
+            border-left: 3px solid var(--warning);
         }
         .grid-card .meal-header {
             font-weight: 700;
             font-size: 13px;
-            color: #ff9500;
+            color: var(--warning);
         }
         .sub-recipe-chip {
             display: inline-block;
-            background: #fff7ec;
-            color: #b8650a;
+            background: var(--tint-warning);
+            color: var(--warning);
             border-radius: 6px;
             padding: 2px 6px;
             margin: 2px 2px 0 0;
@@ -1541,7 +1548,7 @@
         .prep-panel {
             width: 320px;
             max-height: 60dvh;
-            background: #fff;
+            background: var(--card-bg);
             border: 1px solid var(--border);
             border-radius: 12px;
             box-shadow: 0 8px 24px rgba(0,0,0,0.12);
@@ -1557,7 +1564,7 @@
             font-weight: 700;
             position: sticky;
             top: 0;
-            background: #fff;
+            background: var(--card-bg);
         }
         .prep-panel.collapsed { max-height: 44px; overflow: hidden; }
         .prep-toggle {
@@ -1579,9 +1586,9 @@
             text-transform: uppercase;
             font-weight: 700;
         }
-        .badge.prep { background: #e3f2ff; color: #0071e3; }
-        .badge.active { background: #ffeed4; color: #c2680a; }
-        .badge.passive { background: #e9e9eb; color: #6e6e73; }
+        .badge.prep { background: color-mix(in srgb, var(--info) 14%, var(--surface)); color: var(--info); }
+        .badge.active { background: var(--tint-warning); color: var(--warning); }
+        .badge.passive { background: var(--raised); color: var(--muted); }
         .prep-task.done span { text-decoration: line-through; color: var(--text-muted); }
 
         /* --- Modal (meal editor + pantry confirm) --- */
@@ -1596,7 +1603,7 @@
         }
         .modal-backdrop.visible { display: flex; }
         .modal {
-            background: #fff;
+            background: var(--card-bg);
             border-radius: 14px;
             width: 90%;
             max-width: 520px;
@@ -1612,10 +1619,10 @@
         }
         .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
         .modal-actions button {
-            padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border); background: #fff;
+            padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--card-bg);
             cursor: pointer; font-weight: 600;
         }
-        .modal-actions button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+        .modal-actions button.primary { background: var(--accent); border-color: var(--accent); color: var(--text-on-accent); }
         .sub-recipe-row { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
         .sub-recipe-row select { flex: 1; }
         .sub-recipe-row input { width: 60px; }
@@ -1664,7 +1671,7 @@
         .sheet-actions .segment button { flex: 1; }
         .sheet-actions .segment button.selected {
             background: var(--accent);
-            color: #fff;
+            color: var(--text-on-accent);
         }
         .sheet-cancel {
             width: 100%;
@@ -1986,7 +1993,7 @@
             <input type="text" id="meal-tags" placeholder="weeknight, fish">
             <label>Sub-recipes</label>
             <div id="sub-recipes-container"></div>
-            <button id="add-sub-recipe" style="margin-top: 8px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: #fff; cursor: pointer;">+ Add sub-recipe</button>
+            <button id="add-sub-recipe" style="margin-top: 8px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--card-bg); cursor: pointer;">+ Add sub-recipe</button>
             <div class="modal-actions">
                 <button id="meal-modal-cancel">Cancel</button>
                 <button class="primary" id="meal-modal-save">Save</button>
