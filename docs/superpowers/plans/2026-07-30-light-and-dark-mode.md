@@ -236,8 +236,14 @@ HEX = re.compile(
 # permanently legal — but only on a theme-color line.
 THEME_COLOR_LITERALS = {"#f4ede3", "#0f1116"}
 
-# Templates not yet converted. SHRINKS TO EMPTY.
+# Surfaces not yet converted. SHRINKS TO EMPTY.
+#
+# api_server.py is in here for the same reason the templates are: it holds the
+# Claude bar and six inline pages, and its two assertions below would otherwise
+# sit red from the moment this file lands until Task 4 finishes. One mechanism,
+# one finish line.
 UNCONVERTED: set[str] = {
+    "api_server.py",
     "cook_now.html",
     "plan_week.html",
     "print_week.html",
@@ -342,6 +348,8 @@ def test_api_server_has_no_raw_hex():
     Scanning the whole file is exact rather than approximate: a Flask server
     has no legitimate non-markup reason to name a colour.
     """
+    if "api_server.py" in UNCONVERTED:
+        pytest.skip("api_server.py not yet converted")
     offenders = _offending_hexes((REPO / "api_server.py").read_text())
     assert not offenders, (
         f"api_server.py still hardcodes {len(offenders)} colour(s): "
@@ -355,6 +363,8 @@ def test_every_inline_page_goes_through_the_shared_head():
     Six pages were hand-rolled with six different <head> blocks, which is how
     they ended up light-only while the templates moved on.
     """
+    if "api_server.py" in UNCONVERTED:
+        pytest.skip("api_server.py not yet converted")
     text = (REPO / "api_server.py").read_text()
     assert text.count("<!DOCTYPE") == 1, (
         f"expected exactly 1 <!DOCTYPE in api_server.py, found "
@@ -377,11 +387,10 @@ def test_allowlist_is_temporary():
 
 ```bash
 .venv/bin/python -m pytest tests/test_theme_tokens.py -v
+.venv/bin/python -m pytest -q 2>&1 | tail -3
 ```
 
-Expected: the four already-converted templates PASS both parametrized tests; the ten in `UNCONVERTED` SKIP; `test_api_server_has_no_raw_hex` and `test_every_inline_page_goes_through_the_shared_head` **FAIL** (api_server.py is untouched — Tasks 3 and 4 fix them); `test_allowlist_is_temporary` SKIPs.
-
-Two failing tests at this point is correct and expected.
+Expected: the four already-converted templates PASS both parametrized tests; the ten in `UNCONVERTED` SKIP; both `api_server.py` tests SKIP; `test_allowlist_is_temporary` SKIPs. **The full suite stays green** — every surface is either converted or allowlisted, so this file never lands red.
 
 - [ ] **Step 5: Commit**
 
@@ -390,8 +399,8 @@ git add static/kitchenos.css tests/theme_allowlist.py tests/test_theme_tokens.py
 git commit -m "test: guard that every page styles through the design language
 
 Adds the derived tint/edge variables and the shrinking allowlist that
-drives the conversion. api_server.py's two assertions fail until its
-pages move onto the shared head.
+drives the conversion. Every surface starts allowlisted, so the guard
+lands green and goes strict one entry at a time.
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
@@ -504,7 +513,7 @@ If the four already-converted pages fail here, stop — the expectation constant
 .venv/bin/pytest -q 2>&1 | tail -5
 ```
 
-Expected: the e2e tests are deselected by `addopts = -m "not e2e"`; the only failures are Task 1 Step 4's two known `api_server.py` assertions.
+Expected: fully green. The e2e tests are deselected by `addopts = -m "not e2e"`.
 
 - [ ] **Step 4: Commit**
 
@@ -603,7 +612,19 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 - Consumes: tokens + `kitchenos.css` from Tasks 0–1
 - Produces: `_html_page(title: str, body: str, extra_css: str = "") -> str` — the only place in `api_server.py` that writes `<!DOCTYPE>` or `<head>`
 
-- [ ] **Step 1: Add the shared page helper**
+- [ ] **Step 1: Go strict on `api_server.py`, and watch it fail**
+
+Delete `"api_server.py",` from `UNCONVERTED` in `tests/theme_allowlist.py`, then:
+
+```bash
+.venv/bin/python -m pytest tests/test_theme_tokens.py -v -k "api_server or shared_head"
+```
+
+Expected: both FAIL — `test_api_server_has_no_raw_hex` listing the six pages' literals, and `test_every_inline_page_goes_through_the_shared_head` reporting 6 `<!DOCTYPE` where 1 is required.
+
+The Claude bar's colours (Task 3) are already gone, so anything the first assertion still reports belongs to the six pages.
+
+- [ ] **Step 2: Add the shared page helper**
 
 Insert immediately above `def error_page` in `api_server.py`:
 
@@ -654,7 +675,7 @@ def _html_page(title: str, body: str, extra_css: str = "") -> str:
 </html>'''
 ```
 
-- [ ] **Step 2: Rewrite `error_page`**
+- [ ] **Step 3: Rewrite `error_page`**
 
 Replace the whole body of `error_page` (keeping its docstring) with:
 
@@ -665,7 +686,7 @@ Replace the whole body of `error_page` (keeping its docstring) with:
 ''')
 ```
 
-- [ ] **Step 3: Rewrite `success_page`**
+- [ ] **Step 4: Rewrite `success_page`**
 
 ```python
     return _html_page("KitchenOS", f'''
@@ -674,7 +695,7 @@ Replace the whole body of `error_page` (keeping its docstring) with:
 ''')
 ```
 
-- [ ] **Step 4: Rewrite the `/refresh-nutrition` success page**
+- [ ] **Step 5: Rewrite the `/refresh-nutrition` success page**
 
 Replace the `warnings_html` construction and the returned f-string with:
 
@@ -694,7 +715,7 @@ Replace the `warnings_html` construction and the returned f-string with:
 ''')
 ```
 
-- [ ] **Step 5: Rewrite `_success_page_for_wikilink`**
+- [ ] **Step 6: Rewrite `_success_page_for_wikilink`**
 
 ```python
     return _html_page("KitchenOS", f'''
@@ -705,7 +726,7 @@ Replace the `warnings_html` construction and the returned f-string with:
 ''')
 ```
 
-- [ ] **Step 6: Rewrite the "Add to Meal Plan" form page**
+- [ ] **Step 7: Rewrite the "Add to Meal Plan" form page**
 
 Pass its form-specific rules as `extra_css` and drop its `<head>`. **The form markup does not change at all** — keep every `<input>`, `<label>`, `<select>`, `onchange` handler and interpolated value exactly as it is today. Only the wrapper and the style block change: delete everything from `<!DOCTYPE html>` through `</head>` and from `</body></html>` at the end, and hand what remains to `_html_page` as the `body` argument.
 
@@ -749,7 +770,7 @@ Pass its form-specific rules as `extra_css` and drop its `<head>`. **The form ma
 
 The braces in `extra_css` are **not** doubled, because it is a plain string argument rather than part of the f-string. The braces inside the `body` f-string still are.
 
-- [ ] **Step 7: Rewrite the "Schedule Meal" page**
+- [ ] **Step 8: Rewrite the "Schedule Meal" page**
 
 Same shape as Step 6 — the form markup carries over verbatim, only the wrapper and styles change:
 
@@ -786,15 +807,15 @@ Same shape as Step 6 — the form markup carries over verbatim, only the wrapper
 
 The `.ok` class now comes from `_html_page`, so the page-local `.ok` rule is deleted rather than rewritten.
 
-- [ ] **Step 8: Run the guard — the two red assertions go green**
+- [ ] **Step 9: Run the guard — the two red assertions go green**
 
 ```bash
 .venv/bin/python -m pytest tests/test_theme_tokens.py -v
 ```
 
-Expected: `test_api_server_has_no_raw_hex` PASS and `test_every_inline_page_goes_through_the_shared_head` PASS. Both were failing since Task 1.
+Expected: `test_api_server_has_no_raw_hex` PASS and `test_every_inline_page_goes_through_the_shared_head` PASS — both red since Step 1.
 
-- [ ] **Step 9: Restart and smoke-test each rewritten page**
+- [ ] **Step 10: Restart and smoke-test each rewritten page**
 
 ```bash
 launchctl unload ~/Library/LaunchAgents/com.kitchenos.api.plist
@@ -806,7 +827,7 @@ curl -s "http://localhost:5001/add-to-meal-plan?recipe=Butter%20Biscuits" | head
 
 Expected: both return the new `<!DOCTYPE html>` / `<html lang="en">` head, not the old bare one.
 
-- [ ] **Step 10: Run the full unit suite**
+- [ ] **Step 11: Run the full unit suite**
 
 ```bash
 .venv/bin/python -m pytest -q 2>&1 | tail -5
@@ -814,10 +835,10 @@ Expected: both return the new `<!DOCTYPE html>` / `<html lang="en">` head, not t
 
 Expected: all green. `tests/test_api_endpoints.py` and `tests/test_api_server.py` exercise several of these pages — if one asserts on old markup, update the assertion to the new class-based structure, not the other way round.
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 12: Commit**
 
 ```bash
-git add api_server.py
+git add api_server.py tests/theme_allowlist.py
 git commit -m "feat: build every inline page through one themed head
 
 Six hand-rolled <head> blocks were how these pages stayed light-only
