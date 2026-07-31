@@ -331,6 +331,48 @@ it replayed.
 .venv/bin/python migrate_inventory_db.py
 ```
 
+### Recipe repair: bodies and missing frontmatter
+
+Two re-runnable repair passes over `Recipes/*.md`. Both back up each file via
+`lib/backup.create_backup` before writing, and both are no-ops on a corpus
+that's already clean — **always `--dry-run` first.**
+
+`clean_recipe_tails.py` strips duplicated `*Extracted from …*` footers and
+loose `key: null` YAML that a past template-refresh bug appended into the
+markdown body (Obsidian renders those as literal text; Dataview ignores
+them). The template puts the source footer last, so everything after the
+*first* footer is duplicated tail — but a file is only truncated when every
+line of that tail is provably junk. A tail containing prose is reported as
+`SKIP` and left alone, because that prose may be a note you wrote.
+
+```bash
+.venv/bin/python scripts/clean_recipe_tails.py --dry-run
+.venv/bin/python scripts/clean_recipe_tails.py
+```
+
+`enrich_recipes.py` fills *missing* frontmatter with Haiku and flags internal
+inconsistencies. Strictly additive: a field is written only when its current
+value is absent, null, or a known junk placeholder (`"null"`, `"0 seconds"`,
+`"Not explicitly mentioned"`). An existing good value is never overwritten —
+a small model guessing over curated data is how a recipe library silently
+rots. Needs `ANTHROPIC_API_KEY`.
+
+Two guards worth knowing before you widen its scope:
+
+- **`nut-free`, `gluten-free` and `dairy-free` are never auto-filled.** A
+  wrong `vegetarian` is a bad dinner; a wrong `nut-free` is a medical event,
+  and a small model reading a partial ingredient list cannot clear a recipe
+  of trace allergens. Those stay empty until a human sets them.
+- **Consistency problems are reported, not applied.** The model is asked for
+  ingredients used in steps but absent from the table (and vice versa), plus
+  implausible quantities — it is never asked to edit ingredients or steps.
+
+```bash
+.venv/bin/python scripts/enrich_recipes.py --dry-run --limit 10
+.venv/bin/python scripts/enrich_recipes.py --only-servings   # servings drives per-serving nutrition
+.venv/bin/python scripts/enrich_recipes.py --out /tmp/enrich-report.json
+```
+
 ---
 
 ## 2. LaunchAgents (all 8)
