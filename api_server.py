@@ -75,20 +75,62 @@ _recipe_ingredient_cache = {"data": None, "timestamp": 0}
 RECIPE_CACHE_TTL = 300  # 5 minutes
 
 
+def _html_page(title: str, body: str, extra_css: str = "") -> str:
+    """The one <head> for every page api_server builds in Python.
+
+    Six pages used to hand-roll their own, which is how they stayed
+    light-only while the templates moved onto the design language. The
+    guard in tests/test_theme_tokens.py asserts this is the only page
+    with a doctype declaration in the file.
+    """
+    style = f"<style>{extra_css}</style>" if extra_css else ""
+    return f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f4ede3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1116" media="(prefers-color-scheme: dark)">
+<title>{title}</title>
+<link rel="stylesheet" href="/static/tokens.css">
+<link rel="stylesheet" href="/static/kitchenos.css">
+<style>
+  body {{ font-family: var(--font-body); background: var(--bg);
+         background-image: var(--dots);
+         background-size: var(--dot-size) var(--dot-size);
+         color: var(--ink); padding: 2rem 1.5rem; max-width: 600px;
+         margin: 0 auto; -webkit-text-size-adjust: 100%; }}
+  .card {{ background: var(--surface); background-image: var(--grain);
+          border: 1px solid var(--line); border-radius: var(--radius-box);
+          padding: 1rem; }}
+  .card.ok {{ background: var(--tint-done); border-color: var(--edge-done); }}
+  .card.bad {{ background: var(--tint-alert); border-color: var(--edge-alert); }}
+  .card.info {{ background: var(--tint-accent); border-color: var(--edge-accent); }}
+  .card.warn {{ background: var(--tint-warning); border-color: var(--edge-warning); }}
+  .card.ok strong {{ color: var(--done); }}
+  .card.bad strong {{ color: var(--alert); }}
+  a {{ color: var(--app-kitchenos); }}
+  .btn {{ display: inline-block; padding: 12px 20px; border: 1px solid var(--line);
+         border-radius: var(--radius-box); text-decoration: none; color: var(--ink); }}
+</style>
+{style}
+</head>
+<body>
+{body}
+</body>
+</html>'''
+
+
 def error_page(message: str) -> str:
     """Generate simple HTML error page.
 
     The message is escaped here (call sites pass raw text, often str(e));
     escaping already-escaped Markup is a no-op.
     """
-    return f'''<!DOCTYPE html>
-<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>KitchenOS</title></head>
-<body style="font-family: system-ui; padding: 2rem; max-width: 600px; margin: 0 auto;">
-<div style="background: #fee; border: 1px solid #c00; padding: 1rem; border-radius: 8px;">
-<strong style="color: #c00;">Error</strong><br>{escape(message)}
-</div>
-<p><a href="obsidian://open?vault={VAULT_NAME}" style="display: inline-block; padding: 12px 20px; border: 1px solid #ccc; border-radius: 8px; text-decoration: none;">Return to Obsidian</a></p>
-</body></html>'''
+    return _html_page("KitchenOS", f'''
+<div class="card bad"><strong>Error</strong><br>{escape(message)}</div>
+<p><a class="btn" href="obsidian://open?vault={VAULT_NAME}">Return to Obsidian</a></p>
+''')
 
 
 # ---- Claude launch bar (injected into every web page at serve time) ----
@@ -173,14 +215,10 @@ def success_page(message: str, filename: str) -> str:
     """Generate simple HTML success page."""
     from urllib.parse import quote
     encoded_filename = quote(filename, safe='')
-    return f'''<!DOCTYPE html>
-<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>KitchenOS</title></head>
-<body style="font-family: system-ui; padding: 2rem; max-width: 600px; margin: 0 auto;">
-<div style="background: #efe; border: 1px solid #0a0; padding: 1rem; border-radius: 8px;">
-<strong style="color: #0a0;">Success</strong><br>{message}
-</div>
-<p><a href="obsidian://open?vault={VAULT_NAME}&file=Recipes/{encoded_filename}" style="display: inline-block; padding: 12px 20px; border: 1px solid #ccc; border-radius: 8px; text-decoration: none;">Return to {filename}</a></p>
-</body></html>'''
+    return _html_page("KitchenOS", f'''
+<div class="card ok"><strong>Success</strong><br>{message}</div>
+<p><a class="btn" href="obsidian://open?vault={VAULT_NAME}&file=Recipes/{encoded_filename}">Return to {filename}</a></p>
+''')
 
 
 def inject_my_notes(content: str, notes: str) -> str:
@@ -947,17 +985,16 @@ def refresh_nutrition():
         warnings_html = ""
         if warnings:
             warnings_list = "".join(f"<li>{w}</li>" for w in warnings)
-            warnings_html = f'<div style="background: #ffc; border: 1px solid #cc0; padding: 1rem; border-radius: 8px; margin-top: 1rem;"><strong>Warnings:</strong><ul>{warnings_list}</ul></div>'
+            warnings_html = (
+                f'<div class="card warn" style="margin-top:1rem;">'
+                f'<strong>Warnings:</strong><ul>{warnings_list}</ul></div>'
+            )
 
-        return f'''<!DOCTYPE html>
-<html><head><title>KitchenOS</title></head>
-<body style="font-family: system-ui; padding: 2rem; max-width: 600px; margin: 0 auto;">
-<div style="background: #efe; border: 1px solid #0a0; padding: 1rem; border-radius: 8px;">
-<strong style="color: #0a0;">Success</strong><br>Dashboard updated for {week}
-</div>
+        return _html_page("KitchenOS", f'''
+<div class="card ok"><strong>Success</strong><br>Dashboard updated for {week}</div>
 {warnings_html}
 <p><a href="obsidian://open?vault={VAULT_NAME}&file=Nutrition%20Dashboard">View Dashboard</a></p>
-</body></html>'''
+''')
 
     except FileNotFoundError as e:
         return error_page(f"Error: {str(e)}"), 404
@@ -1637,27 +1674,7 @@ def _render_add_form(recipe_display: str, error: str | None = None) -> str:
         f'<div class="error">{error}</div>' if error else ''
     )
 
-    return f'''<!DOCTYPE html>
-<html><head>
-<title>Add to Meal Plan</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
-    body {{ font-family: system-ui; padding: 1.5rem; max-width: 480px; margin: 0 auto; background: #fafafa; }}
-    h2 {{ margin-top: 0; }}
-    .recipe-name {{ background: #f0f0f0; padding: 0.75rem; border-radius: 8px; margin-bottom: 1.5rem; font-weight: 600; }}
-    .error {{ background: #fee; border: 1px solid #c00; color: #c00; padding: 0.75rem; border-radius: 8px; margin-bottom: 1rem; }}
-    .branch {{ display: block; padding: 0.75rem; margin-bottom: 0.5rem; border: 1px solid #ddd; border-radius: 8px; cursor: pointer; background: white; }}
-    .branch input[type="radio"] {{ margin-right: 0.5rem; }}
-    .branch.disabled {{ opacity: 0.5; cursor: not-allowed; }}
-    .fields {{ display: none; margin-top: 1rem; }}
-    .fields.active {{ display: block; }}
-    label {{ display: block; font-weight: 600; margin-bottom: 0.25rem; margin-top: 1rem; }}
-    select, input[type="text"] {{ width: 100%; padding: 0.75rem; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; background: white; -webkit-appearance: none; box-sizing: border-box; }}
-    button {{ width: 100%; padding: 1rem; font-size: 18px; font-weight: 600; background: #2563eb; color: white; border: none; border-radius: 8px; margin-top: 1.5rem; cursor: pointer; }}
-    button:active {{ background: #1d4ed8; }}
-</style>
-</head>
-<body>
+    return _html_page("Add to Meal Plan", f'''
 <h2>Add to Meal Plan</h2>
 <div class="recipe-name">{recipe_display}</div>
 {error_html}
@@ -1710,25 +1727,46 @@ def _render_add_form(recipe_display: str, error: str | None = None) -> str:
         if (checked) toggleFields(checked.value);
     }});
 </script>
-</body></html>'''
+''', extra_css='''
+    body { max-width: 480px; padding: 1.5rem; }
+    h2 { margin-top: 0; }
+    .recipe-name { background: var(--raised); padding: 0.75rem;
+                   border-radius: var(--radius-box); margin-bottom: 1.5rem;
+                   font-weight: 600; }
+    .error { background: var(--tint-alert); border: 1px solid var(--edge-alert);
+             color: var(--alert); padding: 0.75rem;
+             border-radius: var(--radius-box); margin-bottom: 1rem; }
+    .branch { display: block; padding: 0.75rem; margin-bottom: 0.5rem;
+              border: 1px solid var(--line); border-radius: var(--radius-box);
+              cursor: pointer; background: var(--surface); }
+    .branch input[type="radio"] { margin-right: 0.5rem; }
+    .branch.disabled { opacity: 0.5; cursor: not-allowed; }
+    .fields { display: none; margin-top: 1rem; }
+    .fields.active { display: block; }
+    label { display: block; font-weight: 600; margin-bottom: 0.25rem;
+            margin-top: 1rem; }
+    select, input[type="text"] { width: 100%; padding: 0.75rem; font-size: 16px;
+             border: 1px solid var(--line); border-radius: var(--radius-box);
+             background: var(--surface); color: var(--ink);
+             -webkit-appearance: none; box-sizing: border-box; }
+    button { width: 100%; padding: 1rem; font-size: 18px; font-weight: 600;
+             background: var(--app-kitchenos); color: var(--text-on-accent);
+             border: none; border-radius: var(--radius-box);
+             margin-top: 1.5rem; cursor: pointer; }
+    button:active { opacity: 0.85; }
+''')
 
 
 def _success_page_for_wikilink(wikilink_target: str, day: str, meal: str, week: str) -> str:
     """Green confirmation card after a slot insert. Works for [[Recipe]] or [[Meal: X]]."""
     from urllib.parse import quote
     encoded_file = quote(f"Meal Plans/{week}", safe='')
-    return f'''<!DOCTYPE html>
-<html><head><title>KitchenOS</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-</head>
-<body style="font-family: system-ui; padding: 2rem; max-width: 600px; margin: 0 auto;">
-<div style="background: #efe; border: 1px solid #0a0; padding: 1rem; border-radius: 8px;">
-<strong style="color: #0a0;">Added!</strong><br>
-[[{wikilink_target}]] &rarr; {day} {meal} ({week})
-</div>
+    return _html_page("KitchenOS", f'''
+<div class="card ok"><strong>Added!</strong><br>
+[[{wikilink_target}]] &rarr; {day} {meal} ({week})</div>
 <p><a href="obsidian://open?vault={VAULT_NAME}&file={encoded_file}">View Meal Plan</a></p>
 <p><a href="obsidian://open?vault={VAULT_NAME}">Back to Obsidian</a></p>
-</body></html>'''
+''')
 
 
 def _render_schedule_prompt(recipe: str, meal_name: str, action: str, info: str | None = None) -> str:
@@ -1751,25 +1789,10 @@ def _render_schedule_prompt(recipe: str, meal_name: str, action: str, info: str 
 
     info_html = f'<div class="info">{info}</div>' if info else ''
 
-    return f'''<!DOCTYPE html>
-<html><head>
-<title>Schedule Meal</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
-    body {{ font-family: system-ui; padding: 1.5rem; max-width: 480px; margin: 0 auto; background: #fafafa; }}
-    .ok {{ background: #efe; border: 1px solid #0a0; color: #060; padding: 0.75rem; border-radius: 8px; margin-bottom: 1rem; }}
-    .info {{ background: #eef; border: 1px solid #66c; color: #336; padding: 0.5rem 0.75rem; border-radius: 8px; margin-bottom: 1rem; font-size: 14px; }}
-    h3 {{ margin-top: 0.5rem; }}
-    label {{ display: block; font-weight: 600; margin-bottom: 0.25rem; margin-top: 1rem; }}
-    select {{ width: 100%; padding: 0.75rem; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; background: white; -webkit-appearance: none; }}
-    button {{ width: 100%; padding: 1rem; font-size: 18px; font-weight: 600; background: #2563eb; color: white; border: none; border-radius: 8px; margin-top: 1.5rem; cursor: pointer; }}
-    .skip {{ display: block; text-align: center; margin-top: 1rem; color: #666; }}
-</style>
-</head>
-<body>
-<div class="ok"><strong>&#10003;</strong> {banner}</div>
+    return _html_page("Schedule Meal", f'''
+<div class="card ok"><strong>&#10003;</strong> {banner}</div>
 {info_html}
-<h3>Schedule it now? <span style="font-weight: 400; color: #888;">(optional)</span></h3>
+<h3>Schedule it now? <span style="font-weight:400;color:var(--muted);">(optional)</span></h3>
 <form method="POST" action="/add-to-meal-plan">
     <input type="hidden" name="recipe" value="{recipe}">
     <input type="hidden" name="mode" value="schedule_meal">
@@ -1783,7 +1806,26 @@ def _render_schedule_prompt(recipe: str, meal_name: str, action: str, info: str 
     <button type="submit">Schedule meal</button>
 </form>
 <a class="skip" href="obsidian://open?vault={VAULT_NAME}&file={encoded_meal}">Skip &mdash; open in Obsidian</a>
-</body></html>'''
+''', extra_css='''
+    body { max-width: 480px; padding: 1.5rem; }
+    .info { background: var(--tint-accent); border: 1px solid var(--edge-accent);
+            color: var(--app-kitchenos); padding: 0.5rem 0.75rem;
+            border-radius: var(--radius-box); margin-bottom: 1rem;
+            font-size: 14px; }
+    h3 { margin-top: 0.5rem; }
+    label { display: block; font-weight: 600; margin-bottom: 0.25rem;
+            margin-top: 1rem; }
+    select { width: 100%; padding: 0.75rem; font-size: 16px;
+             border: 1px solid var(--line); border-radius: var(--radius-box);
+             background: var(--surface); color: var(--ink);
+             -webkit-appearance: none; }
+    button { width: 100%; padding: 1rem; font-size: 18px; font-weight: 600;
+             background: var(--app-kitchenos); color: var(--text-on-accent);
+             border: none; border-radius: var(--radius-box);
+             margin-top: 1.5rem; cursor: pointer; }
+    .skip { display: block; text-align: center; margin-top: 1rem;
+            color: var(--muted); }
+''')
 
 
 def _schedule_meal_token(meal_name: str, week: str, day: str, meal: str):

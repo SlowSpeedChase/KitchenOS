@@ -36,12 +36,9 @@ THEME_COLOR_LITERALS = {"#f4ede3", "#0f1116"}
 
 # Surfaces not yet converted. SHRINKS TO EMPTY.
 #
-# api_server.py is in here for the same reason the templates are: it holds the
-# Claude bar and six inline pages, and its two assertions below would otherwise
-# sit red from the moment this file lands until Task 4 finishes. One mechanism,
-# one finish line.
+# api_server.py held the Claude bar and six inline pages under the same
+# mechanism; Task 4 converted it and removed its entry here.
 UNCONVERTED: set[str] = {
-    "api_server.py",
     "cook_now.html",
     "meal_planner.html",
     "nutrition_review.html",
