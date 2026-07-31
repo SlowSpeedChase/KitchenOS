@@ -24,6 +24,20 @@ def test_inject_is_case_insensitive():
     out = _inject_after_body('<BODY>HI</BODY>', 'SNIP')
     assert out.startswith('<BODY>SNIP')
 
+def test_inject_ignores_body_spelled_out_inside_the_head():
+    """A template that *writes about* <body> must not be spliced at that word.
+
+    meal_planner.html documents the chrome bar in a CSS comment naming the
+    literal tag; a plain find('<body') matched the comment and dropped the bar
+    into the stylesheet, where the browser discards it — leaving a page that
+    contains the markup and shows no bar.
+    """
+    html = ('<html><head><style>/* sticky at the top of <body>, so .app '
+            'shifts down */</style></head><body class="x">HI</body></html>')
+    out = _inject_after_body(html, 'SNIP')
+    assert '<body class="x">SNIP' in out
+    assert out.index('SNIP') > out.index('</style>')
+
 def test_bar_html_has_ssh_and_endpoint():
     bar = _claude_bar_html()
     assert 'id="ko-claude-bar"' in bar
@@ -61,3 +75,17 @@ def test_page_has_claude_bar(client, path):
 def test_every_page_links_home(client, path):
     body = client.get(path).get_data(as_text=True)
     assert 'id="ko-home-link"' in body
+
+
+@pytest.mark.parametrize('path', PAGES)
+def test_bar_is_not_buried_in_the_stylesheet(client, path):
+    """Presence of the markup is not the same as a rendered bar.
+
+    The string assertions above passed for months while /meal-planner showed no
+    bar at all, because the snippet had been spliced inside <style>. Assert the
+    injection point is real markup: no <style> is still open where it landed.
+    """
+    body = client.get(path).get_data(as_text=True)
+    bar = body.index('id="ko-claude-bar"')
+    assert body.rfind('<style', 0, bar) <= body.rfind('</style>', 0, bar), \
+        f'{path}: bar was injected inside an open <style> block'
