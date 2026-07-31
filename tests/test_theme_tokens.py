@@ -7,16 +7,28 @@ tokens.css and styles through the variables, or the suite says so.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 
-from tests.theme_allowlist import HEX, SYSTEM_COLOR, THEME_COLOR_LITERALS, UNCONVERTED
+from tests.theme_allowlist import HEX, SYSTEM_COLOR, THEME_COLOR_LITERALS
 
 REPO = Path(__file__).resolve().parents[1]
 TEMPLATES = sorted(p for p in (REPO / "templates").glob("*.html"))
 TOKENS_LINK = '<link rel="stylesheet" href="/static/tokens.css">'
 KITCHENOS_LINK = '<link rel="stylesheet" href="/static/kitchenos.css">'
+
+# The literal opening of a hand-rolled page — see _html_page() in
+# api_server.py, which emits exactly this pair of lines. Matching the fuller
+# literal (doctype *and* the <html> that immediately follows it) rather than
+# a bare "<!DOCTYPE" substring is deliberate: a docstring once merely
+# *mentioned* "<!DOCTYPE" while describing this guard and broke the build,
+# forcing a reword. Prose describes a doctype; it does not reproduce the
+# doctype line followed immediately by the html tag, so this pattern stays
+# narrow to genuine page opens without needing to strip comments/docstrings
+# via ast first.
+DOCTYPE_PAGE = re.compile(r"<!DOCTYPE html>\s*<html\b")
 
 assert TEMPLATES, "no templates found — check REPO resolution"
 
@@ -37,8 +49,6 @@ def _offending_hexes(text: str) -> list[str]:
 
 @pytest.mark.parametrize("path", TEMPLATES, ids=lambda p: p.name)
 def test_template_links_the_design_language(path: Path):
-    if path.name in UNCONVERTED:
-        pytest.skip(f"{path.name} not yet converted")
     text = path.read_text()
     assert TOKENS_LINK in text, f"{path.name} does not link tokens.css"
     assert KITCHENOS_LINK in text, f"{path.name} does not link kitchenos.css"
@@ -46,8 +56,6 @@ def test_template_links_the_design_language(path: Path):
 
 @pytest.mark.parametrize("path", TEMPLATES, ids=lambda p: p.name)
 def test_template_has_no_raw_hex(path: Path):
-    if path.name in UNCONVERTED:
-        pytest.skip(f"{path.name} not yet converted")
     offenders = _offending_hexes(path.read_text())
     assert not offenders, (
         f"{path.name} still hardcodes {len(offenders)} colour(s): "
@@ -61,8 +69,6 @@ def test_template_has_no_system_colors(path: Path):
     """Canvas/CanvasText/GrayText pass the hex check clean but are still the
     OS palette, not ours — see the SYSTEM_COLOR docstring in theme_allowlist.
     """
-    if path.name in UNCONVERTED:
-        pytest.skip(f"{path.name} not yet converted")
     offenders = SYSTEM_COLOR.findall(path.read_text())
     assert not offenders, (
         f"{path.name} still uses {len(offenders)} CSS system colour(s): "
@@ -79,8 +85,6 @@ def test_api_server_has_no_raw_hex():
     Scanning the whole file is exact rather than approximate: a Flask server
     has no legitimate non-markup reason to name a colour.
     """
-    if "api_server.py" in UNCONVERTED:
-        pytest.skip("api_server.py not yet converted")
     offenders = _offending_hexes((REPO / "api_server.py").read_text())
     assert not offenders, (
         f"api_server.py still hardcodes {len(offenders)} colour(s): "
@@ -92,8 +96,6 @@ def test_api_server_has_no_system_colors():
     """Same blind spot as test_template_has_no_system_colors, for the six
     inline pages: Canvas/CanvasText/GrayText pass the hex check clean.
     """
-    if "api_server.py" in UNCONVERTED:
-        pytest.skip("api_server.py not yet converted")
     offenders = SYSTEM_COLOR.findall((REPO / "api_server.py").read_text())
     assert not offenders, (
         f"api_server.py still uses {len(offenders)} CSS system colour(s): "
@@ -102,17 +104,19 @@ def test_api_server_has_no_system_colors():
 
 
 def test_every_inline_page_goes_through_the_shared_head():
-    """One <!DOCTYPE in api_server.py — the one inside _html_page().
+    """One hand-rolled page in api_server.py — the one inside _html_page().
 
     Six pages were hand-rolled with six different <head> blocks, which is how
-    they ended up light-only while the templates moved on.
+    they ended up light-only while the templates moved on. See DOCTYPE_PAGE
+    above for why this matches the fuller "<!DOCTYPE html><html>" pair
+    instead of the bare substring.
     """
-    if "api_server.py" in UNCONVERTED:
-        pytest.skip("api_server.py not yet converted")
     text = (REPO / "api_server.py").read_text()
-    assert text.count("<!DOCTYPE") == 1, (
-        f"expected exactly 1 <!DOCTYPE in api_server.py, found "
-        f"{text.count('<!DOCTYPE')} — build the page through _html_page()"
+    found = DOCTYPE_PAGE.findall(text)
+    assert len(found) == 1, (
+        f"expected exactly 1 hand-rolled page (<!DOCTYPE html> followed by "
+        f"<html>) in api_server.py, found {len(found)} — build the page "
+        f"through _html_page()"
     )
 
 
@@ -194,14 +198,3 @@ def test_system_color_pattern_ignores_non_colours(text: str):
 )
 def test_system_color_pattern_finds_real_colours(text: str):
     assert len(SYSTEM_COLOR.findall(text)) >= 1
-
-
-def test_allowlist_is_temporary():
-    """Fails once UNCONVERTED empties, as a prompt to delete the machinery."""
-    if UNCONVERTED:
-        pytest.skip(f"{len(UNCONVERTED)} template(s) still to convert")
-    pytest.fail(
-        "UNCONVERTED is empty — the conversion is done. Delete the skip "
-        "branches in this file and in tests/e2e/test_dark_mode.py, then "
-        "delete UNCONVERTED from tests/theme_allowlist.py."
-    )

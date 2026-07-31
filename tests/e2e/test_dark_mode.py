@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.theme_allowlist import TEMPLATE_ROUTES, UNCONVERTED
+from tests.theme_allowlist import TEMPLATE_ROUTES
 
 pytestmark = pytest.mark.e2e
 
@@ -38,8 +38,6 @@ def _body_background(page) -> str:
 
 @pytest.mark.parametrize("name,route", ROUTABLE, ids=[n for n, _ in ROUTABLE])
 def test_page_follows_the_os_theme(name, route, live_server, page, page_errors):
-    if name in UNCONVERTED:
-        pytest.skip(f"{name} not yet converted")
     url = live_server.url(_resolve(route, live_server))
 
     page.emulate_media(color_scheme="dark")
@@ -64,8 +62,6 @@ def test_paper_is_always_dawn(name, route, live_server, page):
     print_week.html sets `print-color-adjust: exact`, so an Ink ground here
     does not degrade politely — it prints a black page.
     """
-    if name in UNCONVERTED:
-        pytest.skip(f"{name} not yet converted")
     page.emulate_media(media="print", color_scheme="dark")
     page.goto(live_server.url(_resolve(route, live_server)),
               wait_until="networkidle")
