@@ -42,6 +42,8 @@
 
 **`#fff` is ambiguous by design** — it is `var(--surface)` when it is a card background and `var(--text-on-accent)` when it is label text on a coloured button. Read each site.
 
+**System colours are enforced too.** `Canvas` / `CanvasText` / `GrayText` adapt to light and dark on their own, which is precisely why a hex-only check cannot see them — and they are the OS palette, not this one: `GrayText` is not the warm `--muted`, and `Canvas` is pure white/black rather than the Dawn cream or Ink ground, so a `color-mix()` against it is wrong in *both* themes. `SYSTEM_COLOR` in `tests/theme_allowlist.py` rejects them alongside the hex pattern. Inside a `color-mix()`, the base `Canvas` becomes `var(--surface)` when tinting a surface.
+
 ### The head block (added verbatim to every template)
 
 ```html
