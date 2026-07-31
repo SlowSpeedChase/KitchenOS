@@ -94,18 +94,18 @@ def error_page(message: str) -> str:
 # ---- Claude launch bar (injected into every web page at serve time) ----
 
 _CLAUDE_BAR_TEMPLATE = """
-<div id="ko-claude-bar" style="position:sticky;top:0;left:0;right:0;z-index:2147483000;background:#1a1a2e;color:#e8e8f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;box-shadow:0 2px 8px rgba(0,0,0,0.3);">
+<div id="ko-claude-bar" style="position:sticky;top:0;left:0;right:0;z-index:2147483000;background:var(--raised);color:var(--ink);border-bottom:1px solid var(--line);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;box-shadow:var(--shadow);">
   <div style="display:flex;align-items:center;gap:12px;padding:8px 14px;">
-    <a id="ko-home-link" href="/" title="KitchenOS home" aria-label="KitchenOS home" style="color:#e8e8f0;text-decoration:none;padding:0 12px;border:1px solid #44445a;border-radius:8px;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;box-sizing:border-box;">&#127968;</a>
-    <a id="ko-claude-launch" href="ssh://__SSH_TARGET__" style="background:#7c5cff;color:#fff;text-decoration:none;padding:0 16px;border-radius:8px;font-weight:600;white-space:nowrap;display:inline-flex;align-items:center;min-height:44px;box-sizing:border-box;">&#129302; Launch Claude</a>
-    <button id="ko-claude-toggle" type="button" style="background:transparent;color:#b8b8d0;border:1px solid #44445a;border-radius:8px;padding:0 14px;cursor:pointer;font-size:14px;display:inline-flex;align-items:center;min-height:44px;box-sizing:border-box;">&#128221; Notes</button>
-    <span id="ko-claude-status" style="color:#8a8aa5;font-size:12px;margin-left:auto;"></span>
+    <a id="ko-home-link" href="/" title="KitchenOS home" aria-label="KitchenOS home" style="color:var(--ink);text-decoration:none;padding:0 12px;border:1px solid var(--line);border-radius:8px;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;box-sizing:border-box;">&#127968;</a>
+    <a id="ko-claude-launch" href="ssh://__SSH_TARGET__" style="background:var(--insight);color:var(--text-on-accent);text-decoration:none;padding:0 16px;border-radius:8px;font-weight:600;white-space:nowrap;display:inline-flex;align-items:center;min-height:44px;box-sizing:border-box;">&#129302; Launch Claude</a>
+    <button id="ko-claude-toggle" type="button" style="background:transparent;color:var(--muted);border:1px solid var(--line);border-radius:8px;padding:0 14px;cursor:pointer;font-size:14px;display:inline-flex;align-items:center;min-height:44px;box-sizing:border-box;">&#128221; Notes</button>
+    <span id="ko-claude-status" style="color:var(--muted);font-size:12px;margin-left:auto;"></span>
   </div>
   <div id="ko-claude-notes-wrap" style="display:none;padding:0 14px 12px;">
-    <textarea id="ko-claude-notes" placeholder="Notes to yourself &amp; Claude — saved to Claude Notes.md, seeds the next Launch." style="width:100%;box-sizing:border-box;min-height:120px;background:#0f0f1e;color:#e8e8f0;border:1px solid #44445a;border-radius:8px;padding:10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;resize:vertical;"></textarea>
+    <textarea id="ko-claude-notes" placeholder="Notes to yourself &amp; Claude — saved to Claude Notes.md, seeds the next Launch." style="width:100%;box-sizing:border-box;min-height:120px;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;resize:vertical;"></textarea>
     <div style="display:flex;gap:10px;align-items:center;margin-top:8px;">
-      <button id="ko-claude-save" type="button" style="background:#2ecc71;color:#08210f;border:none;border-radius:8px;padding:8px 16px;font-weight:700;cursor:pointer;">Save</button>
-      <span id="ko-claude-save-status" style="color:#8a8aa5;font-size:12px;"></span>
+      <button id="ko-claude-save" type="button" style="background:var(--done);color:var(--text-on-accent);border:none;border-radius:8px;padding:8px 16px;font-weight:700;cursor:pointer;">Save</button>
+      <span id="ko-claude-save-status" style="color:var(--muted);font-size:12px;"></span>
     </div>
   </div>
 </div>
