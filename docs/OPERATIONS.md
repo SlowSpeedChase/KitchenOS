@@ -399,7 +399,7 @@ Two guards worth knowing before you widen its scope:
 
 ---
 
-## 2. LaunchAgents (all 8)
+## 2. LaunchAgents (all 9)
 
 All 8 agents run as `~/Library/LaunchAgents/com.kitchenos.<name>.plist`, with
 `ops/com.kitchenos.<name>.plist` in the repo as the canonical source —
@@ -534,6 +534,32 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.dashboard-update.plist
 
 .venv/bin/python scripts/update_dashboard_canvas.py
 ```
+
+### com.kitchenos.enrich
+
+Fills missing recipe frontmatter nightly at **3am**, so a newly extracted
+recipe is enriched without anyone remembering to run anything. Runs
+`scripts/enrich_recipes.py` for real (it writes, and backs each file up to
+`Recipes/.history/` first). No `RunAtLoad` — installing it does not trigger a
+run.
+
+The nightly cost is near zero on a settled library: a recipe with nothing
+missing short-circuits to `complete` before any API call, so a night with no
+new recipes makes **no requests at all**. Only genuinely new or incomplete
+recipes cost anything.
+
+```bash
+cp ops/com.kitchenos.enrich.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.kitchenos.enrich.plist
+
+tail logs/enrich.log                  # last run's console output
+cat logs/enrich-latest.json           # per-recipe report, incl. consistency flags
+```
+
+**This cannot be a Claude Code cloud routine.** Cloud agents get a fresh git
+clone and no local filesystem — and `vault/` is git-ignored, so a cloud run
+would find *zero* recipes, make no changes, and print a clean summary. It has
+to be a local agent for the same reason the batch-extract job does.
 
 ### com.kitchenos.mealplan
 
