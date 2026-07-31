@@ -6,8 +6,7 @@
     <string>com.kitchenos.verdict-nudge</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/chaseeasterling/Dev/KitchenOS/.venv/bin/python</string>
-        <string>/Users/chaseeasterling/Dev/KitchenOS/scripts/nudge_verdicts.py</string>
+        <string>/Users/chaseeasterling/Dev/KitchenOS/ops/agents/KitchenOS · Verdict Nudge</string>
     </array>
     <!-- 20:15 — after dinner and after cleanup, while the meal is still
          recallable, and before the late-evening window the Meal System note

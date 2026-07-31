@@ -6,8 +6,7 @@
     <string>com.kitchenos.mealplan</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/chaseeasterling/Dev/KitchenOS/.venv/bin/python</string>
-        <string>/Users/chaseeasterling/Dev/KitchenOS/generate_meal_plan.py</string>
+        <string>/Users/chaseeasterling/Dev/KitchenOS/ops/agents/KitchenOS · Meal Plan</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>

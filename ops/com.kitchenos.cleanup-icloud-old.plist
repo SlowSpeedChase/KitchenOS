@@ -6,8 +6,7 @@
     <string>com.kitchenos.cleanup-icloud-old</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>/Users/chaseeasterling/Dev/KitchenOS/scripts/cleanup_old_icloud.sh</string>
+        <string>/Users/chaseeasterling/Dev/KitchenOS/ops/agents/KitchenOS · Cleanup iCloud</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>

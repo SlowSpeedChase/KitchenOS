@@ -102,9 +102,13 @@ For the full route list and per-route contracts, see `docs/API.md`.
 
 ## Background services
 
-Seven LaunchAgents (`ops/com.kitchenos.*.plist`) run the recurring jobs, each
+Nine LaunchAgents (`ops/com.kitchenos.*.plist`) run the recurring jobs, each
 as its own scheduled Python (or shell) process — none of this is a
-queue/worker system. Python services self-rename their process title via
+queue/worker system. Each plist's `ProgramArguments[0]` is a descriptively
+named launcher shim in `ops/agents/` rather than the interpreter itself, so
+macOS's Background App Activity list identifies them individually instead of
+showing nine rows called `python` (see `docs/OPERATIONS.md` §2).
+Python services self-rename their process title via
 `setproctitle`, so `pgrep -f <script>.py` no longer matches after startup;
 search for `kitchenos-*` instead.
 

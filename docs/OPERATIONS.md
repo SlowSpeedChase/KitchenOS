@@ -1,7 +1,7 @@
 # KitchenOS Operations Runbook
 
 The canonical home for running, deploying, and operating KitchenOS: one-off
-CLI commands, the 8 LaunchAgents (install/logs/restart), operational
+CLI commands, the 9 LaunchAgents (install/logs/restart), operational
 caveats, health checks, the failure-analysis agent, QuickAdd setup, the test
 suite, the native app build/sign/deploy procedure, and the completing-work
 checklist. For "what exists and why" see `docs/ARCHITECTURE.md`; for the
@@ -401,7 +401,7 @@ Two guards worth knowing before you widen its scope:
 
 ## 2. LaunchAgents (all 9)
 
-All 8 agents run as `~/Library/LaunchAgents/com.kitchenos.<name>.plist`, with
+All 9 agents run as `~/Library/LaunchAgents/com.kitchenos.<name>.plist`, with
 `ops/com.kitchenos.<name>.plist` in the repo as the canonical source —
 **edit the repo copy, then re-copy it to `~/Library/LaunchAgents/` and
 reload**, don't hand-edit the installed copy. General pattern:
@@ -414,6 +414,39 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.<name>.plist
 launchctl unload ~/Library/LaunchAgents/com.kitchenos.<name>.plist
 launchctl load ~/Library/LaunchAgents/com.kitchenos.<name>.plist
 ```
+
+### Launcher shims (`ops/agents/`)
+
+No plist points at `.venv/bin/python` directly. Each one's `ProgramArguments[0]`
+is a launcher shim in `ops/agents/` named for what the agent *does* —
+`ops/agents/KitchenOS · Batch Extract`, and so on.
+
+This is because macOS names each row in **System Settings → Login Items &
+Extensions → Background App Activity** after the basename of
+`ProgramArguments[0]`. Pointing nine plists at the venv interpreter produced
+nine indistinguishable rows called `python`, alongside Selene's dozen called
+`node`. The launchd `Label` is recorded (verify with `sfltool dumpbtm`) but is
+never displayed, and there is no plist key that overrides the name.
+
+The shims are generated and validated by:
+
+```bash
+./scripts/make-agent-launchers.sh
+```
+
+Re-run it after rebuilding `.venv` or adding an agent. It rewrites every shim
+from its manifest, then fails if any `ops/*.plist` still points at a bare
+interpreter or at a launcher that doesn't exist.
+
+A shim must be a real script that execs the venv interpreter by full path — a
+bare symlink to `.venv/bin/python` will **not** work, because CPython locates
+`pyvenv.cfg` relative to the invoked executable's directory, so a symlink
+outside `.venv/bin/` silently drops the venv's `site-packages` and the agent
+runs against system Python.
+
+Adding an agent: add a line to the `LAUNCHERS` manifest in
+`scripts/make-agent-launchers.sh`, run it, and point the new plist's
+`ProgramArguments` at the single generated shim path.
 
 ### com.kitchenos.api
 
@@ -455,12 +488,23 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.batch-extract.plist
 .venv/bin/python batch_extract.py
 ```
 
-Requires **Full Disk Access** for the `.venv` python (System Settings →
-Privacy & Security → Full Disk Access) so `lib/reminders_url.py` can read the
-Reminders SQLite store directly to recover share-sheet rich-link URLs.
-Grant it to the interpreter itself (`/Users/chaseeasterling/Dev/KitchenOS/.venv/bin/python`,
-reachable in the file picker with ⇧⌘G) — the grant does not follow the repo, so
-it has to be redone after a machine rebuild or a recreated `.venv`.
+Requires **Full Disk Access** (System Settings → Privacy & Security → Full Disk
+Access) so `lib/reminders_url.py` can read the Reminders SQLite store directly
+to recover share-sheet rich-link URLs. The grant does not follow the repo, so it
+has to be redone after a machine rebuild or a recreated `.venv`.
+
+Grant it to **both** of these (⇧⌘G in the file picker to paste a path):
+
+```
+/Users/chaseeasterling/Dev/KitchenOS/ops/agents/KitchenOS · Batch Extract
+/Users/chaseeasterling/Dev/KitchenOS/.venv/bin/python
+```
+
+The shim is what launchd now execs, so it is the process TCC attributes the
+access to; the interpreter entry covers manual `.venv/bin/python
+batch_extract.py` runs from a terminal. Granting only the interpreter is the
+failure mode to watch for after the launcher-shim change — see the silent-denial
+note below.
 
 Without it, a share-sheet reminder resolves no URL, is reported as an invalid
 URL, and is left unchecked to be retried forever. **The denial does not raise:**

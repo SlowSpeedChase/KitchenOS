@@ -6,8 +6,7 @@
     <string>com.kitchenos.dashboard-update</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/chaseeasterling/Dev/KitchenOS/.venv/bin/python</string>
-        <string>/Users/chaseeasterling/Dev/KitchenOS/scripts/update_dashboard_canvas.py</string>
+        <string>/Users/chaseeasterling/Dev/KitchenOS/ops/agents/KitchenOS · Dashboard Update</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
