@@ -33,6 +33,17 @@ def default_week(today: Optional[date] = None) -> str:
     return f"{iso[0]}-W{iso[1]:02d}"
 
 
+def current_week(today: Optional[date] = None) -> str:
+    """The week you are *in* — distinct from :func:`default_week`, which is the
+    week you are planning.
+
+    Anything about what to do right now (today's prep) needs this one; putting
+    ``default_week`` there would report next week's tasks as today's.
+    """
+    iso = (today or date.today()).isocalendar()
+    return f"{iso[0]}-W{iso[1]:02d}"
+
+
 def _day_status_row(d: dict, targets: dict, base_url: str) -> str:
     filled = sum(1 for m in _MEALS if d["slots"].get(m))
     dots = "".join("●" if d["slots"].get(m) else "○" for m in _MEALS)

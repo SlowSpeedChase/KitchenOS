@@ -25,17 +25,35 @@ from typing import Optional
 
 import requests
 
-try:
-    import anthropic
-    _api_key = os.getenv("ANTHROPIC_API_KEY")
-    _anthropic_client = anthropic.Anthropic(api_key=_api_key) if _api_key else None
-except ImportError:
-    _anthropic_client = None
-
 from lib import paths
 from lib.meal_plan_parser import flatten_to_recipes, parse_meal_plan
 from lib.recipe_parser import parse_recipe_body, parse_recipe_file
 from lib.shopping_list_generator import find_recipe_file
+
+
+# Built on FIRST USE, not at import. Importing the Anthropic SDK costs ~250 ms,
+# and this module is now imported by the Kitchen Today prep card — which only
+# reads a JSON sidecar and never classifies anything. Paying a quarter-second of
+# SDK import on the home page's first load, for a client it will never call, is
+# the kind of cost that turns into "why is the front page slow".
+_anthropic_client = None
+_anthropic_resolved = False
+
+
+def _client():
+    """The Anthropic client, or None when unavailable/unconfigured."""
+    global _anthropic_client, _anthropic_resolved
+    if _anthropic_resolved:
+        return _anthropic_client
+    _anthropic_resolved = True
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if api_key:
+        try:
+            import anthropic
+            _anthropic_client = anthropic.Anthropic(api_key=api_key)
+        except ImportError:
+            _anthropic_client = None
+    return _anthropic_client
 
 
 CLAUDE_MODEL = "claude-haiku-4-5-20251001"
@@ -140,10 +158,11 @@ def _build_recipes_block(steps: list[ScheduledStep]) -> str:
 
 
 def _classify_with_claude(prompt: str) -> Optional[list[dict]]:
-    if _anthropic_client is None:
+    client = _client()
+    if client is None:
         return None
     try:
-        message = _anthropic_client.messages.create(
+        message = client.messages.create(
             model=CLAUDE_MODEL,
             max_tokens=CLAUDE_MAX_TOKENS,
             messages=[{"role": "user", "content": prompt}],

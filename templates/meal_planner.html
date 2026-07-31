@@ -1965,14 +1965,6 @@
 
     <!-- Floating panels (stacked dock, bottom-right) -->
     <div class="panel-dock">
-        <aside class="prep-panel collapsed" id="prep-panel">
-            <header>
-                <span>Today's Prep</span>
-                <button class="prep-toggle" id="prep-toggle" aria-label="Toggle prep panel">▾</button>
-            </header>
-            <div id="prep-body"></div>
-        </aside>
-
         <aside class="prep-panel collapsed" id="useitup-panel">
             <header>
                 <span>🥗 Use It Up</span>
@@ -2143,7 +2135,6 @@
         let suggestionSkipIndex = {};  // { "Tuesday-dinner": 0 } — tracks retries per cell
         let editingMealName = null;     // null => creating; string => editing existing meal
         let mealsByName = {};           // lookup helper for slot rendering
-        let weekTasks = null;           // { week, tasks: [...] } — populated by loadTasks()
         let pendingShoppingPreview = null;  // result of /api/shopping-list/preview during pantry modal flow
         let weekBoard = null;           // { week, cooks, freezer, day_totals } from GET /api/week-board/<week>
         let boardMode = false;          // true when weekBoard.cooks.length > 0 — board wins over legacy grid cards
@@ -2177,7 +2168,6 @@
             }
 
             // Load tasks last so it can reference the meal plan
-            loadTasks(currentWeek).catch(err => console.error('tasks load failed', err));
             loadUseItUp().catch(err => console.error('use-it-up load failed', err));
 
             hideLoading();
@@ -4072,8 +4062,7 @@
             try {
                 await loadMealPlan(currentWeek);
                 await loadWeekBoard(currentWeek);
-                loadTasks(currentWeek).catch(err => console.error('tasks load failed', err));
-            } catch (err) {
+                } catch (err) {
                 showToast('Failed to load meal plan', 'error');
                 console.error(err);
             }
@@ -4549,97 +4538,6 @@
 
         // --- Today's Prep panel ---
 
-        async function loadTasks(week) {
-            try {
-                const resp = await fetch(`/api/tasks/${week}`);
-                if (!resp.ok) return;
-                weekTasks = await resp.json();
-                renderPrepPanel();
-            } catch (err) {
-                console.error('tasks load failed', err);
-            }
-        }
-
-        function renderPrepPanel() {
-            const body = document.getElementById('prep-body');
-            body.innerHTML = '';
-            if (!weekTasks || !weekTasks.tasks || !weekTasks.tasks.length) {
-                body.innerHTML = '<div class="prep-section" style="color: var(--text-muted); font-size: 13px;">No tasks yet. Add some recipes to the plan.</div>';
-                return;
-            }
-            const today = DAYS[(new Date().getDay() + 6) % 7];
-
-            const todays = weekTasks.tasks.filter(t => t.day === today);
-            const aheads = weekTasks.tasks.filter(t => t.day !== today && t.can_do_ahead);
-
-            if (todays.length) {
-                body.appendChild(buildPrepSection('Today', todays));
-            }
-            if (aheads.length) {
-                body.appendChild(buildPrepSection('Get ahead', aheads));
-            }
-        }
-
-        function buildPrepSection(label, tasks) {
-            const wrap = document.createElement('div');
-            wrap.className = 'prep-section';
-            const h4 = document.createElement('h4'); h4.textContent = label;
-            wrap.appendChild(h4);
-            // group by recipe within section
-            const byRecipe = {};
-            tasks.forEach(t => {
-                (byRecipe[t.recipe] ||= []).push(t);
-            });
-            Object.entries(byRecipe).forEach(([recipe, ts]) => {
-                const recipeLabel = document.createElement('div');
-                recipeLabel.style.cssText = 'font-size: 12px; color: var(--text-muted); margin-top: 4px;';
-                recipeLabel.textContent = recipe;
-                wrap.appendChild(recipeLabel);
-                ts.sort((a, b) => a.step - b.step).forEach(t => {
-                    const row = document.createElement('label');
-                    row.className = 'prep-task' + (t.done ? ' done' : '');
-                    const cb = document.createElement('input');
-                    cb.type = 'checkbox';
-                    cb.checked = !!t.done;
-                    cb.addEventListener('change', () => toggleTaskDone(t.id, cb.checked, row));
-                    const text = document.createElement('span');
-                    text.innerHTML = `<span class="badge ${t.type}">${t.type}</span>${escapeHtml(t.text)}`;
-                    const meta = document.createElement('div');
-                    meta.className = 'meta';
-                    meta.textContent = `${t.day} ${t.slot} · ~${t.time_minutes}m`;
-                    const col = document.createElement('div');
-                    col.style.flex = '1';
-                    col.appendChild(text);
-                    col.appendChild(meta);
-                    row.appendChild(cb);
-                    row.appendChild(col);
-                    wrap.appendChild(row);
-                });
-            });
-            return wrap;
-        }
-
-        async function toggleTaskDone(taskId, done, row) {
-            try {
-                const resp = await fetch(`/api/tasks/${currentWeek}/${taskId}/done`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ done }),
-                });
-                if (!resp.ok) {
-                    showToast('Failed to update task', 'error');
-                    return;
-                }
-                row.classList.toggle('done', done);
-                if (weekTasks && weekTasks.tasks) {
-                    const t = weekTasks.tasks.find(x => x.id === taskId);
-                    if (t) t.done = done;
-                }
-            } catch (err) {
-                console.error(err);
-            }
-        }
-
         // --- Pantry-aware shopping list flow ---
 
         async function startShoppingListFlow() {
@@ -4755,12 +4653,6 @@
             const addSubBtn = document.getElementById('add-sub-recipe');
             if (addSubBtn) addSubBtn.addEventListener('click', () => addSubRecipeRow('', 1));
             // Whole header toggles collapse (the ▾ button click bubbles here)
-            const prepPanel = document.getElementById('prep-panel');
-            if (prepPanel) {
-                prepPanel.querySelector('header').addEventListener('click', () => {
-                    prepPanel.classList.toggle('collapsed');
-                });
-            }
             const usePanel = document.getElementById('useitup-panel');
             if (usePanel) {
                 usePanel.querySelector('header').addEventListener('click', () => {

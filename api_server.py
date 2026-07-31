@@ -3035,6 +3035,68 @@ def recent_page():
     return html, 200, {'Content-Type': 'text/html'}
 
 
+@app.route('/prep', methods=['GET'])
+def prep_page():
+    """Today's kitchen prep — the panel that used to float on the meal planner.
+
+    Prep is a *today* object; the planner is a *week* screen. It lives here so
+    it's reachable from the home page you actually open, and can be pushed to
+    Reminders. Unlike the home-page card, this route may regenerate a stale task
+    sidecar (an LLM pass) — that cost belongs on the page you opened on purpose.
+    """
+    from lib import kitchen_today
+
+    prep = kitchen_today.prep_tasks()
+    todays, ahead = prep["today"], prep["ahead"]
+    undone = [t for t in todays if not t.get("done")]
+    if todays:
+        sub = (f"{len(undone)} of {len(todays)} left for {prep['day'].lower()}"
+               if undone else f"all done for {prep['day'].lower()} 🎉")
+    elif ahead:
+        sub = f"nothing due today · {len(ahead)} you could pull forward"
+    else:
+        sub = "nothing planned for this week yet"
+
+    html = _serve_page_with_claude_bar('prep.html', [
+        ('<!--SUB-->', sub),
+        ('<!--WEEK-->', prep["week"]),
+        ('<!--PREP-->', kitchen_today.render_prep_html(prep)),
+    ])
+    return html, 200, {'Content-Type': 'text/html'}
+
+
+@app.route('/api/prep/reminders', methods=['POST'])
+@require_token
+def api_prep_to_reminders():
+    """Push prep steps into a Reminders list called 'Prep'.
+
+    A separate list from 'Shopping' on purpose: a grocery run and an afternoon
+    of cooking interleaved in one list is neither.
+
+    `scope` is "today" (the default) or "ahead". Today's steps and get-ahead
+    steps are never sent together — mixing "do this now" with "you could do this
+    for Friday" in one flat list is how a task list stops being trusted.
+    """
+    from lib import kitchen_today
+    from lib.reminders import add_to_reminders
+
+    data = request.get_json(force=True, silent=True) or {}
+    scope = "ahead" if data.get("scope") == "ahead" else "today"
+
+    prep = kitchen_today.prep_tasks()
+    items = [
+        f"{t['text']} — {t['recipe']}" if t.get("recipe") else t.get("text", "")
+        for t in prep[scope] if not t.get("done") and t.get("text")
+    ]
+    if not items:
+        return jsonify({"sent": 0, "list": "Prep", "scope": scope})
+    try:
+        sent = add_to_reminders(items, "Prep")
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 502
+    return jsonify({"sent": sent, "list": "Prep", "scope": scope})
+
+
 @app.route('/', methods=['GET'])
 def home_page():
     """The web home page: live 'Kitchen Today' cards over the full page registry.

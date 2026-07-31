@@ -160,6 +160,121 @@ def _plan_card(today: date) -> Card:
     return Card("🗓️", label, line, f"/plan-week?week={week}")
 
 
+def _prep_card(today: date) -> Card:
+    """What you're meant to be doing in the kitchen this afternoon.
+
+    Reads the week's task sidecar **only when it is already fresh**. The obvious
+    call, ``task_extractor.extract_tasks``, regenerates a stale sidecar with an
+    LLM classification pass — seconds of it — and this runs on every home-page
+    load. A card is worth a number, never a page that hangs. When the sidecar is
+    stale the card says so and links to ``/prep``, which is where regenerating
+    belongs.
+    """
+    from lib import plan_week, task_extractor
+
+    week = plan_week.current_week(today)
+    cached = task_extractor.load_cached_tasks(week)
+    if cached is None:
+        return Card("🔪", "Today's prep", "nothing planned yet", "/prep")
+    if not task_extractor._is_cache_fresh(week, cached):
+        return Card("🔪", "Today's prep", "plan changed — open to refresh", "/prep")
+
+    day_name = today.strftime("%A")
+    tasks = cached.get("tasks", []) or []
+    todays = [t for t in tasks if t.get("day") == day_name and not t.get("done")]
+    ahead = [t for t in tasks
+             if t.get("day") != day_name and t.get("can_do_ahead") and not t.get("done")]
+
+    if not todays and not ahead:
+        return Card("🔪", "Today's prep", "nothing to prep today", "/prep")
+
+    parts = []
+    if todays:
+        parts.append(f"{_plural(len(todays), 'step')} today")
+    if ahead:
+        parts.append(f"{len(ahead)} can be done ahead")
+    return Card("🔪", "Today's prep", " · ".join(parts), "/prep",
+                tone="urgent" if todays else "normal")
+
+
+def prep_tasks(today: Optional[date] = None, force: bool = False) -> dict:
+    """Today's prep, split into what's due today and what can be pulled forward.
+
+    Returns ``{"week", "today", "ahead", "day"}``. Unlike :func:`_prep_card`
+    this *may* regenerate a stale sidecar (an LLM pass) — that's the point of
+    it living on ``/prep`` rather than on the home page.
+    """
+    from lib import plan_week, task_extractor
+
+    today = today or date.today()
+    week = plan_week.current_week(today)
+    day_name = today.strftime("%A")
+    payload = task_extractor.extract_tasks(week, force=force) or {}
+    tasks = payload.get("tasks", []) or []
+
+    return {
+        "week": week,
+        "day": day_name,
+        "today": [t for t in tasks if t.get("day") == day_name],
+        # Get-ahead excludes today's own steps — they're already in the first
+        # list, and showing a step twice makes the count meaningless.
+        "ahead": [t for t in tasks
+                  if t.get("day") != day_name and t.get("can_do_ahead")],
+    }
+
+
+def _task_row_html(task: dict) -> str:
+    done = " done" if task.get("done") else ""
+    checked = " checked" if task.get("done") else ""
+    recipe = task.get("recipe") or ""
+    day = task.get("day") or ""
+    meta = " · ".join(p for p in (recipe, day) if p)
+    return (
+        f'<label class="task{done}" data-task-id="{escape(task.get("id", ""))}">'
+        f'<input type="checkbox"{checked}>'
+        f'<span class="text">'
+        f'<span class="step">{escape(task.get("text", ""))}</span>'
+        f'<span class="meta">{escape(meta)}</span>'
+        f'</span></label>'
+    )
+
+
+def render_prep_html(prep: dict) -> str:
+    """The body of ``/prep``: today's steps, then what can be pulled forward."""
+    todays, ahead = prep.get("today", []), prep.get("ahead", [])
+    if not todays and not ahead:
+        return ('<div class="empty">Nothing to prep — no recipes planned for '
+                'today, or every step is done. 🎉</div>')
+
+    out = []
+    if todays:
+        out.append(f'<h2>Today · {escape(prep.get("day", ""))}</h2>')
+        out.extend(_task_row_html(t) for t in todays)
+    if ahead:
+        out.append("<h2>Get ahead</h2>")
+        out.extend(_task_row_html(t) for t in ahead)
+
+    # The button follows whatever is actually on the page. Gating it on today's
+    # steps alone left a dead end: on a day with only get-ahead work — which is
+    # precisely the work you'd want queued — there was nothing to press.
+    scope = "today" if todays else "ahead"
+    label = "Send today to Reminders" if todays else "Send get-ahead to Reminders"
+    note = (
+        "Sends today&rsquo;s steps only — get-ahead is a suggestion, not "
+        "today&rsquo;s work."
+        if todays else
+        "Nothing is due today, so this sends the steps you could pull forward."
+    )
+    out.append(
+        f'<div class="actions">'
+        f'<button class="btn primary" id="send-reminders" data-scope="{scope}">📋 {label}</button>'
+        f"</div>"
+        f'<div class="note">Goes to a <strong>Prep</strong> list, separate from '
+        f"Shopping. {note}</div>"
+    )
+    return "\n".join(out)
+
+
 # --- helpers ----------------------------------------------------------------
 
 def _ordinal(iso: str) -> Optional[int]:
@@ -216,6 +331,8 @@ def gather(items: Optional[list] = None, recipe_index: Optional[list] = None,
               Card("✨", "New recipes", "what's landed lately", "/recent")),
         _safe(lambda: _use_it_up_card(items, recipe_index, today),
               Card("⏳", "Use it up", "what's on hand, soonest-expiring first", "/review")),
+        _safe(lambda: _prep_card(today),
+              Card("🔪", "Today's prep", "what to get ahead on", "/prep")),
         _safe(lambda: _plan_card(today),
               Card("🗓️", "Plan the week", "fill the week, then print it", "/plan-week")),
     ]
