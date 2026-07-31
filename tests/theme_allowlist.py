@@ -38,17 +38,13 @@ THEME_COLOR_LITERALS = {"#f4ede3", "#0f1116"}
 UNCONVERTED: set[str] = {
     "api_server.py",
     "cook_now.html",
-    "home.html",
     "meal_planner.html",
-    "note_view.html",
     "nutrition_review.html",
     "plan_week.html",
-    "prep.html",
     "print_week.html",
     "receipt_paste.html",
     "recipe_card.html",
     "recipe_detail.html",
-    "recent.html",
     "review.html",
     "system_health.html",
 }
