@@ -44,9 +44,7 @@ THEME_COLOR_LITERALS = {"#f4ede3", "#0f1116"}
 #
 # api_server.py held the Claude bar and six inline pages under the same
 # mechanism; Task 4 converted it and removed its entry here.
-UNCONVERTED: set[str] = {
-    "meal_planner.html",
-}
+UNCONVERTED: set[str] = set()
 
 # One representative route per template, for the browser test. None means the
 # template is not reachable as a standalone page.
