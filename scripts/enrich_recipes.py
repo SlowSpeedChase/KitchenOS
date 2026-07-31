@@ -43,6 +43,7 @@ MODEL = "claude-haiku-4-5-20251001"
 MANAGED_KEYS = {
     "servings", "prep_time", "cook_time", "total_time", "difficulty",
     "cuisine", "protein", "dish_type", "meal_occasion", "dietary",
+    "enrich_none",
 }
 
 # Allergen-negative claims are never auto-filled. A wrong "vegetarian" is a bad
@@ -67,6 +68,31 @@ NO_COOK_DISH_TYPES = {"drink", "snack"}
 # being re-asked. Nothing parses cook_time as a duration (api_server passes it
 # through opaquely), so a human-readable string is safe here.
 NO_COOK = "no cooking"
+
+# The same "no valid way to say none" trap as cook_time, in two fields whose
+# answer cannot be written into the field itself:
+#
+#   protein feeds recipe_index.FILTER_FIELDS and is rendered as an Obsidian tag
+#   (templates/recipe_template.py), so a sentinel value there would surface as a
+#   "none" filter chip and a #none tag — the same out-of-vocabulary pollution
+#   that makes flatbread/kabobs unreachable in the /cook-now filter.
+#
+#   dietary is itself a tag vocabulary, with the same problem. And its empty
+#   list can't carry the meaning either: the template writes `dietary: []` for
+#   every brand-new recipe, so "present but empty" cannot distinguish "asked,
+#   and nothing applies" from "never asked".
+#
+# So a positive "there is none" answer is recorded out of band, in ENRICH_NONE_KEY.
+# cook_time is deliberately not on this list: it is display text nobody filters
+# on, so its sentinel is written in place where a cook can actually read it.
+NONE_SENTINELS = {
+    "protein": "no main protein",
+    "dietary": "no dietary tags",
+}
+
+# Frontmatter key listing fields the model affirmatively reported as having no
+# value, so they stop being re-asked on every run.
+ENRICH_NONE_KEY = "enrich_none"
 
 # Values that mean "absent" even though the key exists.
 _JUNK_RE = re.compile(
@@ -136,14 +162,19 @@ all — nothing heated, baked, boiled, fried or simmered — return exactly \
 simply cannot tell, omit the field instead; do not answer "none" or "0 minutes".
 - difficulty: one of easy, medium, hard
 - cuisine: a single word/short phrase, e.g. Italian, Mexican, Thai, American
-- protein: the ONE main protein, from exactly this list: {proteins}
+- protein: the ONE main protein, from exactly this list: {proteins}. If the \
+dish genuinely has no main protein — a plain vegetable, salad or carbohydrate \
+dish — return exactly "no main protein". Use that only when you are sure; if \
+you cannot tell, omit the field.
 - dish_type: exactly one of: {dish_types}
 - meal_occasion: array, 1-3 values from exactly: {occasions}. Only occasions a \
 person would actually use this dish for — do not pad the list.
 - dietary: array, only values from exactly: {dietary} — include a tag ONLY if \
 the ingredient list genuinely satisfies it (no meat AND no fish AND no dairy \
 AND no eggs for vegan, etc.). When unsure, leave it out. Do NOT emit nut-free, \
-gluten-free, or dairy-free; those are set by hand.
+gluten-free, or dairy-free; those are set by hand. Judge each remaining tag on \
+the ingredients alone. Only if you have checked every tag and none applies, \
+return exactly the string "no dietary tags" rather than an empty array.
 
 Also perform an internal-consistency check and report (do not fix):
 - "unlisted": ingredients the instructions use that are missing from the \
@@ -199,6 +230,16 @@ def fields_to_ask(fm: dict, only_servings: bool = False) -> list:
         return ["servings"] if is_missing(fm.get("servings")) else []
 
     wanted = list(INFERABLE)
+
+    # Fields already reported as having no value — asking again can only ever
+    # produce the same answer, and the field will never look filled.
+    settled = fm.get(ENRICH_NONE_KEY) or []
+    if isinstance(settled, str):
+        settled = [settled]
+    for field in settled:
+        if field in wanted:
+            wanted.remove(field)
+
     dish_type = fm.get("dish_type")
     if isinstance(dish_type, (list, tuple)):
         dish_type = dish_type[0] if dish_type else None
@@ -235,6 +276,29 @@ def clean_value(field: str, value):
     return None
 
 
+def apply_response(missing: list, data: dict):
+    """Split the model's answer into field writes and no-value claims.
+
+    Returns ``(updates, none_fields)``. A field whose answer is exactly its
+    NONE_SENTINELS entry is reported as having no value rather than written —
+    see the note there for why those two can't hold a sentinel themselves. Only
+    the exact sentinel counts, so a vague "none" or "unknown" is still just a
+    rejected answer and the field stays open.
+    """
+    updates, none_fields = {}, []
+    for field in missing:
+        if field not in data:
+            continue
+        sentinel = NONE_SENTINELS.get(field)
+        if sentinel and str(data[field]).strip().lower() == sentinel:
+            none_fields.append(field)
+            continue
+        cleaned = clean_value(field, data[field])
+        if cleaned is not None:
+            updates[field] = cleaned
+    return updates, none_fields
+
+
 def yaml_scalar(v) -> str:
     if isinstance(v, bool):
         return "true" if v else "false"
@@ -265,28 +329,31 @@ def process(path: Path, client, args):
     except Exception as e:
         return {"file": path.name, "status": "error", "error": str(e)[:140]}
 
-    updates = {}
-    for field in missing:
-        if field not in data:
-            continue
-        cleaned = clean_value(field, data[field])
-        if cleaned is not None:
-            updates[field] = cleaned
+    updates, none_fields = apply_response(missing, data)
 
     flags = {k: data.get(k) or [] for k in ("unlisted", "unused", "issues")}
     flags = {k: v for k, v in flags.items() if v}
 
     result = {
-        "file": path.name, "status": "updated" if updates else "no-op",
-        "updates": updates, "flags": flags, "asked": missing,
+        "file": path.name,
+        "status": "updated" if (updates or none_fields) else "no-op",
+        "updates": updates, "none_fields": none_fields,
+        "flags": flags, "asked": missing,
     }
-    if args.dry_run or not updates:
+    if args.dry_run or not (updates or none_fields):
         return result
 
+    to_write = {k: yaml_scalar(v) for k, v in updates.items()}
+    if none_fields:
+        # Union with what's already recorded, so a later run adding one claim
+        # doesn't drop an earlier one.
+        prior = fm.get(ENRICH_NONE_KEY) or []
+        if isinstance(prior, str):
+            prior = [prior]
+        to_write[ENRICH_NONE_KEY] = yaml_scalar(sorted(set(prior) | set(none_fields)))
+
     create_backup(path)
-    new_fm = frontmatter.rewrite(
-        fm_text, {k: yaml_scalar(v) for k, v in updates.items()}, MANAGED_KEYS
-    )
+    new_fm = frontmatter.rewrite(fm_text, to_write, MANAGED_KEYS)
     path.write_text(f"---\n{new_fm}\n---\n{body}", encoding="utf-8")
     return result
 
@@ -315,7 +382,9 @@ def main():
         for i, r in enumerate(pool.map(lambda p: process(p, client, args), files), 1):
             results.append(r)
             if r["status"] in ("updated", "error") or r.get("flags"):
-                bits = ", ".join(f"{k}={v}" for k, v in r.get("updates", {}).items())
+                bits = ", ".join(
+                    [f"{k}={v}" for k, v in r.get("updates", {}).items()]
+                    + [f"{k}=(none)" for k in r.get("none_fields", [])])
                 print(f"[{i}/{len(files)}] {r['status']:9s} {r['file']}"
                       + (f" | {bits}" if bits else "")
                       + (f" | FLAGS {r['flags']}" if r.get("flags") else "")
@@ -330,6 +399,12 @@ def main():
         for k in r.get("updates", {}):
             filled[k] += 1
     print("  fields filled:", dict(filled))
+    none_c = Counter()
+    for r in results:
+        for k in r.get("none_fields", []):
+            none_c[k] += 1
+    if none_c:
+        print("  fields recorded as having no value:", dict(none_c))
     flagged = [r for r in results if r.get("flags")]
     print(f"  recipes with consistency flags: {len(flagged)}")
 

@@ -377,6 +377,19 @@ Two guards worth knowing before you widen its scope:
   `NO_COOK_DISH_TYPES` (`drink`, `snack`). That set is deliberately tiny:
   measured across the corpus, 77% of desserts, 70% of dips and 62% of sauces
   carry a real cook time, so a baked queso keeps being asked.
+- **`enrich_none` records fields that have no value.** `protein` and `dietary`
+  hit the same trap, but their answer can't live in the field: `protein` is one
+  of `recipe_index.FILTER_FIELDS` and is rendered as an Obsidian tag, so a
+  sentinel there would become a "none" filter chip and a `#none` tag, and
+  `dietary` is itself a tag vocabulary. `dietary: []` can't carry the meaning
+  either — the recipe template writes an empty list for every new recipe, so it
+  can't distinguish "nothing applies" from "never asked". Both are therefore
+  recorded in an `enrich_none: [protein]` frontmatter list, and fields named
+  there are not re-asked. **This list is sticky**, so a wrong entry
+  permanently suppresses a real value — keep the prompt's wording for these
+  neutral. Telling the model "an ordinary meat dish usually qualifies for none
+  of them" was enough to make it drop a legitimate `high-protein` tag from
+  three meat dishes that had earned it.
 
 ```bash
 .venv/bin/python scripts/enrich_recipes.py --dry-run --limit 10
