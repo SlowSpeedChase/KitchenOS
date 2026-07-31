@@ -21,8 +21,13 @@ import re
 #
 # The length alternation matters on its own: an unanchored {3,8} accepts 5- and
 # 7-digit runs, which is how review.html's invalid `#d3355` reads as a colour.
+#
+# A third case: HTML numeric character entities. api_server.py's Claude bar
+# spells emoji as `&#127968;`, `&#128221;`, `&#129302;` — without a lookbehind
+# `#127968` reads as a plausible six-digit hex colour. The `(?<!&)` rejects any
+# `#` immediately preceded by `&`, leaving the entities alone.
 HEX = re.compile(
-    r'#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})(?![0-9a-zA-Z_-])'
+    r'(?<!&)#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})(?![0-9a-zA-Z_-])'
 )
 
 # `<meta name="theme-color">` cannot hold a var(), so these two literals are

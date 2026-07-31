@@ -86,6 +86,49 @@ def test_every_inline_page_goes_through_the_shared_head():
     )
 
 
+HEX_SHOULD_NOT_MATCH = {
+    # CSS id selectors — `-` is itself a word boundary, so a trailing \b
+    # would not stop `#add` from matching inside these.
+    "id selector": "#add-week-status { color: red; }",
+    "id selector 2": "#add-sub-recipe { display: none; }",
+    # HTML numeric character entities for emoji, not colours.
+    "entity house": "&#127968;",
+    "entity memo": "&#128221;",
+    "entity robot": "&#129302;",
+    # Invalid CSS hex lengths — 5 and 7 digits are not legal colours.
+    "5-digit": "#d3355",
+    "7-digit": "#1234567",
+}
+
+HEX_SHOULD_MATCH = {
+    "3-digit": "#fff",
+    "4-digit (with alpha)": "#8886",
+    "6-digit": "#f4ede3",
+    "8-digit (with alpha)": "#4a90d955",
+    "in declaration": "color: #0071e3;",
+}
+
+
+@pytest.mark.parametrize("text", HEX_SHOULD_NOT_MATCH.values(), ids=HEX_SHOULD_NOT_MATCH.keys())
+def test_hex_pattern_ignores_non_colours(text: str):
+    """HEX has been wrong twice: id selectors, then HTML numeric entities.
+
+    `#add-week-status` looks like a 3-digit hex colour `#add` followed by
+    ordinary text unless the "no identifier character follows" lookahead is
+    there, and `&#127968;` (an emoji entity) looks like a 6-digit hex colour
+    unless the "not preceded by &" lookbehind is there. Both cases are
+    plausible-looking # runs that are not colours, which is exactly the kind
+    of thing a naive `#[0-9a-fA-F]{3,8}` regex gets wrong silently.
+    """
+    assert HEX.findall(text) == []
+
+
+@pytest.mark.parametrize("text", HEX_SHOULD_MATCH.values(), ids=HEX_SHOULD_MATCH.keys())
+def test_hex_pattern_finds_real_colours(text: str):
+    """The lookbehind/lookahead guards must not swallow legitimate colours."""
+    assert len(HEX.findall(text)) == 1
+
+
 def test_allowlist_is_temporary():
     """Fails once UNCONVERTED empties, as a prompt to delete the machinery."""
     if UNCONVERTED:
