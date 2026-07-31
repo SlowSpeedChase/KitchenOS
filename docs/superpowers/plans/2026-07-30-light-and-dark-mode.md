@@ -17,6 +17,7 @@
 - **Keep layout custom properties.** The rule is "no raw hex", never "no `:root`". `meal_planner.html`'s `--sidebar-width`, `--shelf-h`, `--shelf-collapsed-h` must survive — `initShelf()` writes `--shelf-h` onto `:root` at runtime.
 - **Colour and material only.** Do not change layout, spacing, type scale, or markup structure. A page keeps its shape.
 - **Restart rule.** Template and `static/*.css` edits are live. Any `api_server.py` edit needs `launchctl unload/load ~/Library/LaunchAgents/com.kitchenos.api.plist` or the server serves stale code.
+- **The LaunchAgent serves the main checkout, not this worktree.** `com.kitchenos.api` is pinned to `/Users/chaseeasterling/Dev/KitchenOS`, so reloading it can never reflect a change made on this branch — a green health check there proves nothing about this work. To smoke-test a branch change, run this worktree's own `api_server.py` on a scratch port instead. The tailnet/phone verification in Task 9 therefore happens **after** PR 1 merges, or against a worktree server started by hand.
 - **Run Python as `.venv/bin/python`.** Python 3.11.
 - **Commit trailer:** every commit ends with `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`.
 
