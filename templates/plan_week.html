@@ -28,30 +28,30 @@
         .targets { color: var(--muted); font-size: 14px; margin: 0 0 4px; }
         .lead { font-size: 15px; margin: 0 0 16px; }
         table.status { width: 100%; border-collapse: collapse; margin: 0 0 22px; font-size: 14px; }
-        table.status td { padding: 6px 4px; border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, Canvas); }
+        table.status td { padding: 6px 4px; border-bottom: 1px solid color-mix(in srgb, var(--ink) 12%, var(--bg)); }
         .status .day { font-weight: 600; width: 34%; }
         .status .dots { letter-spacing: 3px; font-size: 15px; }
         .status .dots.full { color: var(--accent); }
         .status .dots.some { color: var(--warning); }
-        .status .dots.empty { color: GrayText; }
+        .status .dots.empty { color: var(--muted); }
         .status .macro { text-align: right; font-variant-numeric: tabular-nums; }
         .status .p.ok { color: var(--accent); font-weight: 600; }
         .status .p.low { color: var(--warning); }
-        .status .p.empty { color: GrayText; }
-        .empty-week { font-size: 15px; background: color-mix(in srgb, var(--accent) 10%, Canvas);
-                      border: 1px solid color-mix(in srgb, var(--accent) 40%, Canvas);
+        .status .p.empty { color: var(--muted); }
+        .empty-week { font-size: 15px; background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+                      border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--surface));
                       border-radius: 10px; padding: 14px; margin: 0 0 22px; }
         .actions { display: flex; flex-direction: column; gap: 12px; }
         .action { display: grid; grid-template-columns: 40px 1fr; grid-template-rows: auto auto;
                   gap: 0 12px; text-decoration: none; color: inherit;
-                  border: 1px solid color-mix(in srgb, CanvasText 16%, Canvas);
+                  border: 1px solid color-mix(in srgb, var(--ink) 16%, var(--surface));
                   border-radius: 12px; padding: 14px 16px; }
-        .action:active { background: color-mix(in srgb, var(--accent) 10%, Canvas); }
+        .action:active { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
         .action .n { grid-row: 1 / 3; align-self: center; justify-self: center;
                      width: 30px; height: 30px; border-radius: 50%; background: var(--accent);
                      color: var(--text-on-accent); font-weight: 700; display: flex; align-items: center; justify-content: center; }
         .action .t { font-size: 17px; font-weight: 600; }
-        .action .d { color: GrayText; font-size: 13px; }
+        .action .d { color: var(--muted); font-size: 13px; }
     </style>
 </head>
 <body>

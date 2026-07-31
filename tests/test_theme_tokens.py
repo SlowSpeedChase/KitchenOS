@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.theme_allowlist import HEX, THEME_COLOR_LITERALS, UNCONVERTED
+from tests.theme_allowlist import HEX, SYSTEM_COLOR, THEME_COLOR_LITERALS, UNCONVERTED
 
 REPO = Path(__file__).resolve().parents[1]
 TEMPLATES = sorted(p for p in (REPO / "templates").glob("*.html"))
@@ -56,6 +56,23 @@ def test_template_has_no_raw_hex(path: Path):
     )
 
 
+@pytest.mark.parametrize("path", TEMPLATES, ids=lambda p: p.name)
+def test_template_has_no_system_colors(path: Path):
+    """Canvas/CanvasText/GrayText pass the hex check clean but are still the
+    OS palette, not ours — see the SYSTEM_COLOR docstring in theme_allowlist.
+    """
+    if path.name in UNCONVERTED:
+        pytest.skip(f"{path.name} not yet converted")
+    offenders = SYSTEM_COLOR.findall(path.read_text())
+    assert not offenders, (
+        f"{path.name} still uses {len(offenders)} CSS system colour(s): "
+        f"{sorted(set(offenders))}. These track the OS palette, not the "
+        f"design language — map Canvas/CanvasText/GrayText onto "
+        f"--bg/--surface/--ink/--muted instead. See "
+        f"docs/superpowers/specs/2026-07-30-light-and-dark-mode-design.md"
+    )
+
+
 def test_api_server_has_no_raw_hex():
     """api_server.py builds six pages plus the Claude bar as f-strings.
 
@@ -67,6 +84,19 @@ def test_api_server_has_no_raw_hex():
     offenders = _offending_hexes((REPO / "api_server.py").read_text())
     assert not offenders, (
         f"api_server.py still hardcodes {len(offenders)} colour(s): "
+        f"{sorted(set(offenders))}"
+    )
+
+
+def test_api_server_has_no_system_colors():
+    """Same blind spot as test_template_has_no_system_colors, for the six
+    inline pages: Canvas/CanvasText/GrayText pass the hex check clean.
+    """
+    if "api_server.py" in UNCONVERTED:
+        pytest.skip("api_server.py not yet converted")
+    offenders = SYSTEM_COLOR.findall((REPO / "api_server.py").read_text())
+    assert not offenders, (
+        f"api_server.py still uses {len(offenders)} CSS system colour(s): "
         f"{sorted(set(offenders))}"
     )
 
@@ -127,6 +157,43 @@ def test_hex_pattern_ignores_non_colours(text: str):
 def test_hex_pattern_finds_real_colours(text: str):
     """The lookbehind/lookahead guards must not swallow legitimate colours."""
     assert len(HEX.findall(text)) == 1
+
+
+SYSTEM_COLOR_SHOULD_NOT_MATCH = {
+    # Prose, not CSS — meal_planner.html:1369 says "off-canvas", lowercase,
+    # inside a comment. SYSTEM_COLOR is case-sensitive on purpose: CSS system
+    # colours are always spelled with this exact casing.
+    "prose off-canvas": "the sidebar used to rip off-canvas behind a FAB",
+    # A longer identifier that merely contains the keyword as a substring.
+    # `-` breaks a word for HEX, but there is no such break inside
+    # "CanvasKit" — \b must not fire between two word characters.
+    "identifier substring": "CanvasKit.render(ctx);",
+}
+
+SYSTEM_COLOR_SHOULD_MATCH = {
+    "Canvas": "background: Canvas;",
+    "CanvasText": "color: CanvasText;",
+    "GrayText": "color: GrayText;",
+    "inside color-mix": "color-mix(in srgb, CanvasText 12%, Canvas)",
+}
+
+
+@pytest.mark.parametrize(
+    "text", SYSTEM_COLOR_SHOULD_NOT_MATCH.values(), ids=SYSTEM_COLOR_SHOULD_NOT_MATCH.keys()
+)
+def test_system_color_pattern_ignores_non_colours(text: str):
+    """Guards against the same two shapes of false positive as HEX: prose
+    that happens to contain the word, and an identifier the keyword is only
+    a substring of.
+    """
+    assert SYSTEM_COLOR.findall(text) == []
+
+
+@pytest.mark.parametrize(
+    "text", SYSTEM_COLOR_SHOULD_MATCH.values(), ids=SYSTEM_COLOR_SHOULD_MATCH.keys()
+)
+def test_system_color_pattern_finds_real_colours(text: str):
+    assert len(SYSTEM_COLOR.findall(text)) >= 1
 
 
 def test_allowlist_is_temporary():

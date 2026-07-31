@@ -30,6 +30,12 @@ HEX = re.compile(
     r'(?<!&)#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})(?![0-9a-zA-Z_-])'
 )
 
+# CSS system colours. They adapt to light/dark on their own, which is exactly
+# why they slip past a hex-only check — but they are the OS palette, not ours:
+# GrayText is not --muted, and Canvas is pure white/black rather than the Dawn
+# cream or Ink ground. A color-mix() against Canvas is wrong in both themes.
+SYSTEM_COLOR = re.compile(r'\b(?:CanvasText|Canvas|GrayText)\b')
+
 # `<meta name="theme-color">` cannot hold a var(), so these two literals are
 # permanently legal — but only on a theme-color line.
 THEME_COLOR_LITERALS = {"#f4ede3", "#0f1116"}
