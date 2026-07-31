@@ -184,7 +184,9 @@ _CLAUDE_BAR_TEMPLATE = """
 
 def _claude_bar_html() -> str:
     """The launch-bar widget with the current SSH target spliced in."""
-    target = os.environ.get('KITCHENOS_SSH_TARGET', 'chase@chases-mac-mini.taila69703.ts.net')
+    target = os.environ.get(
+        'KITCHENOS_SSH_TARGET', 'chaseeasterling@chases-mac-mini.taila69703.ts.net'
+    )
     return _CLAUDE_BAR_TEMPLATE.replace('__SSH_TARGET__', target)
 
 

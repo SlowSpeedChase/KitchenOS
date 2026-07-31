@@ -39,14 +39,23 @@ Plan: `~/.claude/plans/sprightly-strolling-peach.md`
   code + docs.
 
 ## Remaining manual setup (one-time, user-only — feature is inert until done)
+> **Resolved 2026-07-31.** The mini-side setup below was never done, so the feature stayed
+> inert as warned. Fixing it also surfaced a real bug: the shipped default was
+> `chase@`, an account that does not exist on the mini. sshd prompts for a password for
+> unknown users and then always rejects it, so the dead feature presented as "the Launch
+> Claude button won't accept my password". Corrected to `chaseeasterling@` in code, tests,
+> `.env`, and docs. Only the Termius step below is still user-only.
+
 - `launchctl unload/load ~/Library/LaunchAgents/com.kitchenos.api.plist` (API runs from the
-  main checkout — pages serve stale code until reloaded).
+  main checkout — pages serve stale code until reloaded). — **done**
 - On the mini: `brew install tmux`; generate a dedicated ed25519 key; add
   `command="…/kitchenos-claude-launch.sh",no-port-forwarding,no-X11-forwarding <pubkey>` to
-  `~/.ssh/authorized_keys`.
+  `~/.ssh/authorized_keys`. — **done** (`~/.ssh/kitchenos_claude`, verified end to end)
 - On the phone (Termius): import that key; host **"KitchenOS Claude"** =
-  `chase@chases-mac-mini.taila69703.ts.net` presenting only that key.
-- Set `KITCHENOS_SSH_TARGET` in `.env` if the `user@host` differs from the default.
+  `chaseeasterling@chases-mac-mini.taila69703.ts.net` presenting only that key. — **still
+  outstanding**
+- Set `KITCHENOS_SSH_TARGET` in `.env` if the `user@host` differs from the default. —
+  **done** (pinned to the code default so the two can't drift)
 
 ## Lessons Learned
 - 6 standalone raw-HTML pages with no partial system → a single serve-time string-splice
