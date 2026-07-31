@@ -46,7 +46,6 @@ THEME_COLOR_LITERALS = {"#f4ede3", "#0f1116"}
 # mechanism; Task 4 converted it and removed its entry here.
 UNCONVERTED: set[str] = {
     "meal_planner.html",
-    "nutrition_review.html",
     "recipe_detail.html",
 }
 
