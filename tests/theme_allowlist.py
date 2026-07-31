@@ -39,10 +39,8 @@ THEME_COLOR_LITERALS = {"#f4ede3", "#0f1116"}
 # api_server.py held the Claude bar and six inline pages under the same
 # mechanism; Task 4 converted it and removed its entry here.
 UNCONVERTED: set[str] = {
-    "cook_now.html",
     "meal_planner.html",
     "nutrition_review.html",
-    "plan_week.html",
     "print_week.html",
     "receipt_paste.html",
     "recipe_card.html",
