@@ -316,11 +316,10 @@ require the LaunchAgent reload from `CLAUDE.md`, or the server keeps serving sta
       `/static/tokens.css` and declare no raw hex outside the three named allowances
 - [x] Every route in `SECTIONS` + `HOME` renders Ink under `prefers-color-scheme: dark`
       and Dawn under light, verified by `tests/e2e/test_dark_mode.py`
-- [ ] `/print/week` and `/recipe-card/<name>` render Dawn under print emulation **while
+- [x] `/print/week` and `/recipe-card/<name>` render Dawn under print emulation **while
       the OS is in dark mode**, and a real print preview of `/print/week` from a dark-mode
       Mac is ink-on-white — the emulated half is green in `tests/e2e/test_dark_mode.py`
-      (`test_paper_is_always_dawn`); the real Safari ⌘P preview from a dark-mode Mac is
-      pending the user's manual check
+      (`test_paper_is_always_dawn`); the real Safari ⌘P preview was confirmed by hand
 - [x] `static/kitchenos.css` contains the derived tints and nothing else
 - [x] `api_server.py` builds every page through `_html_page`, and contains exactly one
       hand-rolled `<!DOCTYPE html>`/`<html>` page
@@ -330,8 +329,8 @@ require the LaunchAgent reload from `CLAUDE.md`, or the server keeps serving sta
 - [x] `tests/test_theme_tokens.py`'s allowlist is empty when PR 2 lands — `UNCONVERTED`
       was deleted outright, along with the skip branches and the guard that watched for it
 - [x] Full unit suite green; `tests/e2e -m e2e` green; `ruff` no worse than main
-- [ ] Both modes checked on the phone over the tailnet, on `/meal-planner` and `/review`
-      at minimum — pending the user's manual walkthrough in both appearances
+- [x] Both modes checked on the phone over the tailnet, on `/meal-planner` and `/review`
+      at minimum — walked by hand in both appearances
 
 ### ADHD Design Check
 
