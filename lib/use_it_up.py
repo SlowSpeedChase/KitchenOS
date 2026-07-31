@@ -30,6 +30,14 @@ _STATUS_WEIGHT = {"expired": 2, "soon": 1}
 # a short, helpful nudge, not a guilt-inducing audit of everything you ever bought.
 _EXPIRED_GRACE_DAYS = 2
 
+# Recipes shown under each at-risk item. With the usual 1-3 items at risk this
+# lands in the 5-15 range that's useful to scan, and — the actual point — no
+# single item can flood the panel the way one lime once did with all ten slots.
+RECIPES_PER_ITEM = 5
+
+# Missing ingredients listed per recipe in the generated note.
+_NOTE_MISSING_CAP = 4
+
 
 # Compound foods whose head noun lies about what they are: peanut butter is not
 # butter, coconut milk is not milk. Head-noun matching would happily equate them
@@ -53,14 +61,27 @@ _ATOMIC_FOODS: tuple[frozenset, ...] = tuple(
 _TRAILER_RE = re.compile(r"\([^)]*\)")
 _OF_CHOICE_RE = re.compile(r"\bof choice\b", re.IGNORECASE)
 
+# Qualifier clauses that hijack the last-word head heuristic on *inventory* names:
+# "sliced ham off the bone" resolved to `bone`, so the ham could never match a
+# recipe calling for ham — it was looking for a food called bone.
+#
+# `of` is deliberately absent. Stripping it would turn "Cream of tartar" into
+# "cream" and "Canned cream of chicken soup" into "canned cream", both of which
+# would then match every cream in the library. Those are the only three `of`
+# names among the 215 live inventory rows and all three parse correctly today.
+_QUALIFIER_TRAILER_RE = re.compile(r"\b(?:off|with|without)\b.*$", re.IGNORECASE)
+
 
 def _core_head(text: str, strict: bool, fallback: Optional[str]) -> Optional[str]:
     """Head noun for the atomic-block test, ignoring trailing clauses.
 
     ``_head_token`` takes the last content word, so "almond milk (or milk of
     choice)" resolves to "choice" and the block that protects compound foods
-    never fires. Clean names are already trustworthy, so only ingredient text
-    is stripped.
+    never fires.
+
+    Only ingredient text needs stripping *here*, because a clean name has
+    already been through ``_clean_name`` in ``_phrase`` — the fallback it gets
+    passed is a head derived from the cleaned text, not the raw one.
     """
     if strict:
         return fallback
@@ -76,6 +97,11 @@ class Phrase(NamedTuple):
     butter, softened", "flour spooned and leveled, see notes"), so its trailing
     word is unreliable as a head noun and it is parsed non-strict.
 
+    "Clean" means the row names one food, not that it is free of qualifiers:
+    real rows include "sliced ham off the bone" and "whey protein powder
+    (chocolate fudge)". ``_phrase`` runs strict names through ``_clean_name``
+    first so those clauses reach neither the tokens nor the head.
+
     ``core_head`` is the head noun used for the atomic-block test only: for
     noisy ingredient text it is resolved from a version of the text with
     trailing clauses (parentheticals, "of choice") stripped, since those can
@@ -90,10 +116,28 @@ class Phrase(NamedTuple):
     core_head: Optional[str] = None
 
 
+def _clean_name(text: str) -> str:
+    """Strip clauses that hijack the head-noun heuristic on a clean name.
+
+    "Clean" names were assumed trustworthy enough to skip this. They are not:
+    of the 215 live inventory rows, "sliced ham off the bone" resolved to `bone`
+    and "whey protein powder (chocolate fudge)" to `fudge`. Both then matched
+    nothing, silently — the ham showed no recipes for a month while the library
+    held one whose ingredient is literally "ham".
+    """
+    return _QUALIFIER_TRAILER_RE.sub(" ", _TRAILER_RE.sub(" ", text or "")).strip()
+
+
 def _phrase(text: str, strict: bool = True) -> Phrase:
     """Reduce a clean food name (inventory row, staple) to matchable form."""
-    head = _head_token(text)
-    return Phrase(_content_tokens(text), head, strict, _core_head(text, strict, head))
+    # The qualifier clause is stripped from the *tokens* as well as the head.
+    # Fixing only the head is not enough: `_covers` requires token containment
+    # in one direction, and {bone, ham, off} neither contains nor is contained
+    # by {deli, ham} — so "sliced ham off the bone" still matched no ham recipe
+    # even once its head read `ham`. Stripping gives {ham} ⊆ {deli, ham}.
+    source = _clean_name(text) if strict else text
+    return Phrase(_content_tokens(source), _head_token(source), strict,
+                  _core_head(text, strict, _head_token(source)))
 
 
 def _ingredient_phrase(text: str) -> Phrase:
@@ -201,61 +245,141 @@ def _matches(item: Phrase, ingredient_phrases: list[Phrase]) -> bool:
     return any(_covers(item, ing) for ing in ingredient_phrases)
 
 
-def suggest(items: list, recipe_index: list[dict], today: Optional[date] = None,
-            limit: int = 10, staples: Optional[set] = None) -> dict:
-    """Rank recipes by how much at-risk inventory they use.
+def recipe_coverage(ingredients: list[str], inv_phrases: list[Phrase],
+                    staple_sets: list[Phrase],
+                    at_risk_sets: Optional[list[Phrase]] = None
+                    ) -> tuple[int, int, list[str], bool]:
+    """How much of a recipe you already have.
 
-    Returns ``{"at_risk": [...], "suggestions": [...]}``. Each suggestion is
-    ``{recipe, image, uses: [{name, status, expires}], uses_count, urgency}``,
-    sorted by number of at-risk items used (then urgency). Staples are excluded
-    from the at-risk list but assumed available, so a recipe needing flour +
-    butter + the expiring item still surfaces.
+    Returns ``(have, total, missing, uses_at_risk)``. Staples count as
+    always-on-hand: they raise coverage and never appear in ``missing``.
+    Matching is presence-only, not quantity-aware. ``uses_at_risk`` is False
+    whenever ``at_risk_sets`` is omitted.
+
+    The single authority for this calculation. ``cook_now.generate`` ranks the
+    whole library by it and ``suggest`` ranks each at-risk item's recipes by it —
+    and this repo has already been bitten by two modules hand-writing the same
+    rule (``unit_compatibility``, where the shopping list credited limes the cook
+    then refused to spend). It lives here rather than in ``cook_now`` because
+    ``cook_now`` already imports this module's matching machinery, so the
+    dependency only points one way.
+
+    One pass on purpose: it runs over the whole library (252 recipes x ~10
+    ingredients) on a page with a 135 ms budget, and ``_ingredient_phrase`` is
+    the expensive part — so at-risk is detected here rather than in a second
+    loop that would parse every ingredient twice.
+    """
+    missing: list[str] = []
+    uses_at_risk = False
+    for ing in ingredients:
+        phrase = _ingredient_phrase(ing)
+        if not (_is_staple(phrase, staple_sets) or _matches(phrase, inv_phrases)):
+            missing.append(ing)
+        if at_risk_sets and not uses_at_risk and _matches(phrase, at_risk_sets):
+            uses_at_risk = True
+    total = len(ingredients)
+    return total - len(missing), total, missing, uses_at_risk
+
+
+def suggest(items: list, recipe_index: list[dict], today: Optional[date] = None,
+            limit: int = 10, staples: Optional[set] = None,
+            per_item: int = RECIPES_PER_ITEM) -> dict:
+    """What to cook to use up what's about to go off, grouped by the item.
+
+    Returns ``{"at_risk": [...], "suggestions": [...]}``.
+
+    Each ``at_risk`` entry carries its **own** ranked ``recipes`` — the recipes
+    that use *that* item, ordered by how much of each you already have
+    (``recipe_coverage``), capped at ``per_item``. An item that matches nothing
+    keeps an empty list rather than disappearing, because "there is nothing to
+    cook with this ham" is the answer, and a flat list could only express it by
+    omission.
+
+    ``suggestions`` is a flat, deduplicated view of the same grouped data, kept
+    so the generated note and ``kitchen_today`` keep working. It is derived, not
+    ranked separately — there is one ranking in this module.
+
+    Previously this returned a single flat list sorted by
+    ``(uses_count, urgency, -len(recipe))``. With one matchable at-risk item
+    every candidate ties on the first two, so the operative tiebreak was
+    *shortest recipe name*: live, that rendered ten lime recipes and nothing at
+    all for the ham expiring that day.
     """
     today = today or date.today()
-    flagged = at_risk_items(items, today, _staple_phrases(staples))
+    staple_sets = _staple_phrases(staples)
+    flagged = at_risk_items(items, today, staple_sets)
 
-    at_risk = [
-        {
+    if not flagged:
+        return {"at_risk": [], "suggestions": []}
+
+    inv_phrases = [_phrase(it.name) for it in items]
+    tokened = [(status, it, _phrase(it.name)) for status, it in flagged]
+
+    # recipe name -> (coverage payload, [item names it uses])
+    matched: dict[str, tuple[dict, list[dict]]] = {}
+    for recipe in recipe_index:
+        ingredients = recipe.get("ingredient_items", [])
+        if not ingredients:
+            continue
+        ing_sets = [_ingredient_phrase(s) for s in ingredients]
+
+        uses = [
+            {"name": it.name, "status": status, "expires": it.expires}
+            for status, it, item_phrase in tokened
+            if _matches(item_phrase, ing_sets)
+        ]
+        if not uses:
+            continue
+
+        have, total, missing, _ = recipe_coverage(ingredients, inv_phrases, staple_sets)
+        matched[recipe["name"]] = ({
+            "recipe": recipe["name"],
+            "display_name": recipe.get("display_name") or recipe["name"],
+            "image": recipe.get("image"),
+            "have": have,
+            "total": total,
+            "coverage": have / total if total else 0.0,
+            "missing": missing,
+            "uses": uses,
+            "uses_count": len(uses),
+            "urgency": sum(_STATUS_WEIGHT[u["status"]] for u in uses),
+        }, [u["name"] for u in uses])
+
+    at_risk = []
+    for status, it in flagged:
+        for_item = [payload for payload, used in matched.values() if it.name in used]
+        # Most-covered first; then most at-risk items used, so a recipe clearing
+        # two expiring things outranks an equally-covered one clearing one.
+        for_item.sort(key=lambda r: (r["coverage"], r["uses_count"], -len(r["missing"])),
+                      reverse=True)
+        at_risk.append({
             "name": it.name,
             "status": status,
             "expires": it.expires,
             "quantity": it.quantity,
             "unit": it.unit,
             "location": it.location,
-        }
-        for status, it in flagged
-    ]
-    if not flagged:
-        return {"at_risk": [], "suggestions": []}
+            "recipes": for_item[:per_item],
+            "match_count": len(for_item),
+        })
 
-    tokened = [(status, it, _phrase(it.name)) for status, it in flagged]
-
+    # Flat view: item order (already urgency-sorted by at_risk_items), each item's
+    # recipes in their ranked order, first occurrence wins.
+    seen: set[str] = set()
     suggestions = []
-    for recipe in recipe_index:
-        ing_sets = [_ingredient_phrase(s) for s in recipe.get("ingredient_items", [])]
-        if not ing_sets:
-            continue
-        uses, urgency = [], 0
-        for status, it, item_phrase in tokened:
-            if _matches(item_phrase, ing_sets):
-                uses.append({"name": it.name, "status": status, "expires": it.expires})
-                urgency += _STATUS_WEIGHT[status]
-        if uses:
-            suggestions.append({
-                "recipe": recipe["name"],
-                "image": recipe.get("image"),
-                "uses": uses,
-                "uses_count": len(uses),
-                "urgency": urgency,
-            })
+    for entry in at_risk:
+        for r in entry["recipes"]:
+            if r["recipe"] in seen:
+                continue
+            seen.add(r["recipe"])
+            suggestions.append(r)
 
-    suggestions.sort(key=lambda s: (s["uses_count"], s["urgency"], -len(s["recipe"])),
-                     reverse=True)
     return {"at_risk": at_risk, "suggestions": suggestions[:limit]}
 
 
 def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
-             today: Optional[date] = None, limit: int = 10) -> dict:
+             today: Optional[date] = None, limit: int = 10,
+             per_item: int = RECIPES_PER_ITEM) -> dict:
     """Compute suggestions from live inventory + the recipe library."""
     if items is None:
         from lib.inventory import read_inventory
@@ -264,7 +388,7 @@ def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
         from lib import paths
         from lib.recipe_index import get_recipe_index
         recipe_index = get_recipe_index(paths.recipes_dir(), include_ingredients=True)
-    return suggest(items, recipe_index, today=today, limit=limit)
+    return suggest(items, recipe_index, today=today, limit=limit, per_item=per_item)
 
 
 def render_markdown(result: dict, today: Optional[date] = None) -> str:
@@ -288,26 +412,48 @@ def render_markdown(result: dict, today: Optional[date] = None) -> str:
         lines.append("Nothing expiring soon — your fridge is in good shape. ✅\n")
         return "\n".join(lines) + "\n"
 
-    lines += ["## At risk", ""]
+    # One section per item, each with its own recipes. A single "Cook these"
+    # list could not say which item a recipe was for, and could only report an
+    # item with no options by leaving it out.
     for r in at_risk:
         marker = "🔴 expired" if r["status"] == "expired" else "🟡 soon"
         qty = _format_quantity(r["quantity"])
-        lines.append(
-            f"- {marker} — **{r['name']}** ({qty} {r['unit']}, {r['location']}) "
-            f"— expires {r['expires']}"
-        )
+        lines += [
+            f"## {r['name']}",
+            "",
+            f"{marker} — {qty} {r['unit']}, {r['location']} — expires {r['expires']}",
+            "",
+        ]
 
-    lines += ["", "## Cook these", ""]
-    suggestions = result.get("suggestions", [])
-    if not suggestions:
-        lines.append("_No recipes in your library use these items — time to improvise._")
-    else:
-        for s in suggestions:
-            used = ", ".join(u["name"] for u in s["uses"])
-            count = s["uses_count"]
-            plural = "item" if count == 1 else "items"
-            lines.append(f"- [[{s['recipe']}]] — uses {count} at-risk {plural}: {used}")
-    return "\n".join(lines) + "\n"
+        recipes = r.get("recipes", [])
+        if not recipes:
+            lines += ["_Nothing in your library uses this — time to improvise._", ""]
+            continue
+
+        lines += ["| Recipe | Have | Missing |", "|--------|------|---------|"]
+        for s in recipes:
+            pct = round(s["coverage"] * 100)
+            have = f"{pct}% ({s['have']}/{s['total']})"
+            # Capped: raw ingredient text carries its whole parenthetical
+            # ("of cannellini beans or navy beans, or chickpeas, drained and
+            # rinsed (15-ounce/440g)"), so an uncapped list makes the table
+            # unreadable in exactly the rows you were least likely to cook.
+            shown = [m.split(",")[0].strip() for m in s["missing"][:_NOTE_MISSING_CAP]]
+            extra = len(s["missing"]) - len(shown)
+            missing = ", ".join(shown) + (f", +{extra} more" if extra > 0 else "")
+            missing = missing or "—"
+            also = [u["name"] for u in s["uses"] if u["name"] != r["name"]]
+            flag = f" ♻️ also uses {', '.join(also)}" if also else ""
+            lines.append(f"| [[{s['recipe']}]]{flag} | {have} | {missing} |")
+
+        hidden = r.get("match_count", len(recipes)) - len(recipes)
+        if hidden > 0:
+            lines.append("")
+            lines.append(f"_{hidden} more recipe{'s' if hidden != 1 else ''} "
+                         f"use{'' if hidden != 1 else 's'} this, with less on hand._")
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def write_note(today: Optional[date] = None) -> "object":

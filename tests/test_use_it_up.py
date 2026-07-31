@@ -415,3 +415,142 @@ class TestRender:
     def test_markdown_all_clear(self):
         md = use_it_up.render_markdown({"at_risk": [], "suggestions": []})
         assert "good shape" in md
+
+
+# Non-staple throughout, so coverage is decided by the fixture inventory rather
+# than by config/pantry_staples.json quietly counting something as on-hand.
+BY_ITEM_RECIPES = [
+    {"name": "Ham Biscuits", "ingredient_items": ["deli ham", "cheddar"]},
+    {"name": "Ham Salad", "ingredient_items": ["deli ham", "mayonnaise", "celery", "pickles"]},
+    {"name": "Ham And Lime Bowl", "ingredient_items": ["deli ham", "lime", "cheddar"]},
+    {"name": "Lime Tart", "ingredient_items": ["lime", "condensed milk", "shortbread"]},
+    {"name": "Plain Cheddar Toast", "ingredient_items": ["cheddar", "sourdough"]},
+]
+
+
+class TestGroupedByItem:
+    """Recipes hang off the item they use up, not a single flat list.
+
+    Live, the flat version rendered ten lime recipes and nothing for the ham
+    expiring that day — with one matchable item every candidate tied on
+    uses_count and urgency, so the operative sort key was recipe name length.
+    """
+
+    def _result(self, **kw):
+        items = [_item("Sliced Ham Off The Bone", EXPIRED, category="deli"),
+                 _item("Lime", SOON),
+                 _item("Cheddar", LATER, category="dairy")]
+        return use_it_up.suggest(items, BY_ITEM_RECIPES, today=TODAY, **kw)
+
+    def test_every_at_risk_item_carries_its_own_recipes(self):
+        at_risk = self._result()["at_risk"]
+        assert [r["name"] for r in at_risk] == ["Sliced Ham Off The Bone", "Lime"]
+        for entry in at_risk:
+            assert "recipes" in entry
+
+    def test_a_recipe_only_appears_under_an_item_it_uses(self):
+        for entry in self._result()["at_risk"]:
+            for recipe in entry["recipes"]:
+                assert entry["name"] in [u["name"] for u in recipe["uses"]], (
+                    f"{recipe['recipe']!r} listed under {entry['name']!r} without using it")
+
+    def test_ordered_by_how_much_you_already_have(self):
+        ham = self._result()["at_risk"][0]
+        names = [r["recipe"] for r in ham["recipes"]]
+        # Biscuits: ham + cheddar, both on hand -> 100%.
+        # Bowl: ham + lime + cheddar, all on hand -> 100%, but ties are broken by
+        #   uses_count, and it clears two at-risk items.
+        # Salad: ham only of four -> 25%.
+        assert names[0] == "Ham And Lime Bowl", "clears two at-risk items at equal coverage"
+        assert names[1] == "Ham Biscuits"
+        assert names[-1] == "Ham Salad"
+        assert [r["coverage"] for r in ham["recipes"]] == sorted(
+            (r["coverage"] for r in ham["recipes"]), reverse=True)
+
+    def test_coverage_counts_what_is_on_hand(self):
+        ham = self._result()["at_risk"][0]
+        by_name = {r["recipe"]: r for r in ham["recipes"]}
+        assert by_name["Ham Biscuits"]["have"] == 2
+        assert by_name["Ham Biscuits"]["total"] == 2
+        assert by_name["Ham Biscuits"]["missing"] == []
+        salad = by_name["Ham Salad"]
+        assert salad["have"] == 1 and salad["total"] == 4
+        assert set(salad["missing"]) == {"mayonnaise", "celery", "pickles"}
+
+    def test_an_item_nothing_uses_is_reported_not_dropped(self):
+        """The failure that hid the ham bug: a flat list can only say this by omission."""
+        items = [_item("Dragonfruit", SOON)]
+        at_risk = use_it_up.suggest(items, BY_ITEM_RECIPES, today=TODAY)["at_risk"]
+        assert [r["name"] for r in at_risk] == ["Dragonfruit"]
+        assert at_risk[0]["recipes"] == []
+        assert at_risk[0]["match_count"] == 0
+
+    def test_capped_per_item_and_the_true_total_is_still_reported(self):
+        capped = self._result(per_item=1)["at_risk"][0]
+        assert len(capped["recipes"]) == 1
+        assert capped["match_count"] == 3, "the cap must not hide how many matched"
+
+    def test_the_flat_view_is_derived_and_deduplicated(self):
+        result = self._result()
+        flat = [s["recipe"] for s in result["suggestions"]]
+        assert len(flat) == len(set(flat)), "a recipe under two items appears once"
+        grouped = {r["recipe"] for e in result["at_risk"] for r in e["recipes"]}
+        assert set(flat) == grouped, "the flat list is a view of the grouped data"
+
+
+class TestQualifierTrailersInInventoryNames:
+    """Inventory rows are 'clean' in that they name one food — not that they're bare.
+
+    `sliced ham off the bone` parsed its head noun as `bone` AND carried
+    {bone, off} in its token set, so it neither matched `deli ham` by head nor by
+    containment. It showed zero recipes for a month while the library held one
+    whose ingredient is literally "deli ham".
+    """
+
+    def test_the_ham_matches_ham(self):
+        item = _phrase("sliced ham off the bone")
+        assert item.head == "ham"
+        for ingredient in ("ham", "deli ham", "deli ham, chopped"):
+            assert _covers(item, _ingredient_phrase(ingredient)), ingredient
+
+    def test_it_still_does_not_match_a_different_food(self):
+        item = _phrase("sliced ham off the bone")
+        for ingredient in ("graham crackers", "chamomile tea (brewed, cooled)"):
+            assert not _covers(item, _ingredient_phrase(ingredient)), ingredient
+
+    def test_a_parenthetical_flavour_is_stripped(self):
+        item = _phrase("whey protein powder (chocolate fudge)")
+        assert _covers(item, _ingredient_phrase("protein powder"))
+
+    def test_of_is_not_stripped(self):
+        """'of' names a compound food. Stripping it would match every cream."""
+        for name in ("Cream of tartar", "Canned cream of chicken soup"):
+            item = _phrase(name)
+            for cream in ("heavy cream", "sour cream"):
+                assert not _covers(item, _ingredient_phrase(cream)), f"{name} vs {cream}"
+        assert _covers(_phrase("Cream of tartar"),
+                       _ingredient_phrase("cream of tartar"))
+        assert _covers(_phrase("Canned cream of chicken soup"),
+                       _ingredient_phrase("cream of chicken soup"))
+
+    def test_end_to_end_the_ham_gets_recipes(self):
+        items = [_item("Sliced Ham Off The Bone", EXPIRED, category="deli")]
+        at_risk = use_it_up.suggest(items, BY_ITEM_RECIPES, today=TODAY)["at_risk"]
+        assert [r["recipe"] for r in at_risk[0]["recipes"]], "the ham must find its recipes"
+
+
+class TestRenderByItem:
+    def test_each_item_gets_its_own_section(self):
+        items = [_item("Sliced Ham Off The Bone", EXPIRED, category="deli"),
+                 _item("Lime", SOON)]
+        md = use_it_up.render_markdown(
+            use_it_up.suggest(items, BY_ITEM_RECIPES, today=TODAY))
+        assert "## Sliced Ham Off The Bone" in md
+        assert "## Lime" in md
+        assert "[[Ham Biscuits]]" in md, "wikilinks use the real recipe name"
+
+    def test_an_item_with_no_recipes_says_so(self):
+        md = use_it_up.render_markdown(
+            use_it_up.suggest([_item("Dragonfruit", SOON)], BY_ITEM_RECIPES, today=TODAY))
+        assert "## Dragonfruit" in md
+        assert "improvise" in md

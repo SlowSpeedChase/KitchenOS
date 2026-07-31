@@ -2185,12 +2185,19 @@ def api_use_it_up():
     """Recipes that use up at-risk (expiring) inventory, so nothing is wasted.
 
     Returns {at_risk: [...], suggestions: [...]} — see lib/use_it_up.suggest.
-    Staples are excluded; only the actionable expiry window is surfaced.
+    Each at_risk item carries its own coverage-ranked `recipes`; `suggestions`
+    is the flat, deduplicated view of the same data. Staples are excluded from
+    the at-risk list but count as on-hand; only the actionable expiry window is
+    surfaced.
+
+    `limit` caps the flat view. `per_item` caps the recipes shown under each
+    item — that is the one the grouped UI actually reads.
     """
     from lib import use_it_up
 
     limit = request.args.get('limit', type=int) or 10
-    return jsonify(use_it_up.generate(limit=limit))
+    per_item = request.args.get('per_item', type=int) or use_it_up.RECIPES_PER_ITEM
+    return jsonify(use_it_up.generate(limit=limit, per_item=per_item))
 
 
 @app.route('/api/cook-now', methods=['GET'])
