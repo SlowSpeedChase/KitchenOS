@@ -98,3 +98,60 @@ class TestNoCookSettles:
     def test_sentinel_is_not_accepted_for_other_time_fields(self):
         """Every recipe has prep; "no cooking" is meaningless there."""
         assert clean_value("prep_time", NO_COOK) is None
+
+
+class TestFieldsWithNoValue:
+    """protein and dietary have the same "no way to say none" problem as
+    cook_time — but their answer cannot be written into the field.
+
+    protein feeds recipe_index.FILTER_FIELDS and is rendered as an Obsidian
+    tag, so a sentinel there becomes a "none" filter chip and a #none tag.
+    dietary is a tag vocabulary with the same issue. Both are recorded in a
+    separate key instead.
+    """
+
+    apply_response = staticmethod(enrich_recipes.apply_response)
+    KEY = enrich_recipes.ENRICH_NONE_KEY
+
+    def test_protein_none_is_recorded_out_of_band(self):
+        updates, none_fields = self.apply_response(
+            ["protein"], {"protein": "no main protein"})
+        assert "protein" not in updates, "must not pollute the filter/tag field"
+        assert none_fields == ["protein"]
+
+    def test_dietary_none_is_recorded_out_of_band(self):
+        updates, none_fields = self.apply_response(
+            ["dietary"], {"dietary": "no dietary tags"})
+        assert "dietary" not in updates
+        assert none_fields == ["dietary"]
+
+    def test_a_real_answer_still_writes_the_field(self):
+        updates, none_fields = self.apply_response(["protein"], {"protein": "chicken"})
+        assert updates["protein"] == "chicken"
+        assert none_fields == []
+
+    def test_recorded_fields_are_not_reasked(self):
+        assert "protein" not in fields_to_ask({self.KEY: ["protein"]})
+        assert "dietary" not in fields_to_ask({self.KEY: ["dietary"]})
+
+    def test_other_fields_unaffected_by_the_marker(self):
+        assert "cuisine" in fields_to_ask({self.KEY: ["protein"]})
+
+    def test_template_default_empty_dietary_is_still_asked(self):
+        """The recipe template writes `dietary: []` for every new recipe, so an
+        empty list cannot mean "already answered" — only the marker can."""
+        assert "dietary" in fields_to_ask({"dietary": []})
+
+    def test_vague_answers_do_not_count_as_a_none_claim(self):
+        for junk in ["none", "n/a", "unknown", ""]:
+            updates, none_fields = self.apply_response(["protein"], {"protein": junk})
+            assert none_fields == [], f"{junk!r} must not assert 'no protein'"
+            assert "protein" not in updates
+
+    def test_sentinel_is_not_honoured_for_an_unrelated_field(self):
+        updates, none_fields = self.apply_response(
+            ["cuisine"], {"cuisine": "no main protein"})
+        assert none_fields == []
+
+    def test_marker_key_is_managed_so_it_can_be_written(self):
+        assert self.KEY in enrich_recipes.MANAGED_KEYS
