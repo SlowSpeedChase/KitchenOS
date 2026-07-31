@@ -75,11 +75,12 @@ class TestGenerateShoppingListMerge:
              patch.object(lib.shopping_list_generator, 'SHOPPING_LISTS_PATH', test_shopping_list):
 
             # Mock generate_shopping_list to return known items
-            def mock_generate(week):
+            def mock_generate(week, pantry=None):
                 return {
                     'success': True,
                     'items': ['2 cups flour', '1 tsp salt'],
                     'recipes': ['Test Recipe'],
+                    'lines': [],
                     'warnings': []
                 }
 
@@ -114,11 +115,12 @@ class TestGenerateShoppingListMerge:
         with patch.object(api_server, 'SHOPPING_LISTS_PATH', test_shopping_list), \
              patch.object(lib.shopping_list_generator, 'SHOPPING_LISTS_PATH', test_shopping_list):
 
-            def mock_generate(week):
+            def mock_generate(week, pantry=None):
                 return {
                     'success': True,
                     'items': ['2 cups flour'],
                     'recipes': ['Test Recipe'],
+                    'lines': [],
                     'warnings': []
                 }
 
@@ -144,11 +146,12 @@ class TestGenerateShoppingListMerge:
         with patch.object(api_server, 'SHOPPING_LISTS_PATH', test_shopping_list), \
              patch.object(lib.shopping_list_generator, 'SHOPPING_LISTS_PATH', test_shopping_list):
 
-            def mock_generate(week):
+            def mock_generate(week, pantry=None):
                 return {
                     'success': True,
                     'items': ['2 cups flour', '1 tsp salt'],
                     'recipes': ['Test Recipe'],
+                    'lines': [],
                     'warnings': []
                 }
 

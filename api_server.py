@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 
 from lib.shopping_list_generator import (
     generate_shopping_list,
+    on_hand_notes,
     parse_shopping_list_file,
     extract_manual_items,
     SHOPPING_LISTS_PATH,
@@ -873,15 +874,29 @@ def extract_recipe():
 
 @app.route('/generate-shopping-list', methods=['POST'])
 def generate_shopping_list_endpoint():
-    """Generate shopping list markdown from meal plan."""
+    """Generate shopping list markdown from meal plan, crediting what's in stock.
+
+    **Annotates, never decrements.** This is the one-shot trigger — the button on
+    `/current/shopping-list`, the only one reachable from the phone you shop with
+    — so there's no confirmation step to approve inventory writes against. It
+    reads the pantry to keep what you already own off the buy list and records
+    what it credited under "Already have"; the preview/confirm pair
+    (`/api/shopping-list/preview` → `/confirm`) remains the only path that
+    actually decrements stock.
+
+    Until now this passed no pantry at all, so the list you generated from your
+    phone told you to buy the garlic salt, eggs and brown sugar already in the
+    kitchen. Pass `use_pantry: false` to get the old raw-demand behaviour.
+    """
     data = request.get_json(force=True, silent=True) or {}
     week = data.get('week')
 
     if not week:
         return jsonify({'success': False, 'error': 'No week provided'}), 400
 
-    # Generate the shopping list
-    result = generate_shopping_list(week)
+    use_pantry = data.get('use_pantry', True)
+    pantry = pantry_module.load_pantry() if use_pantry else None
+    result = generate_shopping_list(week, pantry=pantry)
 
     if not result['success']:
         return jsonify(result), 400
@@ -901,8 +916,10 @@ def generate_shopping_list_endpoint():
     # Combine generated items with manual items
     all_items = result['items'] + manual_items
 
-    # Create markdown content
-    markdown = generate_shopping_list_markdown(week, all_items)
+    # Create markdown content. on_hand notes are informational only — they carry
+    # no checkbox, so they never reach Reminders or come back as manual items.
+    on_hand = on_hand_notes(result.get('lines') or []) if use_pantry else []
+    markdown = generate_shopping_list_markdown(week, all_items, on_hand=on_hand)
 
     # Ensure Shopping Lists folder exists
     SHOPPING_LISTS_PATH.mkdir(parents=True, exist_ok=True)

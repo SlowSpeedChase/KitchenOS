@@ -106,53 +106,50 @@ router, then surfacing shelf grouping in both `Inventory.md` and the native
 ## Usage feedback — 2026-07-31
 
 Eleven items from a session of actually using the system, ordered by priority.
-Two are confirmed bugs with a verified root cause; the rest were traced far enough
-to name the code involved, or are waiting on a screenshot or a design decision.
-Two screenshots referenced in the original feedback were on the user's Desktop and
-not available to the session that triaged this — they are called out below.
+**The two P1 bugs are fixed** (see the struck-through entries below, kept for the
+diagnosis); the remaining nine were traced far enough to name the code involved,
+or are waiting on a screenshot or a design decision. Two screenshots referenced in
+the original feedback were on the user's Desktop and not available to the session
+that triaged this — they are called out below.
 
-### P1 — Shopping list doesn't compare against inventory (from the phone)
+### ~~P1 — Shopping list doesn't compare against inventory (from the phone)~~ FIXED
 
-**Status: confirmed bug, diagnosed.** Whether the list subtracts what you own
-depends entirely on which trigger you used. `generate_shopping_list(week,
-pantry=None)` defaults to no comparison, and two of its four callers never pass a
-pantry:
+**Fixed 2026-07-31.** `POST /generate-shopping-list` — the button on
+`/current/shopping-list`, the only trigger reachable from the phone you shop with
+— passed no pantry, so `generate_shopping_list(week, pantry=None)` compared
+against nothing and told you to buy the garlic salt, eggs and brown sugar already
+in the kitchen. The MCP `generate_shopping_list` tool inherited it, since
+`lib/mcp_tools.py` POSTs to that same endpoint (an earlier draft of this entry
+listed it as a second independent caller — it isn't; fixing the endpoint fixed
+both surfaces).
 
-| Entry point | Passes pantry? |
-|---|---|
-| `POST /generate-shopping-list` (`api_server.py:884`) — backs the button on `/current/shopping-list`, the workflow's **only phone-reachable trigger** | **No** |
-| `mcp_server.py:189` (the `generate_shopping_list` MCP tool) | **No** |
-| `POST /api/shopping-list/preview` (`api_server.py:2270`) | Yes |
-| `lib/print_week.py:130` | Yes |
+Resolved as **annotate, never decrement**: the endpoint now reads the pantry to
+keep owned items off the buy list, and records what it credited under an
+"Already have" section. Those notes are plain bullets, deliberately *not*
+checkboxes — `parse_shopping_list_file` collects every `- [ ]` line in the file
+regardless of section, so a checkbox there would be sent to Reminders as
+something to buy and would return as a phantom "manual item" on the next
+regeneration. `POST /api/shopping-list/preview` → `/confirm` remains the only path
+that actually spends stock. `use_pantry: false` restores raw-demand behaviour.
 
-So the list you generate from your phone buys garlic salt, eggs and brown sugar
-you already have. This is the same "two callers, one carries the rule" drift the
-`sub_multiplier` and `route_url` invariants exist to warn about.
+### ~~P1 — Grouped ingredient sections are silently dropped~~ FIXED
 
-Fix is not merely "pass the pantry": the phone trigger is one-shot with no
-confirmation step, while the preview/confirm pair exists precisely so pantry
-*decrements* are user-approved. So the one-shot path should compare (annotate
-lines as on-hand) without decrementing, or grow a confirm step. Decide which
-before implementing.
+**Fixed 2026-07-31.** Both ingredient-section parsers truncated, in different
+ways, and an earlier draft of this entry wrongly said the shopping list was
+unaffected — it wasn't:
 
-### P1 — Grouped ingredient sections are silently dropped
+- `parse_recipe_body` matched one *contiguous* run of table rows, so it stopped at
+  the first blank line. A recipe grouped as "…thighs / `### For the spice rub` /
+  …paprika" kept the thighs and lost every spice — the reported bug. A table not
+  preceded by exactly one blank line yielded **zero** ingredients.
+- `shopping_list_generator.extract_ingredient_table` stopped at `\n##`, which
+  matches the first two hashes of `\n###` — so a sub-heading truncated the section
+  there too.
 
-**Status: confirmed bug, systemic, diagnosed.** `parse_recipe_body`
-(`lib/recipe_parser.py:202`) matches `r'## Ingredients\n\n((?:\|[^\n]+\n)+)'`
-— one *contiguous* run of table rows, so it stops at the first blank line.
-Verified against a synthetic recipe:
-
-- Ingredients split into sub-groups (`### For the spice rub`) → only the first
-  group survives. A chicken recipe returned `['chicken thighs']` and lost the
-  paprika and cumin. **This is the "spices don't appear on the ingredients" report.**
-- A table *not* preceded by exactly one blank line → **zero** ingredients, silently.
-
-Every `parse_recipe_body` consumer inherits it: `/recipe/<name>`, the grid recipe
-card, the suggester's ingredient overlap, `/api/suggest-meal`. Note
-`shopping_list_generator.extract_ingredient_table` uses a *different, more
-permissive* pattern (`##\s+Ingredients\s*\n(.*?)(?=\n##|\Z)`), so the shopping
-list may already catch ingredients the recipe page drops — another duplicated rule
-that has drifted. Fold both onto one parser as part of the fix.
+Folded onto one extractor, `recipe_parser.extract_ingredients_section`, whose
+`(?=\n#{1,2}\s|\Z)` ends the section only at an h1/h2 (the trailing `\s` can't
+match an h3's third `#`). `parse_ingredient_table` already skips non-table lines,
+separators and repeated headers, so grouped tables parse as one list.
 
 ### P2 — Week numbers everywhere instead of date ranges
 

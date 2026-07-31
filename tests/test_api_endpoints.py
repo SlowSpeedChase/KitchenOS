@@ -831,3 +831,138 @@ def test_suggest_meal_counts_a_planned_meal_bundle(client, tmp_vault, tmp_path, 
     current = response.get_json()["macro_context"]["current"]
     assert current["protein"] == pytest.approx(32 * 1.5)
     assert current["calories"] == pytest.approx(300 * 1.5)
+
+
+# ---- Shopping list credits inventory on the one-shot trigger ----
+
+def _plan_and_recipe(tmp_path, monkeypatch, ingredients):
+    """A one-recipe week wired into both the API and the generator."""
+    import lib.shopping_list_generator as slg
+
+    plans = tmp_path / "Meal Plans"
+    plans.mkdir(exist_ok=True)
+    (plans / "2026-W31.md").write_text("## Monday (Jul 27)\n### Dinner\n[[Test Bake]]\n")
+    lists = tmp_path / "Shopping Lists"
+    lists.mkdir(exist_ok=True)
+    monkeypatch.setattr(slg, "MEAL_PLANS_PATH", plans)
+    monkeypatch.setattr(slg, "SHOPPING_LISTS_PATH", lists)
+    monkeypatch.setattr("api_server.SHOPPING_LISTS_PATH", lists)
+    monkeypatch.setattr(slg, "load_recipe_ingredients", lambda name: (ingredients, None))
+    return lists
+
+
+def test_generate_shopping_list_omits_what_you_already_have(
+        client, tmp_vault, tmp_path, monkeypatch):
+    """REGRESSION: the phone trigger passed no pantry, so it bought what you owned.
+
+    The reported symptom was garlic salt, eggs and brown sugar on the list when
+    all three were in the kitchen.
+    """
+    from lib import pantry as pantry_module
+
+    lists = _plan_and_recipe(tmp_path, monkeypatch, [
+        {"amount": "1", "unit": "tsp", "item": "garlic salt"},
+        {"amount": "2", "unit": "cup", "item": "flour"},
+    ])
+    monkeypatch.setattr(pantry_module, "load_pantry",
+                        lambda: [{"item": "garlic salt", "amount": "3", "unit": "tsp"}])
+
+    response = client.post('/generate-shopping-list', json={"week": "2026-W31"})
+    assert response.status_code == 200
+
+    written = (lists / "2026-W31.md").read_text()
+    buy_lines = [ln for ln in written.split("\n") if ln.startswith("- [ ] ")]
+    assert any("flour" in ln for ln in buy_lines)
+    assert not any("garlic salt" in ln for ln in buy_lines), \
+        "you own the garlic salt — it must not be on the buy list"
+
+
+def test_generate_shopping_list_annotates_what_it_credited(
+        client, tmp_vault, tmp_path, monkeypatch):
+    """Credited stock is named under 'Already have' — omitted, not silently vanished."""
+    from lib import pantry as pantry_module
+
+    lists = _plan_and_recipe(tmp_path, monkeypatch, [
+        {"amount": "1", "unit": "cup", "item": "brown sugar"},
+    ])
+    monkeypatch.setattr(pantry_module, "load_pantry",
+                        lambda: [{"item": "brown sugar", "amount": "5", "unit": "cup"}])
+
+    client.post('/generate-shopping-list', json={"week": "2026-W31"})
+    written = (lists / "2026-W31.md").read_text()
+
+    assert "## Already have" in written
+    assert "brown sugar — in stock, 1 cup needed" in written
+
+
+def test_credited_items_are_not_checkboxes(client, tmp_vault, tmp_path, monkeypatch):
+    """The 'Already have' notes must never be `- [ ]` lines.
+
+    parse_shopping_list_file collects every unchecked box in the file regardless
+    of section, so a checkbox here would be sent to Reminders as something to buy
+    and would return as a phantom "manual item" on the next regeneration.
+    """
+    from lib import pantry as pantry_module
+    from lib.shopping_list_generator import parse_shopping_list_file
+
+    lists = _plan_and_recipe(tmp_path, monkeypatch, [
+        {"amount": "1", "unit": "cup", "item": "brown sugar"},
+        {"amount": "2", "unit": "cup", "item": "flour"},
+    ])
+    monkeypatch.setattr(pantry_module, "load_pantry",
+                        lambda: [{"item": "brown sugar", "amount": "5", "unit": "cup"}])
+
+    client.post('/generate-shopping-list', json={"week": "2026-W31"})
+
+    unchecked = parse_shopping_list_file("2026-W31")["items"]
+    assert any("flour" in i for i in unchecked)
+    assert not any("brown sugar" in i for i in unchecked), \
+        "a credited note must not read as an item to buy"
+
+    # ...and regenerating must not resurrect it as a manual addition
+    client.post('/generate-shopping-list', json={"week": "2026-W31"})
+    written = (lists / "2026-W31.md").read_text()
+    assert written.count("brown sugar") == 1
+
+
+def test_generate_shopping_list_never_decrements_inventory(
+        client, tmp_vault, tmp_path, monkeypatch):
+    """Annotate, don't decrement — this trigger has no confirmation step.
+
+    Stock is only ever spent through /api/shopping-list/confirm's decisions.
+    """
+    from lib import pantry as pantry_module
+
+    _plan_and_recipe(tmp_path, monkeypatch, [
+        {"amount": "1", "unit": "cup", "item": "brown sugar"},
+    ])
+    monkeypatch.setattr(pantry_module, "load_pantry",
+                        lambda: [{"item": "brown sugar", "amount": "5", "unit": "cup"}])
+
+    def explode(*args, **kwargs):
+        raise AssertionError("generate must not apply pantry decisions")
+
+    monkeypatch.setattr(pantry_module, "apply_decisions", explode)
+    monkeypatch.setattr(pantry_module, "save_pantry", explode)
+
+    assert client.post('/generate-shopping-list',
+                       json={"week": "2026-W31"}).status_code == 200
+
+
+def test_generate_shopping_list_use_pantry_false_keeps_raw_demand(
+        client, tmp_vault, tmp_path, monkeypatch):
+    """The opt-out returns the pre-fix behaviour: every ingredient, no notes."""
+    from lib import pantry as pantry_module
+
+    lists = _plan_and_recipe(tmp_path, monkeypatch, [
+        {"amount": "1", "unit": "cup", "item": "brown sugar"},
+    ])
+    monkeypatch.setattr(pantry_module, "load_pantry",
+                        lambda: [{"item": "brown sugar", "amount": "5", "unit": "cup"}])
+
+    client.post('/generate-shopping-list',
+                json={"week": "2026-W31", "use_pantry": False})
+    written = (lists / "2026-W31.md").read_text()
+
+    assert "- [ ] 1 cup brown sugar" in written
+    assert "## Already have" not in written

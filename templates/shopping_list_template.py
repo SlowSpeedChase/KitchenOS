@@ -8,12 +8,19 @@ import re
 from templates.meal_plan_template import format_week_range
 
 
-def generate_shopping_list_markdown(week: str, items: list[str]) -> str:
+def generate_shopping_list_markdown(week: str, items: list[str],
+                                    on_hand: list[str] | None = None) -> str:
     """Generate shopping list markdown.
 
     Args:
         week: Week identifier like '2026-W04'
-        items: List of formatted ingredient strings
+        items: List of formatted ingredient strings — what to buy
+        on_hand: Optional notes about what the pantry already covered
+            (`shopping_list_generator.on_hand_notes`). Rendered as **plain
+            bullets, never checkboxes**: `parse_shopping_list_file` collects every
+            `- [ ]` line in the file regardless of section, so a checkbox here
+            would be sent to Reminders as something to buy and would come back as
+            a phantom "manual item" on the next regeneration.
 
     Returns:
         Formatted markdown string
@@ -40,6 +47,17 @@ def generate_shopping_list_markdown(week: str, items: list[str]) -> str:
     # Add checklist items
     for item in items:
         lines.append(f"- [ ] {item}")
+
+    if on_hand:
+        lines.extend([
+            "",
+            "## Already have",
+            "",
+            "<!-- Credited from inventory. Nothing here was deducted from your"
+            " stock — that only happens when you confirm a cook. -->",
+            "",
+        ])
+        lines.extend(f"- {note}" for note in on_hand)
 
     # Add buttons
     lines.extend([

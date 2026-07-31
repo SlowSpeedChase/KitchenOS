@@ -26,6 +26,7 @@ from lib.ingredient_aggregator import format_ingredient
 from lib.reminders import add_to_reminders, clear_reminders_list, create_reminders_list
 from lib.shopping_list_generator import (
     MEAL_PLANS_PATH,
+    format_qty,
     generate_shopping_list_from_path,
     parse_week_string,
 )
@@ -56,10 +57,8 @@ def resolve_meal_plan_path(args) -> Path:
 
 
 def _format_qty(amount, unit) -> str:
-    parts = [str(amount)] if amount not in ("", None) else []
-    if unit and unit not in ("whole", ""):
-        parts.append(unit)
-    return " ".join(parts).strip() or "?"
+    """Delegates to the lib — the generated list's notes format quantities too."""
+    return format_qty(amount, unit)
 
 
 def prompt_pantry_decisions(lines: list[dict]) -> tuple[list[dict], list[dict]]:

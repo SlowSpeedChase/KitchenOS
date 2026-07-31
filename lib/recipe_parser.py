@@ -175,6 +175,31 @@ def find_existing_recipe_by_source_url(recipes_dir: Path, url: str) -> Optional[
     return None
 
 
+def extract_ingredients_section(body: str) -> str:
+    """The whole `## Ingredients` section, sub-headings and all.
+
+    The one extractor for this — `shopping_list_generator.extract_ingredient_table`
+    delegates here. Two near-copies of this regex existed and **both** silently
+    dropped ingredients:
+
+    - `parse_recipe_body` matched one *contiguous* run of table rows
+      (`## Ingredients\\n\\n((?:\\|[^\\n]+\\n)+)`), so it stopped at the first blank
+      line. A recipe grouped as "…thighs / ### For the spice rub / …paprika" kept
+      the thighs and lost every spice. It also returned *nothing* when the table
+      wasn't preceded by exactly one blank line.
+    - This function's own predecessor stopped at `\\n##`, which matches the first
+      two hashes of `\\n###` — so a sub-heading truncated the section here too.
+
+    Hence `#{1,2}\\s`: a heading only ends the section when it's h1/h2, because the
+    trailing `\\s` can't match the third `#` of an h3. Everything between is
+    returned verbatim; `parse_ingredient_table` already skips non-table lines,
+    separators and repeated headers, so grouped tables parse as one list.
+    """
+    match = re.search(r'##\s+Ingredients\s*\n(.*?)(?=\n#{1,2}\s|\Z)', body,
+                      re.IGNORECASE | re.DOTALL)
+    return match.group(1).strip() if match else ""
+
+
 def parse_recipe_body(body: str) -> dict:
     """Parse recipe body into structured data for re-rendering.
 
@@ -198,10 +223,11 @@ def parse_recipe_body(body: str) -> dict:
     if desc_match:
         result['description'] = desc_match.group(1).strip()
 
-    # Extract ingredients table
-    ing_match = re.search(r'## Ingredients\n\n((?:\|[^\n]+\n)+)', body)
-    if ing_match:
-        result['ingredients'] = parse_ingredient_table(ing_match.group(1))
+    # Extract ingredients — the whole section, so sub-grouped tables
+    # ("### For the spice rub") contribute their rows too.
+    ingredients_section = extract_ingredients_section(body)
+    if ingredients_section:
+        result['ingredients'] = parse_ingredient_table(ingredients_section)
 
     # Extract instructions
     inst_match = re.search(r'## Instructions\n\n(.*?)(?=\n## |\Z)', body, re.DOTALL)
