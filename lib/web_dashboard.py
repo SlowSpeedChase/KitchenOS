@@ -53,6 +53,9 @@ SECTIONS = [
             ("✨", "New recipes", "/recent",
              "what the extraction pipeline has landed lately, newest first, "
              "grouped by the day it arrived"),
+            ("🔪", "Today's prep", "/prep",
+             "what to do in the kitchen today, and what you could pull "
+             "forward — tick it off, or send it to Reminders"),
             ("📅", "This week's meal plan", "/current/meal-plan",
              "the rendered weekly plan"),
             ("🛒", "This week's shopping list", "/current/shopping-list",

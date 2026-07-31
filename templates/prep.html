@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-title" content="KitchenOS">
+    <meta name="theme-color" content="#f4ede3" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#0f1116" media="(prefers-color-scheme: dark)">
+    <title>Today's prep · KitchenOS</title>
+    <link rel="stylesheet" href="/static/tokens.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: var(--font-body);
+            background: var(--bg);
+            background-image: var(--dots);
+            background-size: var(--dot-size) var(--dot-size);
+            color: var(--ink);
+            min-height: 100vh;
+            padding: 20px 16px calc(32px + env(safe-area-inset-bottom));
+            max-width: 720px;
+            margin: 0 auto;
+            border-top: 3px solid var(--app-kitchenos);
+            -webkit-text-size-adjust: 100%;
+        }
+
+        header { margin-bottom: 18px; }
+        .kicker {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: .12em;
+            color: var(--app-kitchenos);
+            margin-bottom: 6px;
+        }
+        .kicker a { color: inherit; text-decoration: none; }
+        h1 {
+            font-family: var(--font-display);
+            font-size: 30px;
+            font-weight: 600;
+            letter-spacing: -.01em;
+        }
+        .sub { color: var(--muted); font-size: 14px; margin-top: 5px; }
+
+        h2 {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: .1em;
+            margin: 22px 0 8px;
+        }
+
+        /* The whole row is the target: a 44pt checkbox alone is an ugly box, but
+           a 44pt row you can tap anywhere in is both bigger and easier to hit —
+           and prep gets read with wet hands. */
+        .task {
+            display: flex; align-items: flex-start; gap: 13px;
+            background: var(--surface);
+            background-image: var(--grain);
+            border: 1px solid var(--line);
+            border-radius: var(--radius-box);
+            min-height: 56px;
+            padding: 13px 15px;
+            margin-bottom: 8px;
+            cursor: pointer;
+        }
+        .task input[type=checkbox] {
+            width: 24px; height: 24px; flex: none; margin-top: 1px;
+            accent-color: var(--app-kitchenos);
+        }
+        .task .text { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+        .task .step { font-size: 15px; line-height: 1.35; overflow-wrap: anywhere; }
+        .task .meta { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+        .task.done .step { text-decoration: line-through; color: var(--muted); }
+
+        .actions { margin: 26px 0 0; display: flex; gap: 10px; flex-wrap: wrap; }
+        .btn {
+            font-family: var(--font-body);
+            font-size: 15px; font-weight: 600;
+            min-height: 48px;
+            padding: 0 20px;
+            border-radius: var(--radius-box);
+            border: 1px solid var(--line);
+            background: var(--surface);
+            color: inherit;
+            cursor: pointer;
+            display: inline-flex; align-items: center; gap: 8px;
+        }
+        .btn.primary { background: var(--app-kitchenos); border-color: var(--app-kitchenos); color: #fff; }
+        .btn:disabled { opacity: .55; cursor: default; }
+
+        .empty { color: var(--muted); font-size: 15px; padding: 20px 2px; }
+        .note { color: var(--muted); font-size: 13px; margin-top: 14px; }
+
+        .toast {
+            position: fixed; left: 50%; transform: translateX(-50%);
+            bottom: calc(20px + env(safe-area-inset-bottom));
+            background: var(--ink); color: var(--bg);
+            padding: 12px 18px; border-radius: var(--radius-box);
+            font-size: 14px; opacity: 0; pointer-events: none;
+            transition: opacity .2s ease; max-width: 90vw;
+        }
+        .toast.show { opacity: 1; }
+
+        @media (hover: hover) {
+            .task:hover { border-color: var(--app-kitchenos); }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="kicker"><a href="/">‹ KitchenOS</a></div>
+        <h1>Today's prep</h1>
+        <div class="sub"><!--SUB--></div>
+    </header>
+
+    <!--PREP-->
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+        const WEEK = '<!--WEEK-->';
+
+        function toast(msg) {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.classList.add('show');
+            setTimeout(() => t.classList.remove('show'), 2200);
+        }
+
+        // Optimistic: the strike-through lands immediately and reverts only if the
+        // write fails. Prep gets ticked mid-cook — waiting on a round-trip before
+        // the box moves reads as "it didn't register" and invites a second tap.
+        async function setDone(row, done) {
+            row.classList.toggle('done', done);
+            row.querySelector('input').checked = done;
+            try {
+                const resp = await fetch(`/api/tasks/${WEEK}/${row.dataset.taskId}/done`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({done}),
+                });
+                if (!resp.ok) throw new Error(await resp.text());
+            } catch (err) {
+                row.classList.toggle('done', !done);
+                row.querySelector('input').checked = !done;
+                toast("Couldn't save that — try again");
+                console.error(err);
+            }
+        }
+
+        // Listen to `change` on the checkbox, not `click` on the row. The row is
+        // a <label>, so a tap anywhere in it fires click on the label AND a
+        // forwarded click on the input — a click handler therefore ran twice and
+        // the two toggles cancelled out. `change` fires once, after the native
+        // toggle, and the label still makes the whole row tappable.
+        document.querySelectorAll('.task input[type=checkbox]').forEach(cb => {
+            cb.addEventListener('change', () => setDone(cb.closest('.task'), cb.checked));
+        });
+
+        const send = document.getElementById('send-reminders');
+        if (send) {
+            send.addEventListener('click', async () => {
+                send.disabled = true;
+                const original = send.textContent;
+                send.textContent = 'Sending…';
+                try {
+                    const resp = await fetch('/api/prep/reminders', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({scope: send.dataset.scope || 'today'}),
+                    });
+                    const data = await resp.json();
+                    if (!resp.ok) throw new Error(data.error || 'failed');
+                    toast(data.sent
+                        ? `Sent ${data.sent} step${data.sent === 1 ? '' : 's'} to Reminders → Prep`
+                        : 'Nothing to send');
+                } catch (err) {
+                    toast('Reminders failed — ' + err.message);
+                } finally {
+                    send.disabled = false;
+                    send.textContent = original;
+                }
+            });
+        }
+    </script>
+</body>
+</html>

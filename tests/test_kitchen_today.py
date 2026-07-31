@@ -134,6 +134,12 @@ class TestUseItUpCard:
         assert kt._use_it_up_card([], [], TODAY).line == "nothing expiring soon"
 
 
+# Cook now · New recipes · Use it up · Today's prep · Plan the week.
+# Asserted exactly, because the failure this guards against is a card
+# silently vanishing from the page rather than degrading to a link.
+HOME_CARDS = 5
+
+
 class TestGatherIsFailSafe:
     """Every card degrades alone; none can take the page down."""
 
@@ -146,9 +152,9 @@ class TestGatherIsFailSafe:
         cards = kt.gather(items=[], recipe_index=[], today=TODAY)
         cook = next(c for c in cards if c.href == "/cook-now")
         assert cook.line == "ranked by what's on hand"      # the fallback
-        assert len(cards) == 4                              # page is intact
+        assert len(cards) == HOME_CARDS                     # page is intact
 
-    def test_all_four_cards_always_render(self, monkeypatch):
+    def test_every_card_always_renders(self, monkeypatch):
         def boom(**k):
             raise RuntimeError("everything is broken")
         monkeypatch.setattr("lib.cook_now.generate", boom)
@@ -156,7 +162,7 @@ class TestGatherIsFailSafe:
         monkeypatch.setattr("lib.serving_ledger.cooks_for_week", boom)
 
         cards = kt.gather(items=[], recipe_index=[], today=TODAY)
-        assert len(cards) == 4
+        assert len(cards) == HOME_CARDS
         assert all(c.href and c.title and c.line for c in cards)
 
 
@@ -284,3 +290,119 @@ class TestNoteView:
         html = note_view.render("> Unassigned: 7\n- plain bullet\n")
         assert "<blockquote>Unassigned: 7</blockquote>" in html
         assert "<span>plain bullet</span>" in html
+
+
+class TestPrepCard:
+    """Today's prep, moved off the meal planner onto the home page.
+
+    The load-bearing property is *speed*: `task_extractor.extract_tasks`
+    regenerates a stale sidecar with an LLM classification pass, and this card
+    runs on every home-page load. It reads the sidecar only when already fresh.
+    """
+
+    def _card(self, monkeypatch, cached, fresh=True):
+        from lib import kitchen_today, task_extractor
+        monkeypatch.setattr(task_extractor, "load_cached_tasks", lambda w: cached)
+        monkeypatch.setattr(task_extractor, "_is_cache_fresh", lambda w, c: fresh)
+        # Fails the test loudly rather than silently costing seconds.
+        monkeypatch.setattr(task_extractor, "extract_tasks",
+                            lambda *a, **k: pytest.fail(
+                                "the home page must never regenerate the task sidecar"))
+        return kitchen_today._prep_card(date(2026, 7, 31))   # a Friday
+
+    def test_never_regenerates_the_sidecar(self, monkeypatch):
+        """The whole reason this reads the cache directly."""
+        card = self._card(monkeypatch, {"tasks": [
+            {"day": "Friday", "text": "chop", "done": False},
+        ]})
+        assert "1 step today" in card.line
+
+    def test_counts_today_and_get_ahead_separately(self, monkeypatch):
+        card = self._card(monkeypatch, {"tasks": [
+            {"day": "Friday", "text": "a", "done": False},
+            {"day": "Friday", "text": "b", "done": False},
+            {"day": "Sunday", "text": "c", "can_do_ahead": True, "done": False},
+        ]})
+        assert "2 steps today" in card.line
+        assert "1 can be done ahead" in card.line
+
+    def test_done_steps_do_not_count(self, monkeypatch):
+        card = self._card(monkeypatch, {"tasks": [
+            {"day": "Friday", "text": "a", "done": True},
+            {"day": "Friday", "text": "b", "done": False},
+        ]})
+        assert "1 step today" in card.line
+
+    def test_a_future_step_that_cannot_be_done_ahead_is_not_offered(self, monkeypatch):
+        card = self._card(monkeypatch, {"tasks": [
+            {"day": "Sunday", "text": "sear the steak", "can_do_ahead": False, "done": False},
+        ]})
+        assert card.line == "nothing to prep today"
+
+    def test_a_stale_sidecar_says_so_rather_than_lying(self, monkeypatch):
+        card = self._card(monkeypatch, {"tasks": [
+            {"day": "Friday", "text": "a", "done": False},
+        ]}, fresh=False)
+        assert "refresh" in card.line
+        assert card.href == "/prep"
+
+    def test_no_sidecar_at_all(self, monkeypatch):
+        card = self._card(monkeypatch, None)
+        assert card.line == "nothing planned yet"
+
+    def test_today_with_work_is_urgent_but_get_ahead_alone_is_not(self, monkeypatch):
+        todays = self._card(monkeypatch, {"tasks": [
+            {"day": "Friday", "text": "a", "done": False}]})
+        ahead = self._card(monkeypatch, {"tasks": [
+            {"day": "Sunday", "text": "b", "can_do_ahead": True, "done": False}]})
+        assert todays.tone == "urgent"
+        assert ahead.tone == "normal", "'you could' is not 'you must'"
+
+    def test_the_card_is_on_the_home_page(self):
+        from lib import kitchen_today
+        cards = kitchen_today.gather(items=[], recipe_index=[], today=date(2026, 7, 31))
+        prep = [c for c in cards if c.href == "/prep"]
+        assert len(prep) == 1, "exactly one prep card"
+
+
+class TestRenderPrepHtml:
+    def _html(self, today=(), ahead=()):
+        from lib import kitchen_today
+        return kitchen_today.render_prep_html(
+            {"day": "Friday", "week": "2026-W31", "today": list(today), "ahead": list(ahead)})
+
+    def test_empty_says_so(self):
+        assert "Nothing to prep" in self._html()
+
+    def test_a_step_carries_its_recipe_so_it_is_attributable(self):
+        """"Chill until ready to serve" is meaningless on its own."""
+        html = self._html(today=[{"id": "x1", "text": "Chill until ready",
+                                  "recipe": "Beef Kabobs", "day": "Friday"}])
+        assert "Chill until ready" in html
+        assert "Beef Kabobs" in html
+        assert 'data-task-id="x1"' in html
+
+    def test_step_text_is_escaped(self):
+        html = self._html(today=[{"id": "x", "text": "<script>alert(1)</script>",
+                                  "recipe": "R", "day": "Friday"}])
+        assert "<script>alert" not in html
+        assert "&lt;script&gt;" in html
+
+    def test_done_steps_render_ticked(self):
+        html = self._html(today=[{"id": "x", "text": "t", "recipe": "R",
+                                  "day": "Friday", "done": True}])
+        assert "task done" in html and "checked" in html
+
+    def test_get_ahead_alone_still_offers_reminders(self):
+        """Gating the button on today's steps left a dead end on exactly the day
+        the get-ahead work is what you'd want queued."""
+        html = self._html(ahead=[{"id": "a", "text": "t", "recipe": "R", "day": "Sunday"}])
+        assert 'id="send-reminders"' in html
+        assert 'data-scope="ahead"' in html
+        assert "Send get-ahead" in html
+
+    def test_today_takes_precedence_over_get_ahead(self):
+        html = self._html(today=[{"id": "t", "text": "t", "recipe": "R", "day": "Friday"}],
+                          ahead=[{"id": "a", "text": "a", "recipe": "R", "day": "Sunday"}])
+        assert 'data-scope="today"' in html
+        assert "Send today" in html
