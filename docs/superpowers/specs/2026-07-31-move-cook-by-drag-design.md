@@ -185,8 +185,12 @@ updated to say the tap route carries the coverage; it will not be left quarantin
 ## Documentation
 
 - `docs/API.md` — the new endpoint.
-- `CLAUDE.md` — the "cook cards move only via the ledger API (scale stepper, remove button,
-  chip drags)" invariant gains card drags.
+- `CLAUDE.md` — a **new** invariant. The rule "a cook card must never reach
+  `saveMealPlan()`" is currently recorded only as a comment inside
+  `templates/meal_planner.html`; `CLAUDE.md` says nothing about cook cards today. The
+  comment is rewritten in place, and the rule is promoted to a repo invariant, because its
+  enforcement stops being structural (the card was simply not draggable) and becomes a
+  branch someone can delete without the tests obviously objecting.
 
 ## Out of scope
 
