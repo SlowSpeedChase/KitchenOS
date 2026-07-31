@@ -96,3 +96,23 @@
 .dl-surface { background-color:var(--surface); background-image:var(--grain);
               border:1px solid var(--line); border-radius:var(--radius);
               box-shadow:var(--shadow); }
+
+/* ---- Paper is always Dawn ----
+   Print pages set `print-color-adjust: exact`, so an Ink ground would print a
+   black page. The selector list matters: a media query adds no specificity, so
+   a bare `:root` here would lose to `:root[data-theme="dark"]`. This block must
+   stay LAST in the file — against the equal-specificity prefers-color-scheme
+   block, source order decides. */
+@media print {
+  :root, :root[data-theme="dark"], .theme-dark {
+    --bg:#f4ede3; --surface:#fffdf9; --raised:#fbf5ec;
+    --ink:#2c2733; --muted:#8a7f8e; --line:#ece1d3; --line-soft:#f1e8dc;
+    --try:#0d8ea3; --done:#3f8f2f; --warning:#b7791f;
+    --alert:#c0392b; --info:#2f7fd1; --insight:#9a4fb5; --next:#b26a2e;
+    --app-kitchenos:#d1663b; --app-selene:#8a63d6; --app-lumen:#c0842a;
+    --app-journal:#0f9d8c; --app-personal:#d24d78;
+    --text-on-accent:#fffdf9;
+    /* Material paper supplies or cannot render */
+    --dots:none; --grain:none; --shadow:none;
+  }
+}
