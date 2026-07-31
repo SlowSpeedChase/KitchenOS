@@ -1,0 +1,25 @@
+/* ============================================================
+   KitchenOS-local derivations from the design language.
+   NOT a component library — these eight variables and nothing else.
+
+   Why here and not in tokens.css: static/README.md declares tokens.css
+   "a copy, not a fork", pinned by sha256. Editing it locally is how
+   KitchenOS drifts away from Selene and the Obsidian theme.
+
+   --tint-*: the fill of a callout, banner, pill or highlighted cell.
+   --edge-*: the 1px border of that same element, a step stronger.
+
+   color-mix resolves against the live --surface/--line, so a tint is a
+   pale wash on Dawn and a dark wash on Ink with no second declaration.
+   ============================================================ */
+:root {
+  --tint-alert:   color-mix(in srgb, var(--alert)          14%, var(--surface));
+  --tint-done:    color-mix(in srgb, var(--done)           14%, var(--surface));
+  --tint-warning: color-mix(in srgb, var(--warning)        16%, var(--surface));
+  --tint-accent:  color-mix(in srgb, var(--app-kitchenos)  12%, var(--surface));
+
+  --edge-alert:   color-mix(in srgb, var(--alert)          38%, var(--line));
+  --edge-done:    color-mix(in srgb, var(--done)           38%, var(--line));
+  --edge-warning: color-mix(in srgb, var(--warning)        38%, var(--line));
+  --edge-accent:  color-mix(in srgb, var(--app-kitchenos)  38%, var(--line));
+}
