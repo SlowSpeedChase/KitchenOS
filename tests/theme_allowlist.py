@@ -49,7 +49,6 @@ UNCONVERTED: set[str] = {
     "nutrition_review.html",
     "receipt_paste.html",
     "recipe_detail.html",
-    "review.html",
     "system_health.html",
 }
 
