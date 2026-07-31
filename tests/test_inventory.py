@@ -659,11 +659,14 @@ class TestReviewLink:
         assert "/review" in md
         assert "Open Review" in md
 
-    def test_inventory_md_has_launch_claude_link(self):
+    def test_inventory_md_has_launch_claude_link(self, monkeypatch):
         from lib.inventory import render_inventory_md
+        # lib/paths.py load_dotenv()s at import, so a KITCHENOS_SSH_TARGET in .env
+        # would shadow the code default and make this assert test .env instead.
+        monkeypatch.delenv("KITCHENOS_SSH_TARGET", raising=False)
         md = render_inventory_md([])
         assert "Launch Claude" in md
-        assert "ssh://chase@chases-mac-mini.taila69703.ts.net" in md
+        assert "ssh://chaseeasterling@chases-mac-mini.taila69703.ts.net" in md
         assert "[[Claude Notes]]" in md
         # Regression: ensure Open Review is still there
         assert "Open Review" in md

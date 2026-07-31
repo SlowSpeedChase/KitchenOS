@@ -883,15 +883,38 @@ command="/Users/chaseeasterling/Dev/KitchenOS/scripts/kitchenos-claude-launch.sh
 ```
 
 On the phone (Termius): import the `kitchenos_claude` private key; create a host
-**"KitchenOS Claude"** = `chase@chases-mac-mini.taila69703.ts.net` presenting **only**
-that key (so the forced command always fires). Connect once to confirm you land in
-`claude` inside tmux. Set `KITCHENOS_SSH_TARGET` in `.env` if the `user@host` differs
+**"KitchenOS Claude"** = `chaseeasterling@chases-mac-mini.taila69703.ts.net` presenting
+**only** that key (so the forced command always fires). Connect once to confirm you land
+in `claude` inside tmux. Set `KITCHENOS_SSH_TARGET` in `.env` if the `user@host` differs
 from the default, then restart the API LaunchAgent so pages emit the right link.
+
+Verify the forced command from the mini without the phone — `-i` + `IdentitiesOnly=yes`
+is exactly what Termius does. A forced command ignores any command you ask for, so
+without a PTY you get tmux's `open terminal failed: not a terminal`, which is itself
+proof the entry fired:
+
+```bash
+ssh -i ~/.ssh/kitchenos_claude -o IdentitiesOnly=yes \
+  chaseeasterling@chases-mac-mini.taila69703.ts.net 'echo NOT_FORCED'
+```
 
 **Caveats:** iOS routing of `ssh://` → Termius isn't guaranteed across versions — the
 saved Termius host is the reliable entry, the button is convenience. `claude` needs it
 on PATH under a non-login shell; `kitchenos-claude-run.sh` sources `~/.zprofile` and
 prepends Homebrew dirs. tmux/claude need a PTY (Termius interactive default).
+
+**The username must be a real account on the mini.** sshd prompts for a password for an
+account that doesn't exist and then rejects every attempt — indistinguishable from a
+wrong password. The button shipped as `chase@` (borrowed from the `debian` host block in
+`~/.ssh/config`) against a machine whose only account is `chaseeasterling`, so it read as
+"the button won't take my password" for months rather than as an error.
+
+**The forced command is bound to the key, not the host.** Clicking the button on the mini
+itself uses the default `~/.ssh/id_ed25519`, not `kitchenos_claude`, so it lands in an
+ordinary login shell — type `claude` yourself, or run the reset script and use the phone.
+Making a local click land in Claude too would need a client-side `~/.ssh/config` block
+pinning `IdentityFile ~/.ssh/kitchenos_claude` + `IdentitiesOnly yes` for that MagicDNS
+name; deliberately not done, since that hijacks every ssh to that name.
 
 ## 10. Completing work
 

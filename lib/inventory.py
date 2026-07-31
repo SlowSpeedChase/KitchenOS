@@ -267,7 +267,7 @@ def render_inventory_md(items: list[InventoryItem]) -> str:
         "KITCHENOS_API_BASE", "http://chases-mac-mini.taila69703.ts.net:5001"
     )
     ssh_target = os.environ.get(
-        "KITCHENOS_SSH_TARGET", "chase@chases-mac-mini.taila69703.ts.net"
+        "KITCHENOS_SSH_TARGET", "chaseeasterling@chases-mac-mini.taila69703.ts.net"
     )
     return (
         "---\n"
