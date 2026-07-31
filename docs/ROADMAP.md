@@ -103,6 +103,136 @@ router, then surfacing shelf grouping in both `Inventory.md` and the native
 
 ---
 
+## Usage feedback — 2026-07-31
+
+Eleven items from a session of actually using the system, ordered by priority.
+Two are confirmed bugs with a verified root cause; the rest were traced far enough
+to name the code involved, or are waiting on a screenshot or a design decision.
+Two screenshots referenced in the original feedback were on the user's Desktop and
+not available to the session that triaged this — they are called out below.
+
+### P1 — Shopping list doesn't compare against inventory (from the phone)
+
+**Status: confirmed bug, diagnosed.** Whether the list subtracts what you own
+depends entirely on which trigger you used. `generate_shopping_list(week,
+pantry=None)` defaults to no comparison, and two of its four callers never pass a
+pantry:
+
+| Entry point | Passes pantry? |
+|---|---|
+| `POST /generate-shopping-list` (`api_server.py:884`) — backs the button on `/current/shopping-list`, the workflow's **only phone-reachable trigger** | **No** |
+| `mcp_server.py:189` (the `generate_shopping_list` MCP tool) | **No** |
+| `POST /api/shopping-list/preview` (`api_server.py:2270`) | Yes |
+| `lib/print_week.py:130` | Yes |
+
+So the list you generate from your phone buys garlic salt, eggs and brown sugar
+you already have. This is the same "two callers, one carries the rule" drift the
+`sub_multiplier` and `route_url` invariants exist to warn about.
+
+Fix is not merely "pass the pantry": the phone trigger is one-shot with no
+confirmation step, while the preview/confirm pair exists precisely so pantry
+*decrements* are user-approved. So the one-shot path should compare (annotate
+lines as on-hand) without decrementing, or grow a confirm step. Decide which
+before implementing.
+
+### P1 — Grouped ingredient sections are silently dropped
+
+**Status: confirmed bug, systemic, diagnosed.** `parse_recipe_body`
+(`lib/recipe_parser.py:202`) matches `r'## Ingredients\n\n((?:\|[^\n]+\n)+)'`
+— one *contiguous* run of table rows, so it stops at the first blank line.
+Verified against a synthetic recipe:
+
+- Ingredients split into sub-groups (`### For the spice rub`) → only the first
+  group survives. A chicken recipe returned `['chicken thighs']` and lost the
+  paprika and cumin. **This is the "spices don't appear on the ingredients" report.**
+- A table *not* preceded by exactly one blank line → **zero** ingredients, silently.
+
+Every `parse_recipe_body` consumer inherits it: `/recipe/<name>`, the grid recipe
+card, the suggester's ingredient overlap, `/api/suggest-meal`. Note
+`shopping_list_generator.extract_ingredient_table` uses a *different, more
+permissive* pattern (`##\s+Ingredients\s*\n(.*?)(?=\n##|\Z)`), so the shopping
+list may already catch ingredients the recipe page drops — another duplicated rule
+that has drifted. Fold both onto one parser as part of the fix.
+
+### P2 — Week numbers everywhere instead of date ranges
+
+`2026-W31` is not human-readable and it appears in page navs, note titles and
+headings. The user's ask is explicitly universal: dates and day names everywhere.
+Known sites: `lib/plan_week.py:68-71` (the `/plan-week` nav renders the raw week
+id three times), `lib/meal_plan_index.py:49`, `lib/meal_plan_parser.py:265`,
+`lib/week_view.py:70`, `templates/shopping_list_template.py:27`. A
+`format_week_range` helper already exists in `templates/meal_plan_template.py`, so
+the change is mechanical — the work is finding every surface, not inventing the
+formatting. Week ids must stay the *keys* (filenames, API paths, sidecar names);
+this is a display-layer change only.
+
+### P2 — Recipe page should colour ingredients you don't have
+
+On `/recipe/<name>`, style ingredients absent from inventory differently from ones
+on hand. The matching logic already exists (`lib/pantry.split_against_pantry`,
+which is what the shopping-list preview uses), so this is a rendering change plus
+one lookup — not new inference. Worth doing alongside the P1 shopping-list fix
+since both hang off the same pantry-split call.
+
+### P2 — Servings / freezer flow is not discoverable
+
+The serving-ledger board (drag serving chips into day slots, the freezer, or the
+trash; scale a cook with the stepper) is the system's most powerful feature and
+the user reports not understanding how to use it. Nothing here is broken — it's
+unexplained. Needs either an in-page affordance (an empty-state that says what a
+chip is and where it can go) or a short walkthrough on `/plan-week`. See
+`docs/workflows/end-to-end.md` for the intended flow that isn't reaching the user.
+
+### P2 — Nutrition review page: unclear what to do about a flagged item
+
+`/nutrition-review` ranks recipes by weakest nutrition data, but the user doesn't
+know what action is available or what "needs review" is asking of them. The page
+does support live recompute and human match-pinning; the gap is that the *next
+action* isn't stated. Likely a copy/affordance fix rather than new machinery.
+
+### P3 — Recipe view layout, and the Obsidian button block leaking to the top
+
+The full recipe view is reported as ugly, and it "pulls the obsidian button code
+in to the top" — i.e. a vault ```button block is being rendered as content instead
+of being stripped or turned into a real control. `lib/note_view.py` already maps
+known `kitchenos://` button actions onto HTTP endpoints when rendering a *note*;
+the recipe page (`api_server.py:701`, `templates/recipe_detail.html`) doesn't go
+through that path. Reuse it or strip the block.
+
+### P3 — Meal planner rendering on this Mac
+
+Reported as "weird" with a screenshot that the triaging session could not read.
+Needs the image (or a viewport width + what looks wrong) before it can be acted on.
+
+### P3 — Three-finger drag for planner UI elements on macOS
+
+Drag on the planner is Sortable.js pointer-based; three-finger drag is a macOS
+trackpad accessibility gesture (System Settings → Accessibility → Pointer
+Control), which synthesises a drag from a three-finger swipe. Whether this "just
+works" depends on whether Sortable's pointer handling sees those events. Needs a
+test on the machine before deciding if there's code to write.
+
+### P3 — Extractor puts durations in the ingredients array
+
+A boiled-egg recipe lists "boiling time for eggs" as an ingredient. Unlike the
+grouped-sections bug above this is an *extraction*-time fault — the LLM emitted a
+time into `ingredients` — so the fix belongs in the prompt
+(`prompts/recipe_extraction.py`) and/or `lib/ingredient_validator.py`, which
+already exists to reject implausible rows. Before writing a rule, grep the corpus
+for time-shaped ingredient rows to find out whether this is systemic or a one-off;
+that needs vault access.
+
+### P3 — Obsidian vault / web app parity
+
+The vault is reported as messy, with the web app as the primary interface and the
+vault valued for browsing raw data. That's consistent with the existing
+generated-read-only-view pattern (`Inventory.md`, `Use It Up.md`, `Cook Now.md`),
+so the work is auditing which notes are generated-and-current vs. stale hand-made
+leftovers, then either generating or archiving each. Broad; needs a vault
+inventory pass before it can be scoped.
+
+---
+
 ## Salvaged Python-side backlog
 
 Unbuilt feature ideas worth keeping. These were salvaged from stale feature
