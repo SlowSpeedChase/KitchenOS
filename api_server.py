@@ -146,7 +146,8 @@ _CLAUDE_BAR_TEMPLATE = """
   <div id="ko-claude-notes-wrap" style="display:none;padding:0 14px 12px;">
     <textarea id="ko-claude-notes" placeholder="Notes to yourself &amp; Claude — saved to Claude Notes.md, seeds the next Launch." style="width:100%;box-sizing:border-box;min-height:120px;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;resize:vertical;"></textarea>
     <div style="display:flex;gap:10px;align-items:center;margin-top:8px;">
-      <button id="ko-claude-save" type="button" style="background:var(--done);color:var(--text-on-accent);border:none;border-radius:8px;padding:8px 16px;font-weight:700;cursor:pointer;">Save</button>
+      <button id="ko-claude-send" type="button" style="background:var(--insight);color:var(--text-on-accent);border:none;border-radius:8px;padding:8px 16px;font-weight:700;cursor:pointer;min-height:44px;">&#9654;&#65039; Send to Claude</button>
+      <button id="ko-claude-save" type="button" style="background:var(--done);color:var(--text-on-accent);border:none;border-radius:8px;padding:8px 16px;font-weight:700;cursor:pointer;min-height:44px;">Save</button>
       <span id="ko-claude-save-status" style="color:var(--muted);font-size:12px;"></span>
     </div>
   </div>
@@ -176,6 +177,26 @@ _CLAUDE_BAR_TEMPLATE = """
         if(d&&d.status==='saved'){ta.value=d.notes;saveStatus.textContent='Saved ✓';}
         else{saveStatus.textContent='Error';}
       }).catch(function(){saveStatus.textContent='Save failed';});
+  });
+  var sendBtn=document.getElementById('ko-claude-send');
+  sendBtn.addEventListener('click',function(){
+    var text=ta.value;
+    if(!text.trim()){saveStatus.textContent='Nothing to send';return;}
+    saveStatus.textContent='Sending…';
+    // Carry the page, so "fix this" still has a "this" by the time Claude reads it.
+    var payload={text:text,page:location.pathname+location.search,title:document.title};
+    fetch('/api/claude-send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+      .then(function(r){return r.json();}).then(function(d){
+        if(d&&d.status==='sent'){
+          // It landed in the live session, so the box has done its job — clearing
+          // it prevents the same request being sent twice on a double tap.
+          ta.value='';saveStatus.textContent='Sent to Claude ✓';
+        } else if(d&&d.status==='queued'){
+          // Cleared rather than refilled: the stored copy carries a context
+          // header, and echoing that back would re-send it prefixed twice.
+          ta.value='';saveStatus.textContent='No session — queued for next Launch ✓';
+        } else {saveStatus.textContent=(d&&d.error)||'Error';}
+      }).catch(function(){saveStatus.textContent='Send failed';});
   });
 })();
 </script>
@@ -2681,6 +2702,45 @@ def api_claude_notes_post():
 
     write_notes(data['notes'])
     return jsonify({"status": "saved", "notes": read_notes()})
+
+
+@app.route('/api/claude-send', methods=['POST'])
+def api_claude_send():
+    """Deliver text to Claude. Body: {text: str}. Ungated, like claude-notes.
+
+    Two outcomes, both success:
+      - a `ko-claude` session is live  -> injected into it, status "sent"
+      - no session                     -> saved as notes, status "queued", and
+                                          the next Launch Claude opens with it
+
+    Ungated for the same reason as /api/claude-notes: this is the same-origin
+    widget on a tailnet-only server, and both endpoints end at the same place —
+    Claude's prompt. Gating one and not the other would be theatre.
+    """
+    from lib.claude_notes import read_notes, write_notes
+    from lib import claude_send
+
+    data = request.get_json(force=True, silent=True)
+    if not isinstance(data, dict) or 'text' not in data:
+        return jsonify({"error": "'text' is required"}), 400
+    if not isinstance(data['text'], str):
+        return jsonify({"error": "'text' must be a string"}), 400
+    if not data['text'].strip():
+        return jsonify({"error": "'text' is empty"}), 400
+
+    # The widget rides on every page, so without this the note loses its subject:
+    # "this has a whole greek yogurt, fix it" arrives with no referent for "this".
+    message = claude_send.compose(
+        data['text'],
+        page=str(data.get('page') or ''),
+        title=str(data.get('title') or ''),
+    )
+
+    if claude_send.send_text(message):
+        return jsonify({"status": "sent"})
+
+    write_notes(message)
+    return jsonify({"status": "queued", "notes": read_notes()})
 
 
 @app.route('/api/receipts/trips', methods=['GET'])
