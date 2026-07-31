@@ -4,17 +4,22 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>KitchenOS Nutrition Review</title>
+    <meta name="theme-color" content="#f4ede3" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#0f1116" media="(prefers-color-scheme: dark)">
+    <link rel="stylesheet" href="/static/tokens.css">
+    <link rel="stylesheet" href="/static/kitchenos.css">
     <style>
         :root {
-            --bg: #f5f5f7;
-            --card-bg: #ffffff;
-            --border: #e5e5e7;
-            --text: #1d1d1f;
-            --text-muted: #86868b;
-            --accent: #0071e3;
-            --success: #34c759;
-            --danger: #ff3b30;
-            --warning: #ff9f0a;
+            /* Local names aliased onto the design language. --bg and --warning
+               are token names already, so they are simply not redeclared —
+               redeclaring them here would override the tokens for the page. */
+            --card-bg:    var(--surface);
+            --border:     var(--line);
+            --text:       var(--ink);
+            --text-muted: var(--muted);
+            --accent:     var(--app-kitchenos);
+            --success:    var(--done);
+            --danger:     var(--alert);
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -22,6 +27,8 @@
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
             background: var(--bg);
+            background-image: var(--dots);
+            background-size: var(--dot-size) var(--dot-size);
             color: var(--text);
             min-height: 100vh;
             padding: 24px;
@@ -72,10 +79,10 @@
         button.primary {
             background: var(--accent);
             border-color: var(--accent);
-            color: #fff;
+            color: var(--text-on-accent);
         }
 
-        button.primary:hover { color: #fff; opacity: 0.9; }
+        button.primary:hover { color: var(--text-on-accent); opacity: 0.9; }
 
         #rerun-progress {
             font-size: 0.8rem;
@@ -106,8 +113,8 @@
         }
 
         tbody tr.recipe-row { cursor: pointer; }
-        tbody tr.recipe-row:hover { background: #f9f9fb; }
-        tbody tr.recipe-row.expanded { background: #f2f7ff; }
+        tbody tr.recipe-row:hover { background: var(--raised); }
+        tbody tr.recipe-row.expanded { background: var(--tint-accent); }
 
         .empty { color: var(--text-muted); font-size: 0.85rem; font-style: italic; padding: 12px 0; }
         .loading { color: var(--text-muted); font-size: 0.85rem; }
@@ -115,7 +122,7 @@
         .coverage-bar-wrap {
             width: 100px;
             height: 8px;
-            background: #ebebed;
+            background: var(--raised);
             border-radius: 4px;
             overflow: hidden;
             display: inline-block;
@@ -140,17 +147,17 @@
             border-radius: 10px;
             font-size: 0.72rem;
             font-weight: 600;
-            background: #ebebed;
-            color: #555;
+            background: var(--raised);
+            color: var(--muted);
         }
 
-        .badge.red { background: #fde8e8; color: #c0392b; }
-        .badge.green { background: #d4f5de; color: #1a6b34; }
-        .badge.orange { background: #fff0d6; color: #8a5000; }
+        .badge.red { background: var(--tint-alert); color: var(--alert); }
+        .badge.green { background: var(--tint-done); color: var(--done); }
+        .badge.orange { background: var(--tint-warning); color: var(--warning); }
 
         /* Detail panel */
         tr.detail-row td {
-            background: #fafafc;
+            background: var(--surface);
             padding: 0;
         }
 
@@ -174,14 +181,14 @@
             border-radius: 10px;
             font-size: 0.72rem;
             font-weight: 600;
-            background: #fff0d6;
-            color: #8a5000;
+            background: var(--tint-warning);
+            color: var(--warning);
             margin-right: 4px;
         }
 
         .lines-table th, .lines-table td { font-size: 0.8rem; }
 
-        .lines-table td.weak-row { background: #fff8ec; }
+        .lines-table td.weak-row { background: var(--tint-warning); }
 
         select, input[type="text"] {
             font-family: inherit;
@@ -189,7 +196,7 @@
             padding: 5px 8px;
             border: 1px solid var(--border);
             border-radius: 6px;
-            background: #fff;
+            background: var(--surface);
             color: var(--text);
         }
 
@@ -209,7 +216,7 @@
             bottom: 24px;
             right: 24px;
             background: var(--text);
-            color: #fff;
+            color: var(--text-on-accent);
             padding: 10px 16px;
             border-radius: 10px;
             font-size: 0.85rem;

@@ -4,21 +4,28 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cook Now — KitchenOS</title>
+<meta name="theme-color" content="#f4ede3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1116" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/static/tokens.css">
+<link rel="stylesheet" href="/static/kitchenos.css">
 <style>
-  :root { color-scheme: light dark; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  body { font-family: var(--font-body); background: var(--bg);
+         background-image: var(--dots);
+         background-size: var(--dot-size) var(--dot-size);
+         color: var(--ink);
          margin: 0; padding: 1rem; max-width: 900px; margin-inline: auto; }
   h1 { font-size: 1.4rem; margin: 0 0 .75rem; }
   #cook-now-chips { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: .5rem; }
-  .chip { border: 1px solid currentColor; border-radius: 999px; padding: .35rem .8rem;
-          font-size: .9rem; cursor: pointer; background: none; color: inherit;
-          opacity: .45; }
-  .chip[aria-pressed="true"] { opacity: 1; font-weight: 600; }
+  .chip { border: 1px solid var(--line); border-radius: 999px;
+          padding: .35rem .8rem; font-size: .9rem; cursor: pointer;
+          background: var(--surface); color: var(--muted); }
+  .chip[aria-pressed="true"] { color: var(--app-kitchenos);
+          border-color: var(--app-kitchenos); font-weight: 600; }
   #hidden-note { font-size: .85rem; opacity: .7; margin: 0 0 1rem; }
   /* The whole row is the link to the recipe — on a phone a tappable name alone
      is a small target, and the coverage/missing text is part of "what is this". */
   .recipe { display: block; padding: .7rem 0; min-height: 44px;
-            border-bottom: 1px solid rgba(128,128,128,.25);
+            border-bottom: 1px solid var(--line);
             color: inherit; text-decoration: none; }
   .recipe:active { opacity: .6; }
   .recipe-head { display: flex; justify-content: space-between; gap: 1rem;

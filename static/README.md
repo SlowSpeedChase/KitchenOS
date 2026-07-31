@@ -13,7 +13,7 @@ is a page that fails in exactly the situation it exists for.
 | File | Version | Source | sha256 |
 |------|---------|--------|--------|
 | `sortable.min.js` | 1.15.6 | `https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js` | `6d0a831fc19b4bae851797ad3393157e861afb7862459c11226359b27e2c4337` |
-| `tokens.css` | v1 (`~/Dev/design-system` @ `82d7ad4`) | `~/Dev/design-system/tokens.css` | `78107b36844d64f4fa5fe3a0c71cfec4fb1a1eddca8effb2acda5880c544d05b` |
+| `tokens.css` | v1.1 (`~/Dev/design-system` @ `140881e`) | `~/Dev/design-system/tokens.css` | `e81400c434b630f4a5b46bf9fdd32927790298ab740ee66d7340871d16fe2bf4` |
 
 ## `tokens.css`
 

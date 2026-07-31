@@ -8,6 +8,7 @@
     <meta name="theme-color" content="#0f1116" media="(prefers-color-scheme: dark)">
     <title>Today's prep · KitchenOS</title>
     <link rel="stylesheet" href="/static/tokens.css">
+    <link rel="stylesheet" href="/static/kitchenos.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -89,7 +90,7 @@
             cursor: pointer;
             display: inline-flex; align-items: center; gap: 8px;
         }
-        .btn.primary { background: var(--app-kitchenos); border-color: var(--app-kitchenos); color: #fff; }
+        .btn.primary { background: var(--app-kitchenos); border-color: var(--app-kitchenos); color: var(--text-on-accent); }
         .btn:disabled { opacity: .55; cursor: default; }
 
         .empty { color: var(--muted); font-size: 15px; padding: 20px 2px; }
