@@ -48,7 +48,6 @@ UNCONVERTED: set[str] = {
     "meal_planner.html",
     "nutrition_review.html",
     "recipe_detail.html",
-    "system_health.html",
 }
 
 # One representative route per template, for the browser test. None means the
