@@ -1055,7 +1055,7 @@ Then:
 - lines 29–33 `.review-note` → `color: var(--warning); background: var(--tint-warning); border: 1px solid var(--edge-warning);`
 - line 43 `td.action.finish { background: #f1f8f2; }` → `var(--tint-done)`
 - line 53 `.toolbar button { background: #fff; }` → `var(--surface)`
-- line 57 `@media print { body { background: #fff; } }` → `background: var(--surface);`
+- line 57 `@media print { body { background: #fff; } }` → **delete the `background` declaration**, keeping only `padding: 0`. Task 0's `@media print` block in `tokens.css` already re-pins `--bg` to the Dawn cream, so the page inherits the right ground; overriding it here with `var(--surface)` would set `#fffdf9` instead and fail `test_paper_is_always_dawn`, which asserts the `--bg` value. `print_week.html` already relies on this inheritance — match it.
 
 - [ ] **Step 5: Verify both the screen and the paper behaviour**
 
