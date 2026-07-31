@@ -55,8 +55,12 @@ def find_stores(stores_dir: Path = STORES_DIR) -> list[Path]:
         # Access, while the same code run from a terminal reads every store.
         log.warning(
             "No Reminders store files (*.sqlite) under %s — an empty listing "
-            "here usually means this process lacks Full Disk Access (grant it "
-            "to the interpreter running the job, e.g. .venv/bin/python)",
+            "here usually means this process lacks Full Disk Access. Grant it "
+            "to whatever launchd actually execs, which since the launcher-shim "
+            "change is the SHIM, not the interpreter: "
+            "'ops/agents/KitchenOS · Batch Extract' (System Settings → Privacy "
+            "& Security → Full Disk Access, ⇧⌘G to paste the path). Granting "
+            "only .venv/bin/python covers manual terminal runs, not this job.",
             stores_dir,
         )
     return stores
