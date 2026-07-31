@@ -151,8 +151,18 @@ def _inject_after_body(html: str, snippet: str) -> str:
 
     String splice, not regex/replace — the snippet contains regex/format
     metacharacters. Falls back to prepending if there is no <body> tag.
+
+    The search starts after ``</head>`` because a template may *write about*
+    the tag before opening it: meal_planner.html explains the chrome bar in a
+    CSS comment naming the literal ``<body>``, and matching that comment
+    spliced the bar into the stylesheet, where the browser dropped it. The page
+    then contained the markup and rendered no bar — so the planner, the one
+    page you reach mid-task, was the only one with no way back home.
     """
-    idx = html.lower().find('<body')
+    lower = html.lower()
+    head_end = lower.find('</head>')
+    search_from = head_end + len('</head>') if head_end != -1 else 0
+    idx = lower.find('<body', search_from)
     if idx == -1:
         return snippet + html
     close = html.find('>', idx)
