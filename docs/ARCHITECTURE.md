@@ -217,9 +217,9 @@ is unset, but that default is not meaningful for this deployment; treat
 |---|---|
 | `Recipes/` | Recipe markdown files, title-case filenames |
 | `Recipes/Images/` | Downloaded recipe images (source page or YouTube thumbnail) |
-| `Meals/` | Composite meal definitions (`<Name>.meal.md`) |
+| `Meals/` | Composite meal definitions (`<Name>.meal.md`) — sub-recipes with fractional `servings`, plus an optional `slot` |
 | `Meal Plans/` | Weekly plan files (`YYYY-Www.md`) + generated `Meal Plans Index.md` |
-| `My Macros.md` | User's nutrition targets, parsed by `lib/macro_targets.py` |
+| `My Macros.md` | User's nutrition targets, parsed by `lib/macro_targets.py`. Optional flat `share_<slot>` keys split the daily target across breakfast/lunch/snack/dinner (`load_slot_shares`). |
 | `My Meal System.md` | Personal food/habit profile — health drivers, craving lanes, buffer menu, building blocks. Parsed by `lib/profile.py`; the prose is also fed verbatim to LLM prompts so new sections need no code change. |
 | `Inventory.md` | Generated, read-only view of `data/kitchenos.db` inventory |
 | `Use It Up.md` | Generated, read-only waste-reduction suggestions |
@@ -280,6 +280,21 @@ in `docs/setup/`.
   meal-planner UI surfaces today's tasks plus a "Get ahead" section for
   upcoming do-ahead items, with `done` state stable across plan edits via
   hashed task IDs.
+- **Meal-bundle macros** — a meal (`vault/Meals/<Name>.meal.md`) is a named set
+  of sub-recipes, each with a fractional `servings` share, bound to a slot.
+  `lib/meal_nutrition.py` rolls its calories/macros up from its sub-recipes'
+  frontmatter **at read time, never stored** — per-recipe macros get re-derived
+  by `backfill_nutrition.py --force`, so a rollup written into `.meal.md` would
+  go stale invisibly. It composes existing pieces rather than adding rules:
+  `meal_plan_parser.sub_multiplier` for the serving arithmetic,
+  `serving_ledger.recipe_macros` for the safe frontmatter read, and
+  `nutrition_quality.macro_eligible` for the trust gate. An untrusted
+  sub-recipe is excluded from the totals and named in `excluded`, never counted
+  as zero. Surfaced on `/api/meals`, on `/api/meal-plan/<week>`'s meal slots,
+  and in the planner's meal editor, which measures the rollup against
+  `daily_target × share[slot]` (`macro_targets.load_slot_shares`). Meals are
+  *not* ledger citizens: a meal card still contributes nothing to a board
+  week's day-totals row.
 - **Serving ledger & board mode** — `lib/serving_ledger.py` models a week as
   *cooks* (one preparation of a recipe at a fractional scale) and *placements*
   (where each cook's servings go: a date/meal slot, freezer, etc.), stored in

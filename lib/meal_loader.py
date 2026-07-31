@@ -7,30 +7,71 @@ A meal lives at `vault/Meals/<Name>.meal.md` with frontmatter:
     name: Salmon Dinner
     description: Weeknight pan-seared salmon with sides
     tags: [weeknight, fish]
+    slot: dinner
     sub_recipes:
       - recipe: "Pan-Seared Salmon"
-        servings: 1
+        servings: 1.5
       - recipe: "Lemon Asparagus"
       - recipe: "Wild Rice Pilaf"
         servings: 2
     ---
 
 Body is free-form notes.
+
+`servings` is a *float* — a 4-serving chili can contribute 1.5 servings to one
+meal and 2 to another. `slot` binds the meal to one of
+``serving_ledger.MEALS``, which is what gives its macros a per-slot share of the
+daily target to be measured against.
+
+Reading is forgiving, writing is strict: a garbage `servings` or an unrecognised
+`slot` on disk normalises to a sane default rather than raising, because
+:func:`list_meals` swallows per-file exceptions — a raise there wouldn't surface
+an error, it would make the meal silently vanish from every surface. The API
+layer is where a bad *client* payload gets a 400.
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Optional
 
 from lib import paths
+from lib.serving_ledger import MEALS
+
+DEFAULT_SLOT = "dinner"
+
+
+def normalize_slot(value) -> str:
+    """Coerce a slot value to one of ``serving_ledger.MEALS``.
+
+    Anything unrecognised (None, ``"brunch"``, a number) falls back to
+    ``"dinner"`` rather than raising — same forgiving-normalisation posture as
+    ``inventory.location_source``: the failure direction is a sensible default,
+    never a lost meal.
+    """
+    if not isinstance(value, str):
+        return DEFAULT_SLOT
+    slot = value.strip().lower()
+    return slot if slot in MEALS else DEFAULT_SLOT
+
+
+def _coerce_servings(value) -> float:
+    """Positive float, or 1.0. Never raises — see the module docstring."""
+    try:
+        servings = float(value)
+    except (TypeError, ValueError):
+        return 1.0
+    if not math.isfinite(servings) or servings <= 0:
+        return 1.0
+    return servings
 
 
 @dataclass
 class SubRecipe:
     recipe: str
-    servings: int = 1
+    servings: float = 1.0
 
 
 @dataclass
@@ -40,17 +81,19 @@ class Meal:
     tags: list[str] = field(default_factory=list)
     sub_recipes: list[SubRecipe] = field(default_factory=list)
     body: str = ""
+    slot: str = DEFAULT_SLOT
 
     def to_dict(self) -> dict:
         return {
             "name": self.name,
             "description": self.description,
             "tags": list(self.tags),
+            "slot": self.slot,
             "sub_recipes": [asdict(s) for s in self.sub_recipes],
         }
 
 
-def append_sub_recipe(meal: Meal, recipe_name: str, servings: int = 1) -> Meal:
+def append_sub_recipe(meal: Meal, recipe_name: str, servings: float = 1.0) -> Meal:
     """Append a SubRecipe to ``meal.sub_recipes`` in place.
 
     No-op if a SubRecipe with the same ``recipe`` name is already present —
@@ -168,18 +211,17 @@ def _from_frontmatter(fm: dict, name_fallback: str, body: str = "") -> Meal:
         recipe = entry.get("recipe")
         if not recipe:
             continue
-        servings = entry.get("servings", 1)
-        try:
-            servings = int(servings) if servings is not None else 1
-        except (TypeError, ValueError):
-            servings = 1
-        sub_recipes.append(SubRecipe(recipe=str(recipe), servings=servings))
+        sub_recipes.append(SubRecipe(
+            recipe=str(recipe),
+            servings=_coerce_servings(entry.get("servings", 1.0)),
+        ))
     return Meal(
         name=str(fm.get("name") or name_fallback),
         description=str(fm.get("description") or ""),
         tags=list(fm.get("tags") or []),
         sub_recipes=sub_recipes,
         body=body,
+        slot=normalize_slot(fm.get("slot")),
     )
 
 
@@ -242,12 +284,18 @@ def _render_meal(meal: Meal) -> str:
     if meal.tags:
         tag_str = ", ".join(_yaml_quote(t) for t in meal.tags)
         lines.append(f"tags: [{tag_str}]")
+    # Only written when it isn't the default, so rewriting a pre-slot meal file
+    # leaves it byte-identical.
+    if meal.slot and meal.slot != DEFAULT_SLOT:
+        lines.append(f"slot: {meal.slot}")
     if meal.sub_recipes:
         lines.append("sub_recipes:")
         for sub in meal.sub_recipes:
             lines.append(f"  - recipe: {_yaml_quote(sub.recipe)}")
+            # `:g` so 1.5 round-trips and 2.0 renders as `2`. The `!= 1`
+            # omit-when-default rule needs no change: `1.0 != 1` is False.
             if sub.servings != 1:
-                lines.append(f"    servings: {sub.servings}")
+                lines.append(f"    servings: {sub.servings:g}")
     lines.append("---")
     body = meal.body or ""
     if body and not body.startswith("\n"):

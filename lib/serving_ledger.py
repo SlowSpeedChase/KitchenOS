@@ -387,11 +387,16 @@ COVERAGE_REVIEW_THRESHOLD = 0.8
 
 
 def recipe_macros(recipe_name: str, recipes_dir) -> Optional[dict]:
-    """Per-serving macros + coverage from a recipe's frontmatter, or None.
+    """Per-serving macros + coverage + servings from a recipe's frontmatter, or None.
 
     Any per-recipe failure (unreadable file, garbage frontmatter like
     ``nutrition_calories: "lots"``) degrades to None — the day shows as
     incomplete instead of the whole board 500ing.
+
+    ``servings`` is carried so a caller can feed the same dict to
+    ``nutrition_quality.macro_eligible`` (which gates on it) without a second
+    file read; every caller indexes only the keys it knows, so it costs them
+    nothing.
     """
     from lib.recipe_parser import parse_recipe_file
     try:
@@ -408,6 +413,7 @@ def recipe_macros(recipe_name: str, recipes_dir) -> Optional[dict]:
             "carbs": int(fm.get("nutrition_carbs") or 0),
             "fat": int(fm.get("nutrition_fat") or 0),
             "coverage": float(coverage) if coverage is not None else None,
+            "servings": fm.get("servings") or None,
         }
     except Exception:
         return None

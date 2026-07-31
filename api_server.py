@@ -7,6 +7,7 @@ from urllib.parse import quote
 from youtube_transcript_api import YouTubeTranscriptApi
 from googleapiclient.discovery import build
 import functools
+import math
 import os
 import re
 import sqlite3
@@ -26,7 +27,13 @@ from lib.shopping_list_generator import (
 )
 from lib.backup import create_backup
 from lib.recipe_index import get_recipe_index
-from lib.meal_plan_parser import insert_recipe_into_meal_plan, parse_meal_plan, rebuild_meal_plan_markdown
+from lib.meal_plan_parser import (
+    flatten_to_recipes,
+    insert_recipe_into_meal_plan,
+    parse_meal_plan,
+    rebuild_meal_plan_markdown,
+)
+from lib.meal_nutrition import meal_nutrition
 from lib.recipe_parser import parse_recipe_file, extract_my_notes, parse_recipe_body
 from templates.shopping_list_template import generate_shopping_list_markdown, generate_filename as shopping_list_filename
 from templates.recipe_template import format_recipe_markdown
@@ -37,6 +44,7 @@ from lib.ingredient_cleaner import clean_ingredient_list
 from lib.seasonality import match_ingredients_to_seasonal, get_peak_months
 from lib.nutrition_engine import calculate_recipe_nutrition
 from lib import meal_loader, pantry as pantry_module, paths, task_extractor
+from lib.serving_ledger import MEALS as SLOT_VOCAB
 from recipe_sources import parse_recipe_from_text
 
 load_dotenv()
@@ -1181,6 +1189,7 @@ def api_meal_plan_get(week):
     parsed = parse_meal_plan(content, year, week_num)
 
     days = []
+    macro_cache: dict = {}
     for day_data in parsed:
         day_json = {
             "day": day_data["day"],
@@ -1199,6 +1208,14 @@ def api_meal_plan_get(week):
                             {"recipe": s.recipe, "servings": s.servings}
                             for s in meal_def.sub_recipes
                         ]
+                        # Shipped here, not left to the client's /api/meals fetch:
+                        # the planner loads meals and the plan concurrently, so a
+                        # card built from the plan can't count on the meal index
+                        # being populated yet. `nutrition` is per 1x the bundle —
+                        # the card scales it by its own servings multiplier.
+                        slot_json["slot"] = meal_def.slot
+                        slot_json["nutrition"] = meal_nutrition(
+                            meal_def, OBSIDIAN_RECIPES_PATH, macro_cache=macro_cache)
                 day_json[meal] = slot_json
         days.append(day_json)
 
@@ -1565,9 +1582,18 @@ def api_suggest_meal():
         for day_data in parsed:
             for meal_type in ("breakfast", "lunch", "snack", "dinner"):
                 entry = day_data.get(meal_type)
-                if entry is not None and entry.name:
-                    # Load ingredient items for this recipe
-                    recipe_file = OBSIDIAN_RECIPES_PATH / f"{entry.name}.md"
+                if entry is None or not entry.name:
+                    continue
+                # Flatten meal bundles to their sub-recipes first. Everything
+                # downstream — the ingredient overlap here, and day_macro_gap's
+                # per-recipe frontmatter lookup — resolves a name against
+                # Recipes/, where a `[[Meal: X]]` bundle has no file. Left
+                # unflattened, a planned meal contributed zero ingredients and
+                # zero calories, so the suggester believed the day was emptier
+                # than it was and steered every macro-aware suggestion wrong by a
+                # whole meal.
+                for flat in flatten_to_recipes([entry]):
+                    recipe_file = OBSIDIAN_RECIPES_PATH / f"{flat.name}.md"
                     ingredients = []
                     if recipe_file.exists():
                         try:
@@ -1584,9 +1610,9 @@ def api_suggest_meal():
                     planned_meals.append({
                         "day": day_data["day"],
                         "meal": meal_type,
-                        "name": entry.name,
+                        "name": flat.name,
                         "ingredients": ingredients,
-                        "servings": getattr(entry, "servings", 1) or 1,
+                        "servings": flat.servings or 1,
                     })
 
     from lib.meal_suggester import suggest_meal, day_macro_gap
@@ -2035,20 +2061,71 @@ def current_shopping_list_page():
 
 # ----- Meals (composite recipe bundles) -----
 
-def _meal_to_json(meal):
+def _meal_to_json(meal, macro_cache=None):
+    """Serialize a meal, with its macros rolled up from its sub-recipes.
+
+    ``nutrition`` is derived on every read (see lib/meal_nutrition.py) — never
+    stored, because per-recipe macros get re-derived by backfill_nutrition.py and
+    a stored rollup would go stale invisibly. Pass ``macro_cache`` when
+    serializing many meals so shared sub-recipes are read from disk once.
+    """
     return {
         "name": meal.name,
         "description": meal.description,
         "tags": list(meal.tags),
+        "slot": meal.slot,
         "sub_recipes": [
             {"recipe": s.recipe, "servings": s.servings} for s in meal.sub_recipes
         ],
+        "nutrition": meal_nutrition(meal, OBSIDIAN_RECIPES_PATH, macro_cache=macro_cache),
     }
+
+
+def _parse_sub_recipes(raw):
+    """Coerce a client's sub_recipes payload to SubRecipes, or return an error string.
+
+    Strict where ``meal_loader`` is forgiving: a file on disk with a garbage
+    ``servings`` normalises quietly (a raise there would make the meal vanish),
+    but a *client* sending one should hear about it.
+    """
+    parsed = []
+    for entry in raw:
+        if not isinstance(entry, dict) or not entry.get("recipe"):
+            continue
+        # `raw or 1.0` would be wrong here: 0 is falsy, and 0 is exactly the
+        # value this is supposed to reject.
+        raw = entry.get("servings")
+        if raw is None:
+            raw = 1.0
+        try:
+            servings = float(raw)
+        except (TypeError, ValueError):
+            return None, f"servings must be a number (got {raw!r})"
+        if not math.isfinite(servings) or servings <= 0:
+            return None, f"servings must be greater than 0 (got {raw!r})"
+        parsed.append(meal_loader.SubRecipe(recipe=str(entry["recipe"]), servings=servings))
+    return parsed, None
+
+
+def _parse_slot(data, default=meal_loader.DEFAULT_SLOT):
+    """Validate an optional ``slot`` from a client payload, or return an error string."""
+    if "slot" not in data or data.get("slot") is None:
+        return default, None
+    slot = str(data["slot"]).strip().lower()
+    if slot not in SLOT_VOCAB:
+        return None, ("slot must be one of "
+                      f"{', '.join(SLOT_VOCAB)} (got {data['slot']!r})")
+    return slot, None
 
 
 @app.route('/api/meals', methods=['GET'])
 def api_meals_list():
-    return jsonify({"meals": [_meal_to_json(m) for m in meal_loader.list_meals()]})
+    # One cache across the whole list: meals share sub-recipes, and each rollup
+    # otherwise re-reads the same recipe frontmatter.
+    macro_cache: dict = {}
+    return jsonify({"meals": [
+        _meal_to_json(m, macro_cache=macro_cache) for m in meal_loader.list_meals()
+    ]})
 
 
 @app.route('/api/meals', methods=['POST'])
@@ -2062,22 +2139,21 @@ def api_meals_create():
     sub_recipes = data.get("sub_recipes") or []
     if not isinstance(sub_recipes, list) or not sub_recipes:
         return jsonify({"error": "sub_recipes must be a non-empty list"}), 400
-    parsed_subs = [
-        meal_loader.SubRecipe(
-            recipe=str(s.get("recipe", "")),
-            servings=int(s.get("servings", 1) or 1),
-        )
-        for s in sub_recipes
-        if isinstance(s, dict) and s.get("recipe")
-    ]
+    parsed_subs, err = _parse_sub_recipes(sub_recipes)
+    if err:
+        return jsonify({"error": err}), 400
     if not parsed_subs:
         return jsonify({"error": "every sub_recipes entry must include a 'recipe' key"}), 400
+    slot, err = _parse_slot(data)
+    if err:
+        return jsonify({"error": err}), 400
     meal = meal_loader.Meal(
         name=name,
         description=data.get("description", ""),
         tags=list(data.get("tags") or []),
         sub_recipes=parsed_subs,
         body=data.get("body", ""),
+        slot=slot,
     )
     meal_loader.save_meal(meal)
     return jsonify(_meal_to_json(meal)), 201
@@ -2098,29 +2174,35 @@ def api_meals_update(name):
         return jsonify({"error": f"meal '{name}' not found"}), 404
     data = request.get_json(force=True, silent=True) or {}
     new_name = (data.get("name") or name).strip()
-    if new_name != name:
-        # rename: write new file, delete old
-        meal_loader.delete_meal(name)
+
+    # Validate everything *before* the rename deletes the old file. A 400 raised
+    # after the delete would take the meal with it — and there are more ways to
+    # 400 now (non-positive servings, unknown slot) than when this was written.
     sub_recipes = data.get("sub_recipes")
     if sub_recipes is None:
         sub_records = existing.sub_recipes
     elif isinstance(sub_recipes, list) and sub_recipes:
-        sub_records = [
-            meal_loader.SubRecipe(
-                recipe=str(s.get("recipe", "")),
-                servings=int(s.get("servings", 1) or 1),
-            )
-            for s in sub_recipes
-            if s.get("recipe")
-        ]
+        sub_records, err = _parse_sub_recipes(sub_recipes)
+        if err:
+            return jsonify({"error": err}), 400
+        if not sub_records:
+            return jsonify({"error": "every sub_recipes entry must include a 'recipe' key"}), 400
     else:
         return jsonify({"error": "sub_recipes must be a non-empty list"}), 400
+    slot, err = _parse_slot(data, default=existing.slot)
+    if err:
+        return jsonify({"error": err}), 400
+
+    if new_name != name:
+        # rename: write new file, delete old
+        meal_loader.delete_meal(name)
     meal = meal_loader.Meal(
         name=new_name,
         description=data.get("description", existing.description),
         tags=list(data.get("tags") if data.get("tags") is not None else existing.tags),
         sub_recipes=sub_records,
         body=data.get("body", existing.body),
+        slot=slot,
     )
     meal_loader.save_meal(meal)
     return jsonify(_meal_to_json(meal))
@@ -2131,6 +2213,32 @@ def api_meals_delete(name):
     if not meal_loader.delete_meal(name):
         return jsonify({"error": f"meal '{name}' not found"}), 404
     return jsonify({"status": "deleted", "name": name})
+
+
+@app.route('/api/macro-targets', methods=['GET'])
+def api_macro_targets():
+    """Daily macro targets plus how they split across the four meal slots.
+
+    ``daily`` is null when there's no My Macros.md — clients should then show no
+    reference line rather than inventing one. ``slot_shares_normalized`` is true
+    when the file's own share numbers didn't sum to 1.0 and were rescaled, so the
+    UI can say so instead of quietly reinterpreting them.
+    """
+    from lib.macro_targets import load_macro_targets, load_slot_shares
+
+    vault = paths.vault_root()
+    targets = load_macro_targets(vault)
+    slot_shares = load_slot_shares(vault)
+    return jsonify({
+        "daily": None if targets is None else {
+            "calories": targets.calories,
+            "protein": targets.protein,
+            "carbs": targets.carbs,
+            "fat": targets.fat,
+        },
+        "slot_shares": slot_shares.shares,
+        "slot_shares_normalized": slot_shares.normalized,
+    })
 
 
 # ----- Pantry inventory -----

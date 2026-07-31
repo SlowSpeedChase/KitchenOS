@@ -452,3 +452,43 @@ class TestExtractManualItems:
         result = extract_manual_items(existing, [])
 
         assert result == ["item1", "item2"]
+
+
+def test_extract_recipe_links_keeps_fractional_sub_servings(tmp_path, monkeypatch):
+    """A 1.5-serving sub-recipe must buy 1.5x, not round down to 1x.
+
+    This path used to carry its own copy of the multiplier rule and truncated
+    with `int()` — a silent under-buy at the store for a meal the planner shows
+    as split. Both callers now go through meal_plan_parser.sub_multiplier.
+    """
+    from lib.meal_loader import Meal, SubRecipe, save_meal
+
+    monkeypatch.setenv("KITCHENOS_VAULT", str(tmp_path))
+    save_meal(Meal(
+        name="Chili Bowl",
+        sub_recipes=[
+            SubRecipe(recipe="Turkey Chili", servings=1.5),
+            SubRecipe(recipe="Cornbread", servings=0.5),
+        ],
+    ))
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_text("## Monday\n[[Meal: Chili Bowl]]\n")
+
+    links = extract_recipe_links(plan_path)
+
+    assert ("Turkey Chili", 1.5) in links
+    assert ("Cornbread", 0.5) in links
+
+
+def test_extract_recipe_links_fractional_stacks_with_outer_multiplier(tmp_path, monkeypatch):
+    from lib.meal_loader import Meal, SubRecipe, save_meal
+
+    monkeypatch.setenv("KITCHENOS_VAULT", str(tmp_path))
+    save_meal(Meal(
+        name="Chili Bowl",
+        sub_recipes=[SubRecipe(recipe="Turkey Chili", servings=1.5)],
+    ))
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_text("[[Meal: Chili Bowl]] x2\n")
+
+    assert ("Turkey Chili", 3.0) in extract_recipe_links(plan_path)

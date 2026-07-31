@@ -10,6 +10,7 @@ from typing import Optional
 from lib.recipe_parser import parse_recipe_file, parse_ingredient_table
 from lib.ingredient_aggregator import aggregate_ingredients, format_ingredient, parse_amount_to_float, format_amount
 from lib import meal_loader, paths
+from lib.meal_plan_parser import sub_multiplier
 
 # Configuration
 OBSIDIAN_VAULT = paths.vault_root()
@@ -57,7 +58,7 @@ def extract_recipe_links(meal_plan_path: Path) -> list[tuple[str, float]]:
             meal = meal_loader.load_meal(name)
             if meal and meal.sub_recipes:
                 for sub in meal.sub_recipes:
-                    out.append((sub.recipe, servings * max(1, int(sub.servings or 1))))
+                    out.append((sub.recipe, sub_multiplier(servings, sub.servings)))
                 continue
         out.append((name, servings))
     return out

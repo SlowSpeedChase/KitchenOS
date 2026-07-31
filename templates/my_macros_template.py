@@ -23,6 +23,13 @@ calories: {calories}
 protein: {protein}
 carbs: {carbs}
 fat: {fat}
+# How the day's target splits across slots — the reference line a meal's macros
+# are measured against in the meal planner. Optional; these are the defaults.
+# Flat keys, not a nested block: the frontmatter parser reads top-level keys only.
+share_breakfast: 0.25
+share_lunch: 0.3
+share_dinner: 0.35
+share_snack: 0.1
 ---
 
 # My Daily Macros
