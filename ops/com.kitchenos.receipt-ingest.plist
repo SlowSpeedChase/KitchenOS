@@ -6,8 +6,7 @@
     <string>com.kitchenos.receipt-ingest</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/chaseeasterling/Dev/KitchenOS/.venv/bin/python</string>
-        <string>/Users/chaseeasterling/Dev/KitchenOS/ingest_receipts.py</string>
+        <string>/Users/chaseeasterling/Dev/KitchenOS/ops/agents/KitchenOS · Receipt Ingest</string>
     </array>
     <key>RunAtLoad</key>
     <true/>

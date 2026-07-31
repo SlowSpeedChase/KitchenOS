@@ -6,8 +6,7 @@
     <string>com.kitchenos.api</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/chaseeasterling/Dev/KitchenOS/.venv/bin/python</string>
-        <string>/Users/chaseeasterling/Dev/KitchenOS/api_server.py</string>
+        <string>/Users/chaseeasterling/Dev/KitchenOS/ops/agents/KitchenOS · API</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>

@@ -54,7 +54,7 @@ cd /Users/chaseeasterling/Dev/KitchenOS
 The recipe is saved to your Obsidian vault. See
 [docs/OPERATIONS.md](docs/OPERATIONS.md) for the full command reference
 (meal planning, shopping lists, receipt/CSA ingest, dashboards, the native
-app build/deploy, and the 7 background LaunchAgents).
+app build/deploy, and the 9 background LaunchAgents).
 
 ## Installation
 
