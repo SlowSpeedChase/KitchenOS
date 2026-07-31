@@ -228,8 +228,15 @@ import re
 #
 # The length alternation matters on its own: an unanchored {3,8} accepts 5- and
 # 7-digit runs, which is how review.html's invalid `#d3355` reads as a colour.
+#
+# The (?<!&) lookbehind is the third case: api_server.py writes its Claude-bar
+# emoji as HTML numeric entities (&#127968; &#128221; &#129302;), and without it
+# `#127968` reads as a six-digit colour and fails the file on correct markup.
+#
+# Wrong three times for three different reasons — hence the table-driven test in
+# tests/test_theme_tokens.py that pins every one of these cases.
 HEX = re.compile(
-    r'#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})(?![0-9a-zA-Z_-])'
+    r'(?<!&)#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})(?![0-9a-zA-Z_-])'
 )
 
 # `<meta name="theme-color">` cannot hold a var(), so these two literals are
