@@ -383,7 +383,21 @@ def test_allowlist_is_temporary():
     )
 ```
 
-- [ ] **Step 4: Run the guard and confirm it is green with everything allowlisted**
+- [ ] **Step 4: Bring the four already-converted templates up to the guard**
+
+The guard requires both stylesheet links, but `home.html`, `prep.html`, `recent.html` and `note_view.html` were converted before `static/kitchenos.css` existed and link only `tokens.css`. Add the second link after the first in each (`home.html:13`, the other three at `:10`).
+
+`prep.html:92` also fails, and it is a real defect rather than a formality:
+
+```css
+.btn.primary { background: var(--app-kitchenos); border-color: var(--app-kitchenos); color: #fff; }
+```
+
+`--text-on-accent` is `#fffdf9` on Dawn but `#0f1116` on Ink, because the coral accent *lightens* in dark mode — so a hardcoded white label on it is illegible in the dark. Change `color: #fff` to `color: var(--text-on-accent)`.
+
+These four are the guard's only live coverage; leaving them allowlisted would make the whole file assert nothing.
+
+- [ ] **Step 5: Run the guard and confirm it is green with everything allowlisted**
 
 ```bash
 .venv/bin/python -m pytest tests/test_theme_tokens.py -v
@@ -392,7 +406,7 @@ def test_allowlist_is_temporary():
 
 Expected: the four already-converted templates PASS both parametrized tests; the ten in `UNCONVERTED` SKIP; both `api_server.py` tests SKIP; `test_allowlist_is_temporary` SKIPs. **The full suite stays green** — every surface is either converted or allowlisted, so this file never lands red.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add static/kitchenos.css tests/theme_allowlist.py tests/test_theme_tokens.py
