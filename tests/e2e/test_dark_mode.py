@@ -43,11 +43,11 @@ def test_page_follows_the_os_theme(name, route, live_server, page, page_errors):
     url = live_server.url(_resolve(route, live_server))
 
     page.emulate_media(color_scheme="dark")
-    page.goto(url, wait_until="domcontentloaded")
+    page.goto(url, wait_until="networkidle")
     assert _body_background(page) == INK, f"{name} is not Ink in dark mode"
 
     page.emulate_media(color_scheme="light")
-    page.goto(url, wait_until="domcontentloaded")
+    page.goto(url, wait_until="networkidle")
     assert _body_background(page) == DAWN, f"{name} is not Dawn in light mode"
 
     assert page_errors == [], f"{name} raised: {page_errors}"
@@ -68,7 +68,7 @@ def test_paper_is_always_dawn(name, route, live_server, page):
         pytest.skip(f"{name} not yet converted")
     page.emulate_media(media="print", color_scheme="dark")
     page.goto(live_server.url(_resolve(route, live_server)),
-              wait_until="domcontentloaded")
+              wait_until="networkidle")
     assert _body_background(page) == DAWN, (
         f"{name} would print an Ink ground from a dark-mode machine"
     )
