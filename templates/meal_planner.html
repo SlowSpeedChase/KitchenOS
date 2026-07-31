@@ -31,7 +31,6 @@
             --text:         var(--ink);
             --text-muted:   var(--muted);
             --accent:       var(--app-kitchenos);
-            --accent-hover: color-mix(in srgb, var(--app-kitchenos) 82%, var(--ink));
             --success:      var(--done);
             --danger:       var(--alert);
             --drop-zone:    var(--raised);
@@ -214,7 +213,7 @@
             height: 44px;
             border: none;
             border-radius: 22px;
-            background: rgba(255, 255, 255, 0.92);
+            background: color-mix(in srgb, var(--surface) 92%, transparent);
             box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
             font-size: 17px;
             line-height: 1;
@@ -787,7 +786,7 @@
             min-height: 44px;
             min-width: 44px;
             padding: 0 16px;
-            border: 1px solid rgba(255, 255, 255, 0.5);
+            border: 1px solid color-mix(in srgb, var(--text-on-accent) 50%, transparent);
             border-radius: 10px;
             background: transparent;
             color: var(--text-on-accent);
@@ -1223,7 +1222,7 @@
 
         #trash-target.sortable-drag-over,
         #trash-target:has(.sortable-ghost) {
-            background: color-mix(in srgb, var(--danger) 85%, black);
+            background: color-mix(in srgb, var(--danger) 85%, var(--ink));
             transform: scale(1.12);
         }
 
@@ -1306,7 +1305,7 @@
         .loading-overlay {
             position: fixed;
             inset: 0;
-            background: rgba(245, 245, 247, 0.85);
+            background: color-mix(in srgb, var(--bg) 85%, transparent);
             display: flex;
             align-items: center;
             justify-content: center;
