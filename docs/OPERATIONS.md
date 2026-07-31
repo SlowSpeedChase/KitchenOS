@@ -366,6 +366,17 @@ Two guards worth knowing before you widen its scope:
 - **Consistency problems are reported, not applied.** The model is asked for
   ingredients used in steps but absent from the table (and vice versa), plus
   implausible quantities — it is never asked to edit ingredients or steps.
+- **An uncooked recipe settles as `cook_time: no cooking`.** Every honest way
+  of saying "not cooked" (`0 minutes`, `none`, `n/a`) is also how the old
+  extractor wrote *I don't know*, so without a distinct value a no-cook recipe
+  could never satisfy `cook_time`: it was re-asked on every run, costing an API
+  call each time, and could never reach `complete`. The model now returns the
+  literal `no cooking`, and only that exact string is accepted — a vague
+  `none` is still rejected, so "no cook step" stays distinguishable from "don't
+  know". `cook_time` is additionally never asked for the dish types in
+  `NO_COOK_DISH_TYPES` (`drink`, `snack`). That set is deliberately tiny:
+  measured across the corpus, 77% of desserts, 70% of dips and 62% of sauces
+  carry a real cook time, so a baked queso keeps being asked.
 
 ```bash
 .venv/bin/python scripts/enrich_recipes.py --dry-run --limit 10

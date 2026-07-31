@@ -51,6 +51,23 @@ MANAGED_KEYS = {
 # allergens. These stay empty until a human sets them.
 ALLERGEN_CLAIMS = {"nut-free", "gluten-free", "dairy-free"}
 
+# Dish types that are essentially never cooked, so asking for a cook_time only
+# ever burns a call. Deliberately short: measured against the corpus, *every*
+# other type has real cooked members — 77% of desserts, 70% of dips and 62% of
+# sauces carry a genuine cook_time, so a baked queso must keep being asked.
+# Values must come from normalizer.VALID_DISH_TYPES; anything else silently
+# never matches (see the closed-vocabulary invariant in CLAUDE.md).
+NO_COOK_DISH_TYPES = {"drink", "snack"}
+
+# What the model says when a recipe involves no cooking at all. A *positive*
+# claim, distinct from the junk placeholders below: "none" and "0 minutes" are
+# how the old extractor wrote "I don't know", so they can't also mean "there is
+# genuinely no cook step" — a recipe would never settle. This value is not
+# matched by _JUNK_RE, so once written the field reads as present and stops
+# being re-asked. Nothing parses cook_time as a duration (api_server passes it
+# through opaquely), so a human-readable string is safe here.
+NO_COOK = "no cooking"
+
 # Values that mean "absent" even though the key exists.
 _JUNK_RE = re.compile(
     r"^\s*(null|none|n/?a|unknown|-|\?|0\s*(seconds?|mins?|minutes?)"
@@ -113,6 +130,10 @@ downstream per-serving nutrition is computed by dividing by it. Never return a \
 range or prose.
 - prep_time / cook_time / total_time: strings like "15 minutes" or "1 hour". \
 Estimate from the instructions. Omit a field entirely if you truly cannot tell.
+- cook_time, when nothing is cooked: if the recipe involves no cook step at \
+all — nothing heated, baked, boiled, fried or simmered — return exactly \
+"no cooking". Use that ONLY when you are sure there is no cook step. If you \
+simply cannot tell, omit the field instead; do not answer "none" or "0 minutes".
 - difficulty: one of easy, medium, hard
 - cuisine: a single word/short phrase, e.g. Italian, Mexican, Thai, American
 - protein: the ONE main protein, from exactly this list: {proteins}
@@ -167,10 +188,31 @@ INFERABLE = ["servings", "prep_time", "cook_time", "total_time", "difficulty",
              "cuisine", "protein", "dish_type", "meal_occasion", "dietary"]
 
 
+def fields_to_ask(fm: dict, only_servings: bool = False) -> list:
+    """The inferable fields this recipe is actually missing.
+
+    Skips cook_time for the dish types that are never cooked. dish_type is
+    itself inferable, so it may not be known yet — an unset one keeps asking
+    rather than guessing, and a later run excludes it once the type lands.
+    """
+    if only_servings:
+        return ["servings"] if is_missing(fm.get("servings")) else []
+
+    wanted = list(INFERABLE)
+    dish_type = fm.get("dish_type")
+    if isinstance(dish_type, (list, tuple)):
+        dish_type = dish_type[0] if dish_type else None
+    if isinstance(dish_type, str) and dish_type.strip().lower() in NO_COOK_DISH_TYPES:
+        wanted.remove("cook_time")
+    return [f for f in wanted if is_missing(fm.get(f))]
+
+
 def clean_value(field: str, value):
     """Validate/normalize one model-supplied value. Returns None to skip."""
     if value is None or value == "" or value == []:
         return None
+    if field == "cook_time" and str(value).strip().lower() == NO_COOK:
+        return NO_COOK
     if field == "servings":
         try:
             n = int(value)
@@ -210,8 +252,7 @@ def process(path: Path, client, args):
         return {"file": path.name, "status": "no-frontmatter"}
     fm = parse_fm(fm_text)
 
-    wanted = ["servings"] if args.only_servings else INFERABLE
-    missing = [f for f in wanted if is_missing(fm.get(f))]
+    missing = fields_to_ask(fm, only_servings=args.only_servings)
     if not missing:
         return {"file": path.name, "status": "complete"}
 
