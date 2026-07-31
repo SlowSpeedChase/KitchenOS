@@ -267,10 +267,18 @@ The alternation also matters on its own: an unanchored `{3,8}` accepts five- and
 seven-digit runs, which is how `review.html`'s invalid `#d3355` reads as legitimate.
 
 For `api_server.py` the guard runs the same pattern over **the whole file**, which is
-exact rather than approximate: all 54 of its current hex literals sit inside the six page
-f-strings, and a Flask server has no other reason to name a colour. It additionally
-asserts the file contains exactly one `<!DOCTYPE` — the one inside `_html_page` — so a
-seventh hand-rolled page cannot appear without going through the shared head.
+exact rather than approximate: a Flask server has no legitimate non-markup reason to name
+a colour. It additionally asserts the file contains exactly one `<!DOCTYPE` — the one
+inside `_html_page` — so a seventh hand-rolled page cannot appear without going through
+the shared head.
+
+Its 54 hex literals are **not** all in the six pages, as an earlier draft of this document
+claimed. Roughly 18 belong to `_CLAUDE_BAR_TEMPLATE`, the Claude launch bar that
+`_serve_page_with_claude_bar` injects after the opening `<body>` of *every* page. That
+makes it a seventeenth surface and the most consequential one: it was hardcoded dark, so
+without converting it each newly-Dawn page would carry a dark strip across its top. Its
+purple maps to `--insight` — a *meaning* colour — rather than to `--app-kitchenos`,
+because the accent's job is identity and a second coral element in shared chrome blurs it.
 
 **`test_dark_mode.py`** — walks `SECTIONS` + `HOME` from `lib/web_dashboard.py`, the same
 registry that feeds the home page and the Safari bookmark sync, so a new page joins this
