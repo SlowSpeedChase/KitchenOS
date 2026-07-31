@@ -4,31 +4,38 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>__CARD_TITLE__ — Recipe Card</title>
+    <meta name="theme-color" content="#f4ede3" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#0f1116" media="(prefers-color-scheme: dark)">
+    <link rel="stylesheet" href="/static/tokens.css">
+    <link rel="stylesheet" href="/static/kitchenos.css">
     <style>
-        :root { --grid-line: #3f9e4d; --ink: #1a1a1a; }
+        :root { --grid-line: var(--done); }
         * { box-sizing: border-box; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            font-family: var(--font-body);
             color: var(--ink);
-            background: #f4f4f2;
+            background: var(--bg);
+            background-image: var(--dots);
+            background-size: var(--dot-size) var(--dot-size);
             margin: 0;
             padding: 24px;
         }
         .card {
             max-width: 760px;
             margin: 0 auto;
-            background: #fff;
+            background: var(--surface);
+            background-image: var(--grain);
             border: 3px solid var(--grid-line);
             border-radius: 6px;
             padding: 18px 20px 22px;
         }
         .card-header { text-align: center; border-bottom: 2px solid var(--grid-line); padding-bottom: 10px; margin-bottom: 12px; }
         .card-header h1 { font-size: 24px; margin: 0 0 4px; }
-        .card-meta { font-size: 13px; color: #555; }
+        .card-meta { font-size: 13px; color: var(--muted); }
         .card-meta strong { color: var(--ink); }
         .review-note {
-            font-size: 12px; color: #8a6d00; background: #fff8e1;
-            border: 1px solid #ffe082; border-radius: 6px;
+            font-size: 12px; color: var(--warning); background: var(--tint-warning);
+            border: 1px solid var(--edge-warning); border-radius: 6px;
             padding: 6px 10px; margin: 0 0 14px; text-align: center;
         }
         table.recipe-grid { width: 100%; border-collapse: collapse; }
@@ -40,7 +47,7 @@
         }
         table.recipe-grid td.ing { text-align: left; width: 52%; }
         table.recipe-grid td.action { text-align: center; font-weight: 600; }
-        table.recipe-grid td.action.finish { background: #f1f8f2; }
+        table.recipe-grid td.action.finish { background: var(--tint-done); }
         .grid-steps { margin: 0; padding-left: 18px; text-align: left; font-weight: 400; }
         .grid-steps li { margin: 4px 0; }
         .grid-prep {
@@ -50,11 +57,11 @@
         .toolbar { max-width: 760px; margin: 0 auto 14px; text-align: right; }
         .toolbar button {
             font: inherit; font-size: 14px; padding: 8px 16px;
-            border: 1px solid var(--grid-line); background: #fff; color: var(--grid-line);
+            border: 1px solid var(--grid-line); background: var(--surface); color: var(--grid-line);
             border-radius: 8px; cursor: pointer;
         }
         @media print {
-            body { background: #fff; padding: 0; }
+            body { padding: 0; }
             .card { border-width: 2px; max-width: none; }
             .toolbar, #ko-claude-bar { display: none !important; }
             @page { margin: 12mm; }

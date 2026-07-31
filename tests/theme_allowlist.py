@@ -47,9 +47,7 @@ THEME_COLOR_LITERALS = {"#f4ede3", "#0f1116"}
 UNCONVERTED: set[str] = {
     "meal_planner.html",
     "nutrition_review.html",
-    "print_week.html",
     "receipt_paste.html",
-    "recipe_card.html",
     "recipe_detail.html",
     "review.html",
     "system_health.html",
