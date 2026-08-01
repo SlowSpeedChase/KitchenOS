@@ -54,9 +54,22 @@ def rename_nutrition_keys(content: str) -> tuple[str, list[str]]:
     for old_key, new_key in NUTRITION_KEY_RENAMES.items():
         # Anchored to start-of-line so 'nutrition_calories:' is not matched by 'calories:'
         pattern = rf'(?m)^(\s*){re.escape(old_key)}:'
-        if re.search(pattern, new_frontmatter):
-            new_frontmatter = re.sub(pattern, rf'\g<1>{new_key}:', new_frontmatter)
-            changes.append(f"Renamed '{old_key}' to '{new_key}'")
+        if not re.search(pattern, new_frontmatter):
+            continue
+
+        # Refuse to rename onto a key that already exists — 13 corpus files
+        # carry both families, and renaming would emit two 'nutrition_calories:'
+        # lines. yaml.safe_load tolerates that (last wins) but a strict parser
+        # raises, and the value only survives because those files happen to be
+        # legacy-first: with the canonical key first, last-wins would publish
+        # the 3058 kcal whole-recipe total as a per-serving value. Deleting the
+        # legacy key is scripts/normalize_recipes.py's job, not a rename's.
+        canonical = rf'(?m)^\s*{re.escape(new_key)}:'
+        if re.search(canonical, new_frontmatter):
+            continue
+
+        new_frontmatter = re.sub(pattern, rf'\g<1>{new_key}:', new_frontmatter)
+        changes.append(f"Renamed '{old_key}' to '{new_key}'")
 
     if not changes:
         return content, changes
