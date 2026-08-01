@@ -42,11 +42,12 @@ Healthy Blueberry Apple Oatmeal Cake.md  servings: 6-8
 Watermelon Feta Salad.md                 servings: 6-8 as a side dish
 ```
 
-Proposed handling: take the low end of the range, and mark
+**DECIDED (user, 2026-07-31): take the low end of the range.** So `6-8` → `6`,
+`4-6 servings (estimated)` → `4`, `6-8 as a side dish` → `6`. Also mark
 `servings_inferred: true` + `servings_needs_review: true` — reusing the keys
 11 files already carry, per the "honest about inference" principle in CLAUDE.md.
-**Open question:** low end vs midpoint. Low end means fewer servings means
-*higher* per-serving calories, which is the conservative direction for macros.
+Low end means fewer servings means *higher* per-serving calories, which is the
+conservative direction for macros.
 
 **2. Legacy flat nutrition keys (13 files).** `calories` / `fat` / `carbs`
 survive alongside the canonical `nutrition_*` keys. All have `date_added` in
@@ -81,12 +82,16 @@ Chocolate Peanut Butter Bars.md   recipe_url: "https://feelgoodfoodie.net/recipe
 Cabbage Steaks.md                 enrich_none: ["protein"]
 ```
 
-`recipe_url` is *not* a duplicate of `source_url` here — that file's `source_url`
-is the YouTube short, and `recipe_url` is the creator's actual recipe page. So
-this is a **naming decision, not a delete**: either standardize the key across
-the corpus or drop it. Do not blindly fold it into `source_url`.
-`enrich_none: ["protein"]` needs its writer located before deciding — grep the
-enrichment path; it may be meaningful state rather than debris.
+**DECIDED (user, 2026-07-31): drop `recipe_url`.** Note what this costs — it is
+*not* a duplicate of `source_url`. That file's `source_url` is the YouTube short;
+`recipe_url` is the creator's own recipe page, and it exists nowhere else in the
+corpus. Dropping it discards that URL. The vault is not in git, so the only
+recovery path is the `lib/backup.create_backup` snapshot the normalizer takes
+before writing — make sure that runs. **Never fold it into `source_url`.**
+
+`enrich_none: ["protein"]` is still open, but it is a code question, not a user
+question: locate its writer in the enrichment path before deciding. It may be
+meaningful state rather than debris.
 
 ### Out of scope (deliberately)
 
@@ -115,8 +120,9 @@ enrichment path; it may be meaningful state rather than debris.
    **line-surgical edits vs YAML round-trip**. Strong prior: line-surgical, like
    `migrate_recipes.py` — a round-trip through a YAML lib would reformat all 252
    files and bury the real change in noise.
-2. Resolve the two open questions above (servings low-end vs midpoint;
-   `recipe_url` / `enrich_none` keep-or-drop) — ask the user, don't guess.
+2. ~~Servings low-end vs midpoint; `recipe_url` keep-or-drop~~ — **both answered
+   by the user 2026-07-31: low end, and drop `recipe_url`.** Only `enrich_none`
+   remains, and that resolves by reading the enrichment code, not by asking.
 3. Write `tests/test_recipe_schema.py` **first** (TDD): the corpus-wide check
    that fails on drift. It is the deliverable that prevents recurrence, and it
    defines the schema the normalizer must satisfy.
@@ -144,7 +150,8 @@ Both read the live vault read-only. Delete `scripts/_analysis/` before merge.
       `scripts/purge_unvetted_resolutions.py`; no overlap with this scope
 - [x] Dependencies identified and noted
 - [x] Branch and worktree created
-- [ ] Open questions resolved with the user
+- [x] Open questions resolved with the user (2026-07-31: servings → low end;
+      `recipe_url` → drop). `enrich_none` still needs its writer located.
 - [ ] Implementation plan written (superpowers:writing-plans)
 
 ### Dev
