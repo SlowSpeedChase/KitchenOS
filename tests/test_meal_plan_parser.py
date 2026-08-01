@@ -9,6 +9,7 @@ from lib.meal_plan_parser import (
     insert_recipe_into_meal_plan,
     parse_meal_plan,
     rebuild_meal_plan_markdown,
+    sub_multiplier,
 )
 from lib.meal_loader import Meal, SubRecipe, save_meal
 from templates.meal_plan_template import generate_meal_plan_markdown
@@ -523,3 +524,55 @@ class TestFlattenToRecipes:
         assert flatten_to_recipes(None, meals_dir=tmp_path) == []
         single = MealEntry("Pancakes", 1)
         assert flatten_to_recipes(single, meals_dir=tmp_path) == [single]
+
+
+class TestSubMultiplier:
+    """sub_multiplier is the single authority on a sub-recipe's effective scale."""
+
+    def test_multiplies_outer_by_sub(self):
+        assert sub_multiplier(2, 3) == 6.0
+        assert sub_multiplier(1, 1) == 1.0
+
+    def test_preserves_fractions_in_both_factors(self):
+        assert sub_multiplier(2, 1.5) == 3.0
+        assert sub_multiplier(1, 0.25) == 0.25
+        assert sub_multiplier(1.5, 1.5) == 2.25
+
+    def test_non_positive_or_garbage_sub_counts_as_one(self):
+        assert sub_multiplier(2, 0) == 2.0
+        assert sub_multiplier(2, -1) == 2.0
+        assert sub_multiplier(2, None) == 2.0
+        assert sub_multiplier(2, "lots") == 2.0
+
+    def test_returns_float_even_for_integer_inputs(self):
+        assert isinstance(sub_multiplier(2, 3), float)
+
+
+class TestFlattenToRecipesFractional:
+    """Fractional sub-servings must survive flattening, not truncate to 1."""
+
+    def test_fractional_sub_serving_is_not_truncated(self, tmp_path):
+        save_meal(
+            Meal(
+                name="Chili Bowl",
+                sub_recipes=[
+                    SubRecipe(recipe="Turkey Chili", servings=1.5),
+                    SubRecipe(recipe="Cornbread", servings=0.5),
+                ],
+            ),
+            meals_dir=tmp_path,
+        )
+        flat = flatten_to_recipes(
+            [MealEntry(name="Chili Bowl", servings=1.0, kind="meal")], meals_dir=tmp_path)
+        assert flat[0].servings == 1.5
+        assert flat[1].servings == 0.5
+
+    def test_fractional_stacks_with_outer_multiplier(self, tmp_path):
+        save_meal(
+            Meal(name="Chili Bowl",
+                 sub_recipes=[SubRecipe(recipe="Turkey Chili", servings=1.5)]),
+            meals_dir=tmp_path,
+        )
+        flat = flatten_to_recipes(
+            [MealEntry(name="Chili Bowl", servings=2.0, kind="meal")], meals_dir=tmp_path)
+        assert flat[0].servings == 3.0

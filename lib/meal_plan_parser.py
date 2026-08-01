@@ -3,6 +3,7 @@
 Extracts recipe links from weekly meal plan files for calendar generation.
 """
 
+import math
 import re
 from datetime import date, timedelta
 from pathlib import Path
@@ -66,6 +67,28 @@ def extract_meals_for_day(section: str) -> dict:
     return meals
 
 
+def sub_multiplier(outer: float, sub_servings) -> float:
+    """Effective multiplier for one sub-recipe of a meal placed at ``outer`` scale.
+
+    The single authority on this arithmetic. Two callers walk meal bundles and
+    both need the same answer — :func:`flatten_to_recipes` here, and
+    ``shopping_list_generator.extract_recipe_links`` — and they shipped as
+    independent copies that both truncated ``1.5`` to ``1``. Keep it one rule:
+    a fractional sub-serving that the planner honours but the shopping list
+    rounds down is a silent under-buy at the store.
+
+    A missing, unparseable or non-positive ``sub_servings`` counts as 1.0 —
+    matching ``meal_loader``'s forgiving read of the same field.
+    """
+    try:
+        sub = float(sub_servings)
+    except (TypeError, ValueError):
+        sub = 1.0
+    if not math.isfinite(sub) or sub <= 0:
+        sub = 1.0
+    return float(outer) * sub
+
+
 def flatten_to_recipes(entries, meals_dir: Optional[Path] = None) -> list[MealEntry]:
     """Expand any meal entries to their sub-recipes; pass recipe entries through.
 
@@ -100,7 +123,7 @@ def flatten_to_recipes(entries, meals_dir: Optional[Path] = None) -> list[MealEn
             flat.append(
                 MealEntry(
                     name=sub.recipe,
-                    servings=entry.servings * max(1, int(sub.servings or 1)),
+                    servings=sub_multiplier(entry.servings, sub.servings),
                     kind="recipe",
                 )
             )

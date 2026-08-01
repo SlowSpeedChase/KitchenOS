@@ -77,7 +77,10 @@ private struct MealEditor: View {
     @State private var description: String
     @State private var tagsText: String
     @State private var subRecipes: [SubRecipe]
+    @State private var slot: String
     @State private var pickingRecipe = false
+
+    private static let slots = ["breakfast", "lunch", "snack", "dinner"]
 
     init(original: Meal?, onSave: @escaping (Meal) async -> Void) {
         self.original = original
@@ -86,6 +89,14 @@ private struct MealEditor: View {
         _description = State(initialValue: original?.description ?? "")
         _tagsText = State(initialValue: (original?.tags ?? []).joined(separator: ", "))
         _subRecipes = State(initialValue: original?.subRecipes ?? [])
+        _slot = State(initialValue: original?.slot ?? "dinner")
+    }
+
+    /// "1.5", "2" — a serving count without a trailing .0 on whole numbers.
+    /// `%g` rather than `Int(value)` because converting a non-finite or huge
+    /// Double to Int traps, and this renders whatever the API decoded.
+    private func fmt(_ value: Double) -> String {
+        value.isFinite ? String(format: "%g", value) : "1"
     }
 
     var body: some View {
@@ -95,13 +106,19 @@ private struct MealEditor: View {
                     TextField("Name", text: $name).disabled(original != nil)
                     TextField("Description", text: $description)
                     TextField("Tags (comma-separated)", text: $tagsText)
+                    Picker("Slot", selection: $slot) {
+                        ForEach(Self.slots, id: \.self) { Text($0.capitalized).tag($0) }
+                    }
                 }
                 Section("Recipes") {
                     ForEach($subRecipes) { $sub in
                         HStack {
                             Text(sub.recipe)
                             Spacer()
-                            Stepper("×\(sub.servings)", value: $sub.servings, in: 1...12)
+                            // Quarter-serving steps: splitting a batch across meals
+                            // is the whole point of a fractional serving count.
+                            Stepper("×\(fmt(sub.servings))",
+                                    value: $sub.servings, in: 0.25...12, step: 0.25)
                                 .fixedSize()
                         }
                     }
@@ -137,6 +154,7 @@ private struct MealEditor: View {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
         return Meal(name: name.trimmingCharacters(in: .whitespaces),
-                    description: description, tags: tags, subRecipes: subRecipes)
+                    description: description, tags: tags, subRecipes: subRecipes,
+                    slot: slot)
     }
 }

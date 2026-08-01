@@ -452,3 +452,135 @@ class TestExtractManualItems:
         result = extract_manual_items(existing, [])
 
         assert result == ["item1", "item2"]
+
+
+def test_extract_recipe_links_keeps_fractional_sub_servings(tmp_path, monkeypatch):
+    """A 1.5-serving sub-recipe must buy 1.5x, not round down to 1x.
+
+    This path used to carry its own copy of the multiplier rule and truncated
+    with `int()` — a silent under-buy at the store for a meal the planner shows
+    as split. Both callers now go through meal_plan_parser.sub_multiplier.
+    """
+    from lib.meal_loader import Meal, SubRecipe, save_meal
+
+    monkeypatch.setenv("KITCHENOS_VAULT", str(tmp_path))
+    save_meal(Meal(
+        name="Chili Bowl",
+        sub_recipes=[
+            SubRecipe(recipe="Turkey Chili", servings=1.5),
+            SubRecipe(recipe="Cornbread", servings=0.5),
+        ],
+    ))
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_text("## Monday\n[[Meal: Chili Bowl]]\n")
+
+    links = extract_recipe_links(plan_path)
+
+    assert ("Turkey Chili", 1.5) in links
+    assert ("Cornbread", 0.5) in links
+
+
+def test_extract_recipe_links_fractional_stacks_with_outer_multiplier(tmp_path, monkeypatch):
+    from lib.meal_loader import Meal, SubRecipe, save_meal
+
+    monkeypatch.setenv("KITCHENOS_VAULT", str(tmp_path))
+    save_meal(Meal(
+        name="Chili Bowl",
+        sub_recipes=[SubRecipe(recipe="Turkey Chili", servings=1.5)],
+    ))
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_text("[[Meal: Chili Bowl]] x2\n")
+
+    assert ("Turkey Chili", 3.0) in extract_recipe_links(plan_path)
+
+
+# ---- on_hand_notes: annotate what the pantry covered, never decrement ----
+
+def test_on_hand_notes_names_a_fully_covered_line():
+    """A covered line drops out of `items`, so something has to say why."""
+    from lib.shopping_list_generator import on_hand_notes
+
+    notes = on_hand_notes([
+        {"item": "brown sugar", "needed": {"amount": "1", "unit": "cup"},
+         "from_pantry": {"amount": "1", "unit": "cup"}, "to_buy": None, "warning": None},
+    ])
+    assert notes == ["brown sugar — in stock, 1 cup needed"]
+
+
+def test_on_hand_notes_explains_a_partial_credit():
+    from lib.shopping_list_generator import on_hand_notes
+
+    notes = on_hand_notes([
+        {"item": "eggs", "needed": {"amount": "4", "unit": "whole"},
+         "from_pantry": {"amount": "2", "unit": "whole"},
+         "to_buy": {"amount": "2", "unit": "whole"}, "warning": None},
+    ])
+    assert notes == ["eggs — using 2 from the pantry, buying 2"]
+
+
+def test_on_hand_notes_skips_lines_the_pantry_did_not_touch():
+    from lib.shopping_list_generator import on_hand_notes
+
+    assert on_hand_notes([
+        {"item": "flour", "needed": {"amount": "1", "unit": "cup"},
+         "from_pantry": None, "to_buy": {"amount": "1", "unit": "cup"}, "warning": None},
+    ]) == []
+
+
+def test_on_hand_notes_surfaces_a_unit_mismatch_warning():
+    """A cross-family mismatch isn't subtracted, so say so rather than go quiet."""
+    from lib.shopping_list_generator import on_hand_notes
+
+    notes = on_hand_notes([
+        {"item": "milk", "needed": {"amount": "1", "unit": "cup"},
+         "from_pantry": None, "to_buy": {"amount": "1", "unit": "cup"},
+         "warning": "pantry has 500 g, recipe asks 1 cup (different units)"},
+    ])
+    assert notes == ["milk — pantry has 500 g, recipe asks 1 cup "
+                     "(different units); still on the list"]
+
+
+def test_format_qty_drops_the_whole_pseudo_unit():
+    from lib.shopping_list_generator import format_qty
+
+    assert format_qty("3", "whole") == "3"
+    assert format_qty("2", "cup") == "2 cup"
+    assert format_qty("", "") == "?"
+
+
+def test_pantry_split_does_not_mutate_inventory(tmp_path, monkeypatch):
+    """The generator only ever reads the pantry — decrementing is apply_decisions' job."""
+    from lib import shopping_list_generator as slg
+
+    plan = tmp_path / "Meal Plans"
+    plan.mkdir()
+    (plan / "2026-W04.md").write_text("## Monday\n### Dinner\n[[Test Pasta]]\n")
+    monkeypatch.setattr(slg, "MEAL_PLANS_PATH", plan)
+    monkeypatch.setattr(slg, "load_recipe_ingredients",
+                        lambda name: ([{"amount": "1", "unit": "cup", "item": "flour"}], None))
+
+    pantry = [{"item": "flour", "amount": "10", "unit": "cup"}]
+    before = [dict(row) for row in pantry]
+    slg.generate_shopping_list("2026-W04", pantry=pantry)
+    assert pantry == before
+
+
+def test_extract_ingredient_table_keeps_grouped_sections():
+    """REGRESSION: the section regex stopped at `\\n##`, which matches `\\n###` too.
+
+    So a recipe grouping its ingredients under sub-headings lost every group after
+    the first from the shopping list — the same bug as parse_recipe_body's, in a
+    second copy of the rule.
+    """
+    from lib.shopping_list_generator import extract_ingredient_table
+
+    body = (
+        "## Ingredients\n\n"
+        "| Amount | Unit | Ingredient |\n|---|---|---|\n| 2 | lb | chicken thighs |\n\n"
+        "### For the spice rub\n\n"
+        "| Amount | Unit | Ingredient |\n|---|---|---|\n| 1 | tsp | paprika |\n\n"
+        "## Instructions\n\n1. Cook.\n"
+    )
+    section = extract_ingredient_table(body)
+    assert "paprika" in section
+    assert "Cook." not in section

@@ -615,3 +615,354 @@ def test_review_page_has_a_location_sort_mode(client):
     assert b'groupHeader' in html
     assert b'placeRows' in html
     assert b'li.group' in html
+
+
+# ---- Meal macros + fractional serving splits ----
+
+def test_create_meal_accepts_fractional_servings_and_slot(client, tmp_vault, tmp_path, monkeypatch):
+    """A 1.5-serving sub-recipe round-trips, and the rollup comes back with it."""
+    recipes_dir = tmp_path / "Recipes"
+    recipes_dir.mkdir()
+    _write_recipe(recipes_dir, "Turkey Chili", cal=300, protein=32,
+                  coverage=0.95, servings=4, items=["turkey", "beans"])
+    _write_recipe(recipes_dir, "Cornbread", cal=200, protein=6,
+                  coverage=0.95, servings=8, items=["cornmeal"])
+    monkeypatch.setattr("api_server.OBSIDIAN_RECIPES_PATH", recipes_dir)
+
+    response = client.post('/api/meals', json={
+        "name": "Chili Bowl Lunch",
+        "slot": "lunch",
+        "sub_recipes": [
+            {"recipe": "Turkey Chili", "servings": 1.5},
+            {"recipe": "Cornbread", "servings": 0.5},
+        ],
+    })
+    assert response.status_code == 201
+    created = response.get_json()
+    assert created["slot"] == "lunch"
+    assert [s["servings"] for s in created["sub_recipes"]] == [1.5, 0.5]
+    assert created["nutrition"]["calories"] == pytest.approx(300 * 1.5 + 200 * 0.5)
+    assert created["nutrition"]["incomplete"] is False
+
+    # ...and survives the round trip through the .meal.md file
+    fetched = client.get('/api/meals/Chili Bowl Lunch').get_json()
+    assert [s["servings"] for s in fetched["sub_recipes"]] == [1.5, 0.5]
+    assert fetched["slot"] == "lunch"
+    assert fetched["nutrition"]["protein"] == pytest.approx(32 * 1.5 + 6 * 0.5)
+
+
+def test_meal_nutrition_names_untrusted_sub_recipes(client, tmp_vault, tmp_path, monkeypatch):
+    """An untrusted sub-recipe is excluded and named, not counted as zero."""
+    recipes_dir = tmp_path / "Recipes"
+    recipes_dir.mkdir()
+    _write_recipe(recipes_dir, "Turkey Chili", cal=300, protein=32,
+                  coverage=0.95, servings=4, items=["turkey"])
+    (recipes_dir / "Greek Yogurt.md").write_text(
+        '---\ntitle: "Greek Yogurt"\nnutrition_calories: 8000\n'
+        'nutrition_protein: 900\nnutrition_coverage: 0.95\n---\n\n# Greek Yogurt\n'
+    )
+    monkeypatch.setattr("api_server.OBSIDIAN_RECIPES_PATH", recipes_dir)
+
+    client.post('/api/meals', json={
+        "name": "Sketchy Bowl",
+        "sub_recipes": [
+            {"recipe": "Turkey Chili"},
+            {"recipe": "Greek Yogurt", "servings": 1.5},
+        ],
+    })
+    nutrition = client.get('/api/meals/Sketchy Bowl').get_json()["nutrition"]
+    assert nutrition["calories"] == 300
+    assert nutrition["incomplete"] is True
+    assert nutrition["excluded"] == ["Greek Yogurt"]
+
+
+def test_create_meal_rejects_non_positive_servings(client, tmp_vault):
+    response = client.post('/api/meals', json={
+        "name": "Zero Meal",
+        "sub_recipes": [{"recipe": "Turkey Chili", "servings": 0}],
+    })
+    assert response.status_code == 400
+    assert "servings" in response.get_json()["error"].lower()
+
+
+def test_create_meal_rejects_unparseable_servings(client, tmp_vault):
+    response = client.post('/api/meals', json={
+        "name": "Wordy Meal",
+        "sub_recipes": [{"recipe": "Turkey Chili", "servings": "lots"}],
+    })
+    assert response.status_code == 400
+    assert "servings" in response.get_json()["error"].lower()
+
+
+def test_create_meal_rejects_unknown_slot(client, tmp_vault):
+    response = client.post('/api/meals', json={
+        "name": "Brunchy Meal",
+        "slot": "brunch",
+        "sub_recipes": [{"recipe": "Turkey Chili"}],
+    })
+    assert response.status_code == 400
+    assert "slot" in response.get_json()["error"].lower()
+
+
+def test_meal_defaults_to_dinner_slot(client, tmp_vault, tmp_path, monkeypatch):
+    monkeypatch.setattr("api_server.OBSIDIAN_RECIPES_PATH", tmp_path)
+    response = client.post('/api/meals', json={
+        "name": "Slotless Meal",
+        "sub_recipes": [{"recipe": "Turkey Chili"}],
+    })
+    assert response.status_code == 201
+    assert response.get_json()["slot"] == "dinner"
+
+
+def test_update_meal_rejection_does_not_delete_the_meal(client, tmp_vault, tmp_path, monkeypatch):
+    """A 400 on a rename must not take the existing file with it.
+
+    The rename used to delete the old file before validating the payload, so an
+    invalid body destroyed the meal and saved nothing in its place.
+    """
+    monkeypatch.setattr("api_server.OBSIDIAN_RECIPES_PATH", tmp_path)
+    client.post('/api/meals', json={
+        "name": "Keeper", "sub_recipes": [{"recipe": "Turkey Chili"}],
+    })
+
+    response = client.put('/api/meals/Keeper', json={
+        "name": "Renamed", "sub_recipes": [{"recipe": "Turkey Chili", "servings": -1}],
+    })
+    assert response.status_code == 400
+    assert client.get('/api/meals/Keeper').status_code == 200
+
+
+def test_update_meal_preserves_slot_when_omitted(client, tmp_vault, tmp_path, monkeypatch):
+    monkeypatch.setattr("api_server.OBSIDIAN_RECIPES_PATH", tmp_path)
+    client.post('/api/meals', json={
+        "name": "Lunchy", "slot": "lunch",
+        "sub_recipes": [{"recipe": "Turkey Chili"}],
+    })
+    updated = client.put('/api/meals/Lunchy', json={
+        "description": "now with a description",
+    }).get_json()
+    assert updated["slot"] == "lunch"
+
+
+def test_macro_targets_endpoint_defaults(client, tmp_vault):
+    """No My Macros.md → null daily target, default shares, no normalisation."""
+    body = client.get('/api/macro-targets').get_json()
+    assert body["daily"] is None
+    assert body["slot_shares"] == {
+        "breakfast": 0.25, "lunch": 0.3, "dinner": 0.35, "snack": 0.1,
+    }
+    assert body["slot_shares_normalized"] is False
+
+
+def test_macro_targets_endpoint_reads_shares(client, tmp_vault):
+    (tmp_vault / "My Macros.md").write_text(
+        "---\ncalories: 2300\nprotein: 190\ncarbs: 228\nfat: 70\n"
+        "share_breakfast: 25\nshare_lunch: 30\nshare_dinner: 35\nshare_snack: 10\n---\n"
+    )
+    body = client.get('/api/macro-targets').get_json()
+    assert body["daily"]["protein"] == 190
+    assert body["slot_shares"]["lunch"] == pytest.approx(0.30)
+    assert body["slot_shares_normalized"] is True, "percentages were rescaled — say so"
+
+
+def test_meal_plan_get_ships_slot_and_nutrition_for_meal_entries(
+        client, tmp_vault, tmp_path, monkeypatch):
+    """The planner loads meals and the plan concurrently, so the plan must carry
+    a meal's macros itself rather than relying on the meal index being ready."""
+    recipes_dir = tmp_path / "Recipes"
+    recipes_dir.mkdir()
+    _write_recipe(recipes_dir, "Turkey Chili", cal=300, protein=32,
+                  coverage=0.95, servings=4, items=["turkey"])
+    plans_dir = tmp_path / "Meal Plans"
+    plans_dir.mkdir()
+    (plans_dir / "2026-W31.md").write_text(
+        "## Thursday (Jul 31)\n\n### Lunch\n[[Meal: Chili Bowl Lunch]]\n\n### Dinner\n\n"
+    )
+    monkeypatch.setattr("api_server.OBSIDIAN_RECIPES_PATH", recipes_dir)
+    monkeypatch.setattr("api_server.MEAL_PLANS_PATH", plans_dir)
+    client.post('/api/meals', json={
+        "name": "Chili Bowl Lunch", "slot": "lunch",
+        "sub_recipes": [{"recipe": "Turkey Chili", "servings": 1.5}],
+    })
+
+    days = client.get('/api/meal-plan/2026-W31').get_json()["days"]
+    thursday = next(d for d in days if d["day"] == "Thursday")
+    assert thursday["lunch"]["kind"] == "meal"
+    assert thursday["lunch"]["slot"] == "lunch"
+    assert thursday["lunch"]["nutrition"]["calories"] == pytest.approx(450)
+    assert thursday["lunch"]["sub_recipes"] == [
+        {"recipe": "Turkey Chili", "servings": 1.5}
+    ]
+
+
+def test_suggest_meal_counts_a_planned_meal_bundle(client, tmp_vault, tmp_path, monkeypatch):
+    """REGRESSION: a `[[Meal: X]]` entry contributed zero kcal to the day.
+
+    day_macro_gap resolves each planned name against Recipes/, where a meal
+    bundle has no file — so the suggester saw an empty day and steered every
+    macro-aware suggestion wrong by a whole meal. The endpoint now flattens meal
+    entries to their sub-recipes before building planned_meals.
+    """
+    (tmp_vault / "My Macros.md").write_text(
+        "---\ncalories: 2300\nprotein: 190\ncarbs: 228\nfat: 70\n---\n"
+    )
+    recipes_dir = tmp_path / "Recipes"
+    recipes_dir.mkdir()
+    _write_recipe(recipes_dir, "Turkey Chili", cal=300, protein=32,
+                  coverage=0.95, servings=4, items=["turkey", "beans"])
+    _write_recipe(recipes_dir, "Beef Power Bowl", cal=650, protein=48,
+                  coverage=0.95, servings=3, items=["beef", "quinoa"])
+    plans_dir = tmp_path / "Meal Plans"
+    plans_dir.mkdir()
+    (plans_dir / "2026-W31.md").write_text(
+        "## Thursday (Jul 31)\n\n### Lunch\n[[Meal: Chili Bowl Lunch]]\n\n### Dinner\n\n"
+    )
+    monkeypatch.setattr("api_server.OBSIDIAN_RECIPES_PATH", recipes_dir)
+    monkeypatch.setattr("api_server.MEAL_PLANS_PATH", plans_dir)
+    client.post('/api/meals', json={
+        "name": "Chili Bowl Lunch", "slot": "lunch",
+        "sub_recipes": [{"recipe": "Turkey Chili", "servings": 1.5}],
+    })
+
+    response = client.post('/api/suggest-meal', json={
+        "week": "2026-W31", "day": "Thursday", "meal": "dinner",
+    })
+    assert response.status_code == 200
+    current = response.get_json()["macro_context"]["current"]
+    assert current["protein"] == pytest.approx(32 * 1.5)
+    assert current["calories"] == pytest.approx(300 * 1.5)
+
+
+# ---- Shopping list credits inventory on the one-shot trigger ----
+
+def _plan_and_recipe(tmp_path, monkeypatch, ingredients):
+    """A one-recipe week wired into both the API and the generator."""
+    import lib.shopping_list_generator as slg
+
+    plans = tmp_path / "Meal Plans"
+    plans.mkdir(exist_ok=True)
+    (plans / "2026-W31.md").write_text("## Monday (Jul 27)\n### Dinner\n[[Test Bake]]\n")
+    lists = tmp_path / "Shopping Lists"
+    lists.mkdir(exist_ok=True)
+    monkeypatch.setattr(slg, "MEAL_PLANS_PATH", plans)
+    monkeypatch.setattr(slg, "SHOPPING_LISTS_PATH", lists)
+    monkeypatch.setattr("api_server.SHOPPING_LISTS_PATH", lists)
+    monkeypatch.setattr(slg, "load_recipe_ingredients", lambda name: (ingredients, None))
+    return lists
+
+
+def test_generate_shopping_list_omits_what_you_already_have(
+        client, tmp_vault, tmp_path, monkeypatch):
+    """REGRESSION: the phone trigger passed no pantry, so it bought what you owned.
+
+    The reported symptom was garlic salt, eggs and brown sugar on the list when
+    all three were in the kitchen.
+    """
+    from lib import pantry as pantry_module
+
+    lists = _plan_and_recipe(tmp_path, monkeypatch, [
+        {"amount": "1", "unit": "tsp", "item": "garlic salt"},
+        {"amount": "2", "unit": "cup", "item": "flour"},
+    ])
+    monkeypatch.setattr(pantry_module, "load_pantry",
+                        lambda: [{"item": "garlic salt", "amount": "3", "unit": "tsp"}])
+
+    response = client.post('/generate-shopping-list', json={"week": "2026-W31"})
+    assert response.status_code == 200
+
+    written = (lists / "2026-W31.md").read_text()
+    buy_lines = [ln for ln in written.split("\n") if ln.startswith("- [ ] ")]
+    assert any("flour" in ln for ln in buy_lines)
+    assert not any("garlic salt" in ln for ln in buy_lines), \
+        "you own the garlic salt — it must not be on the buy list"
+
+
+def test_generate_shopping_list_annotates_what_it_credited(
+        client, tmp_vault, tmp_path, monkeypatch):
+    """Credited stock is named under 'Already have' — omitted, not silently vanished."""
+    from lib import pantry as pantry_module
+
+    lists = _plan_and_recipe(tmp_path, monkeypatch, [
+        {"amount": "1", "unit": "cup", "item": "brown sugar"},
+    ])
+    monkeypatch.setattr(pantry_module, "load_pantry",
+                        lambda: [{"item": "brown sugar", "amount": "5", "unit": "cup"}])
+
+    client.post('/generate-shopping-list', json={"week": "2026-W31"})
+    written = (lists / "2026-W31.md").read_text()
+
+    assert "## Already have" in written
+    assert "brown sugar — in stock, 1 cup needed" in written
+
+
+def test_credited_items_are_not_checkboxes(client, tmp_vault, tmp_path, monkeypatch):
+    """The 'Already have' notes must never be `- [ ]` lines.
+
+    parse_shopping_list_file collects every unchecked box in the file regardless
+    of section, so a checkbox here would be sent to Reminders as something to buy
+    and would return as a phantom "manual item" on the next regeneration.
+    """
+    from lib import pantry as pantry_module
+    from lib.shopping_list_generator import parse_shopping_list_file
+
+    lists = _plan_and_recipe(tmp_path, monkeypatch, [
+        {"amount": "1", "unit": "cup", "item": "brown sugar"},
+        {"amount": "2", "unit": "cup", "item": "flour"},
+    ])
+    monkeypatch.setattr(pantry_module, "load_pantry",
+                        lambda: [{"item": "brown sugar", "amount": "5", "unit": "cup"}])
+
+    client.post('/generate-shopping-list', json={"week": "2026-W31"})
+
+    unchecked = parse_shopping_list_file("2026-W31")["items"]
+    assert any("flour" in i for i in unchecked)
+    assert not any("brown sugar" in i for i in unchecked), \
+        "a credited note must not read as an item to buy"
+
+    # ...and regenerating must not resurrect it as a manual addition
+    client.post('/generate-shopping-list', json={"week": "2026-W31"})
+    written = (lists / "2026-W31.md").read_text()
+    assert written.count("brown sugar") == 1
+
+
+def test_generate_shopping_list_never_decrements_inventory(
+        client, tmp_vault, tmp_path, monkeypatch):
+    """Annotate, don't decrement — this trigger has no confirmation step.
+
+    Stock is only ever spent through /api/shopping-list/confirm's decisions.
+    """
+    from lib import pantry as pantry_module
+
+    _plan_and_recipe(tmp_path, monkeypatch, [
+        {"amount": "1", "unit": "cup", "item": "brown sugar"},
+    ])
+    monkeypatch.setattr(pantry_module, "load_pantry",
+                        lambda: [{"item": "brown sugar", "amount": "5", "unit": "cup"}])
+
+    def explode(*args, **kwargs):
+        raise AssertionError("generate must not apply pantry decisions")
+
+    monkeypatch.setattr(pantry_module, "apply_decisions", explode)
+    monkeypatch.setattr(pantry_module, "save_pantry", explode)
+
+    assert client.post('/generate-shopping-list',
+                       json={"week": "2026-W31"}).status_code == 200
+
+
+def test_generate_shopping_list_use_pantry_false_keeps_raw_demand(
+        client, tmp_vault, tmp_path, monkeypatch):
+    """The opt-out returns the pre-fix behaviour: every ingredient, no notes."""
+    from lib import pantry as pantry_module
+
+    lists = _plan_and_recipe(tmp_path, monkeypatch, [
+        {"amount": "1", "unit": "cup", "item": "brown sugar"},
+    ])
+    monkeypatch.setattr(pantry_module, "load_pantry",
+                        lambda: [{"item": "brown sugar", "amount": "5", "unit": "cup"}])
+
+    client.post('/generate-shopping-list',
+                json={"week": "2026-W31", "use_pantry": False})
+    written = (lists / "2026-W31.md").read_text()
+
+    assert "- [ ] 1 cup brown sugar" in written
+    assert "## Already have" not in written

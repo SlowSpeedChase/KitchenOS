@@ -7,9 +7,14 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from lib.recipe_parser import parse_recipe_file, parse_ingredient_table
+from lib.recipe_parser import (
+    extract_ingredients_section,
+    parse_ingredient_table,
+    parse_recipe_file,
+)
 from lib.ingredient_aggregator import aggregate_ingredients, format_ingredient, parse_amount_to_float, format_amount
 from lib import meal_loader, paths
+from lib.meal_plan_parser import sub_multiplier
 
 # Configuration
 OBSIDIAN_VAULT = paths.vault_root()
@@ -57,7 +62,7 @@ def extract_recipe_links(meal_plan_path: Path) -> list[tuple[str, float]]:
             meal = meal_loader.load_meal(name)
             if meal and meal.sub_recipes:
                 for sub in meal.sub_recipes:
-                    out.append((sub.recipe, servings * max(1, int(sub.servings or 1))))
+                    out.append((sub.recipe, sub_multiplier(servings, sub.servings)))
                 continue
         out.append((name, servings))
     return out
@@ -82,10 +87,13 @@ def find_recipe_file(recipe_name: str) -> Path | None:
 
 
 def extract_ingredient_table(body: str) -> str:
-    """Extract ingredient table from recipe body."""
-    pattern = r'##\s+Ingredients\s*\n(.*?)(?=\n##|\Z)'
-    match = re.search(pattern, body, re.IGNORECASE | re.DOTALL)
-    return match.group(1).strip() if match else ""
+    """Extract the ingredients section from a recipe body.
+
+    Delegates to `recipe_parser.extract_ingredients_section` — this used to carry
+    its own regex, which stopped at `\\n##` and so truncated at a `###` sub-heading,
+    dropping every ingredient group after the first from the shopping list.
+    """
+    return extract_ingredients_section(body)
 
 
 def multiply_ingredients(ingredients: list[dict], multiplier: float) -> list[dict]:
@@ -181,6 +189,62 @@ def compute_lines(aggregated: list[dict], pantry: Optional[list[dict]] = None) -
             "warning": warning,
         })
     return lines
+
+
+def format_qty(amount, unit) -> str:
+    """"2 cup", or a bare "3" for the `whole` pseudo-unit ("3 whole eggs" reads badly).
+
+    The one quantity formatter for shopping-list prose — `shopping_list.py`'s
+    interactive pantry prompt delegates here rather than keeping its own copy.
+    """
+    parts = [str(amount)] if amount not in ("", None) else []
+    if unit and unit not in ("whole", ""):
+        parts.append(str(unit))
+    return " ".join(parts).strip() or "?"
+
+
+def _fmt_qty(qty: Optional[dict]) -> str:
+    """`format_qty` for a `{amount, unit}` record."""
+    if not qty:
+        return ""
+    return format_qty(qty.get("amount"), qty.get("unit"))
+
+
+def on_hand_notes(lines: list[dict]) -> list[str]:
+    """Human notes for the lines the pantry covered, whole or in part.
+
+    The pantry-aware list drops a fully-covered line from ``items`` entirely, so
+    without this the ingredient just silently isn't there and you can't tell
+    whether the system credited your stock or forgot the ingredient. These notes
+    are **informational only** — they say what was credited, and nothing here
+    decrements inventory (only ``pantry.apply_decisions`` does that, from the
+    confirm step).
+
+    Lines carrying a ``warning`` are included too: a cross-family unit mismatch
+    means ``split_against_pantry`` deliberately did *not* subtract, so the item
+    stays on the buy list and the note explains why.
+    """
+    notes: list[str] = []
+    for line in lines:
+        item = line.get("item", "")
+        warning = line.get("warning")
+        if warning:
+            notes.append(f"{item} — {warning}; still on the list")
+            continue
+        from_pantry = line.get("from_pantry")
+        if not from_pantry:
+            continue
+        have = _fmt_qty(from_pantry)
+        to_buy = line.get("to_buy")
+        if to_buy:
+            notes.append(f"{item} — using {have} from the pantry, "
+                         f"buying {_fmt_qty(to_buy)}")
+        else:
+            # `have` is the credited amount, which for a fully covered line equals
+            # what the recipes asked for — not how much is in the kitchen. Say
+            # "needed" so the note can't be read as a stock level.
+            notes.append(f"{item} — in stock, {have} needed")
+    return notes
 
 
 def generate_shopping_list_from_path(meal_plan_path: Path, pantry: Optional[list[dict]] = None) -> dict:

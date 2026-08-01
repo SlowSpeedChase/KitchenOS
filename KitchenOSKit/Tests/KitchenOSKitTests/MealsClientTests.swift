@@ -18,6 +18,60 @@ final class MealsClientTests: XCTestCase {
         XCTAssertEqual(meals.first?.name, "Salmon Dinner")
         XCTAssertEqual(meals.first?.subRecipes.count, 2)
         XCTAssertEqual(meals.first?.subRecipes.first?.servings, 2)
+        XCTAssertEqual(meals.first?.slot, "dinner", "absent slot defaults, it doesn't fail the decode")
+    }
+
+    /// A fractional serving must decode, not empty the list.
+    ///
+    /// `Meal.init(from:)` decodes `sub_recipes` with `try?`, so when `servings`
+    /// was an `Int` a `1.5` from the API didn't raise — one unrepresentable
+    /// element failed the whole array and the meal rendered with no recipes.
+    func testMealDecodesFractionalServingsAndSlot() async throws {
+        MockURLProtocol.handler = { req in
+            let body = """
+            {"meals":[{"name":"Chili Bowl Lunch","description":"","tags":[],"slot":"lunch",
+              "sub_recipes":[{"recipe":"Turkey Chili","servings":1.5},{"recipe":"Cornbread","servings":0.5}],
+              "nutrition":{"calories":550.0,"protein":51.0,"carbs":50.0,"fat":17.0,
+                "sub":[],"incomplete":false,"excluded":[]}}]}
+            """.data(using: .utf8)!
+            return (HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
+        }
+        let client = KitchenOSClient.mock()
+        let meals = try await client.meals()
+        XCTAssertEqual(meals.first?.subRecipes.count, 2, "fractional servings must not empty the list")
+        XCTAssertEqual(meals.first?.subRecipes.first?.servings, 1.5)
+        XCTAssertEqual(meals.first?.subRecipes.last?.servings, 0.5)
+        XCTAssertEqual(meals.first?.slot, "lunch")
+    }
+
+    func testUnknownSlotStillDecodes() async throws {
+        MockURLProtocol.handler = { req in
+            let body = """
+            {"meals":[{"name":"Odd","description":"","tags":[],"slot":42,
+              "sub_recipes":[{"recipe":"Eggs","servings":1}]}]}
+            """.data(using: .utf8)!
+            return (HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, body)
+        }
+        let meals = try await KitchenOSClient.mock().meals()
+        XCTAssertEqual(meals.first?.slot, "dinner")
+        XCTAssertEqual(meals.first?.subRecipes.count, 1)
+    }
+
+    func testCreateMealSendsSlotAndFractionalServings() async throws {
+        MockURLProtocol.handler = { req in
+            let json = try! JSONSerialization.jsonObject(with: req.bodyData()) as! [String: Any]
+            XCTAssertEqual(json["slot"] as? String, "lunch")
+            let subs = json["sub_recipes"] as! [[String: Any]]
+            XCTAssertEqual(subs.first?["servings"] as? Double, 1.5)
+            let echo = #"{"name":"Chili Bowl Lunch","description":"","tags":[],"slot":"lunch","sub_recipes":[{"recipe":"Turkey Chili","servings":1.5}]}"#
+            return (HTTPURLResponse(url: req.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!,
+                    echo.data(using: .utf8)!)
+        }
+        let created = try await KitchenOSClient.mock().createMeal(
+            Meal(name: "Chili Bowl Lunch",
+                 subRecipes: [SubRecipe(recipe: "Turkey Chili", servings: 1.5)],
+                 slot: "lunch"))
+        XCTAssertEqual(created.subRecipes.first?.servings, 1.5)
     }
 
     func testCreateMealPostsSubRecipes() async throws {

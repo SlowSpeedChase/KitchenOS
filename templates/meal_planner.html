@@ -1527,6 +1527,11 @@
             margin: 2px 2px 0 0;
             font-size: 11px;
         }
+        .grid-card.is-meal .meal-macros {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 3px;
+        }
 
         /* --- Today's Prep panel --- */
         .panel-dock {
@@ -1624,9 +1629,43 @@
         }
         .modal-actions button.primary { background: var(--accent); border-color: var(--accent); color: var(--text-on-accent); }
         .sub-recipe-row { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
-        .sub-recipe-row select { flex: 1; }
+        .sub-recipe-row select { flex: 1; min-width: 0; }
         .sub-recipe-row input { width: 60px; }
         .sub-recipe-row button { padding: 4px 8px; }
+        .sub-recipe-row .sub-contribution {
+            font-size: 11px;
+            color: var(--text-muted);
+            white-space: nowrap;
+            min-width: 96px;
+            text-align: right;
+        }
+        .sub-recipe-row .sub-contribution.is-unknown { color: var(--danger); }
+
+        /* --- Meal macro readout (editor modal) --- */
+        .meal-macro-readout {
+            margin-top: 12px;
+            padding-top: 10px;
+            border-top: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+        .meal-macro-readout .macro-totals {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            font-size: 13px;
+            color: var(--text);
+            font-weight: 600;
+        }
+        .meal-macro-readout .macro-over { color: var(--danger); }
+        .meal-macro-readout .macro-note {
+            margin-top: 6px;
+            color: var(--danger);
+        }
+        .meal-macro-readout .macro-hint {
+            margin-top: 6px;
+            color: var(--text-muted);
+        }
 
         /* --- Card action sheet (touch replacement for the tiny grid-card buttons) --- */
         .sheet-backdrop {
@@ -1991,9 +2030,19 @@
             <input type="text" id="meal-description" placeholder="Optional short description">
             <label>Tags (comma-separated)</label>
             <input type="text" id="meal-tags" placeholder="weeknight, fish">
+            <label for="meal-slot">Slot</label>
+            <select id="meal-slot">
+                <option value="breakfast">Breakfast</option>
+                <option value="lunch">Lunch</option>
+                <option value="snack">Snack</option>
+                <option value="dinner" selected>Dinner</option>
+            </select>
             <label>Sub-recipes</label>
             <div id="sub-recipes-container"></div>
             <button id="add-sub-recipe" style="margin-top: 8px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--card-bg); cursor: pointer;">+ Add sub-recipe</button>
+            <!-- Live macro readout: recomputed locally as you type so splitting a
+                 recipe across meals shows its effect immediately. -->
+            <div id="meal-macro-readout" class="meal-macro-readout"></div>
             <div class="modal-actions">
                 <button id="meal-modal-cancel">Cancel</button>
                 <button class="primary" id="meal-modal-save">Save</button>
@@ -2142,6 +2191,10 @@
         let suggestionSkipIndex = {};  // { "Tuesday-dinner": 0 } — tracks retries per cell
         let editingMealName = null;     // null => creating; string => editing existing meal
         let mealsByName = {};           // lookup helper for slot rendering
+        // { daily, slot_shares, slot_shares_normalized } from GET /api/macro-targets.
+        // daily is null when there's no My Macros.md — then no reference line is
+        // shown rather than one being invented.
+        let macroTargets = null;
         let pendingShoppingPreview = null;  // result of /api/shopping-list/preview during pantry modal flow
         let weekBoard = null;           // { week, cooks, freezer, day_totals } from GET /api/week-board/<week>
         let boardMode = false;          // true when weekBoard.cooks.length > 0 — board wins over legacy grid cards
@@ -2165,6 +2218,7 @@
                 await Promise.all([
                     loadRecipes(),
                     loadMeals(),
+                    loadMacroTargets(),
                     loadMealPlan(currentWeek)
                 ]);
                 // Board wins over the legacy grid rendered by loadMealPlan above.
@@ -2508,6 +2562,16 @@
             card.dataset.servings = s;
             const btn = card.querySelector('.servings-btn');
             if (btn) btn.textContent = `×${s}`;
+            // A meal card's kcal line is per-1x figures times this multiplier —
+            // rescale it here or the badge and the macros disagree.
+            const macrosEl = card.querySelector('.meal-macros');
+            if (macrosEl && card.dataset.mealKcal !== undefined) {
+                macrosEl.textContent = mealMetaLine(card.dataset.mealSlot, {
+                    calories: parseFloat(card.dataset.mealKcal),
+                    protein: parseFloat(card.dataset.mealProtein),
+                    incomplete: !!card.dataset.mealIncomplete,
+                }, s);
+            }
             debounceSave();
         }
 
@@ -3309,7 +3373,8 @@
                             );
                             if (cell) {
                                 const card = (mealData.kind === 'meal')
-                                    ? createMealGridCard(mealData.name, mealData.servings || 1, mealData.sub_recipes || [])
+                                    ? createMealGridCard(mealData.name, mealData.servings || 1,
+                                                         mealData.sub_recipes || [], mealData)
                                     : createGridCard(mealData.name, mealData.servings || 1);
                                 cell.appendChild(card);
                                 updateCellState(cell);
@@ -3326,7 +3391,7 @@
             initGridSortables();
         }
 
-        function createMealGridCard(name, servings, subRecipes) {
+        function createMealGridCard(name, servings, subRecipes, slotData) {
             const card = document.createElement('div');
             card.className = 'grid-card is-meal';
             card.dataset.kind = 'meal';
@@ -3345,9 +3410,29 @@
             (subList || []).forEach(sub => {
                 const chip = document.createElement('span');
                 chip.className = 'sub-recipe-chip';
-                chip.textContent = sub.recipe + (sub.servings && sub.servings !== 1 ? ` x${sub.servings}` : '');
+                chip.textContent = sub.recipe
+                    + (sub.servings && sub.servings !== 1 ? ` x${fmtMult(sub.servings)}` : '');
                 chipsWrap.appendChild(chip);
             });
+
+            // Macros come from the plan payload when we have it, falling back to the
+            // meal index. Not the other way round: loadMeals() and loadMealPlan()
+            // race in init's Promise.all, so mealsByName can still be empty here.
+            const nutrition = (slotData && slotData.nutrition)
+                || (meta ? meta.nutrition : null);
+            const slot = (slotData && slotData.slot) || (meta ? meta.slot : null);
+            const macrosEl = document.createElement('div');
+            macrosEl.className = 'meal-macros';
+            if (nutrition) {
+                // Per-1x figures live on the element so setCardServings can rescale
+                // the line without another fetch when the ×N badge is cycled.
+                card.dataset.mealKcal = nutrition.calories || 0;
+                card.dataset.mealProtein = nutrition.protein || 0;
+                card.dataset.mealIncomplete = nutrition.incomplete ? '1' : '';
+                card.dataset.mealSlot = slot || '';
+                macrosEl.textContent = mealMetaLine(slot, nutrition, servings || 1);
+                if (nutrition.incomplete) macrosEl.title = MEAL_INCOMPLETE_TITLE;
+            }
 
             const removeBtn = document.createElement('button');
             removeBtn.className = 'remove-btn';
@@ -3373,6 +3458,7 @@
 
             card.appendChild(headerEl);
             card.appendChild(chipsWrap);
+            if (nutrition) card.appendChild(macrosEl);
             card.appendChild(removeBtn);
             card.appendChild(servingsBtn);
             return card;
@@ -4348,6 +4434,17 @@
 
         // --- Meals API + rendering ---
 
+        /** Daily macro target + how it splits across slots, for the editor's reference line. */
+        async function loadMacroTargets() {
+            try {
+                const resp = await fetch('/api/macro-targets');
+                if (!resp.ok) return;
+                macroTargets = await resp.json();
+            } catch (err) {
+                console.error('Failed to load macro targets', err);
+            }
+        }
+
         async function loadMeals() {
             try {
                 const resp = await fetch('/api/meals');
@@ -4362,6 +4459,31 @@
             }
         }
 
+        const MEAL_INCOMPLETE_TITLE =
+            'Some sub-recipes have missing or low-confidence nutrition data and are ' +
+            'left out of these totals';
+
+        /** "lunch · 433 kcal · 38p ⚠" — a meal card's macro summary, or '' if unknown.
+         *
+         * `scale` multiplies a bundle placed on the board at x2. The ⚠ is the same
+         * convention as the day-totals row: totals cover only the sub-recipes whose
+         * macros are trustworthy, and the marker says the rest were left out.
+         */
+        function mealMetaLine(slot, nutrition, scale) {
+            if (!nutrition) return '';
+            const mult = (isFinite(scale) && scale > 0) ? scale : 1;
+            const bits = [];
+            if (slot) bits.push(slot);
+            bits.push(`${Math.round((nutrition.calories || 0) * mult)} kcal`);
+            bits.push(`${Math.round((nutrition.protein || 0) * mult)}p`);
+            return bits.join(' · ') + (nutrition.incomplete ? ' ⚠' : '');
+        }
+
+        function mealMetaTitle(nutrition) {
+            return (nutrition && nutrition.incomplete)
+                ? ` title="${MEAL_INCOMPLETE_TITLE}"` : '';
+        }
+
         function renderMeals() {
             const list = document.getElementById('meals-list');
             // keep the New Meal button as the first child
@@ -4374,9 +4496,13 @@
                 card.dataset.name = meal.name;
                 card.dataset.kind = 'meal';
                 const sub = (meal.sub_recipes || []).length;
+                const parts = [`${sub} sub-recipe${sub === 1 ? '' : 's'}`];
+                const macros = mealMetaLine(meal.slot, meal.nutrition);
+                if (macros) parts.unshift(macros);
+                if (meal.description) parts.push(meal.description);
                 card.innerHTML = `
                     <div class="meal-card-name">${escapeHtml(meal.name)}</div>
-                    <div class="meal-card-meta">${sub} sub-recipe${sub === 1 ? '' : 's'}${meal.description ? ' · ' + escapeHtml(meal.description) : ''}</div>
+                    <div class="meal-card-meta"${mealMetaTitle(meal.nutrition)}>${escapeHtml(parts.join(' · '))}</div>
                 `;
                 card.addEventListener('dblclick', () => openMealEditor(meal.name));
                 // Visible edit affordance — dblclick has no touch equivalent
@@ -4403,6 +4529,7 @@
             const nameInput = document.getElementById('meal-name');
             const descInput = document.getElementById('meal-description');
             const tagsInput = document.getElementById('meal-tags');
+            const slotInput = document.getElementById('meal-slot');
             const container = document.getElementById('sub-recipes-container');
 
             container.innerHTML = '';
@@ -4412,14 +4539,17 @@
                 nameInput.value = m.name;
                 descInput.value = m.description || '';
                 tagsInput.value = (m.tags || []).join(', ');
-                (m.sub_recipes || []).forEach(s => addSubRecipeRow(s.recipe, s.servings || 1));
+                slotInput.value = m.slot || 'dinner';
+                (m.sub_recipes || []).forEach(s => addSubRecipeRow(s.recipe, s.servings));
             } else {
                 title.textContent = 'New Meal';
                 nameInput.value = '';
                 descInput.value = '';
                 tagsInput.value = '';
+                slotInput.value = 'dinner';
                 addSubRecipeRow('', 1);
             }
+            renderMealMacros();
             modal.classList.add('visible');
         }
 
@@ -4443,14 +4573,119 @@
                 select.appendChild(opt);
             });
             const qty = document.createElement('input');
-            qty.type = 'number'; qty.min = '1'; qty.value = servings || 1;
+            // Fractional: a 4-serving chili can put 1.5 servings in one meal and
+            // 2 in another. The API accepts any positive float; the UI steps by .25.
+            qty.type = 'number'; qty.min = '0.25'; qty.step = '0.25';
+            qty.value = fmtMult(servings > 0 ? servings : 1);
+            const contribution = document.createElement('span');
+            contribution.className = 'sub-contribution';
             const remove = document.createElement('button');
             remove.textContent = '×';
-            remove.addEventListener('click', () => row.remove());
+            remove.addEventListener('click', () => { row.remove(); renderMealMacros(); });
+            select.addEventListener('change', renderMealMacros);
+            qty.addEventListener('input', renderMealMacros);
             row.appendChild(select);
             row.appendChild(qty);
+            row.appendChild(contribution);
             row.appendChild(remove);
             container.appendChild(row);
+            renderMealMacros();
+        }
+
+        /** macro_eligible() from lib/nutrition_quality.py, mirrored for the live readout.
+         *
+         * The server stays authoritative — the saved meal's `nutrition` replaces
+         * this the moment a save returns. This exists only so the numbers move as
+         * you type, without a round-trip per keystroke. Keep the three checks in
+         * step with the Python: a recipe with no serving count had its batch
+         * divided by 1, so its "per-serving" macros are whole-recipe totals and
+         * scaling one by 1.5 would invent thousands of kcal.
+         */
+        const MACRO_COVERAGE_THRESHOLD = 0.8;
+
+        function subRecipeEligibility(recipe) {
+            if (!recipe) return { eligible: false, reasons: ['missing'] };
+            const reasons = [];
+            if (recipe.nutrition_calories === null || recipe.nutrition_calories === undefined) {
+                reasons.push('no_nutrition');
+            }
+            const coverage = recipe.nutrition_coverage;
+            if (coverage === null || coverage === undefined || Number(coverage) < MACRO_COVERAGE_THRESHOLD) {
+                reasons.push('low_coverage');
+            }
+            if (recipe.servings === null || recipe.servings === undefined) {
+                reasons.push('servings_unknown');
+            }
+            return { eligible: reasons.length === 0, reasons };
+        }
+
+        const EXCLUSION_LABELS = {
+            missing: 'recipe not found',
+            no_nutrition: 'no nutrition data',
+            low_coverage: 'low-confidence nutrition',
+            servings_unknown: 'servings unknown',
+        };
+
+        /** Recompute the modal's per-row contributions and the totals-vs-target line. */
+        function renderMealMacros() {
+            const readout = document.getElementById('meal-macro-readout');
+            if (!readout) return;
+            const slot = (document.getElementById('meal-slot') || {}).value || 'dinner';
+            const totals = { calories: 0, protein: 0, carbs: 0, fat: 0 };
+            const excluded = [];
+
+            document.querySelectorAll('#sub-recipes-container .sub-recipe-row').forEach(row => {
+                const name = row.querySelector('select').value;
+                const servings = parseFloat(row.querySelector('input').value);
+                const cell = row.querySelector('.sub-contribution');
+                if (!cell) return;
+                if (!name) { cell.textContent = ''; cell.classList.remove('is-unknown'); return; }
+
+                const recipe = allRecipes.find(r => r.name === name);
+                const { eligible, reasons } = subRecipeEligibility(recipe);
+                if (!eligible) {
+                    cell.textContent = `⚠ ${EXCLUSION_LABELS[reasons[0]] || 'unknown'}`;
+                    cell.classList.add('is-unknown');
+                    excluded.push({ name, reason: reasons[0] });
+                    return;
+                }
+                const mult = (isFinite(servings) && servings > 0) ? servings : 1;
+                totals.calories += recipe.nutrition_calories * mult;
+                totals.protein += recipe.nutrition_protein * mult;
+                totals.carbs += recipe.nutrition_carbs * mult;
+                totals.fat += recipe.nutrition_fat * mult;
+                cell.classList.remove('is-unknown');
+                cell.textContent =
+                    `${Math.round(recipe.nutrition_calories * mult)} kcal · ` +
+                    `${Math.round(recipe.nutrition_protein * mult)}p`;
+            });
+
+            const daily = macroTargets && macroTargets.daily;
+            const share = (macroTargets && macroTargets.slot_shares)
+                ? macroTargets.slot_shares[slot] : null;
+            const part = (key, label) => {
+                const value = Math.round(totals[key]);
+                if (!daily || !share) return `<span>${value}${label}</span>`;
+                const reference = Math.round(daily[key] * share);
+                const over = value > reference ? ' macro-over' : '';
+                return `<span class="${over.trim()}">${value} / ${reference}${label}</span>`;
+            };
+
+            let html = '<div class="macro-totals">' +
+                part('calories', ' kcal') + part('protein', ' p') +
+                part('carbs', ' c') + part('fat', ' f') + '</div>';
+            excluded.forEach(x => {
+                html += `<div class="macro-note">⚠ ${escapeHtml(x.name)} excluded — ` +
+                        `${EXCLUSION_LABELS[x.reason] || 'unknown'}</div>`;
+            });
+            if (!daily) {
+                html += '<div class="macro-hint">No target to compare against — ' +
+                        'add calories/protein/carbs/fat to My Macros.md.</div>';
+            } else if (macroTargets.slot_shares_normalized) {
+                html += '<div class="macro-hint">Slot shares in My Macros.md didn\'t ' +
+                        'sum to 1 — rescaled proportionally.</div>';
+            }
+            readout.innerHTML = html;
         }
 
         async function saveMealFromModal() {
@@ -4459,18 +4694,25 @@
             const description = document.getElementById('meal-description').value.trim();
             const tagsRaw = document.getElementById('meal-tags').value.trim();
             const tags = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [];
+            const slot = document.getElementById('meal-slot').value || 'dinner';
             const subRows = document.querySelectorAll('#sub-recipes-container .sub-recipe-row');
             const sub_recipes = [];
             subRows.forEach(row => {
                 const sel = row.querySelector('select');
                 const qty = row.querySelector('input');
                 if (sel.value) {
-                    sub_recipes.push({ recipe: sel.value, servings: parseInt(qty.value) || 1 });
+                    // parseFloat, not parseInt — a 1.5 typed here must reach the API
+                    // intact. The server rejects anything <= 0.
+                    const servings = parseFloat(qty.value);
+                    sub_recipes.push({
+                        recipe: sel.value,
+                        servings: (isFinite(servings) && servings > 0) ? servings : 1,
+                    });
                 }
             });
             if (!sub_recipes.length) { showToast('Add at least one sub-recipe', 'error'); return; }
 
-            const payload = { name, description, tags, sub_recipes };
+            const payload = { name, description, tags, slot, sub_recipes };
             const isUpdate = !!editingMealName;
             const url = isUpdate ? `/api/meals/${encodeURIComponent(editingMealName)}` : '/api/meals';
             const method = isUpdate ? 'PUT' : 'POST';
@@ -4673,6 +4915,10 @@
             if (saveBtn) saveBtn.addEventListener('click', saveMealFromModal);
             const addSubBtn = document.getElementById('add-sub-recipe');
             if (addSubBtn) addSubBtn.addEventListener('click', () => addSubRecipeRow('', 1));
+            // Changing the slot changes which share of the daily target the
+            // meal's macros are measured against, so re-render the readout.
+            const slotSelect = document.getElementById('meal-slot');
+            if (slotSelect) slotSelect.addEventListener('change', renderMealMacros);
             // Whole header toggles collapse (the ▾ button click bubbles here)
             const usePanel = document.getElementById('useitup-panel');
             if (usePanel) {

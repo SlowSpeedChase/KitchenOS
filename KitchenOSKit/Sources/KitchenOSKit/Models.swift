@@ -313,12 +313,19 @@ public struct ShoppingPreview: Codable, Sendable {
 
 // MARK: - Composite meals
 
+/// One recipe inside a meal bundle.
+///
+/// `servings` is a `Double`, not an `Int`: a 4-serving chili can contribute 1.5
+/// servings to one meal and 2 to another, and the API sends whatever the user
+/// split it into. Decoding `1.5` into an `Int` doesn't surface an error either —
+/// `Meal.init(from:)` decodes the array with `try?`, so one bad element empties
+/// the whole list and the meal renders with no sub-recipes at all.
 public struct SubRecipe: Codable, Sendable, Hashable, Identifiable {
     public var recipe: String
-    public var servings: Int
+    public var servings: Double
     public var id: String { recipe }
 
-    public init(recipe: String, servings: Int = 1) {
+    public init(recipe: String, servings: Double = 1) {
         self.recipe = recipe; self.servings = servings
     }
 }
@@ -331,18 +338,22 @@ public struct Meal: Codable, Sendable, Hashable, Identifiable {
     public var tags: [String]
     public var subRecipes: [SubRecipe]
     public var body: String?
+    /// Which meal slot this bundle is for — one of breakfast/lunch/snack/dinner.
+    /// Defaults to `dinner`, matching the server's own forgiving normalisation.
+    public var slot: String
 
     public var id: String { name }
 
     enum CodingKeys: String, CodingKey {
-        case name, description, tags, body
+        case name, description, tags, body, slot
         case subRecipes = "sub_recipes"
     }
 
     public init(name: String, description: String = "", tags: [String] = [],
-                subRecipes: [SubRecipe] = [], body: String? = nil) {
+                subRecipes: [SubRecipe] = [], body: String? = nil,
+                slot: String = "dinner") {
         self.name = name; self.description = description; self.tags = tags
-        self.subRecipes = subRecipes; self.body = body
+        self.subRecipes = subRecipes; self.body = body; self.slot = slot
     }
 
     public init(from decoder: Decoder) throws {
@@ -352,6 +363,7 @@ public struct Meal: Codable, Sendable, Hashable, Identifiable {
         tags = (try? c.decode([String].self, forKey: .tags)) ?? []
         subRecipes = (try? c.decode([SubRecipe].self, forKey: .subRecipes)) ?? []
         body = try c.decodeIfPresent(String.self, forKey: .body)
+        slot = (try? c.decode(String.self, forKey: .slot)) ?? "dinner"
     }
 }
 
