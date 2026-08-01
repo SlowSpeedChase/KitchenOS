@@ -553,3 +553,50 @@ def test_split_shows_the_recipe_unit_when_it_is_specific():
     pantry = [{"item": "garlic", "amount": "1", "unit": "ct"}]
     split = split_against_pantry("garlic", "3", "cloves", pantry)
     assert split["from_pantry"]["unit"] == "cloves"
+
+
+class TestStockForIngredients:
+    """Presence of each ingredient in inventory — the recipe page's colouring."""
+
+    PANTRY = [
+        {"item": "Chicken thighs", "amount": "3", "unit": "lb"},
+        {"item": "Paprika", "amount": "1", "unit": "jar"},
+    ]
+
+    def test_positionally_aligned_with_the_input(self):
+        result = pantry_module.stock_for_ingredients(
+            ["chicken thighs", "saffron", "paprika"], self.PANTRY)
+        assert len(result) == 3
+        assert result[0]["item"] == "Chicken thighs"
+        assert result[1] is None
+        assert result[2]["item"] == "Paprika"
+
+    def test_matching_is_case_insensitive(self):
+        assert pantry_module.stock_for_ingredients(["PAPRIKA"], self.PANTRY)[0] is not None
+
+    def test_delegates_to_find_match(self, monkeypatch):
+        """The page and the shopping list must never disagree about what you own."""
+        calls = []
+
+        def spy(item, pantry):
+            calls.append(item)
+            return None
+
+        monkeypatch.setattr(pantry_module, "find_match", spy)
+        pantry_module.stock_for_ingredients(["a", "b"], self.PANTRY)
+        assert calls == ["a", "b"]
+
+    def test_empty_and_missing_names_are_unmatched_not_errors(self):
+        assert pantry_module.stock_for_ingredients(["", None], self.PANTRY) == [None, None]
+
+    def test_empty_pantry_matches_nothing(self):
+        assert pantry_module.stock_for_ingredients(["paprika"], []) == [None]
+
+    def test_presence_not_sufficiency(self):
+        """A pantry row smaller than the recipe needs is still 'in stock'.
+
+        Sufficiency depends on the scale the reader picks, so it can't be
+        answered here — and answering it wrongly is worse than not answering.
+        """
+        pantry = [{"item": "Paprika", "amount": "0.5", "unit": "tsp"}]
+        assert pantry_module.stock_for_ingredients(["paprika"], pantry)[0] is not None
