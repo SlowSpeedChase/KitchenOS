@@ -1,7 +1,7 @@
 # Ingredient audit
 
 - recipes scanned: **252**
-- ingredient lines: **2758**
+- ingredient lines: **2755**
 - recipes with an *actionable* issue: **169** (67%)
 - recipes flagged by any rule incl. `info`: 224 (89%)
 

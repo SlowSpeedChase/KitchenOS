@@ -23,6 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from backfill_nutrition import extract_ingredients  # noqa: E402
 from lib.paths import recipes_dir  # noqa: E402
 from lib.units import get_unit_family, lookup_density, normalize_unit  # noqa: E402
 
@@ -43,7 +44,6 @@ UNIT_WORDS = (
     "clove", "cloves", "can", "cans", "slice", "slices",
 )
 
-ROW = re.compile(r"^\|\s*([^|]*?)\s*\|\s*([^|]*?)\s*\|\s*([^|]*?)\s*\|\s*$")
 
 # An exact weight the recipe author supplied, sitting unused inside the name.
 GRAM_EQUIV = re.compile(
@@ -86,23 +86,15 @@ ORDER = ["defect", "recoverable", "filler", "junk", "info"]
 
 
 def parse_rows(text: str) -> list[tuple[str, str, str]]:
-    """(amount, unit, item) for each ingredient row, header/separator skipped."""
-    rows, in_table = [], False
-    for line in text.splitlines():
-        if line.strip().startswith("| Amount |"):
-            in_table = True
-            continue
-        if in_table:
-            if not line.strip().startswith("|"):
-                if line.strip():
-                    break
-                continue
-            if set(line.strip()) <= set("|- "):
-                continue
-            m = ROW.match(line.strip())
-            if m:
-                rows.append(tuple(s.strip() for s in m.groups()))
-    return rows
+    """(amount, unit, item) for each ingredient row.
+
+    Delegates to the same ``extract_ingredients`` the nutrition backfill uses,
+    so the audit can never disagree with the pipeline about what an ingredient
+    line is — an audit that parses differently from the code it audits reports
+    on a corpus that doesn't exist.
+    """
+    return [(str(d.get("amount", "")), str(d.get("unit", "")), str(d.get("item", "")))
+            for d in extract_ingredients(text)]
 
 
 def _bulk_hit(item: str) -> str | None:
