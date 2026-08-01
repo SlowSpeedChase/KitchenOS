@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from lib import (fdc_local, food_db, food_resolver, gram_equivalent,
-                 inventory_db, units)
+                 inventory_db, resolution_guard, units)
 from lib.ingredient_text import apply_aliases, clean_for_matching
 from lib.nutrition import NutritionData
 
@@ -255,6 +255,16 @@ def _resolve_food(item: str, *, use_cache: bool, resolution_provider: str,
             "portions": rec_obj.portions,
             "density_g_per_ml": rec_obj.density_g_per_ml,
         }
+
+    # Vet the match before it is cached. The LLM resolver latches onto a shared
+    # modifier — "blueberries, fresh" -> "Basil, fresh" at confidence 1.0 — and a
+    # high-confidence cache entry is never re-examined, so the error is permanent
+    # and silent. Downgraded rather than discarded: an ingredient may have no USDA
+    # equivalent, and a weak number can beat none; it just must not pose as settled.
+    confidence, resolver, guard_note = resolution_guard.vet(
+        norm, record.get("description", ""), confidence, resolver)
+    if guard_note:
+        record["guard_note"] = guard_note
 
     if use_cache:
         inventory_db.put_food_cache(record)
