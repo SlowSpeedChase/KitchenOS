@@ -171,21 +171,41 @@ which is what the shopping-list preview uses), so this is a rendering change plu
 one lookup — not new inference. Worth doing alongside the P1 shopping-list fix
 since both hang off the same pantry-split call.
 
-### P2 — Servings / freezer flow is not discoverable
+### ~~P2 — Servings / freezer flow is not discoverable~~ FIXED
 
-The serving-ledger board (drag serving chips into day slots, the freezer, or the
-trash; scale a cook with the stepper) is the system's most powerful feature and
-the user reports not understanding how to use it. Nothing here is broken — it's
-unexplained. Needs either an in-page affordance (an empty-state that says what a
-chip is and where it can go) or a short walkthrough on `/plan-week`. See
-`docs/workflows/end-to-end.md` for the intended flow that isn't reaching the user.
+**Fixed 2026-08-01.** Nothing was broken — it was unexplained. The board turns on
+and chips, a scale stepper, a freezer tab and a bin all appear at once with no
+statement of what any of them are.
 
-### P2 — Nutrition review page: unclear what to do about a flagged item
+- A one-line legend under the grid header, shown **only in board mode** (a legend
+  for chips that don't exist is noise on a legacy week), naming all three
+  destinations a chip can go to.
+- Every serving chip carries a `title` saying what it is and where it can go.
+- The freezer's empty state said "Freezer is empty" — true, useless, and a dead
+  end. It now says how food gets in, because dragging a chip onto a tray is not a
+  guessable gesture.
+- The Unscheduled tray says what "unscheduled" means.
 
-`/nutrition-review` ranks recipes by weakest nutrition data, but the user doesn't
-know what action is available or what "needs review" is asking of them. The page
-does support live recompute and human match-pinning; the gap is that the *next
-action* isn't stated. Likely a copy/affordance fix rather than new machinery.
+Deliberately copy and affordances only: no behaviour changed, so nothing here can
+break a working board. A walkthrough on `/plan-week` was considered and skipped —
+explaining the model where the controls actually are beats a tour of them
+elsewhere.
+
+### ~~P2 — Nutrition review page: unclear what to do about a flagged item~~ FIXED
+
+**Fixed 2026-08-01.** The actions already existed (pick a USDA match → **Use**, or
+mark **Negligible**) but only inside an expanded row, and nothing said the rows
+expanded, what the buttons meant, or what being flagged costs you.
+
+- A lead paragraph stating the job *and the stakes*: a flagged recipe is skipped
+  when suggestions are ranked against your targets, and its day shows a ⚠.
+- "click a row to fix it" in the column header — the affordance was a bare
+  `cursor: pointer`.
+- Each expanded recipe opens with how many ingredients are the problem and what
+  the two answers mean, plus the fact that an answer is **remembered for every
+  recipe using that ingredient** — the thing that makes the work worth doing.
+- Tooltips on Use / Negligible. "Negligible" is jargon for "count this as zero
+  calories, permanently".
 
 ### P3 — Recipe view layout, and the Obsidian button block leaking to the top
 
