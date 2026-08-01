@@ -127,6 +127,21 @@ def main() -> int:
 
     recipes_dir = paths.recipes_dir()
 
+    # An empty corpus must never report "0 violations". lib/paths.py resolves
+    # KITCHENOS_VAULT from the repo's own .env, which is git-ignored and so
+    # absent from every linked worktree — running this from .worktrees/ found
+    # zero recipes and exited 0, which reads as "the corpus is clean" when it
+    # means "the corpus was never looked at". Same failure shape as --only
+    # matching nothing: silence that looks like success.
+    if not recipes_dir.is_dir() or not any(recipes_dir.glob("*.md")):
+        raise SystemExit(
+            f"no recipes found in {recipes_dir}\n"
+            "If you are in a linked worktree, .env lives only in the main "
+            "checkout — set KITCHENOS_VAULT explicitly, e.g.\n"
+            "  KITCHENOS_VAULT=/Users/<you>/Dev/KitchenOS/vault/KitchenOS \\\n"
+            "    ../../.venv/bin/python scripts/normalize_recipes.py --check"
+        )
+
     if args.check:
         violations = audit(recipes_dir)
         for v in violations:

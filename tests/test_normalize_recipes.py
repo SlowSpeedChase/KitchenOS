@@ -6,6 +6,8 @@ the schema gains a key.
 """
 import sys
 
+import pytest
+
 import yaml
 
 from lib.recipe_schema import REQUIRED_KEYS
@@ -161,3 +163,45 @@ def test_check_exits_zero_on_a_conforming_corpus(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "argv", ["normalize_recipes.py", "--check"])
 
     assert normalize_recipes.main() == 0
+
+
+def test_a_missing_recipes_dir_is_an_error_not_a_clean_bill(tmp_path, monkeypatch):
+    """An empty corpus must never report "0 violations".
+
+    lib/paths.py resolves KITCHENOS_VAULT from the repo's own .env, which is
+    git-ignored and therefore absent from every linked worktree — so running
+    this from .worktrees/ silently found zero recipes and exited 0, which reads
+    as "the corpus is clean" when it means "the corpus was never looked at".
+    """
+    from scripts import normalize_recipes
+
+    monkeypatch.setenv("KITCHENOS_VAULT", str(tmp_path / "nowhere"))
+    monkeypatch.setattr(sys, "argv", ["normalize_recipes.py", "--check"])
+
+    with pytest.raises(SystemExit) as e:
+        normalize_recipes.main()
+    assert "no recipes" in str(e.value).lower()
+
+
+def test_an_empty_recipes_dir_is_an_error(tmp_path, monkeypatch):
+    from scripts import normalize_recipes
+
+    (tmp_path / "Recipes").mkdir()
+    monkeypatch.setenv("KITCHENOS_VAULT", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["normalize_recipes.py", "--check"])
+
+    with pytest.raises(SystemExit) as e:
+        normalize_recipes.main()
+    assert "no recipes" in str(e.value).lower()
+
+
+def test_the_error_names_the_directory_it_looked_in(tmp_path, monkeypatch):
+    """So the fix (point KITCHENOS_VAULT at the main checkout) is obvious."""
+    from scripts import normalize_recipes
+
+    monkeypatch.setenv("KITCHENOS_VAULT", str(tmp_path / "nowhere"))
+    monkeypatch.setattr(sys, "argv", ["normalize_recipes.py", "--apply"])
+
+    with pytest.raises(SystemExit) as e:
+        normalize_recipes.main()
+    assert "nowhere" in str(e.value)
