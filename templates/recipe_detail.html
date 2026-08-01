@@ -499,6 +499,64 @@
             });
         }
 
+        /** Drop the Obsidian-only chrome every recipe body carries, and unquote
+         *  the rest.
+         *
+         *  Each of the 252 recipes opens its body with a `[!tools]` callout of
+         *  ```button blocks, above the `# Title`. This renderer escapes what it
+         *  doesn't understand, so that callout arrived at the top of the page as
+         *  "> ```button / > name Re-extract / > type link / > action http://…" —
+         *  Obsidian source code presented as the first thing about the recipe.
+         *
+         *  Buttons are dropped, not revived. `lib/note_view.py` turns the two
+         *  `kitchenos://` actions into real controls because those triggers are
+         *  otherwise dead, but these three (re-extract, refresh, add to plan) are
+         *  already ordinary HTTP links *and* already buttons in this page's own
+         *  header — reviving them here would just duplicate the header.
+         *
+         *  Only `button` fences go: a fence of any other kind is content, and
+         *  `[!abstract]` (48 recipes) is content too, so only `[!tools]` is
+         *  matched by name.
+         */
+        function stripObsidianChrome(md) {
+            const out = [];
+            let inButtonFence = false;
+            let inToolsCallout = false;
+            for (const rawLine of md.split('\n')) {
+                // Callout bodies are blockquoted; read through the marker to see
+                // the structure, then emit the unquoted text.
+                const bare = rawLine.replace(/^\s*>+\s?/, '');
+                const isQuoted = bare !== rawLine;
+                const fence = bare.match(/^```(\S*)/);
+
+                if (inButtonFence) {
+                    if (fence) inButtonFence = false;
+                    continue;
+                }
+                if (fence && fence[1] === 'button') { inButtonFence = true; continue; }
+
+                // The recipe template seeds "My Notes" with an HTML comment
+                // prompting the user to write there. It's an instruction to the
+                // author, not a note — same class as the buttons.
+                if (/^<!--.*-->\s*$/.test(bare.trim())) continue;
+
+                const callout = bare.match(/^\[!(\w+)\]-?\s*(.*)$/);
+                if (callout) {
+                    inToolsCallout = callout[1].toLowerCase() === 'tools';
+                    if (inToolsCallout) continue;
+                    // Keep a real callout's title as a heading; drop the marker.
+                    out.push(callout[2] ? `## ${callout[2]}` : '');
+                    continue;
+                }
+                // A blank line ends the callout it was quoting.
+                if (!isQuoted && !bare.trim()) inToolsCallout = false;
+                if (inToolsCallout && isQuoted) continue;
+
+                out.push(isQuoted ? bare : rawLine);
+            }
+            return out;
+        }
+
         function renderBodyMarkdown() {
             const md = recipeData.body_markdown || '';
             const notesCard = document.getElementById('notes-card');
@@ -510,7 +568,7 @@
             // Minimal read-only markdown rendering — no JS markdown
             // library dependency. Handles headers and simple "- " lists;
             // everything else is escaped and left as plain text.
-            const lines = md.split('\n');
+            const lines = stripObsidianChrome(md);
             let html = '';
             let inList = false;
             for (const rawLine of lines) {
