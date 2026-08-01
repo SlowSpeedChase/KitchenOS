@@ -119,6 +119,29 @@
         .empty { color: var(--text-muted); font-size: 0.85rem; font-style: italic; padding: 12px 0; }
         .loading { color: var(--text-muted); font-size: 0.85rem; }
 
+        /* The page ranked recipes by how untrustworthy their macros were and then
+           said nothing about what to do next. These explain the job. */
+        .page-lead {
+            font-size: 0.9rem;
+            line-height: 1.55;
+            color: var(--text);
+            margin-bottom: 16px;
+            max-width: 68ch;
+        }
+        .page-lead .muted { color: var(--text-muted); }
+        .panel-lead {
+            font-size: 0.82rem;
+            color: var(--text-muted);
+            margin-bottom: 10px;
+            line-height: 1.5;
+        }
+        .expand-hint {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            font-weight: 400;
+            white-space: nowrap;
+        }
+
         .coverage-bar-wrap {
             width: 100px;
             height: 8px;
@@ -242,12 +265,21 @@
         </div>
     </header>
 
+    <p class="page-lead">
+        These recipes have macros the planner doesn't fully trust — an ingredient
+        it couldn't match to a food, or matched with low confidence. Until a recipe
+        is fixed, it's <strong>skipped</strong> when suggestions are ranked against
+        your daily targets, and its day shows a ⚠ on the planner.
+        <span class="muted">Worst first. Open a recipe to see which ingredients are
+        the problem and correct them — nothing here changes the recipe's own text.</span>
+    </p>
+
     <div class="card">
         <div id="review-list">
             <table>
                 <thead>
                     <tr>
-                        <th>Recipe</th>
+                        <th>Recipe <span class="expand-hint">— click a row to fix it</span></th>
                         <th>Coverage</th>
                         <th>Confidence</th>
                         <th>kcal/serving</th>
@@ -405,12 +437,12 @@
             if (weak) {
                 actions = `
                     <div class="line-actions" data-item="${escapeAttr(li.item)}" data-idx="${idx}">
-                        <select class="candidate-select">
+                        <select class="candidate-select" title="USDA foods that might be this ingredient">
                             <option value="">Choose match…</option>
                             ${candidatesOptions}
                         </select>
-                        <button class="use-btn">Use</button>
-                        <button class="negligible-btn">Negligible</button>
+                        <button class="use-btn" title="Record this as the right food for &quot;${escapeAttr(li.item)}&quot;. Remembered for every recipe using it.">Use</button>
+                        <button class="negligible-btn" title="This ingredient adds no meaningful calories (a pinch of salt, a garnish) — count it as zero and stop flagging it.">Negligible</button>
                         <span class="search-box">
                             <input type="text" class="search-input" placeholder="Search…">
                             <button class="search-btn">Search</button>
@@ -426,7 +458,18 @@
             </tr>`;
         }).join('');
 
+        const weakCount = detail.lines.filter(li => li.needs_review || li.confidence < 0.8).length;
+        const lead = weakCount
+            ? `<p class="panel-lead"><strong>${weakCount} ingredient${weakCount === 1 ? '' : 's'}</strong>
+               couldn't be matched confidently — they're highlighted below. For each one, either
+               pick the right food and press <strong>Use</strong>, or press <strong>Negligible</strong>
+               if it adds no real calories. Your answer is remembered for every recipe that uses
+               that ingredient, not just this one.</p>`
+            : `<p class="panel-lead">Every ingredient matched confidently. This recipe is flagged
+               on coverage alone — re-running the backfill may clear it.</p>`;
+
         return `<div class="detail-panel">
+            ${lead}
             <div class="detail-summary">
                 <span>Coverage <b>${Math.round(r.coverage * 100)}%</b></span>
                 <span>Confidence <b>${Math.round(r.confidence * 100)}%</b></span>

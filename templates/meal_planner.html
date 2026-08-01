@@ -1140,7 +1140,29 @@
             text-align: center;
             color: var(--text-muted);
             font-size: 13px;
+            line-height: 1.5;
         }
+
+        .freezer-empty-how {
+            display: inline-block;
+            margin-top: 6px;
+            font-size: 12px;
+        }
+
+        /* One line saying what the board is, shown only while it's active. The
+           serving-ledger board is the most powerful thing here and the least
+           guessable: chips, a scale stepper, a freezer and a bin appear with no
+           statement of what any of them are for. */
+        .board-help {
+            display: none;
+            padding: 6px 12px 8px;
+            font-size: 11px;
+            line-height: 1.45;
+            color: var(--text-muted);
+            border-bottom: 1px solid var(--border);
+        }
+
+        body.board-mode .board-help { display: block; }
 
         /* --- Unscheduled section (top of Freezer tab): cooks with no
            date/meal yet — e.g. "Add to this week" from the recipe detail
@@ -1979,6 +2001,9 @@
             </div>
             <div class="unscheduled-section" id="unscheduled-section">
                 <div class="unscheduled-title">Unscheduled</div>
+                <div class="board-help">
+                    Cooked, but not assigned to a day yet — drag a chip onto a meal slot.
+                </div>
                 <div class="unscheduled-tray" id="unscheduled-tray"></div>
             </div>
             <div class="freezer-tray" id="freezer-tray"></div>
@@ -1998,6 +2023,14 @@
                     <div class="week-dates" id="week-dates"></div>
                 </div>
                 <button class="nav-btn" id="next-week" aria-label="Next week">&rarr;</button>
+            </div>
+            <!-- Shown only in board mode. The chips, scale stepper, freezer and bin
+                 all appear at once with nothing saying what they are; this is the
+                 one sentence that makes the rest legible. -->
+            <div class="board-help" id="board-help">
+                <b>🍽× chips are servings.</b> Drag one to another day to eat it then,
+                to the <b>Freezer</b> tab to save it, or to the 🗑 that appears while
+                dragging to bin it. The ×N on a card is how much you cooked.
             </div>
             <div class="grid-container">
                 <div class="grid" id="grid"></div>
@@ -2781,6 +2814,9 @@
             return tray;
         }
 
+        const CHIP_HELP = 'A serving of this cook. Drag it onto a day to eat it then, '
+            + 'onto the Freezer tab to save it, or onto the bin to throw it away.';
+
         function makeServingChip(cookId, placementId, count, recipeNameIfForeign) {
             const chip = document.createElement('div');
             chip.className = 'serving-chip';
@@ -2790,6 +2826,7 @@
             chip.textContent = recipeNameIfForeign
                 ? `🍽 ${recipeNameIfForeign} ×${fmtMult(count)}`
                 : `🍽×${fmtMult(count)}`;
+            chip.title = `${fmtMult(count)} serving${count === 1 ? '' : 's'}. ${CHIP_HELP}`;
             return chip;
         }
 
@@ -2800,6 +2837,8 @@
             chip.dataset.count = unassigned;
             chip.dataset.placementId = '';  // none yet — dropping this creates a new placement
             chip.textContent = `+${fmtMult(unassigned)}`;
+            // These are the board's core object and nothing on screen said so.
+            chip.title = `${fmtMult(unassigned)} unassigned serving${unassigned === 1 ? '' : 's'}. ${CHIP_HELP}`;
             return chip;
         }
 
@@ -2938,7 +2977,12 @@
             if (!items.length) {
                 const empty = document.createElement('div');
                 empty.className = 'freezer-empty';
-                empty.textContent = 'Freezer is empty';
+                // "Freezer is empty" was a dead end: true, but it never said how
+                // anything gets in here, and dragging a serving chip onto this
+                // tray is not a guessable gesture.
+                empty.innerHTML = 'Freezer is empty.<br><span class="freezer-empty-how">' +
+                    'Cook more than you\'ll eat, then drag a leftover <b>serving chip</b> ' +
+                    'from a day onto this tray to save it for later.</span>';
                 tray.appendChild(empty);
                 return;
             }

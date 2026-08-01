@@ -966,3 +966,65 @@ def test_generate_shopping_list_use_pantry_false_keeps_raw_demand(
 
     assert "- [ ] 1 cup brown sugar" in written
     assert "## Already have" not in written
+
+
+# ---- Discoverability: the board and the review page explain themselves ----
+
+def _outside_style(body: str, needle: str) -> bool:
+    """Is `needle` in real markup, not buried inside an open <style> block?
+
+    Same check as tests/test_claude_bar.py: a string assertion alone passed for
+    months while /meal-planner rendered nothing, because the snippet had been
+    spliced inside <style>.
+    """
+    at = body.index(needle)
+    return body.rfind('<style', 0, at) <= body.rfind('</style>', 0, at)
+
+
+def test_planner_explains_what_a_serving_chip_is(client):
+    """The board's core object had no on-screen explanation at all."""
+    body = client.get('/meal-planner').get_data(as_text=True)
+    assert 'id="board-help"' in body
+    assert 'chips are servings' in body
+    assert _outside_style(body, 'chips are servings')
+
+
+def test_planner_board_help_is_board_mode_only(client):
+    """A legend for chips that don't exist yet is noise on a legacy week."""
+    body = client.get('/meal-planner').get_data(as_text=True)
+    assert 'body.board-mode .board-help' in body, 'help must be gated on board mode'
+    assert '.board-help {' in body and 'display: none;' in body
+
+
+def test_planner_names_all_three_chip_destinations(client):
+    """Day, freezer, bin — the freezer was the one nobody could find."""
+    body = client.get('/meal-planner').get_data(as_text=True)
+    help_text = body[body.index('id="board-help"'):body.index('id="board-help"') + 600]
+    assert 'Freezer' in help_text
+    assert '🗑' in help_text
+    assert 'another day' in help_text
+
+
+def test_freezer_empty_state_says_how_to_fill_it(client):
+    """'Freezer is empty' was true and useless — dragging a chip isn't guessable."""
+    body = client.get('/meal-planner').get_data(as_text=True)
+    assert 'Freezer is empty.' in body
+    assert 'freezer-empty-how' in body
+    assert 'drag a leftover' in body
+
+
+def test_nutrition_review_states_the_job_and_the_stakes(client):
+    """The page ranked untrustworthy recipes and never said what to do or why."""
+    body = client.get('/nutrition-review').get_data(as_text=True)
+    assert 'class="page-lead"' in body
+    assert _outside_style(body, 'class="page-lead"')
+    # what the flag costs you, and that a row is the way in
+    assert 'skipped' in body
+    assert 'click a row to fix it' in body
+
+
+def test_nutrition_review_explains_negligible(client):
+    """'Negligible' is jargon for 'count this as zero calories, forever'."""
+    body = client.get('/nutrition-review').get_data(as_text=True)
+    assert 'no meaningful calories' in body
+    assert 'Remembered for every recipe' in body
