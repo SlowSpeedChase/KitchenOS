@@ -20,6 +20,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from lib.shopping_list_generator import (
+    format_qty as shopping_list_format_qty,
     generate_shopping_list,
     on_hand_notes,
     parse_shopping_list_file,
@@ -659,6 +660,38 @@ def _resolve_recipes_dir() -> Path:
     return OBSIDIAN_RECIPES_PATH
 
 
+def _annotate_stock(ingredients: list[dict]) -> list[dict]:
+    """Copy of ``ingredients`` with each entry marked in-stock or not.
+
+    Adds two keys per ingredient:
+        ``in_stock``  True / False, or **None when there's nothing to check
+                      against** — an empty inventory would otherwise render the
+                      whole recipe as "you have none of this", which is a claim
+                      about the kitchen rather than about the data.
+        ``have``      the matched row as "3 lb", for a tooltip; None when unmatched.
+
+    Presence, not sufficiency — see ``pantry.stock_for_ingredients``. Never
+    raises: a DB that won't open leaves the page rendering an uncoloured
+    ingredient list, which is what it did before this existed.
+    """
+    try:
+        pantry = pantry_module.load_pantry()
+    except Exception:
+        pantry = []
+    if not pantry:
+        return [{**ing, "in_stock": None, "have": None} for ing in ingredients]
+
+    matches = pantry_module.stock_for_ingredients(
+        [ing.get("item", "") for ing in ingredients], pantry)
+    annotated = []
+    for ing, match in zip(ingredients, matches):
+        have = None
+        if match:
+            have = shopping_list_format_qty(match.get("amount"), match.get("unit"))
+        annotated.append({**ing, "in_stock": match is not None, "have": have})
+    return annotated
+
+
 @app.route('/api/recipes/<name>', methods=['GET'])
 @require_token
 def api_recipe_detail(name):
@@ -692,6 +725,8 @@ def api_recipe_detail(name):
         image_file = recipes_dir / "Images" / f"{name}.jpg"
         image = f"{name}.jpg" if image_file.exists() else None
 
+        ingredients = _annotate_stock(body_data.get('ingredients', []))
+
         return jsonify({
             "title": fm.get('title', name),
             "cuisine": fm.get('cuisine'),
@@ -716,7 +751,7 @@ def api_recipe_detail(name):
             "source_url": fm.get('source_url'),
             "needs_review": fm.get('needs_review', False),
             "description": body_data.get('description', ''),
-            "ingredients": body_data.get('ingredients', []),
+            "ingredients": ingredients,
             "instructions": body_data.get('instructions', []),
             "video_tips": body_data.get('video_tips', []),
             "body_markdown": parsed['body'],

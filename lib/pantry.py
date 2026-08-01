@@ -297,3 +297,29 @@ def apply_decisions(decisions: list[dict], pantry: list[dict]) -> list[dict]:
             # If units don't match family, do nothing — caller should have warned.
             break
     return updated
+
+
+def stock_for_ingredients(
+    items: list[str],
+    pantry: Optional[list[dict]] = None,
+) -> list[Optional[dict]]:
+    """For each ingredient name, the pantry row covering it — or None.
+
+    Answers **presence, not sufficiency**: "is this food in the kitchen at all",
+    not "is there enough". Sufficiency depends on the recipe's scale, which the
+    reader changes on the fly (`/recipe/<name>` has a 1x-4x selector), so a
+    server-side "enough" would be a lie the moment they scale it up — and
+    deciding it client-side would mean a second copy of the unit-conversion
+    rules that `unit_compatibility` is meant to own. Presence is the honest
+    answer to "what would I have to go buy".
+
+    Matching is delegated to :func:`find_match`, so this and the shopping list
+    can never disagree about whether you own something.
+
+    Returns a list positionally aligned with ``items`` — an entry is the matched
+    ``{item, amount, unit}`` pantry row, or None. ``pantry=None`` loads the
+    current inventory.
+    """
+    if pantry is None:
+        pantry = load_pantry()
+    return [find_match(name or "", pantry) for name in items]

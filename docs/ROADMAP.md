@@ -106,7 +106,7 @@ router, then surfacing shelf grouping in both `Inventory.md` and the native
 ## Usage feedback — 2026-07-31
 
 Eleven items from a session of actually using the system, ordered by priority.
-**The two P1 bugs are fixed** (see the struck-through entries below, kept for the
+**The two P1 bugs and two P2 items are fixed** (see the struck-through entries below, kept for the
 diagnosis); the remaining nine were traced far enough to name the code involved,
 or are waiting on a screenshot or a design decision. Two screenshots referenced in
 the original feedback were on the user's Desktop and not available to the session
@@ -151,25 +151,37 @@ Folded onto one extractor, `recipe_parser.extract_ingredients_section`, whose
 match an h3's third `#`). `parse_ingredient_table` already skips non-table lines,
 separators and repeated headers, so grouped tables parse as one list.
 
-### P2 — Week numbers everywhere instead of date ranges
+### ~~P2 — Week numbers everywhere instead of date ranges~~ FIXED
 
-`2026-W31` is not human-readable and it appears in page navs, note titles and
-headings. The user's ask is explicitly universal: dates and day names everywhere.
-Known sites: `lib/plan_week.py:68-71` (the `/plan-week` nav renders the raw week
-id three times), `lib/meal_plan_index.py:49`, `lib/meal_plan_parser.py:265`,
-`lib/week_view.py:70`, `templates/shopping_list_template.py:27`. A
-`format_week_range` helper already exists in `templates/meal_plan_template.py`, so
-the change is mechanical — the work is finding every surface, not inventing the
-formatting. Week ids must stay the *keys* (filenames, API paths, sidecar names);
-this is a display-layer change only.
+**Fixed 2026-08-01 (#64).** Eight surfaces, not the three this entry originally
+named: the `/plan-week` nav (three raw ids in one line, on the page that defaults
+to *next* week), the planner header, `week_view`'s plan title (which had no dates
+at all), the printed week packet's h1 (`2026-W31  (2026-07-27 → 2026-08-02)`), the
+plan and shopping-list note titles, the meal-plans index table, the note-view
+subtitle, and the week dropdowns (which appended the id beside the range, putting
+the unreadable form back in front of the user when it was already the option's
+value).
 
-### P2 — Recipe page should colour ingredients you don't have
+All now render `format_week_range`, or `format_week_heading` — "This week · Jul 27
+- Aug 2, 2026". The relative prefix is the orientation the week number was really
+standing in for. Display-layer only: week ids are untouched as keys in every href,
+filename, API path and wikilink.
 
-On `/recipe/<name>`, style ingredients absent from inventory differently from ones
-on hand. The matching logic already exists (`lib/pantry.split_against_pantry`,
-which is what the shopping-list preview uses), so this is a rendering change plus
-one lookup — not new inference. Worth doing alongside the P1 shopping-list fix
-since both hang off the same pantry-split call.
+### ~~P2 — Recipe page should colour ingredients you don't have~~ FIXED
+
+**Fixed 2026-08-01.** `/api/recipes/<name>` annotates each ingredient with
+`in_stock` + `have` via `pantry.stock_for_ingredients`, which delegates to
+`find_match` — the same matcher the shopping list uses, so the page and the list
+can't disagree about what you own. `/recipe/<name>` colours the row, marks it
+`✓`/`•` (colour is never the only signal), and shows a summary line.
+
+Two deliberate limits. It reports **presence, not sufficiency**: the page scales
+1x-4x, so a server-side "do you have enough" would be wrong the moment the reader
+scales up, and computing it client-side would mean a second copy of the
+unit-conversion rules `unit_compatibility` owns. And `in_stock` is **tri-state** —
+`null` when there's no inventory to check against, rendered unmarked, because
+painting every ingredient red on an empty pantry is a claim about the kitchen
+rather than about the data.
 
 ### ~~P2 — Servings / freezer flow is not discoverable~~ FIXED
 

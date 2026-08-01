@@ -185,6 +185,26 @@
 
         .empty { color: var(--text-muted); font-size: 0.85rem; font-style: italic; padding: 12px 0; }
 
+        /* --- Inventory status on ingredient rows ---
+           Colour alone can't be the signal: red/green is the most common form of
+           colour blindness, and this list is read in a kitchen at a glance. Each
+           state carries a glyph and a tooltip too. Rows are left unmarked when
+           there's no inventory to check against. */
+        tr.not-in-stock td.ingredient-name { color: var(--danger); }
+        tr.in-stock td.ingredient-name { color: var(--text); }
+        .stock-mark {
+            font-size: 0.8rem;
+            margin-left: 6px;
+            vertical-align: baseline;
+        }
+        tr.in-stock .stock-mark { color: var(--success); }
+        tr.not-in-stock .stock-mark { color: var(--danger); }
+        .stock-legend {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-top: 10px;
+        }
+
         #add-week-status {
             font-size: 0.85rem;
             margin-top: 10px;
@@ -240,6 +260,7 @@
                 </thead>
                 <tbody id="ingredients-body"></tbody>
             </table>
+            <div class="stock-legend" id="stock-legend"></div>
         </div>
 
         <div class="card">
@@ -317,6 +338,45 @@
             return parseFloat(document.getElementById('scale-select').value) || 1;
         }
 
+        /* `in_stock` is a tri-state from the server: true / false / null, where
+           null means there was no inventory to check against. Null must render
+           as *unmarked*, not as "you don't have it" — an empty inventory would
+           otherwise paint every ingredient red and read as a claim about the
+           kitchen rather than about the data. */
+        function stockClass(ing) {
+            if (ing.in_stock === true) return 'in-stock';
+            if (ing.in_stock === false) return 'not-in-stock';
+            return '';
+        }
+
+        function stockMark(ing) {
+            if (ing.in_stock === true) {
+                const have = ing.have ? ` — ${ing.have} on hand` : '';
+                return `<span class="stock-mark" title="In your inventory${escapeHtml(have)}">✓</span>`;
+            }
+            if (ing.in_stock === false) {
+                return '<span class="stock-mark" title="Not in your inventory — you\'ll need to buy this">•</span>';
+            }
+            return '';
+        }
+
+        function renderStockLegend(ingredients) {
+            const legend = document.getElementById('stock-legend');
+            if (!legend) return;
+            const checked = ingredients.filter(i => i.in_stock !== null &&
+                                                    i.in_stock !== undefined);
+            if (!checked.length) {
+                // Say why nothing is marked, rather than looking merely unstyled.
+                legend.textContent = ingredients.length
+                    ? 'Inventory is empty, so nothing is marked as on hand.' : '';
+                return;
+            }
+            const missing = checked.filter(i => i.in_stock === false).length;
+            legend.textContent = missing === 0
+                ? '✓ You have everything for this recipe.'
+                : `• ${missing} of ${checked.length} ingredient${checked.length === 1 ? '' : 's'} not in your inventory.`;
+        }
+
         function renderIngredients() {
             if (!recipeData) return;
             const scale = currentScale();
@@ -326,13 +386,14 @@
                 tbody.innerHTML = '<tr><td colspan="3" class="empty">No ingredients listed</td></tr>';
             } else {
                 tbody.innerHTML = ingredients.map(ing => `
-                    <tr>
+                    <tr class="${stockClass(ing)}">
                         <td>${escapeHtml(scaleAmount(ing.amount, scale))}</td>
                         <td>${escapeHtml(ing.unit || '')}</td>
-                        <td>${escapeHtml(ing.item || '')}</td>
+                        <td class="ingredient-name">${escapeHtml(ing.item || '')}${stockMark(ing)}</td>
                     </tr>
                 `).join('');
             }
+            renderStockLegend(ingredients);
 
             const baseServings = parseFloat(recipeData.servings) || 4;
             const produced = Math.round(baseServings * scale * 100) / 100;

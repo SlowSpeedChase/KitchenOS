@@ -1,5 +1,7 @@
 """Tests for API endpoints."""
 
+import os
+
 import pytest
 from api_server import app
 
@@ -1028,3 +1030,103 @@ def test_nutrition_review_explains_negligible(client):
     body = client.get('/nutrition-review').get_data(as_text=True)
     assert 'no meaningful calories' in body
     assert 'Remembered for every recipe' in body
+
+
+# ---- Recipe page marks what you don't have in stock ----
+
+def _stock_recipe(tmp_path, monkeypatch, rows="| 2 | lb | chicken thighs |\n| 1 | tsp | saffron |\n"):
+    recipes_dir = tmp_path / "Recipes"
+    recipes_dir.mkdir(exist_ok=True)
+    (recipes_dir / "Stock Test.md").write_text(
+        '---\ntitle: "Stock Test"\nservings: 4\n---\n\n# Stock Test\n\n## Ingredients\n\n'
+        "| Amount | Unit | Ingredient |\n|---|---|---|\n" + rows +
+        "\n## Instructions\n\n1. Cook.\n"
+    )
+    monkeypatch.setattr("api_server.OBSIDIAN_RECIPES_PATH", recipes_dir)
+    monkeypatch.setattr("api_server._RECIPES_ENV_AT_IMPORT", os.environ.get("KITCHENOS_VAULT"))
+    return recipes_dir
+
+
+def test_recipe_detail_marks_ingredients_you_do_not_have(client, tmp_path, monkeypatch):
+    from lib import pantry as pantry_module
+
+    _stock_recipe(tmp_path, monkeypatch)
+    monkeypatch.setattr(pantry_module, "load_pantry",
+                        lambda: [{"item": "Chicken thighs", "amount": "3", "unit": "lb"}])
+
+    data = client.get('/api/recipes/Stock Test').get_json()
+    by_item = {i["item"]: i for i in data["ingredients"]}
+
+    assert by_item["chicken thighs"]["in_stock"] is True
+    assert by_item["chicken thighs"]["have"] == "3 lb"
+    assert by_item["saffron"]["in_stock"] is False
+    assert by_item["saffron"]["have"] is None
+
+
+def test_empty_inventory_leaves_ingredients_unmarked(client, tmp_path, monkeypatch):
+    """None, not False — an empty inventory says nothing about your kitchen.
+
+    Marking everything "not in stock" would read as a claim about the kitchen
+    rather than about the absence of data.
+    """
+    from lib import pantry as pantry_module
+
+    _stock_recipe(tmp_path, monkeypatch)
+    monkeypatch.setattr(pantry_module, "load_pantry", lambda: [])
+
+    data = client.get('/api/recipes/Stock Test').get_json()
+    assert all(i["in_stock"] is None for i in data["ingredients"])
+
+
+def test_stock_check_failure_does_not_break_the_recipe(client, tmp_path, monkeypatch):
+    """A DB that won't open degrades to an uncoloured list, not a 500."""
+    from lib import pantry as pantry_module
+
+    _stock_recipe(tmp_path, monkeypatch)
+
+    def boom():
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(pantry_module, "load_pantry", boom)
+
+    response = client.get('/api/recipes/Stock Test')
+    assert response.status_code == 200
+    data = response.get_json()
+    assert len(data["ingredients"]) == 2
+    assert all(i["in_stock"] is None for i in data["ingredients"])
+
+
+def test_stock_annotation_preserves_the_original_ingredient_fields(client, tmp_path, monkeypatch):
+    from lib import pantry as pantry_module
+
+    _stock_recipe(tmp_path, monkeypatch)
+    monkeypatch.setattr(pantry_module, "load_pantry",
+                        lambda: [{"item": "Chicken thighs", "amount": "3", "unit": "lb"}])
+
+    first = client.get('/api/recipes/Stock Test').get_json()["ingredients"][0]
+    assert first["item"] == "chicken thighs"
+    assert first["amount"] == "2"
+    assert first["unit"] == "lb"
+
+
+def test_grouped_ingredient_sections_are_stock_checked_too(client, tmp_path, monkeypatch):
+    """The sub-heading fix and this feature have to compose."""
+    from lib import pantry as pantry_module
+
+    recipes_dir = tmp_path / "Recipes"
+    recipes_dir.mkdir(exist_ok=True)
+    (recipes_dir / "Stock Test.md").write_text(
+        '---\ntitle: "Stock Test"\n---\n\n## Ingredients\n\n'
+        "| Amount | Unit | Ingredient |\n|---|---|---|\n| 2 | lb | chicken thighs |\n\n"
+        "### For the rub\n\n"
+        "| Amount | Unit | Ingredient |\n|---|---|---|\n| 1 | tsp | saffron |\n\n"
+        "## Instructions\n\n1. Cook.\n"
+    )
+    monkeypatch.setattr("api_server.OBSIDIAN_RECIPES_PATH", recipes_dir)
+    monkeypatch.setattr("api_server._RECIPES_ENV_AT_IMPORT", os.environ.get("KITCHENOS_VAULT"))
+    monkeypatch.setattr(pantry_module, "load_pantry",
+                        lambda: [{"item": "Chicken thighs", "amount": "3", "unit": "lb"}])
+
+    items = {i["item"]: i["in_stock"]
+             for i in client.get('/api/recipes/Stock Test').get_json()["ingredients"]}
+    assert items == {"chicken thighs": True, "saffron": False}
