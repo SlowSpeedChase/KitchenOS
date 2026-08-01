@@ -2013,7 +2013,7 @@
         <!-- Main Grid -->
         <main class="main">
             <div class="assign-bar" id="assign-bar" hidden>
-                <span class="assign-bar-text">Placing <span id="assign-bar-name"></span> — tap a slot</span>
+                <span class="assign-bar-text"><span id="assign-bar-verb">Placing</span> <span id="assign-bar-name"></span> — tap a slot</span>
                 <button class="assign-bar-cancel" id="assign-bar-cancel">Cancel</button>
             </div>
             <div class="grid-header">
@@ -4155,6 +4155,12 @@
                 addAction('Open recipe', () => { window.location.href = link.href; });
             }
 
+            // The single-pointer path WCAG 2.2 SC 2.5.7 requires for the card
+            // drag, and the only route into a move on a desktop mouse-less setup.
+            if (card.classList.contains('cook-card') && card.dataset.cookId) {
+                addAction('Move to another slot', () => armRecipe(card));
+            }
+
             // Servings segment: ×1 / ×2 / ×3 — legacy grid cards only. Cook
             // cards (board mode) carry their own scale stepper (± 0.5, visible
             // inline, not display:none'd on touch) instead of this fixed menu.
@@ -4297,6 +4303,10 @@
             // the thing you touched reads as having grabbed the wrong one.
             document.getElementById('assign-bar-name').textContent =
                 displayNameFor(card.dataset.name) || 'recipe';
+            // A move that announces itself as "Placing" looks like it is about
+            // to duplicate the meal rather than relocate it.
+            document.getElementById('assign-bar-verb').textContent =
+                card.classList.contains('cook-card') ? 'Moving' : 'Placing';
             document.getElementById('assign-bar').hidden = false;
             setEmptyLabels('+ here');
         }
@@ -4315,6 +4325,13 @@
             const name = card.dataset.name;
             const isMeal = card.classList.contains('meal-card');
             disarmRecipe();
+
+            // An armed cook card is already on the board — this is a move, not a
+            // second cook of the same recipe.
+            if (card.classList.contains('cook-card')) {
+                await moveCookCard(card, cell);
+                return;
+            }
 
             if (isMeal) {
                 // Mirrors the meal branch of the grid Sortable's onAdd, including

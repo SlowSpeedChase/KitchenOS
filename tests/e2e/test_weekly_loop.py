@@ -273,3 +273,46 @@ def test_marking_a_plan_card_cooked_creates_a_ledger_row(live_server, page, page
     cooks = conn.execute("SELECT COUNT(*) FROM cooks WHERE week = ?", (week,)).fetchone()[0]
     conn.close()
     assert cooks > 0, "marking a plan card cooked left no ledger row"
+
+
+def test_a_cook_can_be_moved_to_another_slot_by_tapping(live_server, page, page_errors):
+    """The single-pointer alternative to the card drag (WCAG 2.2 SC 2.5.7).
+
+    Driven through the UI because the ledger call is the easy half; the part
+    that breaks is the armed state routing a cook card into a *move* rather
+    than into createCook(), which would schedule the same meal twice.
+    """
+    from datetime import date as _date
+    week, when = unique_week(6)
+    target = _date.fromisocalendar(2099, 7, 5).isoformat()   # Friday, same week
+    cook = _log_cook(live_server, week=week, recipe="E2E Move Cook",
+                     produced=2, when=when, meal="dinner")
+
+    page.goto(live_server.url(f"/meal-planner?week={week}"),
+              wait_until="domcontentloaded")
+    page.wait_for_selector(".cook-card", timeout=15_000)
+
+    # ⋮ is the only route into the sheet on a desktop browser (tap-to-open is
+    # gated on IS_TOUCH).
+    page.locator(".cook-card .card-menu-btn").first.click()
+    page.get_by_role("button", name="Move to another slot").click()
+
+    page.wait_for_selector("#assign-bar:not([hidden])")
+    assert "Moving" in page.inner_text("#assign-bar"), \
+        "a move announced as 'Placing' reads as duplicating the meal"
+
+    page.locator('.grid-cell[data-day="Friday"][data-meal="lunch"]').click()
+    page.wait_for_timeout(2000)
+
+    conn = sqlite3.connect(live_server.db)
+    row = conn.execute("SELECT date, meal FROM cooks WHERE id = ?",
+                       (cook["id"],)).fetchone()
+    placements = conn.execute(
+        "SELECT date, meal, count FROM placements WHERE cook_id = ?"
+        " AND destination = 'slot'", (cook["id"],)).fetchall()
+    conn.close()
+
+    assert row == (target, "lunch"), "the tap route did not re-anchor the cook"
+    assert placements == [(target, "lunch", 1.0)], \
+        "the home serving must travel with the card"
+    assert page_errors == [], f"planner raised: {page_errors}"
