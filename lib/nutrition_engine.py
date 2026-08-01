@@ -25,7 +25,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
-from lib import fdc_local, food_db, food_resolver, inventory_db, units
+from lib import (fdc_local, food_db, food_resolver, gram_equivalent,
+                 inventory_db, units)
 from lib.ingredient_text import apply_aliases, clean_for_matching
 from lib.nutrition import NutritionData
 
@@ -42,6 +43,7 @@ KCAL_SANITY_RANGE = (50, 2500)          # per serving
 # One ingredient line contributing more than this fraction of total recipe
 # grams is flagged for review (only when there is more than one resolved line).
 CONFIDENCE_LEDGER = 0.6                 # portion-ledger grams estimate confidence
+CONFIDENCE_STATED = 0.98                # the recipe stated the weight outright
 DOMINANT_LINE_FRACTION = 0.5            # one line > 50% of recipe grams
 
 # A single ingredient line over this many grams (~24 lb) is almost certainly a
@@ -264,6 +266,16 @@ def _resolve_food(item: str, *, use_cache: bool, resolution_provider: str,
 
 def _resolve_grams(amount, unit, item, record, *, use_cache: bool, portion_provider: str):
     """Convert to grams, falling back to a cached/LLM portion estimate."""
+    # An author-supplied metric aside — "light brown sugar (165 g)" — outranks
+    # every method below it, because it is stated fact rather than inference.
+    # Checked first for that reason: 60 corpus lines currently carry an exact
+    # weight that is discarded in favour of a density estimate. The value is
+    # absolute (it restates the whole line), so the amount is NOT re-applied.
+    _, explicit_g = gram_equivalent.extract(item or "")
+    if explicit_g:
+        return units.GramResult(explicit_g, "stated_weight", CONFIDENCE_STATED, False,
+                                note="weight stated in the recipe")
+
     density = (record or {}).get("density_g_per_ml")
     portions = (record or {}).get("portions") or []
     gr = units.to_grams(
