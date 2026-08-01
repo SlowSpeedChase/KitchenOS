@@ -11,6 +11,7 @@ from lib.meal_plan_parser import (
     rebuild_meal_plan_markdown,
 )
 from lib.meal_loader import Meal, SubRecipe, save_meal
+from templates.meal_plan_template import generate_meal_plan_markdown
 
 
 class TestParseMealPlan:
@@ -301,7 +302,10 @@ class TestRebuildMealPlanMarkdown:
             {"day": "Sunday", "date": "2026-03-01", "breakfast": None, "lunch": None, "snack": None, "dinner": None},
         ]
         result = rebuild_meal_plan_markdown("2026-W09", days)
-        assert "# Meal Plan - Week 09" in result
+        # The title is the date range, and must be byte-identical to the one the
+        # template writes — the two generators produce the same note.
+        assert result.split("\n")[0] == "# Meal Plan - Feb 23 - Mar 1, 2026"
+        assert result.split("\n")[0] == generate_meal_plan_markdown(2026, 9).split("\n")[0]
         assert "## Monday (Feb 23)" in result
         assert "## Sunday (Mar 1)" in result
         assert "### Breakfast" in result

@@ -2242,19 +2242,33 @@
 
         // --- Week Display ---
 
+        /** 'This week' / 'Next week' / 'Last week', else '' — mirrors
+         *  templates/meal_plan_template.week_relative_label. */
+        function weekRelativeLabel(monday) {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const thisMonday = new Date(today);
+            thisMonday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+            const deltaWeeks = Math.round((monday - thisMonday) / (7 * 864e5));
+            return {0: 'This week', 1: 'Next week', '-1': 'Last week'}[deltaWeeks] || '';
+        }
+
         function updateWeekDisplay() {
             const match = currentWeek.match(/^(\d{4})-W(\d{2})$/);
             if (!match) return;
-            const weekNum = parseInt(match[2]);
             const year = parseInt(match[1]);
 
             const monday = isoWeekToMonday(currentWeek);
             const sunday = new Date(monday);
             sunday.setDate(monday.getDate() + 6);
 
-            document.getElementById('week-num').textContent = `Week ${weekNum}`;
-            document.getElementById('week-dates').textContent =
+            // The date range leads; the week number is gone. It identified the
+            // week to the filesystem, never to a person — and the id is still in
+            // the URL for that. The muted line carries the orientation the number
+            // was standing in for.
+            document.getElementById('week-num').textContent =
                 `${formatDateShort(monday)} - ${formatDateShort(sunday)}, ${year}`;
+            document.getElementById('week-dates').textContent = weekRelativeLabel(monday);
 
             // Store dates for each day
             dayDates = {};

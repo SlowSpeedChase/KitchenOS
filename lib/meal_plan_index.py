@@ -38,15 +38,17 @@ def build_index_markdown(week_ids: list[str], today: Optional[date] = None) -> s
         "",
         "> Auto-generated — find a week by its dates, then open the plan.",
         "",
-        "| Week | Dates | Plan |",
-        "| --- | --- | --- |",
+        "| Dates | Plan |",
+        "| --- | --- |",
     ]
     for week_id in unique_sorted:
-        _, week_num = parse_week_id(week_id)
         start, end = get_week_date_range(*parse_week_id(week_id))
         date_range = format_week_range(week_id)  # e.g. "Jun 22 - Jun 28, 2026"
         marker = " **(this week)**" if start <= today <= end else ""
-        lines.append(f"| Week {week_num:02d} | {date_range}{marker} | [[{week_id}]] |")
+        # The wikilink still carries the id — it's the filename. The column a
+        # human reads is the range; a "Week 26" column alongside it said nothing
+        # the id didn't already say, in a less useful form.
+        lines.append(f"| {date_range}{marker} | [[{week_id}]] |")
     lines.append("")
     return "\n".join(lines)
 

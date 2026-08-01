@@ -30,7 +30,11 @@ from lib.meal_plan_parser import insert_recipe_into_meal_plan, parse_meal_plan, 
 from lib.recipe_parser import parse_recipe_file, extract_my_notes, parse_recipe_body
 from templates.shopping_list_template import generate_shopping_list_markdown, generate_filename as shopping_list_filename
 from templates.recipe_template import format_recipe_markdown
-from templates.meal_plan_template import generate_meal_plan_markdown, format_week_range
+from templates.meal_plan_template import (
+    format_week_heading,
+    format_week_range,
+    generate_meal_plan_markdown,
+)
 from lib.meal_plan_index import regenerate_index
 from lib.ingredient_validator import validate_ingredients
 from lib.ingredient_cleaner import clean_ingredient_list
@@ -1024,7 +1028,7 @@ def refresh_nutrition():
             )
 
         return _html_page("KitchenOS", f'''
-<div class="card ok"><strong>Success</strong><br>Dashboard updated for {week}</div>
+<div class="card ok"><strong>Success</strong><br>Dashboard updated for {_week_label(week)}</div>
 {warnings_html}
 <p><a href="obsidian://open?vault={VAULT_NAME}&file=Nutrition%20Dashboard">View Dashboard</a></p>
 ''')
@@ -1663,10 +1667,16 @@ def _generate_week_options(weeks_ahead: int = 4) -> list[str]:
     return weeks
 
 
-def _week_option_label(week_id: str) -> str:
-    """Dropdown label leading with the date range, e.g. 'Jun 22 - Jun 28 (2026-W26)'."""
+def _week_label(week_id: str) -> str:
+    """A week as a human reads it, e.g. 'This week · Jun 22 - Jun 28'.
+
+    Never raises — falls back to the raw id, so a malformed week can't turn a
+    success message into an error page. In a `<select>` the id is the option's
+    *value*; it used to be appended in parentheses here too, which just put the
+    unreadable form back in front of the user.
+    """
     try:
-        return f"{format_week_range(week_id, with_year=False)} ({week_id})"
+        return format_week_heading(week_id, with_year=False)
     except ValueError:
         return week_id
 
@@ -1694,7 +1704,7 @@ def _render_add_form(recipe_display: str, error: str | None = None) -> str:
     meals = ['Breakfast', 'Lunch', 'Snack', 'Dinner']
     meal_names = _list_meal_names()
 
-    week_options = ''.join(f'<option value="{w}">{_week_option_label(w)}</option>' for w in weeks)
+    week_options = ''.join(f'<option value="{w}">{_week_label(w)}</option>' for w in weeks)
     day_options = ''.join(f'<option value="{d}">{d}</option>' for d in days)
     meal_options = ''.join(f'<option value="{m}">{m}</option>' for m in meals)
     meal_name_options = ''.join(f'<option value="{n}">{n}</option>' for n in meal_names)
@@ -1808,7 +1818,7 @@ def _render_schedule_prompt(recipe: str, meal_name: str, action: str, info: str 
     weeks = _generate_week_options()
     days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     meals = ['Breakfast', 'Lunch', 'Snack', 'Dinner']
-    week_options = ''.join(f'<option value="{w}">{_week_option_label(w)}</option>' for w in weeks)
+    week_options = ''.join(f'<option value="{w}">{_week_label(w)}</option>' for w in weeks)
     day_options = ''.join(f'<option value="{d}">{d}</option>' for d in days)
     meal_options = ''.join(f'<option value="{m}">{m}</option>' for m in meals)
     encoded_meal = quote(f"Meals/{meal_name}", safe='')
@@ -2020,7 +2030,7 @@ def _render_note_page(subdir: str, week: str, title: str, empty_html: str) -> st
                 f'&file={encoded}">Open in Obsidian ›</a>')
     return _serve_page_with_claude_bar('note_view.html', [
         ('<!--TITLE-->', title),
-        ('<!--SUB-->', f"Week {int(week.split('-W')[1])} · {week}"),
+        ('<!--SUB-->', format_week_heading(week)),
         ('<!--BODY-->', body),
         ('<!--OBSIDIAN-->', obsidian),
     ])

@@ -239,7 +239,7 @@ def rebuild_meal_plan_markdown(week: str, days: list[dict]) -> str:
         return link
 
     lines = [
-        f"# Meal Plan - Week {week_num:02d} ({fmt_date(start_date)} - {fmt_date(end_date)}, {year})",
+        f"# Meal Plan - {fmt_date(start_date)} - {fmt_date(end_date)}, {year}",
         "",
         "```button",
         "name Generate Shopping List",

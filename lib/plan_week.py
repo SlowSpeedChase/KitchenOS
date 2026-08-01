@@ -14,6 +14,7 @@ from html import escape
 from typing import Optional
 
 from lib.meal_plan_parser import get_week_start_date
+from templates.meal_plan_template import format_week_heading, format_week_range
 
 _MEALS = ("breakfast", "lunch", "snack", "dinner")
 
@@ -65,10 +66,15 @@ def render_plan_center_html(week: str, packet: Optional[dict], targets: dict,
     base = base_url.rstrip("/")
     t = targets
 
+    # Date ranges, not week ids: this page defaults to *next* week, so "2026-W32"
+    # in the middle told you neither when it is nor that you'd been moved forward.
+    # The ids stay in the hrefs, where they're the key.
     nav = (f"<div class='weeknav'>"
-           f"<a href='{base}/plan-week?week={prev_week}'>← {prev_week}</a>"
-           f"<span class='cur'>{escape(week)}</span>"
-           f"<a href='{base}/plan-week?week={next_week}'>{next_week} →</a></div>")
+           f"<a href='{base}/plan-week?week={prev_week}'>"
+           f"← {escape(format_week_range(prev_week, with_year=False))}</a>"
+           f"<span class='cur'>{escape(format_week_heading(week))}</span>"
+           f"<a href='{base}/plan-week?week={next_week}'>"
+           f"{escape(format_week_range(next_week, with_year=False))} →</a></div>")
 
     if packet and any(d["macros"] for d in packet["days"]):
         rows = "".join(_day_status_row(d, t, base) for d in packet["days"])

@@ -60,3 +60,31 @@ class TestRenderPlanCenter:
             "2026-W40", None, T, "", "2026-W39", "2026-W41")
         assert "empty" in html.lower()
         assert "meal-planner?week=2026-W40" in html  # still offers the fill action
+
+
+class TestWeekNavIsHumanReadable:
+    """REGRESSION: the nav rendered three raw week ids and no dates.
+
+    This page defaults to *next* week, so "2026-W32" in the middle told you
+    neither when it is nor that you'd been moved forward.
+    """
+
+    def test_nav_shows_date_ranges_not_ids(self):
+        html = plan_week.render_plan_center_html(
+            "2026-W32", None, T, "https://ko.example", "2026-W31", "2026-W33")
+        assert "Jul 27 - Aug 2" in html      # prev
+        assert "Aug 3 - Aug 9" in html       # current
+        assert "Aug 10 - Aug 16" in html     # next
+
+    def test_ids_stay_in_the_hrefs(self):
+        """The id is the key — it must still address the page."""
+        html = plan_week.render_plan_center_html(
+            "2026-W32", None, T, "https://ko.example", "2026-W31", "2026-W33")
+        assert "plan-week?week=2026-W31" in html
+        assert "plan-week?week=2026-W33" in html
+
+    def test_no_bare_week_id_is_rendered_as_text(self):
+        html = plan_week.render_plan_center_html(
+            "2026-W32", None, T, "https://ko.example", "2026-W31", "2026-W33")
+        assert ">2026-W32<" not in html
+        assert "← 2026-W31" not in html

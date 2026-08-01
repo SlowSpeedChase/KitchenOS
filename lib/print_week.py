@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
 
+from templates.meal_plan_template import format_week_heading
+
 _MEALS = ("breakfast", "lunch", "snack", "dinner")
 _MEAL_LABELS = {"breakfast": "Breakfast", "lunch": "Lunch",
                 "snack": "Snack", "dinner": "Dinner"}
@@ -143,7 +145,8 @@ def build_week_packet(week: str, vault_path: Path, recipes_dir: Path, *,
     all_tasks = (tasks_payload or {}).get("tasks", [])
     do_ahead = [t for t in all_tasks if t.get("can_do_ahead") and not t.get("done")]
 
-    week_label = f"{week}  ({days[0]['date']} → {days[-1]['date']})" if days else week
+    # The printed page goes on the fridge — "2026-W31" on it helps nobody.
+    week_label = format_week_heading(week)
     return {
         "week": week,
         "week_label": week_label,
