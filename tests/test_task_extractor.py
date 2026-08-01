@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from lib import task_extractor
+from lib import llm_gate, task_extractor
 
 
 SAMPLE_PLAN = """# Meal Plan - Week 18 (Apr 27 - May 3, 2026)
@@ -219,3 +219,71 @@ def test_mark_task_done_unknown_id_returns_error(vault: Path):
         task_extractor.extract_tasks("2026-W18")
     result = task_extractor.mark_task_done("2026-W18", "nope")
     assert result["success"] is False
+
+
+# ---- lib/llm_gate: a page render may not hang on inference ----
+
+class _FakeResponse:
+    status_code = 200
+
+    def json(self):
+        return {"response": "[]"}
+
+
+def _capture(seen):
+    """Record the kwargs of a requests.post and answer with an empty JSON body."""
+    def post(*args, **kwargs):
+        seen.update(kwargs)
+        return _FakeResponse()
+    return post
+
+
+def test_the_kill_switch_skips_the_ollama_tier(monkeypatch):
+    """The e2e harness sets this. Blanking API keys can't stop Ollama — no key."""
+    monkeypatch.setenv(llm_gate.DISABLE_ENV, "1")
+    posted = []
+    monkeypatch.setattr(task_extractor.requests, "post", lambda *a, **k: posted.append(k))
+
+    assert task_extractor._classify_with_ollama("prompt") is None
+    assert posted == [], "the kill switch must be checked before the request"
+
+
+def test_a_script_keeps_the_long_ollama_timeout(monkeypatch):
+    """Nobody is waiting on a nightly job; it may take its two minutes."""
+    seen = {}
+    monkeypatch.setattr(task_extractor.requests, "post", _capture(seen))
+
+    task_extractor._classify_with_ollama("prompt")
+
+    assert seen["timeout"] == 120
+
+
+def test_a_page_render_bounds_the_ollama_timeout(monkeypatch):
+    """/prep was a 120 s blocking call behind a 30 s browser timeout."""
+    from flask import Flask
+
+    seen = {}
+    monkeypatch.setattr(task_extractor.requests, "post", _capture(seen))
+
+    with Flask(__name__).test_request_context("/prep"):
+        task_extractor._classify_with_ollama("prompt")
+
+    assert seen["timeout"] <= llm_gate.WEB_BUDGET_S
+
+
+def test_a_page_render_does_not_persist_a_budget_forced_heuristic(vault: Path):
+    """A fallback the *clock* forced must not become the cached answer.
+
+    `_is_cache_fresh` only compares mtimes, so persisting it would freeze the
+    heuristic in place until the plan is edited. Falling back because no model
+    exists at all is different and still caches — that is the real answer there.
+    """
+    from flask import Flask
+
+    with patch.object(task_extractor, "_anthropic_client", None), \
+         patch.object(task_extractor, "_classify_with_ollama", return_value=None), \
+         Flask(__name__).test_request_context("/prep"):
+        result = task_extractor.extract_tasks("2026-W18")
+
+    assert result["tasks"], "the reader still gets an answer"
+    assert not (vault / "Meal Plans" / "2026-W18.tasks.json").exists()

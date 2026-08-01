@@ -25,7 +25,7 @@ from typing import Optional
 
 import requests
 
-from lib import paths
+from lib import llm_gate, paths
 from lib.meal_plan_parser import flatten_to_recipes, parse_meal_plan
 from lib.recipe_parser import parse_recipe_body, parse_recipe_file
 from lib.shopping_list_generator import find_recipe_file
@@ -58,8 +58,10 @@ def _client():
 
 CLAUDE_MODEL = "claude-haiku-4-5-20251001"
 CLAUDE_MAX_TOKENS = 4000
+CLAUDE_TIMEOUT_S = 60
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "mistral:7b"
+OLLAMA_TIMEOUT_S = 120
 
 
 @dataclass
@@ -159,13 +161,17 @@ def _build_recipes_block(steps: list[ScheduledStep]) -> str:
 
 def _classify_with_claude(prompt: str) -> Optional[list[dict]]:
     client = _client()
-    if client is None:
+    if client is None or not llm_gate.allowed():
+        return None
+    budget = llm_gate.budget_s(CLAUDE_TIMEOUT_S)
+    if budget <= 0:
         return None
     try:
         message = client.messages.create(
             model=CLAUDE_MODEL,
             max_tokens=CLAUDE_MAX_TOKENS,
             messages=[{"role": "user", "content": prompt}],
+            timeout=budget,
         )
         raw = message.content[0].text
         return _extract_json_array(raw)
@@ -174,11 +180,16 @@ def _classify_with_claude(prompt: str) -> Optional[list[dict]]:
 
 
 def _classify_with_ollama(prompt: str) -> Optional[list[dict]]:
+    if not llm_gate.allowed():
+        return None
+    budget = llm_gate.budget_s(OLLAMA_TIMEOUT_S)
+    if budget <= 0:
+        return None
     try:
         response = requests.post(
             OLLAMA_URL,
             json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False, "format": "json"},
-            timeout=120,
+            timeout=budget,
         )
         if response.status_code != 200:
             return None
@@ -334,7 +345,8 @@ def extract_tasks(week: str, force: bool = False) -> dict:
     classified = _classify_with_claude(prompt)
     if classified is None:
         classified = _classify_with_ollama(prompt)
-    if classified is None:
+    fell_back = classified is None
+    if fell_back:
         classified = _heuristic_classify(steps)
 
     tasks = _normalize_classified(classified, steps)
@@ -347,7 +359,13 @@ def extract_tasks(week: str, force: bool = False) -> dict:
                 task["done"] = True
 
     payload = {"week": week, "generated_at": _now_iso(), "tasks": tasks}
-    _save_sidecar(week, payload)
+    # A heuristic answer reached during a page render is the *clock's* answer,
+    # not the machine's — the budget cut inference short. `_is_cache_fresh` only
+    # compares mtimes, so persisting it would freeze it in place until the plan
+    # is next edited. Off a request there is no budget, so a heuristic there is
+    # the real answer this machine can give, and it caches as before.
+    if not (fell_back and llm_gate.on_page_render()):
+        _save_sidecar(week, payload)
     return payload
 
 

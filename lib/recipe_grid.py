@@ -27,6 +27,8 @@ from typing import Optional
 
 import requests
 
+from lib import llm_gate
+
 try:
     import anthropic
     _api_key = os.getenv("ANTHROPIC_API_KEY")
@@ -36,8 +38,10 @@ except ImportError:
 
 CLAUDE_MODEL = "claude-haiku-4-5-20251001"
 CLAUDE_MAX_TOKENS = 700
+CLAUDE_TIMEOUT_S = 60
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "mistral:7b"
+OLLAMA_TIMEOUT_S = 120
 
 
 # ---- ingredient display (best-effort grams) ------------------------------
@@ -73,13 +77,17 @@ def _ingredient_display(ing: dict) -> str:
 # ---- LLM tiering (mirrors lib/task_extractor.py) --------------------------
 
 def _group_with_claude(prompt: str) -> Optional[dict]:
-    if _anthropic_client is None:
+    if _anthropic_client is None or not llm_gate.allowed():
+        return None
+    budget = llm_gate.budget_s(CLAUDE_TIMEOUT_S)
+    if budget <= 0:
         return None
     try:
         message = _anthropic_client.messages.create(
             model=CLAUDE_MODEL,
             max_tokens=CLAUDE_MAX_TOKENS,
             messages=[{"role": "user", "content": prompt}],
+            timeout=budget,
         )
         return _extract_json_object(message.content[0].text)
     except Exception:
@@ -87,11 +95,16 @@ def _group_with_claude(prompt: str) -> Optional[dict]:
 
 
 def _group_with_ollama(prompt: str) -> Optional[dict]:
+    if not llm_gate.allowed():
+        return None
+    budget = llm_gate.budget_s(OLLAMA_TIMEOUT_S)
+    if budget <= 0:
+        return None
     try:
         response = requests.post(
             OLLAMA_URL,
             json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False, "format": "json"},
-            timeout=120,
+            timeout=budget,
         )
         if response.status_code != 200:
             return None
@@ -203,10 +216,15 @@ def build_grid(recipe_name: str, recipes_dir: Path, force: bool = False) -> Opti
         raw = _group_with_ollama(prompt)
         source = "ollama"
     if raw is None:
+        # Deliberately *not* cached. `_is_fresh` only compares mtimes, so a
+        # heuristic sidecar reads as fresh forever — one cold render and the AI
+        # grid would never be built for this recipe again. Recomputing it needs
+        # no model, so there is nothing to save.
         spec = _heuristic_grid(ingredients, instructions)
-    else:
-        spec = _normalize_spec(raw, source)
+        spec["ingredient_rows"] = ingredient_rows
+        return spec
 
+    spec = _normalize_spec(raw, source)
     try:
         sidecar.write_text(json.dumps({k: v for k, v in spec.items()
                                        if k != "ingredient_rows"}, indent=2),

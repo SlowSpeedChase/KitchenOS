@@ -25,7 +25,13 @@ from pathlib import Path
 import pytest
 import requests
 
+from tests.e2e._paths import data_root
+
+#: The checkout under test — its api_server.py and config/ are what we exercise.
 REPO = Path(__file__).resolve().parents[2]
+#: Where the git-ignored vault/ and data/ actually live: always the main
+#: worktree, so the suite runs from a branch worktree too.
+DATA_ROOT = data_root(REPO)
 BOOT_TIMEOUT_S = 30
 
 
@@ -56,12 +62,12 @@ def live_server(tmp_path_factory) -> LiveServer:
     # config (machine state, not content), and .history/ (thousands of timestamped
     # backups left by the backfill scripts — pure copy cost, never read).
     shutil.copytree(
-        REPO / "vault" / "KitchenOS",
+        DATA_ROOT / "vault" / "KitchenOS",
         vault,
         ignore=shutil.ignore_patterns("Images", ".obsidian", ".history"),
     )
     db = root / "kitchenos.db"
-    shutil.copy2(REPO / "data" / "kitchenos.db", db)
+    shutil.copy2(DATA_ROOT / "data" / "kitchenos.db", db)
     # A move teaches the storage table, so the server *writes* this file. Copied
     # rather than pointed at the real one: otherwise the browser tests rewrite
     # the developer's config/storage_locations.json — observed, they injected
@@ -78,9 +84,13 @@ def live_server(tmp_path_factory) -> LiveServer:
         "KITCHENOS_DB": str(db),
         "KITCHENOS_STORAGE_TABLE": str(storage_table),
         "PORT": str(port),
-        # Never let a test hit the paid APIs or a live LLM.
+        # Never let a test hit the paid APIs or a live LLM. Blank keys alone did
+        # not achieve this: Ollama needs no key, so /prep and /recipe-card kept
+        # reaching the local tier and the browser's 30 s navigation timeout raced
+        # a model. lib/llm_gate refuses every tier, keyed or not.
         "ANTHROPIC_API_KEY": "",
         "OPENAI_API_KEY": "",
+        "KITCHENOS_NO_LLM": "1",
     }
     with open(log, "w") as logfile:
         proc = subprocess.Popen(
