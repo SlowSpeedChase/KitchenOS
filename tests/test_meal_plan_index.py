@@ -10,26 +10,29 @@ from lib.meal_plan_index import (
 
 
 class TestBuildIndexMarkdown:
-    def test_rows_have_week_dates_and_link(self):
+    def test_rows_have_dates_and_link(self):
+        """The readable column is the date range; the id lives in the link."""
         md = build_index_markdown(["2026-W04"], today=date(2026, 1, 1))
         assert "# Meal Plans Index" in md
-        assert "| Week 04 | Jan 19 - Jan 25, 2026 | [[2026-W04]] |" in md
+        assert "| Jan 19 - Jan 25, 2026 | [[2026-W04]] |" in md
+
+    def test_no_week_number_column(self):
+        md = build_index_markdown(["2026-W04"], today=date(2026, 1, 1))
+        assert "Week 04" not in md, "a week number identifies nothing to a human"
 
     def test_sorted_newest_first(self):
         md = build_index_markdown(
             ["2026-W04", "2026-W26", "2026-W10"], today=date(2026, 1, 1)
         )
-        rows = [l for l in md.splitlines() if l.startswith("| Week ")]
-        # header row is "| Week | Dates | Plan |"; data rows start "| Week NN"
-        data = [r for r in rows if r.startswith("| Week 0") or r.startswith("| Week 1") or r.startswith("| Week 2")]
-        assert data[0].startswith("| Week 26")
-        assert data[-1].startswith("| Week 04")
+        data = [l for l in md.splitlines() if l.startswith("| ") and "[[" in l]
+        assert data[0].startswith("| Jun 22")   # 2026-W26
+        assert data[-1].startswith("| Jan 19")  # 2026-W04
 
     def test_current_week_marked(self):
         # Jan 21 2026 falls inside ISO week 4.
         md = build_index_markdown(["2026-W04", "2026-W26"], today=date(2026, 1, 21))
-        wk4 = next(l for l in md.splitlines() if l.startswith("| Week 04"))
-        wk26 = next(l for l in md.splitlines() if l.startswith("| Week 26"))
+        wk4 = next(l for l in md.splitlines() if "[[2026-W04]]" in l)
+        wk26 = next(l for l in md.splitlines() if "[[2026-W26]]" in l)
         assert "(this week)" in wk4
         assert "(this week)" not in wk26
 

@@ -195,7 +195,7 @@ def compute_dashboard(
     # Format week dates
     first_date = days[0]['date']
     last_date = days[6]['date']
-    week_label = f"Week {week_num} ({first_date.strftime('%b %d')} - {last_date.strftime('%b %d')})"
+    week_label = f"{first_date.strftime('%b %-d')} - {last_date.strftime('%b %-d')}, {first_date.year}"
 
     day_records = []
     for day_data, nutrition in zip(days, daily_nutrition):

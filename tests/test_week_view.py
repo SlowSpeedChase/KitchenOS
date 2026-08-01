@@ -86,3 +86,19 @@ def test_import_legacy_week_skips_leftover_lines(tmp_db, tmp_vault):
     imported = week_view.import_legacy_week("2026-W28")
     assert imported == []
     assert sl.cooks_for_week("2026-W28") == []
+
+
+def test_week_view_title_carries_the_date_range(tmp_db, tmp_vault):
+    """REGRESSION: the ledger-authored view titled itself "Week 28" — no dates at all.
+
+    Of all the week surfaces this was the worst: the other notes at least put the
+    range in parentheses.
+    """
+    plans = tmp_vault / "Meal Plans"
+    plans.mkdir(parents=True)
+    (plans / "2026-W28.md").write_text("# Meal Plan - Week 28\n", encoding="utf-8")
+
+    week_view.write_week_markdown("2026-W28")
+
+    title = (plans / "2026-W28.md").read_text(encoding="utf-8").split("\n")[0]
+    assert title == "# Meal Plan - Jul 6 - Jul 12, 2026"

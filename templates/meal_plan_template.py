@@ -5,6 +5,7 @@ Creates weekly meal plan markdown files with blank slots for recipes.
 
 import re
 from datetime import date, timedelta
+from typing import Optional
 
 
 DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
@@ -46,11 +47,45 @@ def format_week_range(week_id: str, *, with_year: bool = True) -> str:
     """Human date range for a 'YYYY-Www' id, e.g. 'Jun 22 - Jun 28, 2026'.
 
     Pass with_year=False for the bare 'Jun 22 - Jun 28' form (e.g. dropdowns).
+
+    **This is what a surface shows.** A week id is a key — it names files
+    (`Meal Plans/2026-W26.md`), API paths, task sidecars and wikilinks — but
+    "2026-W26" tells a human nothing about when it is, and neither does "Week
+    26". Render the range; keep the id for the link.
     """
     year, week = parse_week_id(week_id)
     start, end = get_week_date_range(year, week)
     rng = f"{format_date_short(start)} - {format_date_short(end)}"
     return f"{rng}, {year}" if with_year else rng
+
+
+def week_relative_label(week_id: str, today: Optional[date] = None) -> str:
+    """'This week' / 'Next week' / 'Last week', or '' for anything further out.
+
+    The orientation a week number was really being used for — "which week am I
+    looking at?" — answered in words instead of arithmetic. Empty for distant
+    weeks, where the date range is the only honest answer.
+    """
+    try:
+        year, week = parse_week_id(week_id)
+    except ValueError:
+        return ""
+    today = today or date.today()
+    start, _ = get_week_date_range(year, week)
+    this_monday = today - timedelta(days=today.weekday())
+    delta_weeks = (start - this_monday).days // 7
+    return {0: "This week", 1: "Next week", -1: "Last week"}.get(delta_weeks, "")
+
+
+def format_week_heading(week_id: str, *, with_year: bool = True,
+                        today: Optional[date] = None) -> str:
+    """The full human label: 'This week · Jun 22 - Jun 28, 2026'.
+
+    Falls back to the bare range when the week isn't adjacent to today.
+    """
+    rng = format_week_range(week_id, with_year=with_year)
+    relative = week_relative_label(week_id, today)
+    return f"{relative} · {rng}" if relative else rng
 
 
 def generate_meal_plan_markdown(year: int, week: int) -> str:
@@ -67,7 +102,7 @@ def generate_meal_plan_markdown(year: int, week: int) -> str:
     week_id = f"{year}-W{week:02d}"
 
     lines = [
-        f"# Meal Plan - Week {week:02d} ({format_date_short(start_date)} - {format_date_short(end_date)}, {year})",
+        f"# Meal Plan - {format_week_range(week_id)}",
         "",
         "```button",
         "name Generate Shopping List",

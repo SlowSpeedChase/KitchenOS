@@ -13,6 +13,7 @@ from datetime import timedelta
 
 from lib import paths, serving_ledger
 from lib.meal_plan_parser import get_week_start_date, fmt_mult
+from templates.meal_plan_template import format_week_range
 
 MEALS = ("breakfast", "lunch", "snack", "dinner")
 MEAL_LABELS = {"breakfast": "Breakfast", "lunch": "Lunch",
@@ -67,8 +68,7 @@ def render_week_markdown(week: str, recipes_dir) -> str:
 
     end = start + timedelta(days=6)
     lines = [
-        f"# Meal Plan - Week {week_num:02d}"
-        f" ({fmt_date(start)} - {fmt_date(end)}, {year})",
+        f"# Meal Plan - {format_week_range(week)}",
         "",
         "```button",
         "name Generate Shopping List",

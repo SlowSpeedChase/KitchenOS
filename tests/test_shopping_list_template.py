@@ -9,14 +9,20 @@ def test_generates_markdown_with_header():
         week="2026-W04",
         items=["2 lbs chicken", "1 cup rice"]
     )
-    assert "# Shopping List - Week 04" in result
+    assert "# Shopping List - Jan 19 - Jan 25, 2026" in result
     assert "[[2026-W04|Meal Plan]]" in result
 
 
-def test_header_includes_date_range():
-    """Title leads with the human date range so the week is identifiable."""
+def test_header_is_the_date_range_not_a_week_number():
+    """The title *is* the date range — "Week 04" identifies nothing to a human."""
     result = generate_shopping_list_markdown(week="2026-W04", items=["item"])
-    assert "# Shopping List - Week 04 (Jan 19 - Jan 25, 2026)" in result
+    assert "# Shopping List - Jan 19 - Jan 25, 2026" in result
+    assert "Week 04" not in result
+
+
+def test_header_falls_back_to_the_id_when_it_is_malformed():
+    result = generate_shopping_list_markdown(week="not-a-week", items=["item"])
+    assert "# Shopping List - not-a-week" in result
 
 
 def test_generates_checklist_items():
@@ -51,7 +57,7 @@ def test_empty_items_list():
         week="2026-W04",
         items=[]
     )
-    assert "# Shopping List - Week 04" in result
+    assert "# Shopping List - Jan 19 - Jan 25, 2026" in result
     assert "## Items" in result
     # Should still have button
     assert "```button" in result

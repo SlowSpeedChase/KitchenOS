@@ -95,3 +95,17 @@ class TestRenderPacketHtml:
         packet = print_week.build_week_packet(WEEK, vault, recipes, pantry=[])
         html = print_week.render_packet_html(packet)
         assert "?tasks=1" in html  # hint when no cached prep tasks exist
+
+
+def test_week_label_is_human_readable(tmp_vault):
+    """REGRESSION: the printed page's <h1> read "2026-W31  (2026-07-27 → 2026-08-02)".
+
+    It goes on the fridge — an ISO week id and ISO dates are the two least
+    readable ways to say "this week".
+    """
+    vault, recipes = _setup_markdown_week(tmp_vault)
+    packet = print_week.build_week_packet(WEEK, vault, recipes, pantry=[])
+
+    assert "2026-W31" not in packet["week_label"]
+    assert "Jul 27 - Aug 2, 2026" in packet["week_label"]
+    assert packet["week"] == "2026-W31", "the id stays as the key"
