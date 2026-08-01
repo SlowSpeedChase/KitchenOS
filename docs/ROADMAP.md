@@ -219,14 +219,39 @@ expanded, what the buttons meant, or what being flagged costs you.
 - Tooltips on Use / Negligible. "Negligible" is jargon for "count this as zero
   calories, permanently".
 
-### P3 — Recipe view layout, and the Obsidian button block leaking to the top
+### ~~P3 — the Obsidian button block leaking to the top~~ FIXED
 
-The full recipe view is reported as ugly, and it "pulls the obsidian button code
-in to the top" — i.e. a vault ```button block is being rendered as content instead
-of being stripped or turned into a real control. `lib/note_view.py` already maps
-known `kitchenos://` button actions onto HTTP endpoints when rendering a *note*;
-the recipe page (`api_server.py:701`, `templates/recipe_detail.html`) doesn't go
-through that path. Reuse it or strip the block.
+**Fixed 2026-07-31.** All 252 recipe bodies open with a `[!tools]` callout of
+```button blocks, *above* the `# Title`. `renderBodyMarkdown` in
+`templates/recipe_detail.html` escapes whatever it doesn't understand and had no
+concept of a fence, so that callout arrived at the top of the Full Recipe panel
+as literal `> ```button / > name Re-extract / > type link / > action http://…`.
+
+Resolved by **stripping, not reviving**: `stripObsidianChrome()` drops `button`
+fences, the `[!tools]` callout, HTML-comment authoring prompts, and blockquote
+markers, then hands the rest to the existing renderer. Unlike the `kitchenos://`
+buttons `lib/note_view.py` revives, these three actions (re-extract, refresh, add
+to plan) are already plain HTTP links *and* already buttons in this page's own
+header, so rendering them would only duplicate the header. Only `button` fences
+are dropped — a fence of any other kind is content, and `[!abstract]` (48
+recipes) is content, so only `[!tools]` is matched by name.
+
+Covered by `tests/e2e/test_recipe_body_chrome.py`, including a guard that the
+strip doesn't eat real sections.
+
+### P3 — Recipe view layout
+
+Still open, and the screenshot now makes the complaint concrete: the **Full
+Recipe panel repeats the whole page**. Ingredients, Instructions and Equipment
+are already rendered as structured cards above it, then appear again as raw
+markdown — including the ingredients table as literal `| Amount | Unit |` pipes
+and `---` as three dashes, because the minimal renderer handles only headings and
+`- ` lists.
+
+The open question is what that panel is *for* once the page above it is
+structured. Most likely it should show only what has no card of its own — "My
+Notes" and the extraction footer — rather than a second copy of the recipe. That
+is a design decision, not a bug fix, so it needs a call before any code.
 
 ### P3 — Meal planner rendering on this Mac
 
