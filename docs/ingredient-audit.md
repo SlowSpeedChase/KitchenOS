@@ -2,21 +2,31 @@
 
 - recipes scanned: **252**
 - ingredient lines: **2758**
-- recipes with at least one issue: **224** (89%)
+- recipes with an *actionable* issue: **169** (67%)
+- recipes flagged by any rule incl. `info`: 224 (89%)
 
-| issue | lines | recipes | what it means |
-|---|---:|---:|---|
-| `parenthetical` | 556 | 142 | the name carries a parenthetical aside |
-| `digits_in_item` | 249 | 76 | a number leaked into the ingredient name |
-| `alternatives` | 202 | 98 | the name offers a choice ('x or y') |
-| `unit_word_in_item` | 180 | 94 | a measurement word leaked into the ingredient name |
-| `count_unit_on_pourable` | 146 | 91 | count unit on a pourable item |
-| `whole_on_bulk` | 133 | 87 | 'whole' used for something poured or spooned |
-| `unit_repeated_in_item` | 71 | 44 | the unit is duplicated into the ingredient name |
-| `unknown_unit` | 66 | 38 | unrecognized unit |
-| `leading_punctuation` | 10 | 9 | the name starts mid-phrase |
-| `doubled_word` | 4 | 3 | a word repeats inside the ingredient name |
-| `empty_item` | 2 | 1 | blank ingredient name |
+`info` lines read fine to a cook and are excluded from the headline —
+"almond or cashew butter" is how recipes talk, not a defect.
+
+| severity | issue | lines | recipes | what it means |
+|---|---|---:|---:|---|
+| `defect` | `unit_repeated_in_item` | 71 | 44 | the unit is duplicated into the ingredient name |
+| `defect` | `unknown_unit` | 66 | 38 | unrecognized unit |
+| `defect` | `leading_punctuation` | 10 | 9 | the name starts mid-phrase |
+| `defect` | `doubled_word` | 4 | 3 | a word repeats inside the ingredient name |
+| `defect` | `empty_item` | 2 | 1 | blank ingredient name |
+| `recoverable` | `gram_equivalent_discarded` | 71 | 22 | an exact weight is sitting unused in the name |
+| `filler` | `count_unit_on_pourable` | 146 | 91 | count unit on a pourable item |
+| `filler` | `whole_on_bulk` | 133 | 87 | 'whole' used for something poured or spooned |
+| `filler` | `no_amount_stated` | 17 | 12 | the line says outright that no amount was given |
+| `junk` | `price_leaked` | 50 | 3 | a price came along from the source page |
+| `junk` | `cross_reference` | 29 | 11 | points at a note that wasn't kept |
+| `junk` | `oven_temp_as_ingredient` | 1 | 1 | an oven temperature parsed as an ingredient |
+| `junk` | `sponsor_code` | 1 | 1 | a sponsor/affiliate code came along |
+| `info` | `parenthetical` | 556 | 142 | the name carries a parenthetical aside |
+| `info` | `digits_in_item` | 249 | 76 | a number leaked into the ingredient name |
+| `info` | `alternatives` | 202 | 98 | the name offers a choice ('x or y') |
+| `info` | `unit_word_in_item` | 180 | 94 | a measurement word leaked into the ingredient name |
 
 ## Examples
 
@@ -83,6 +93,15 @@
 - **Charred Cabbage + Sicilian Pesto.md** — unit 'whole' also starts the item 'whole caraflex cabbage (also known as sweetheart cabbage)'
 - …and 65 more (`--issue unit_repeated_in_item` for all)
 
+### `gram_equivalent_discarded`
+- **Black Bean Brownies.md** — 'cocoa powder (10g)' states an exact weight that is being thrown away
+- **Black Bean Brownies.md** — 'quick oats  see nutrition link below for substitutions (40g)' states an exact weight that is being thrown away
+- **Black Bean Brownies.md** — 'coconut or vegetable oil  see nutrition link for substitution notes (40g)' states an exact weight that is being thrown away
+- **Black Bean Dip.md** — 'black beans, rinsed and drained (15.5 ounce)' states an exact weight that is being thrown away
+- **Blueberry Rhubarb Muffins.md** — 'frozen blueberries (130g, $0.82)' states an exact weight that is being thrown away
+- **Braised Tofu.md** — 'thinly sliced red bell peppers  see note 2 for more options (120g)' states an exact weight that is being thrown away
+- …and 65 more (`--issue gram_equivalent_discarded` for all)
+
 ### `unknown_unit`
 - **150 Calorie Chicken Summer Rolls.md** — unit 'handful' is unrecognized
 - **3010 Blueberry Banana Smoothie.md** — unit 'scoop' is unrecognized
@@ -91,6 +110,33 @@
 - **Budget Meal With Sopita And Crispy Cheese Tacos.md** — unit 'maseca masa mix' is unrecognized
 - **Carnitas Batch Cook.md** — unit 'jar' is unrecognized
 - …and 60 more (`--issue unknown_unit` for all)
+
+### `price_leaked`
+- **Blueberry Rhubarb Muffins.md** — 'granulated sugar ($0.38)' carries a price from the source page
+- **Blueberry Rhubarb Muffins.md** — 'eggs ($0.50)' carries a price from the source page
+- **Blueberry Rhubarb Muffins.md** — 'vegetable oil ($0.30)' carries a price from the source page
+- **Blueberry Rhubarb Muffins.md** — 'milk ($0.10)' carries a price from the source page
+- **Blueberry Rhubarb Muffins.md** — 'lemon (juice and zest, $0.29)' carries a price from the source page
+- **Blueberry Rhubarb Muffins.md** — 'all-purpose flour ($0.38)' carries a price from the source page
+- …and 44 more (`--issue price_leaked` for all)
+
+### `cross_reference`
+- **Almond Flour Pancakes.md** — 'blanched almond flour* (spooned and leveled see note)' points at a note that wasn't kept
+- **Blueberry Muffins.md** — 'fresh blueberries washed, drained, and picked-over, or frozen see note 1 (1 pint)' points at a note that wasn't kept
+- **Borscht Recipe With Meat.md** — 'beef: sirloin (stew meat, or whatever kind of beef you like, really (bone-in or boneless *see note))' points at a note that wasn't kept
+- **Borscht Recipe With Meat.md** — 'tomatoes (peeled and diced (**see note))' points at a note that wasn't kept
+- **Braised Tofu.md** — 'oil from chinese chile oil or chile crisp  see note 1 (sub neutral-flavored oil)' points at a note that wasn't kept
+- **Braised Tofu.md** — 'thinly sliced red bell peppers  see note 2 for more options (120g)' points at a note that wasn't kept
+- …and 23 more (`--issue cross_reference` for all)
+
+### `no_amount_stated`
+- **150 Calorie Chicken Summer Rolls.md** — 'a large handful arugula or thinly sliced gem lettuce' says outright that no amount was given
+- **Charred Corn Salad With White Beans.md** — 'handful of fresh basil leaves, (slivered)' says outright that no amount was given
+- **Chicken Gyro Bowls.md** — 'to your liking salt and pepper' says outright that no amount was given
+- **Crispy Baked Chicken Thighs.md** — 'a handful fresh dill' says outright that no amount was given
+- **Crispy Pasta Salad.md** — 'handful  parsley (finely chopped)' says outright that no amount was given
+- **Earl Grey Pie.md** — 'a few splashes heavy cream' says outright that no amount was given
+- …and 11 more (`--issue no_amount_stated` for all)
 
 ### `leading_punctuation`
 - **Beefy Queso Loaded Potatoes.md** — '% milk' starts mid-phrase
@@ -110,4 +156,10 @@
 ### `empty_item`
 - **Lime Cheesecake.md** — ingredient name is blank
 - **Lime Cheesecake.md** — ingredient name is blank
+
+### `oven_temp_as_ingredient`
+- **Charred Cabbage.md** — 'f 400' is an oven temperature, not an ingredient
+
+### `sponsor_code`
+- **High Protein Crispy Mozzarella Sticks.md** — '@fit.flour (code:shredz)' carries a sponsor/affiliate code
 

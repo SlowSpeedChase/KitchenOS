@@ -45,6 +45,45 @@ UNIT_WORDS = (
 
 ROW = re.compile(r"^\|\s*([^|]*?)\s*\|\s*([^|]*?)\s*\|\s*([^|]*?)\s*\|\s*$")
 
+# An exact weight the recipe author supplied, sitting unused inside the name.
+GRAM_EQUIV = re.compile(
+    r"\((?:about\s+)?[\d.,/ ]+\s*(?:g|gram|grams|ml|kg|oz|ounce|ounces|lb|pound)s?\b[^)]*\)",
+    re.I)
+PRICE = re.compile(r"\$\s?\d")
+SPONSOR = re.compile(r"code:|@[a-z0-9._]+\.", re.I)
+XREF = re.compile(r"\bsee note\b|\boriginal recipe\b", re.I)
+NO_AMOUNT = re.compile(
+    r"quantity not specified|to your liking|a few splashes|\bhandful\b", re.I)
+OVEN_TEMP = re.compile(r"^\s*f?\s*\d{3}\s*$|^\s*\d{3}\s*f\s*$", re.I)
+
+# Triage. Only `defect` should drive a corpus fix; `info` exists so the headline
+# number isn't inflated by lines that read perfectly well to a cook.
+#   defect      — mechanically wrong, deterministic fix, no judgement needed
+#   filler      — the recipe stated no amount and the extractor invented one
+#   recoverable — real data being discarded; fixing this ADDS precision
+#   junk        — source-page noise that should never have been an ingredient
+#   info        — flagged by a strict rule but legitimate recipe language
+SEVERITY = {
+    "unknown_unit": "defect",
+    "unit_repeated_in_item": "defect",
+    "leading_punctuation": "defect",
+    "doubled_word": "defect",
+    "empty_item": "defect",
+    "whole_on_bulk": "filler",
+    "count_unit_on_pourable": "filler",
+    "no_amount_stated": "filler",
+    "gram_equivalent_discarded": "recoverable",
+    "price_leaked": "junk",
+    "cross_reference": "junk",
+    "sponsor_code": "junk",
+    "oven_temp_as_ingredient": "junk",
+    "alternatives": "info",
+    "parenthetical": "info",
+    "digits_in_item": "info",
+    "unit_word_in_item": "info",
+}
+ORDER = ["defect", "recoverable", "filler", "junk", "info"]
+
 
 def parse_rows(text: str) -> list[tuple[str, str, str]]:
     """(amount, unit, item) for each ingredient row, header/separator skipped."""
@@ -119,6 +158,22 @@ def check(amount: str, unit: str, item: str) -> list[tuple[str, str]]:
                            f"'{clean}' has a density but a count unit '{unit}'"))
     if not clean:
         issues.append(("empty_item", "ingredient name is blank"))
+
+    if GRAM_EQUIV.search(clean):
+        issues.append(("gram_equivalent_discarded",
+                       f"'{clean}' states an exact weight that is being thrown away"))
+    if PRICE.search(clean):
+        issues.append(("price_leaked", f"'{clean}' carries a price from the source page"))
+    if SPONSOR.search(clean):
+        issues.append(("sponsor_code", f"'{clean}' carries a sponsor/affiliate code"))
+    if XREF.search(clean):
+        issues.append(("cross_reference", f"'{clean}' points at a note that wasn't kept"))
+    if NO_AMOUNT.search(clean):
+        issues.append(("no_amount_stated",
+                       f"'{clean}' says outright that no amount was given"))
+    if OVEN_TEMP.search(clean):
+        issues.append(("oven_temp_as_ingredient",
+                       f"'{clean}' is an oven temperature, not an ingredient"))
     return issues
 
 
@@ -134,6 +189,12 @@ TITLES = {
     "unknown_unit": "unrecognized unit",
     "count_unit_on_pourable": "count unit on a pourable item",
     "empty_item": "blank ingredient name",
+    "gram_equivalent_discarded": "an exact weight is sitting unused in the name",
+    "price_leaked": "a price came along from the source page",
+    "cross_reference": "points at a note that wasn't kept",
+    "sponsor_code": "a sponsor/affiliate code came along",
+    "no_amount_stated": "the line says outright that no amount was given",
+    "oven_temp_as_ingredient": "an oven temperature parsed as an ingredient",
 }
 
 
@@ -163,19 +224,31 @@ def main() -> int:
             print(f"{name}\n    {detail}")
         return 0
 
+    actionable = {k for k in counts if SEVERITY.get(k, "info") != "info"}
+    dirty_actionable = set().union(*(affected[k] for k in actionable)) if actionable else set()
+
     lines = [
         "# Ingredient audit",
         "",
         f"- recipes scanned: **{total_recipes}**",
         f"- ingredient lines: **{total_rows}**",
-        f"- recipes with at least one issue: **{len(dirty_recipes)}** "
+        f"- recipes with an *actionable* issue: **{len(dirty_actionable)}** "
+        f"({len(dirty_actionable) / max(total_recipes, 1):.0%})",
+        f"- recipes flagged by any rule incl. `info`: {len(dirty_recipes)} "
         f"({len(dirty_recipes) / max(total_recipes, 1):.0%})",
         "",
-        "| issue | lines | recipes | what it means |",
-        "|---|---:|---:|---|",
+        "`info` lines read fine to a cook and are excluded from the headline —",
+        "\"almond or cashew butter\" is how recipes talk, not a defect.",
+        "",
+        "| severity | issue | lines | recipes | what it means |",
+        "|---|---|---:|---:|---|",
     ]
-    for key, n in counts.most_common():
-        lines.append(f"| `{key}` | {n} | {len(affected[key])} | {TITLES.get(key, '')} |")
+    for sev in ORDER:
+        for key, n in counts.most_common():
+            if SEVERITY.get(key, "info") != sev:
+                continue
+            lines.append(f"| `{sev}` | `{key}` | {n} | {len(affected[key])} "
+                         f"| {TITLES.get(key, '')} |")
     lines += ["", "## Examples", ""]
     for key, _ in counts.most_common():
         lines.append(f"### `{key}`")
