@@ -3,7 +3,22 @@
 import tempfile
 from pathlib import Path
 
-from lib import recipe_grid
+from lib import llm_gate, recipe_grid
+
+
+class _FakeResponse:
+    status_code = 200
+
+    def json(self):
+        return {"response": "{}"}
+
+
+def _capture(seen):
+    """Record the kwargs of a requests.post and answer with an empty JSON body."""
+    def post(*args, **kwargs):
+        seen.update(kwargs)
+        return _FakeResponse()
+    return post
 
 
 def _write_recipe(recipes_dir, name, ingredients, steps, extra_fm=""):
@@ -81,7 +96,12 @@ class TestBuildGrid:
             assert recipe_grid.build_grid("Nope", Path(tmp)) is None
 
     def test_heuristic_when_no_llm(self, monkeypatch):
-        """No Claude + no Ollama -> heuristic spec, sidecar written, needs_review."""
+        """No Claude + no Ollama -> heuristic spec, needs_review.
+
+        The sidecar assertion this test used to carry moved to
+        :class:`TestTheHeuristicIsNeverCached`, inverted: caching the fallback
+        made ``_is_fresh`` report it fresh forever.
+        """
         monkeypatch.setattr(recipe_grid, "_anthropic_client", None)
         monkeypatch.setattr(recipe_grid, "_group_with_ollama", lambda prompt: None)
         with tempfile.TemporaryDirectory() as tmp:
@@ -94,7 +114,6 @@ class TestBuildGrid:
             assert spec["needs_review"] is True
             assert spec["steps"] == ["Melt butter", "Stir in sugar", "Bake"]
             assert spec["ingredient_rows"]  # display rows present
-            assert (recipes_dir / "Test Cake.grid.json").exists()
 
     def test_claude_spec_is_normalized_and_cached(self, monkeypatch):
         fake = {
@@ -121,3 +140,94 @@ class TestBuildGrid:
             monkeypatch.setattr(recipe_grid, "_group_with_ollama", lambda prompt: None)
             spec2 = recipe_grid.build_grid("Cake", recipes_dir)
             assert spec2["source"] == "claude"  # from sidecar, not heuristic
+
+
+class TestTheHeuristicIsNeverCached:
+    """A fallback cached as if it were the real answer is a permanent regression.
+
+    ``_is_fresh`` only compares mtimes, so a heuristic sidecar reports fresh
+    forever — one cold render and the AI grid is never built for that recipe
+    again. The heuristic needs no model, so recomputing it costs nothing.
+    """
+
+    def test_no_sidecar_is_written_when_the_llm_is_unavailable(self, monkeypatch):
+        monkeypatch.setattr(recipe_grid, "_anthropic_client", None)
+        monkeypatch.setattr(recipe_grid, "_group_with_ollama", lambda prompt: None)
+        with tempfile.TemporaryDirectory() as tmp:
+            recipes_dir = Path(tmp)
+            _write_recipe(recipes_dir, "Cake", [("4", "oz", "butter")], ["Melt", "Bake"])
+
+            spec = recipe_grid.build_grid("Cake", recipes_dir)
+
+            assert spec["source"] == "heuristic"
+            assert not (recipes_dir / "Cake.grid.json").exists()
+
+    def test_the_ai_grid_still_arrives_after_a_cold_render(self, monkeypatch):
+        """The whole point: a cold render must not poison the cache."""
+        monkeypatch.setattr(recipe_grid, "_anthropic_client", None)
+        monkeypatch.setattr(recipe_grid, "_group_with_ollama", lambda prompt: None)
+        with tempfile.TemporaryDirectory() as tmp:
+            recipes_dir = Path(tmp)
+            _write_recipe(recipes_dir, "Cake", [("4", "oz", "butter")], ["Melt", "Bake"])
+            assert recipe_grid.build_grid("Cake", recipes_dir)["source"] == "heuristic"
+
+            # the model comes back — no force, no recipe edit
+            monkeypatch.setattr(recipe_grid, "_group_with_claude",
+                                lambda prompt: {"prep": [], "groups": [
+                                    {"action": "melt", "ingredients": ["butter"]}],
+                                    "finish": "bake"})
+
+            spec = recipe_grid.build_grid("Cake", recipes_dir)
+
+            assert spec["source"] == "claude"
+            assert (recipes_dir / "Cake.grid.json").exists()
+
+
+class TestLlmGate:
+    """Every tier answers to lib/llm_gate — blanking API keys can't stop Ollama."""
+
+    def test_the_kill_switch_skips_the_ollama_tier(self, monkeypatch):
+        monkeypatch.setenv(llm_gate.DISABLE_ENV, "1")
+        posted = []
+        monkeypatch.setattr(recipe_grid.requests, "post",
+                            lambda *a, **k: posted.append(k))
+
+        assert recipe_grid._group_with_ollama("prompt") is None
+        assert posted == [], "the kill switch must be checked before the request"
+
+    def test_a_script_keeps_the_long_ollama_timeout(self, monkeypatch):
+        seen = {}
+        monkeypatch.setattr(recipe_grid.requests, "post", _capture(seen))
+
+        recipe_grid._group_with_ollama("prompt")
+
+        assert seen["timeout"] == 120
+
+    def test_a_page_render_bounds_the_ollama_timeout(self, monkeypatch):
+        from flask import Flask
+
+        seen = {}
+        monkeypatch.setattr(recipe_grid.requests, "post", _capture(seen))
+
+        with Flask(__name__).test_request_context("/recipe-card/Cake"):
+            recipe_grid._group_with_ollama("prompt")
+
+        assert seen["timeout"] <= llm_gate.WEB_BUDGET_S
+
+    def test_an_exhausted_budget_skips_the_tier_entirely(self, monkeypatch):
+        """0 seconds left means don't call — never pass 0 on as a timeout."""
+        from flask import Flask
+
+        clock = {"t": 1000.0}
+        monkeypatch.setattr(llm_gate.time, "monotonic", lambda: clock["t"])
+        posted = []
+        monkeypatch.setattr(recipe_grid.requests, "post",
+                            lambda *a, **k: posted.append(k))
+
+        with Flask(__name__).test_request_context("/recipe-card/Cake"):
+            llm_gate.budget_s(120)  # opens the deadline
+            clock["t"] += llm_gate.WEB_BUDGET_S + 1
+
+            assert recipe_grid._group_with_ollama("prompt") is None
+
+        assert posted == []

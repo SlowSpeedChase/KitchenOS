@@ -287,6 +287,51 @@ inventory pass before it can be scoped.
 
 ---
 
+## Infrastructure — 2026-08-01
+
+### ~~A cold AI sidecar hung the page, and e2e couldn't run from a worktree~~ FIXED
+
+**Fixed 2026-08-01.** Six e2e tests had been failing on `main`
+(4 × `test_prep_page.py`, 2 × `test_dark_mode.py::recipe_card.html`), found while
+merging #66/#68/#69 — they predate all three. One root cause with three faces:
+
+- **The hang.** `/recipe-card/<name>` → `recipe_grid.build_grid()` and `/prep` →
+  `task_extractor.extract_tasks()` each try Claude, then Ollama, then a non-LLM
+  fallback they only reach *after* the wait. Both Ollama calls were a hardcoded
+  `timeout=120` and the Anthropic SDK carries a multi-minute default, behind a
+  30 s browser navigation timeout. Only **5 of 252** recipes have a
+  `.grid.json` sidecar, so nearly every recipe card is a cold render.
+- **The kill switch that wasn't.** `tests/e2e/conftest.py` promised "never let a
+  test hit the paid APIs or a live LLM" and enforced it by blanking
+  `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`. **Ollama needs no key**, so the local
+  tier was reached anyway and the browser tests raced a model.
+- **The harness couldn't leave `main`.** `vault/` and `data/` are git-ignored, so
+  they exist only in the main checkout, and both `conftest.py` and
+  `test_live_state.py` resolved them relative to themselves — so the browser
+  suite died on `FileNotFoundError` in any `.worktrees/` branch, which is the
+  mandated workflow in this repo.
+
+New `lib/llm_gate.py` is the one authority: `allowed()` (honouring
+`KITCHENOS_NO_LLM`) and `budget_s(default)`, which returns a single
+`WEB_BUDGET_S` deadline shared by the whole Flask request and the caller's own
+timeout outside one. Keyed on `has_request_context()` rather than a parameter, so
+a new AI-on-render path is bounded without its author knowing the rule exists.
+`tests/e2e/_paths.data_root()` walks `git rev-parse --git-common-dir` back to the
+main checkout for *data only* — code still comes from the worktree under test.
+
+Found while reading, and fixed with it: **both sidecars cached the fallback.**
+Keyed on mtime alone, a heuristic sidecar reads fresh forever, so one cold render
+permanently prevented the AI grid from ever being built for that recipe. Capping
+the wait would have made that fire on every cold page load. `build_grid` no
+longer writes a heuristic at all (it needs no model, so there's nothing to save);
+`extract_tasks` still persists one reached off a request — that one is genuine,
+and the sidecar also carries `done` flags — but not one the budget forced.
+
+3408 → 3433 unit tests, e2e 108 → **124 passing, 0 failing**, and the browser
+suite dropped from 267 s to 92 s now that it isn't waiting on models.
+
+---
+
 ## Salvaged Python-side backlog
 
 Unbuilt feature ideas worth keeping. These were salvaged from stale feature

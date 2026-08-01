@@ -16,10 +16,14 @@ from pathlib import Path
 
 import pytest
 
+from tests.e2e._paths import data_root
+
 pytestmark = pytest.mark.e2e
 
 REPO = Path(__file__).resolve().parents[2]
-VAULT = REPO / "vault" / "KitchenOS"
+# The real vault is git-ignored, so it lives in the main worktree even when this
+# branch is being tested from .worktrees/. Same reason conftest.py needs this.
+VAULT = data_root(REPO) / "vault" / "KitchenOS"
 
 
 def current_week() -> str:
