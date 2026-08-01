@@ -1,0 +1,163 @@
+"""Repairs, exercised over temp files — never the real vault.
+
+Fixtures carry the full required key set, because a real recipe does. Building
+them from REQUIRED_KEYS rather than hand-listing 30 lines keeps them honest if
+the schema gains a key.
+"""
+import sys
+
+import yaml
+
+from lib.recipe_schema import REQUIRED_KEYS
+from scripts.normalize_recipes import normalize_content, normalize_file
+
+_BODY = "\n# Recipe\n\nBody stays untouched.\n"
+
+
+def _doc(*, leading: str = "", trailing: str = "", **overrides) -> str:
+    """A conforming recipe document, with `overrides` applied to frontmatter.
+
+    ``leading`` is emitted before the generated keys and ``trailing`` after, so
+    a test can control where drift sits relative to the canonical keys — the
+    ordering that decides which duplicate YAML keeps.
+    """
+    values = {k: "x" for k in REQUIRED_KEYS}
+    values["servings"] = 4
+    values["nutrition_calories"] = 169
+    values["nutrition_carbs"] = 12
+    values["nutrition_fat"] = 9
+    values.update(overrides)
+    lines = [f"{k}: {values[k]}" for k in sorted(values)]
+    fm = "\n".join(filter(None, [leading.strip("\n"), "\n".join(lines), trailing.strip("\n")]))
+    return f"---\n{fm}\n---\n{_BODY}"
+
+
+#: Watermelon Feta Salad's real shape: a servings range, plus legacy nutrition
+#: keys sitting *above* the canonical ones (legacy-first, as all 13 corpus
+#: files are).
+RANGED = _doc(
+    leading="calories: 3058\ncarbs: null\nfat: null",
+    servings="6-8 as a side dish",
+)
+
+CLEAN = _doc()
+
+
+def _fm(content: str) -> dict:
+    return yaml.safe_load(content.split("---")[1])
+
+
+def test_a_servings_range_becomes_its_low_end():
+    out, _ = normalize_content("Watermelon Feta Salad", RANGED)
+    assert _fm(out)["servings"] == 6
+
+
+def test_a_repaired_servings_is_flagged_as_inferred():
+    out, _ = normalize_content("Watermelon Feta Salad", RANGED)
+    fm = _fm(out)
+    assert fm["servings_inferred"] is True
+    assert fm["servings_needs_review"] is True
+
+
+def test_legacy_nutrition_keys_are_deleted():
+    out, _ = normalize_content("Watermelon Feta Salad", RANGED)
+    fm = _fm(out)
+    assert "calories" not in fm
+    assert "carbs" not in fm
+    assert "fat" not in fm
+
+
+def test_the_canonical_nutrition_values_are_untouched():
+    out, _ = normalize_content("Watermelon Feta Salad", RANGED)
+    fm = _fm(out)
+    assert fm["nutrition_calories"] == 169
+    assert fm["nutrition_carbs"] == 12
+    assert fm["nutrition_fat"] == 9
+
+
+def test_a_dropped_key_is_removed():
+    content = _doc(trailing='recipe_url: "https://example.com"')
+    out, changes = normalize_content("Chocolate Peanut Butter Bars", content)
+    assert "recipe_url" not in _fm(out)
+    assert any("recipe_url" in c for c in changes)
+
+
+def test_the_body_is_never_touched():
+    out, _ = normalize_content("Watermelon Feta Salad", RANGED)
+    assert out.split("---", 2)[2] == RANGED.split("---", 2)[2]
+
+
+def test_a_conforming_file_is_returned_byte_identical():
+    out, changes = normalize_content("Fine Recipe", CLEAN)
+    assert out == CLEAN
+    assert changes == []
+
+
+def test_normalization_is_idempotent():
+    once, _ = normalize_content("Watermelon Feta Salad", RANGED)
+    twice, changes = normalize_content("Watermelon Feta Salad", once)
+    assert twice == once
+    assert changes == []
+
+
+def test_changes_name_every_repair():
+    _, changes = normalize_content("Watermelon Feta Salad", RANGED)
+    joined = " ".join(changes)
+    assert "servings" in joined
+    assert "calories" in joined
+
+
+def test_a_file_with_no_frontmatter_is_left_alone():
+    content = "# Just a body\n\nNo frontmatter here.\n"
+    out, changes = normalize_content("Bare", content)
+    assert out == content
+    assert changes == []
+
+
+def test_dry_run_does_not_write(tmp_path):
+    p = tmp_path / "Watermelon Feta Salad.md"
+    p.write_text(RANGED, encoding="utf-8")
+    changes = normalize_file(p, apply=False)
+    assert changes                       # it reports what it would do
+    assert p.read_text(encoding="utf-8") == RANGED   # but changes nothing
+
+
+def test_apply_writes_and_backs_up(tmp_path):
+    p = tmp_path / "Watermelon Feta Salad.md"
+    p.write_text(RANGED, encoding="utf-8")
+    normalize_file(p, apply=True)
+    assert _fm(p.read_text(encoding="utf-8"))["servings"] == 6
+    backups = list((tmp_path / ".history").glob("*"))
+    assert backups, "the vault is not in git — a backup is the only recovery path"
+
+
+def test_apply_on_a_clean_file_writes_nothing(tmp_path):
+    p = tmp_path / "Fine Recipe.md"
+    p.write_text(CLEAN, encoding="utf-8")
+    before = p.stat().st_mtime_ns
+    assert normalize_file(p, apply=True) == []
+    assert p.stat().st_mtime_ns == before
+    assert not (tmp_path / ".history").exists()
+
+
+def test_check_exits_nonzero_when_the_corpus_drifts(tmp_path, monkeypatch, capsys):
+    from scripts import normalize_recipes
+
+    (tmp_path / "Recipes").mkdir()
+    (tmp_path / "Recipes" / "Ranged.md").write_text(RANGED, encoding="utf-8")
+    monkeypatch.setenv("KITCHENOS_VAULT", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["normalize_recipes.py", "--check"])
+
+    assert normalize_recipes.main() == 1
+    assert "servings_not_numeric" in capsys.readouterr().out
+
+
+def test_check_exits_zero_on_a_conforming_corpus(tmp_path, monkeypatch):
+    from scripts import normalize_recipes
+
+    (tmp_path / "Recipes").mkdir()
+    (tmp_path / "Recipes" / "Fine Recipe.md").write_text(CLEAN, encoding="utf-8")
+    monkeypatch.setenv("KITCHENOS_VAULT", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["normalize_recipes.py", "--check"])
+
+    assert normalize_recipes.main() == 0
