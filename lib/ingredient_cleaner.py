@@ -34,6 +34,7 @@ from lib.ingredient_parser import (
     replace_unicode_fractions,
 )
 from lib.ingredient_validator import is_malformed_ingredient, repair_ingredient
+from lib import ingredient_presentation
 from lib.units import (
     COUNT_UNITS,
     MASS_G,
@@ -204,6 +205,19 @@ def clean_ingredient(ing: dict) -> CleanIngredient:
         # be converted to grams reliably — flag rather than miscount.
         needs_review = True
         notes.append("liquid/powder with a count unit")
+
+    # --- B: item-text presentation --------------------------------------------
+    # Deferred when Phase A shipped and never built, which left 153 corpus lines
+    # reading as things no cook could act on ("2 whole % milk", "1 whole whole
+    # dark chocolate", "1 lemon lemon").
+    #
+    # Runs AFTER A3 deliberately: before it, "small piece" is still an
+    # unrecognized unit and the misplaced-ingredient repair below would swallow
+    # it into the item, turning "1 small piece yellow onion" into a count of a
+    # thing called "small piece yellow onion".
+    amount_str, unit, item, b_notes = ingredient_presentation.repair(
+        amount_str, unit, item)
+    notes.extend(b_notes)
 
     if not item:
         return CleanIngredient(amount_str, unit, item, inferred,
