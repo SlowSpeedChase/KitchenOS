@@ -331,6 +331,45 @@ it replayed.
 .venv/bin/python migrate_inventory_db.py
 ```
 
+### Normalize recipe frontmatter (schema drift)
+
+`scripts/normalize_recipes.py` repairs frontmatter that drifts from the schema
+declared in `lib/recipe_schema.py` — the one place stating what keys a recipe
+file may carry. It fixes three classes and *reports* anything else rather than
+inventing a value:
+
+| Class | Repair |
+|---|---|
+| `servings` is a string (`"6-8"`) | rewritten to the **low end** (`6`), flagged `servings_inferred` + `servings_needs_review` |
+| legacy `calories` / `carbs` / `fat` | deleted — `nutrition_*` is the FDC-sourced authority and every affected file already has a non-null canonical value |
+| `recipe_url` | dropped (user decision, 2026-07-31) |
+
+```bash
+.venv/bin/python scripts/normalize_recipes.py            # dry run (default)
+.venv/bin/python scripts/normalize_recipes.py --check    # exit 1 on drift, never writes
+.venv/bin/python scripts/normalize_recipes.py --apply    # write (backs each file up first)
+```
+
+**A `servings` change leaves that file's macros stale.** `nutrition_*` is
+per-serving, derived as batch ÷ servings, so correcting the count without
+re-deriving ships a recipe whose serving count contradicts its own numbers. The
+apply run names the affected recipes; re-derive exactly those:
+
+```bash
+.venv/bin/python backfill_nutrition.py --force \
+  --only "Creamy Grape Salad Alternative" --only "Watermelon Feta Salad"
+```
+
+`tests/e2e/test_recipe_corpus_schema.py` fails if the corpus drifts again. A
+*legitimate* new key (a new producer, a new template field) is fixed by adding
+it to `lib/recipe_schema.OPTIONAL_KEYS` in the same commit that starts writing
+it — not by loosening the test.
+
+> **From a linked worktree**, `.env` lives only in the main checkout, so
+> `KITCHENOS_VAULT` must be set explicitly or the tool exits rather than
+> reporting an empty corpus as clean:
+> `KITCHENOS_VAULT=~/Dev/KitchenOS/vault/KitchenOS ../../.venv/bin/python scripts/normalize_recipes.py --check`
+
 ### Recipe repair: bodies and missing frontmatter
 
 Two re-runnable repair passes over `Recipes/*.md`. Both back up each file via

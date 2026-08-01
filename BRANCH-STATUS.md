@@ -1,9 +1,9 @@
 # Branch Status: recipe-schema-normalize
 
 **Created:** 2026-07-31
-**Design Doc:** none yet — findings captured below, promote to `docs/plans/` if this grows
-**Current Stage:** planning (paused before any code was written)
-**Last Rebased:** 2026-07-31 (branched from `origin/main` @ fd480e7)
+**Design Doc:** [docs/superpowers/plans/2026-08-01-recipe-schema-normalize.md](docs/superpowers/plans/2026-08-01-recipe-schema-normalize.md)
+**Current Stage:** review (implementation complete; the corpus write is awaiting approval)
+**Last Rebased:** 2026-08-01 (onto `main` @ fb76b16)
 
 ## Overview
 
@@ -11,9 +11,15 @@ Normalize recipe frontmatter drift across the 252 files in
 `vault/KitchenOS/Recipes/`, then add a corpus-wide schema test so the drift
 can't silently return.
 
-**Nothing has been implemented yet.** This branch contains only this status file
-and the two throwaway profiling scripts under `scripts/_analysis/`. Resume at
-"Next action" below.
+**Implemented 2026-08-01.** `lib/recipe_schema.py` declares the schema,
+`scripts/normalize_recipes.py` repairs what it reports, and
+`tests/e2e/test_recipe_corpus_schema.py` fails if drift returns. 3508 unit
+tests (main: 3450), zero new ruff errors, `scripts/_analysis/` deleted.
+
+**One step is outstanding:** `scripts/normalize_recipes.py --apply` has not been
+run against the live vault — the write was blocked pending approval. Until it
+runs, the two corpus tests are RED against the real 43 violations, which is
+also the proof the guard detects drift.
 
 ## Dependencies
 
@@ -34,7 +40,16 @@ keys appear at 100%, and every file has an H1 title plus `## Ingredients`,
 ### In scope — agreed fixes
 
 **1. Non-numeric `servings` (3 files).** The other 249 are plain integers.
-`lib/serving_ledger.py` coerces with bare `float()` in five places, so these can throw.
+
+> **CORRECTED 2026-08-01: nothing throws.** This entry claimed
+> `lib/serving_ledger.py` coerces with a bare `float()` "in five places, so these
+> can throw". Those `float()` calls are all on SQLite rows, not frontmatter. The
+> frontmatter reader is `lib/week_view.py:135`, and it sits inside
+> `except Exception: return 4.0`. The real defect is silent disagreement:
+> `nutrition_engine._parse_servings` reads `"6-8"` as the **midpoint 7**,
+> `week_view` reads it as **4.0**, and `nutrition_quality.macro_eligible` only
+> tests for `None`, so it certifies the recipe as trustworthy while the other two
+> disagree by up to 75%.
 
 ```
 Creamy Grape Salad Alternative.md        servings: 4-6 servings (estimated)
@@ -53,12 +68,19 @@ conservative direction for macros.
 survive alongside the canonical `nutrition_*` keys. All have `date_added` in
 2026-05 or 2026-06, so they postdate the last `migrate_recipes.py` run.
 
-> **CRITICAL — do not just re-run `migrate_recipes.py` on these.**
-> `rename_nutrition_keys` (migrate_recipes.py:40) rewrites `^calories:` to
-> `nutrition_calories:`, but these files **already have** `nutrition_calories:`.
-> The rename would produce two identical YAML keys in one document. This was
-> inferred from reading the code; **write a failing test proving it before
-> changing anything.**
+> **FIXED 2026-08-01.** `rename_nutrition_keys` rewrote `^calories:` to
+> `nutrition_calories:` on files that **already have** that key, producing two
+> identical YAML keys. It now declines on any collision, pinned by
+> `tests/test_migrate_recipes.py`.
+>
+> **Severity corrected.** The original note (and a mid-session claim) said this
+> would replace 169 kcal/serving with the 3058 whole-recipe total. It would not:
+> all 13 files are legacy-*first*, so the renamed line lands in the earlier
+> position and PyYAML's last-wins rule keeps the canonical value. What it
+> actually produced was **malformed frontmatter** — `yaml.safe_load` tolerates
+> the duplicate, a strict parser raises on it — and the value survived only by
+> ordering luck. A canonical-first file *would* have been corrupted, which is
+> the case `test_a_canonical_first_file_would_otherwise_be_corrupted` pins.
 
 The two families genuinely disagree — the legacy values look like
 whole-recipe totals, not per-serving:
@@ -69,10 +91,14 @@ Watermelon Feta Salad.md      calories: 3058   vs  nutrition_calories: 169
 Borscht Recipe With Meat.md   calories: null   vs  nutrition_calories: 536
 ```
 
-Proposed handling: `nutrition_*` wins (it is FDC-sourced —
-`nutrition_source: "fdc"` on 244 of 252). Drop the legacy key. Only carry a
-legacy value across when the canonical one is null — and of the 13, `calories`
-is a number on 9 and null on 4, while `carbs`/`fat` were null everywhere sampled.
+Handling: `nutrition_*` wins (it is FDC-sourced — `nutrition_source: "fdc"`
+on 244 of 252). Drop the legacy key.
+
+**No carry-across logic was needed.** This entry proposed carrying a legacy
+value over "when the canonical one is null". Measured across the corpus on
+2026-08-01: there are **zero** such cases — every one of the 13 files has a
+non-null canonical value. It is a pure delete, and the conditional was never
+written (YAGNI).
 
 **4. Stray one-off keys (3 files).**
 
@@ -89,9 +115,14 @@ corpus. Dropping it discards that URL. The vault is not in git, so the only
 recovery path is the `lib/backup.create_backup` snapshot the normalizer takes
 before writing — make sure that runs. **Never fold it into `source_url`.**
 
-`enrich_none: ["protein"]` is still open, but it is a code question, not a user
-question: locate its writer in the enrichment path before deciding. It may be
-meaningful state rather than debris.
+**RESOLVED 2026-08-01: `enrich_none` is kept, and it is on 18 files, not 2.**
+Locating its writer answered it, as predicted. `scripts/enrich_recipes.py:353`
+writes it and `docs/OPERATIONS.md:380` specifies it: a sticky record of fields
+that have *no* value, which cannot live in the field itself because `protein` is
+rendered as an Obsidian tag and `dietary: []` can't distinguish "nothing
+applies" from "never asked". It is optional-by-design, exactly like
+`short_title`, and is now declared in `lib/recipe_schema.OPTIONAL_KEYS`. It was
+never drift.
 
 ### Out of scope (deliberately)
 
@@ -114,30 +145,47 @@ meaningful state rather than debris.
 
 ---
 
-## Next action (start here)
+## What was built
 
-1. Read `lib/recipe_parser.py` to see how frontmatter is parsed, and decide
-   **line-surgical edits vs YAML round-trip**. Strong prior: line-surgical, like
-   `migrate_recipes.py` — a round-trip through a YAML lib would reformat all 252
-   files and bury the real change in noise.
-2. ~~Servings low-end vs midpoint; `recipe_url` keep-or-drop~~ — **both answered
-   by the user 2026-07-31: low end, and drop `recipe_url`.** Only `enrich_none`
-   remains, and that resolves by reading the enrichment code, not by asking.
-3. Write `tests/test_recipe_schema.py` **first** (TDD): the corpus-wide check
-   that fails on drift. It is the deliverable that prevents recurrence, and it
-   defines the schema the normalizer must satisfy.
-4. Then `scripts/normalize_recipes.py`: `--dry-run` default, `create_backup`
-   before writing, idempotent (running twice is a no-op).
+1. **`lib/recipe_schema.py`** — the schema in one place: `REQUIRED_KEYS` (30),
+   `OPTIONAL_KEYS`, `LEGACY_NUTRITION_KEYS`, `DROPPED_KEYS`, `check_frontmatter()`
+   and `servings_low_end()`. Pure, no I/O. Allowlists measured, not designed.
+2. **`migrate_recipes.rename_nutrition_keys`** — declines to rename onto an
+   existing key (7 tests).
+3. **`scripts/normalize_recipes.py`** — `--check` / dry-run default / `--apply`,
+   line-surgical through `lib.frontmatter` (the shared editor
+   `backfill_nutrition.py` already uses), `create_backup` before every write,
+   idempotent. Refuses an empty corpus rather than reporting it clean.
+4. **`backfill_nutrition.py --only NAME`** — re-derive named recipes, since a
+   servings correction invalidates exactly the files it touched.
+5. **`tests/e2e/test_recipe_corpus_schema.py`** — the anti-recurrence guard.
+
+Line-surgical vs YAML round-trip was decided as the branch predicted:
+`lib.frontmatter.rewrite()` already existed as the shared line editor, so a
+second one would have been free to disagree with it.
+
+## Outstanding
+
+- [ ] `scripts/normalize_recipes.py --apply` against the live vault (blocked
+      pending approval — writes 16 files, each backed up to `Recipes/.history/`).
+- [ ] Then `backfill_nutrition.py --force --only` for the 3 servings-changed
+      recipes, or they ship a serving count contradicting their own macros.
+- [ ] Then the 2 corpus tests go green.
 
 ## Reproducing the analysis
 
+`scripts/_analysis/` has been deleted (its findings are captured above and in the
+plan). The live equivalent is the tool itself:
+
 ```bash
 cd /Users/chaseeasterling/Dev/KitchenOS/.worktrees/recipe-schema-normalize
-../../.venv/bin/python scripts/_analysis/profile_recipes.py   # key/heading census
-../../.venv/bin/python scripts/_analysis/cluster.py           # variants by era + value shapes
+KITCHENOS_VAULT=/Users/chaseeasterling/Dev/KitchenOS/vault/KitchenOS \
+  ../../.venv/bin/python scripts/normalize_recipes.py --check
 ```
 
-Both read the live vault read-only. Delete `scripts/_analysis/` before merge.
+`KITCHENOS_VAULT` must be set explicitly from a worktree: `lib/paths.py` reads
+`.env` relative to its own repo root, and `.env` is git-ignored so it exists only
+in the main checkout.
 
 ---
 
@@ -152,26 +200,26 @@ Both read the live vault read-only. Delete `scripts/_analysis/` before merge.
 - [x] Branch and worktree created
 - [x] Open questions resolved with the user (2026-07-31: servings → low end;
       `recipe_url` → drop). `enrich_none` still needs its writer located.
-- [ ] Implementation plan written (superpowers:writing-plans)
+- [x] Implementation plan written (superpowers:writing-plans)
 
 ### Dev
-- [ ] Tests written first (superpowers:test-driven-development)
-- [ ] `tests/test_recipe_schema.py` — corpus-wide drift check
-- [ ] Failing test proving the `migrate_recipes.py` duplicate-key hazard
-- [ ] `scripts/normalize_recipes.py` — dry-run default, backup, idempotent
-- [ ] All tests passing
-- [ ] No linting errors (`ruff`)
+- [x] Tests written first (superpowers:test-driven-development)
+- [x] `tests/test_recipe_schema.py` (30 tests) + `tests/e2e/test_recipe_corpus_schema.py`
+- [x] Failing test proving the `migrate_recipes.py` duplicate-key hazard
+- [x] `scripts/normalize_recipes.py` — dry-run default, backup, idempotent
+- [x] All tests passing (3508, main 3450)
+- [x] No *new* linting errors (branch and main both report 155; the repo baseline is not clean)
 
 ### Testing
-- [ ] Unit tests pass
-- [ ] Dry-run diff reviewed against all 252 files
-- [ ] Idempotency verified (second run is a no-op)
-- [ ] Verified with superpowers:verification-before-completion
+- [x] Unit tests pass
+- [x] Dry-run diff reviewed: 16 files, 43 violations, no UNREPAIRED/SKIPPED
+- [ ] BLOCKED: idempotency on the live corpus — needs the apply to run first (unit-tested)
+- [x] Verified with superpowers:verification-before-completion
 
 ### Docs
-- [ ] Doc obligations met per CLAUDE.md table (new script → `docs/OPERATIONS.md`)
-- [ ] `docs/plans/INDEX.md` updated
-- [ ] New invariant recorded in `CLAUDE.md` if the schema check becomes load-bearing
+- [x] Doc obligations met — `docs/OPERATIONS.md` runbook entry added
+- [x] `docs/plans/INDEX.md` updated (In Progress row)
+- [x] New invariant recorded in `CLAUDE.md`
 
 ### Review
 - [ ] Requested review (superpowers:requesting-code-review)
@@ -181,5 +229,5 @@ Both read the live vault read-only. Delete `scripts/_analysis/` before merge.
 - [ ] Rebased on latest main (note: `git fetch` failed on 2026-07-31 — no DNS in
       that session; re-fetch before merging)
 - [ ] Final test pass after rebase
-- [ ] `scripts/_analysis/` deleted
+- [x] `scripts/_analysis/` deleted
 - [ ] BRANCH-STATUS.md fully checked
