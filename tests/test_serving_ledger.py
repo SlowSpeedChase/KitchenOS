@@ -347,3 +347,123 @@ def test_week_board_shape(tmp_db, tmp_vault):
     assert board["cooks"][0]["unassigned"] == 3.0
     assert len(board["freezer"]) == 1
     assert "2026-07-07" in board["day_totals"]
+
+
+# --- move_cook: dragging a scheduled card to another slot -------------------
+
+
+def test_move_cook_takes_its_home_servings(tmp_db):
+    cook = _mk_cook()
+    moved = sl.move_cook(cook["id"], "2026-07-09", "lunch")
+
+    assert (moved["date"], moved["meal"]) == ("2026-07-09", "lunch")
+    slots = [p for p in moved["placements"] if p["destination"] == "slot"]
+    assert len(slots) == 1
+    assert (slots[0]["date"], slots[0]["meal"], slots[0]["count"]) == \
+        ("2026-07-09", "lunch", 1.0)
+
+
+def test_move_cook_leaves_leftovers_where_they_are(tmp_db):
+    """A serving parked in another cell is a planned leftover, not part of the
+    card being dragged."""
+    cook = _mk_cook()
+    sl.add_placement(cook["id"], "slot", 1.0, date="2026-07-08", meal="lunch")
+
+    moved = sl.move_cook(cook["id"], "2026-07-09", "dinner")
+
+    away = [p for p in moved["placements"]
+            if (p["date"], p["meal"]) == ("2026-07-08", "lunch")]
+    assert len(away) == 1 and away[0]["count"] == 1.0
+
+
+def test_move_cook_merges_into_a_leftover_already_at_the_destination(tmp_db):
+    """`placements` has no UNIQUE constraint, so an unmerged arrival would show
+    as two chips of the same recipe in one cell."""
+    cook = _mk_cook()
+    sl.add_placement(cook["id"], "slot", 2.0, date="2026-07-09", meal="dinner")
+
+    moved = sl.move_cook(cook["id"], "2026-07-09", "dinner")
+
+    there = [p for p in moved["placements"]
+             if (p["date"], p["meal"]) == ("2026-07-09", "dinner")]
+    assert len(there) == 1, "the arriving serving must merge, not duplicate"
+    assert there[0]["count"] == 3.0
+
+
+def test_move_cook_anchors_a_cook_that_never_had_a_slot(tmp_db):
+    """An unscheduled cook has no card to drag, but the endpoint is public and
+    a NULL old anchor must not match every placement."""
+    cook = sl.create_cook(recipe="Chili", week="2026-W28",
+                          servings_produced=4.0)
+    sl.add_placement(cook["id"], "freezer", 2.0)
+
+    moved = sl.move_cook(cook["id"], "2026-07-09", "dinner")
+
+    assert (moved["date"], moved["meal"]) == ("2026-07-09", "dinner")
+    frozen = [p for p in moved["placements"] if p["destination"] == "freezer"]
+    assert len(frozen) == 1 and frozen[0]["count"] == 2.0, \
+        "a freezer placement is not a home serving"
+    assert [p for p in moved["placements"] if p["destination"] == "slot"] == []
+
+
+def test_move_cook_to_the_same_slot_is_a_no_op(tmp_db):
+    cook = _mk_cook()
+    moved = sl.move_cook(cook["id"], "2026-07-07", "dinner")
+
+    assert (moved["date"], moved["meal"]) == ("2026-07-07", "dinner")
+    assert len(moved["placements"]) == 1
+    assert moved["placements"][0]["count"] == 1.0
+
+
+def test_move_cook_rejects_a_bad_meal(tmp_db):
+    cook = _mk_cook()
+    with pytest.raises(ValueError):
+        sl.move_cook(cook["id"], "2026-07-09", "brunch")
+
+
+def test_move_cook_rejects_a_bad_date(tmp_db):
+    cook = _mk_cook()
+    with pytest.raises(ValueError):
+        sl.move_cook(cook["id"], "07/09/2026", "dinner")
+
+
+def test_move_cook_rejects_a_date_outside_the_cooks_week(tmp_db):
+    """`cooks.week` is not updatable and `week_board()` filters on it, so a cook
+    whose date left its week would render on no board at all."""
+    cook = _mk_cook()                      # week 2026-W28
+    with pytest.raises(ValueError, match="week"):
+        sl.move_cook(cook["id"], "2026-07-20", "dinner")   # 2026-W30
+
+
+def test_move_cook_rejects_an_unknown_cook(tmp_db):
+    with pytest.raises(ValueError):
+        sl.move_cook(9999, "2026-07-09", "dinner")
+
+
+def test_move_cook_does_not_change_the_total_placed(tmp_db):
+    cook = _mk_cook()
+    sl.add_placement(cook["id"], "slot", 2.0, date="2026-07-08", meal="lunch")
+    before = sum(p["count"] for p in sl.get_cook(cook["id"])["placements"])
+
+    moved = sl.move_cook(cook["id"], "2026-07-09", "dinner")
+
+    assert sum(p["count"] for p in moved["placements"]) == before
+    assert moved["unassigned"] == 3.0
+
+
+def test_move_cook_preserves_scale_verdict_and_note(tmp_db):
+    """A move re-anchors; it is not an edit. Everything the cook records about
+    how it went has to survive being dragged across the board."""
+    cook = _mk_cook()
+    sl.update_cook(cook["id"], make_again=True, cook_note="too salty",
+                   notes="batch 2", servings_produced=6.0)
+
+    moved = sl.move_cook(cook["id"], "2026-07-09", "lunch")
+
+    assert moved["scale"] == 1.5
+    assert moved["make_again"] is True
+    assert moved["cook_note"] == "too salty"
+    assert moved["notes"] == "batch 2"
+    assert moved["servings_produced"] == 6.0
+    assert moved["recipe"] == "Chili"
+    assert moved["week"] == "2026-W28"

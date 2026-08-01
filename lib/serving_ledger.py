@@ -336,6 +336,56 @@ def move_servings(placement_id: int, count: float, destination: str,
         conn.close()
 
 
+def move_cook(cook_id: int, date: str, meal: str) -> dict:
+    """Re-anchor a cook to another slot, taking its home servings with it.
+
+    The card and the servings eaten *at* it move together; slot placements in
+    other cells are planned leftovers and stay where they are. Moving the
+    anchor alone would strand a card in a slot with no servings beside an
+    orphaned foreign chip, which reads as a bug rather than as a plan.
+
+    Total placed is conserved, so no capacity check is needed — the same
+    reasoning ``move_servings`` records.
+    """
+    _validate_placement("slot", date, meal)
+    conn = inventory_db.connect()
+    try:
+        with _write_txn(conn):
+            row = conn.execute("SELECT * FROM cooks WHERE id = ?",
+                               (cook_id,)).fetchone()
+            if row is None:
+                raise ValueError(f"cook {cook_id} not found")
+            # `week` is not in _COOK_FIELDS and cooks_for_week() filters on it,
+            # so a cook whose date left its week renders on no board at all.
+            # Reject rather than half-apply: the grid shows one week, so a drag
+            # cannot produce this, but the endpoint is public.
+            year, week_no, _ = _date.fromisoformat(date).isocalendar()
+            if f"{year}-W{week_no:02d}" != row["week"]:
+                raise ValueError(
+                    f"date {date} falls outside the cook's week {row['week']}")
+
+            old_date, old_meal = row["date"], row["meal"]
+            if (old_date, old_meal) != (date, meal):
+                conn.execute("UPDATE cooks SET date = ?, meal = ? WHERE id = ?",
+                             (date, meal, cook_id))
+                # `IS` rather than `=` so a NULL old anchor matches nothing
+                # instead of everything — an unscheduled cook has no home
+                # servings to bring along.
+                movers = conn.execute(
+                    "SELECT * FROM placements WHERE cook_id = ?"
+                    " AND destination = 'slot' AND date IS ? AND meal IS ?",
+                    (cook_id, old_date, old_meal),
+                ).fetchall()
+                for p in movers:
+                    conn.execute("DELETE FROM placements WHERE id = ?",
+                                 (p["id"],))
+                    _merge_or_insert(conn, cook_id, "slot", date, meal,
+                                     float(p["count"]))
+    finally:
+        conn.close()
+    return get_cook(cook_id)
+
+
 def cooks_for_week(week: str) -> list[dict]:
     conn = inventory_db.connect()
     try:

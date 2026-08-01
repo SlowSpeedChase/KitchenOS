@@ -2013,7 +2013,7 @@
         <!-- Main Grid -->
         <main class="main">
             <div class="assign-bar" id="assign-bar" hidden>
-                <span class="assign-bar-text">Placing <span id="assign-bar-name"></span> — tap a slot</span>
+                <span class="assign-bar-text"><span id="assign-bar-verb">Placing</span> <span id="assign-bar-name"></span> — tap a slot</span>
                 <button class="assign-bar-cancel" id="assign-bar-cancel">Cancel</button>
             </div>
             <div class="grid-header">
@@ -2498,13 +2498,21 @@
                 gridSortables.push(
                     Sortable.create(cell, {
                         group: { name: 'recipes', pull: true, put: true },
-                        // Cook cards (board mode) must never be draggable through
-                        // the legacy grid Sortable — its onAdd falls through to
-                        // debounceSave()/saveMealPlan(), which PUTs scale-less
-                        // legacy meal-plan data over ledger-authored Markdown.
-                        // Cook cards move only via the ledger API (scale stepper,
-                        // remove button, chip drags).
-                        draggable: '.grid-card:not(.cook-card)',
+                        // A cook card must never reach debounceSave()/saveMealPlan(),
+                        // which PUTs scale-less legacy meal-plan data over
+                        // ledger-authored Markdown. It used to be excluded from the
+                        // drag entirely; it is now draggable in board mode and
+                        // branches to the ledger API in onAdd/onEnd below, before
+                        // anything legacy runs. Legacy weeks keep the exclusion —
+                        // there is no cook to move there.
+                        draggable: boardMode ? '.grid-card' : '.grid-card:not(.cook-card)',
+                        // A press on a card's own controls actuates them; it does not
+                        // drag the card. preventOnFilter stays false for the reason the
+                        // sidebar Sortable documents: Sortable otherwise swallows a
+                        // filtered element's click on touch. Cook cards carry
+                        // .scale-btn, legacy grid cards carry .servings-btn.
+                        filter: '.remove-btn, .scale-btn, .servings-btn, .cooked-btn, .card-menu-btn',
+                        preventOnFilter: false,
                         ghostClass: 'sortable-ghost',
                         dragClass: 'sortable-drag',
                         forceFallback: true,
@@ -2522,6 +2530,11 @@
                         onAdd: function(evt) {
                             const cell = evt.to;
                             const item = evt.item;
+                            // First, before anything that can reach debounceSave().
+                            if (item.classList.contains('cook-card')) {
+                                moveCookCard(item, cell);
+                                return;
+                            }
                             // Recipe drops always go through the serving ledger (createCook),
                             // regardless of whether this week is board-backed yet — the first
                             // drop on a legacy week converts it (see ensureLegacyImported).
@@ -2573,7 +2586,11 @@
                             if (evt.from !== evt.to) {
                                 updateCellState(evt.from);
                                 updateCellState(evt.to);
-                                debounceSave();
+                                // onAdd already routed a cook card to the ledger;
+                                // debounceSave() here would follow it with a legacy PUT.
+                                if (!evt.item.classList.contains('cook-card')) {
+                                    debounceSave();
+                                }
                             }
                         }
                     })
@@ -3348,6 +3365,45 @@
             }
         }
 
+        // Dragging a cook card re-anchors the cook and brings the servings
+        // eaten at that slot with it (POST /api/cooks/<id>/move). Deliberately
+        // NOT the legacy grid path: that ends in saveMealPlan(), which PUTs
+        // scale-less meal-plan data over ledger-authored Markdown.
+        async function moveCookCard(card, cell) {
+            const cookId = card.dataset.cookId;
+            if (!cookId) return;
+            const date = dayDates[cell.dataset.day];
+            const meal = cell.dataset.meal;
+
+            if (ledgerBusy) {
+                // Sortable already moved the node; the in-flight mutation's
+                // loadWeekBoard() re-render restores truth.
+                showToast('Busy — try again', 'error');
+                await loadWeekBoard(currentWeek);
+                return;
+            }
+            ledgerBusy = true;
+            try {
+                const resp = await fetch(`/api/cooks/${cookId}/move`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ date, meal })
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    showToast(err.error || 'Failed to move the meal', 'error');
+                }
+            } catch (err) {
+                showToast('Failed to move the meal', 'error');
+            } finally {
+                // Always reload, even on failure, so the DOM Sortable already
+                // mutated snaps back to server truth. No manual node removal:
+                // renderBoardIfActive() clears every .cook-card unconditionally.
+                await loadWeekBoard(currentWeek);
+                ledgerBusy = false;
+            }
+        }
+
         function wireChipSortables() {
             chipSortables.forEach(s => s.destroy());
             chipSortables = [];
@@ -4099,6 +4155,12 @@
                 addAction('Open recipe', () => { window.location.href = link.href; });
             }
 
+            // The single-pointer path WCAG 2.2 SC 2.5.7 requires for the card
+            // drag, and the only route into a move on a desktop mouse-less setup.
+            if (card.classList.contains('cook-card') && card.dataset.cookId) {
+                addAction('Move to another slot', () => armRecipe(card));
+            }
+
             // Servings segment: ×1 / ×2 / ×3 — legacy grid cards only. Cook
             // cards (board mode) carry their own scale stepper (± 0.5, visible
             // inline, not display:none'd on touch) instead of this fixed menu.
@@ -4241,6 +4303,10 @@
             // the thing you touched reads as having grabbed the wrong one.
             document.getElementById('assign-bar-name').textContent =
                 displayNameFor(card.dataset.name) || 'recipe';
+            // A move that announces itself as "Placing" looks like it is about
+            // to duplicate the meal rather than relocate it.
+            document.getElementById('assign-bar-verb').textContent =
+                card.classList.contains('cook-card') ? 'Moving' : 'Placing';
             document.getElementById('assign-bar').hidden = false;
             setEmptyLabels('+ here');
         }
@@ -4259,6 +4325,13 @@
             const name = card.dataset.name;
             const isMeal = card.classList.contains('meal-card');
             disarmRecipe();
+
+            // An armed cook card is already on the board — this is a move, not a
+            // second cook of the same recipe.
+            if (card.classList.contains('cook-card')) {
+                await moveCookCard(card, cell);
+                return;
+            }
 
             if (isMeal) {
                 // Mirrors the meal branch of the grid Sortable's onAdd, including
