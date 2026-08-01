@@ -449,3 +449,21 @@ def test_move_cook_does_not_change_the_total_placed(tmp_db):
 
     assert sum(p["count"] for p in moved["placements"]) == before
     assert moved["unassigned"] == 3.0
+
+
+def test_move_cook_preserves_scale_verdict_and_note(tmp_db):
+    """A move re-anchors; it is not an edit. Everything the cook records about
+    how it went has to survive being dragged across the board."""
+    cook = _mk_cook()
+    sl.update_cook(cook["id"], make_again=True, cook_note="too salty",
+                   notes="batch 2", servings_produced=6.0)
+
+    moved = sl.move_cook(cook["id"], "2026-07-09", "lunch")
+
+    assert moved["scale"] == 1.5
+    assert moved["make_again"] is True
+    assert moved["cook_note"] == "too salty"
+    assert moved["notes"] == "batch 2"
+    assert moved["servings_produced"] == 6.0
+    assert moved["recipe"] == "Chili"
+    assert moved["week"] == "2026-W28"

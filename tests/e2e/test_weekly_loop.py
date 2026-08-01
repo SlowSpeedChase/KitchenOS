@@ -362,4 +362,12 @@ def test_a_cook_can_be_dragged_to_another_slot(live_server, page, page_errors):
     conn.close()
 
     assert row == (target, "lunch"), "the drag did not reach the ledger"
+
+    # The CLAUDE.md invariant, pinned: a card drag must never fall through to
+    # debounceSave()/saveMealPlan(), which PUTs scale-less legacy meal-plan data
+    # over ledger-authored Markdown. Scoped to this test's own week, since the
+    # log is shared across the session and legacy weeks legitimately PUT.
+    assert f"PUT /api/meal-plan/{week}" not in live_server.log.read_text(errors="replace"), \
+        "the drag reached the legacy save path"
+
     assert page_errors == [], f"planner raised: {page_errors}"
