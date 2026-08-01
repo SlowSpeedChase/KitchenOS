@@ -487,3 +487,65 @@ def test_legacy_import_syncs_cook_history_to_the_recipe_note(client, tmp_db, tmp
     assert "cook_count: 1" in body, (
         f"legacy import left the recipe note unsynced:\n{body}")
     assert "observed_servings:" in body
+
+
+# --- POST /api/cooks/<id>/move ---------------------------------------------
+
+
+def test_move_cook_endpoint_moves_card_and_home_servings(client, tmp_db, tmp_vault):
+    cook = _create_cook(client).get_json()
+
+    resp = client.post(f"/api/cooks/{cook['id']}/move",
+                       json={"date": "2026-07-09", "meal": "lunch"})
+
+    assert resp.status_code == 200, resp.get_data(as_text=True)
+    body = resp.get_json()
+    assert (body["date"], body["meal"]) == ("2026-07-09", "lunch")
+    slots = [p for p in body["placements"] if p["destination"] == "slot"]
+    assert len(slots) == 1
+    assert (slots[0]["date"], slots[0]["meal"]) == ("2026-07-09", "lunch")
+
+
+def test_move_unknown_cook_returns_404(client, tmp_db, tmp_vault):
+    resp = client.post("/api/cooks/9999/move",
+                       json={"date": "2026-07-09", "meal": "dinner"})
+    assert resp.status_code == 404
+
+
+def test_move_cook_with_a_bad_meal_returns_400(client, tmp_db, tmp_vault):
+    cook = _create_cook(client).get_json()
+    resp = client.post(f"/api/cooks/{cook['id']}/move",
+                       json={"date": "2026-07-09", "meal": "brunch"})
+    assert resp.status_code == 400
+
+
+def test_move_cook_outside_its_week_returns_400(client, tmp_db, tmp_vault):
+    cook = _create_cook(client).get_json()
+    resp = client.post(f"/api/cooks/{cook['id']}/move",
+                       json={"date": "2026-07-20", "meal": "dinner"})
+    assert resp.status_code == 400
+
+
+def test_move_cook_regenerates_the_week_markdown(client, tmp_db, tmp_vault):
+    """The Markdown is a view of the ledger; a move that doesn't regenerate it
+    leaves the vault disagreeing with the board.
+
+    Asserts the recipe changed *cells*, not merely that it is somewhere in the
+    file — it was already there before the move, so a presence check would pass
+    against an endpoint that never called _regen_weeks() at all.
+    """
+    cook = _create_cook(client).get_json()
+    plan = tmp_vault / "Meal Plans" / "2026-W28.md"
+
+    def cell(text, day, meal):
+        day_body = text.split(f"## {day} ")[1].split("\n## ")[0]
+        return day_body.split(f"### {meal}\n")[1].split("###")[0]
+
+    assert "Chili" in cell(plan.read_text(), "Tuesday", "Dinner")
+
+    client.post(f"/api/cooks/{cook['id']}/move",
+                json={"date": "2026-07-09", "meal": "lunch"})
+
+    after = plan.read_text()
+    assert "Chili" in cell(after, "Thursday", "Lunch")
+    assert "Chili" not in cell(after, "Tuesday", "Dinner")

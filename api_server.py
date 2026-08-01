@@ -1518,6 +1518,28 @@ def api_cook_update(cook_id):
     return jsonify(cook)
 
 
+@app.route('/api/cooks/<int:cook_id>/move', methods=['POST'])
+@require_token
+@_ledger_error
+def api_cook_move(cook_id):
+    """Move a scheduled cook to another slot, home servings included.
+
+    Distinct from PATCH /api/cooks/<id>, which is a field-setter: this rewrites
+    placement rows as well, so it says so in its name rather than making
+    {"date": ...} mean two different things depending on the caller.
+    """
+    from lib import serving_ledger
+    data = request.get_json(force=True, silent=True) or {}
+    cook = serving_ledger.get_cook(cook_id)
+    if cook is None:
+        return jsonify({"error": "cook not found"}), 404
+    cook = serving_ledger.move_cook(cook_id, data.get('date'), data.get('meal'))
+    # One week, not two: move_cook rejects a date outside the cook's week.
+    _regen_weeks(cook["week"])
+    _sync_cook_history(cook["recipe"])
+    return jsonify(cook)
+
+
 @app.route('/api/cooks/<int:cook_id>', methods=['DELETE'])
 @require_token
 @_ledger_error
