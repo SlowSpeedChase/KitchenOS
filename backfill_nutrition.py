@@ -207,12 +207,34 @@ def run_fix_duplicates(recipes_dir: Path, dry_run: bool) -> None:
     print(f"\n{'[DRY RUN] ' if dry_run else ''}Files with duplicates: {changed}")
 
 
+def select_only(candidates, names):
+    """Narrow ``candidates`` to the recipes named in ``names``.
+
+    A name that matches nothing is an error, not a silent no-op: the caller
+    asked for a specific recipe to be re-derived, and quietly doing zero work
+    would look identical to success.
+    """
+    if not names:
+        return candidates
+    by_stem = {p.stem: p for p in candidates}
+    missing = [n for n in names if n not in by_stem]
+    if missing:
+        raise SystemExit(
+            f"--only: no such recipe(s) in the candidate set: {', '.join(missing)}"
+        )
+    return [by_stem[n] for n in sorted(names)]
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Backfill nutrition data for recipes (gram-based engine)"
     )
     parser.add_argument("--dry-run", action="store_true", help="Preview without writing files")
     parser.add_argument("--limit", type=int, help="Process at most N recipes")
+    parser.add_argument(
+        "--only", action="append", default=[], metavar="NAME",
+        help="only this recipe (by filename stem); repeatable",
+    )
     parser.add_argument(
         "--force", action="store_true", help="Re-process even recipes with existing data"
     )
@@ -233,6 +255,7 @@ def main():
 
     print(f"Scanning: {recipes_dir}")
     candidates = collect_recipes_needing_backfill(recipes_dir, force=args.force)
+    candidates = select_only(candidates, args.only)
 
     if args.limit:
         candidates = candidates[: args.limit]

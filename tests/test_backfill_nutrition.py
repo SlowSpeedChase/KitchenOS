@@ -424,3 +424,38 @@ serving_size: null
         from lib.recipe_parser import parse_recipe_file
         body = parse_recipe_file(out)["body"]
         assert "## Instructions" in body
+
+
+class TestSelectOnly:
+    """--only narrows the candidate set to explicitly named recipes.
+
+    A servings correction invalidates exactly the files it touched. --limit
+    takes the first N, which cannot express "these three".
+    """
+
+    class _P:
+        def __init__(self, stem):
+            self.stem = stem
+
+    def test_selects_a_single_named_recipe(self):
+        from backfill_nutrition import select_only
+        cands = [self._P("Alpha"), self._P("Beta"), self._P("Gamma")]
+        assert [p.stem for p in select_only(cands, ["Beta"])] == ["Beta"]
+
+    def test_selects_several_and_orders_them_stably(self):
+        from backfill_nutrition import select_only
+        cands = [self._P("Alpha"), self._P("Beta"), self._P("Gamma")]
+        assert [p.stem for p in select_only(cands, ["Gamma", "Alpha"])] == ["Alpha", "Gamma"]
+
+    def test_an_empty_name_list_is_a_no_op(self):
+        from backfill_nutrition import select_only
+        cands = [self._P("Alpha"), self._P("Beta")]
+        assert [p.stem for p in select_only(cands, [])] == ["Alpha", "Beta"]
+
+    def test_an_unknown_name_exits_rather_than_doing_nothing(self):
+        """Silently re-deriving zero recipes looks identical to success."""
+        import pytest
+        from backfill_nutrition import select_only
+        with pytest.raises(SystemExit) as e:
+            select_only([self._P("Alpha")], ["Nope"])
+        assert "Nope" in str(e.value)
