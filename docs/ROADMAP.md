@@ -287,6 +287,100 @@ inventory pass before it can be scoped.
 
 ---
 
+## Usage feedback — 2026-08-01 (meal planner, iPad landscape)
+
+Five items from an annotated screenshot of `/meal-planner` at iPad size, on a
+week where only Sunday has anything planned. Ordered by priority. Nothing here
+is a crash — the board is doing arithmetic correctly and saying it badly, which
+is why every item below is a rendering or layout question rather than a data
+one. Three are confirmed from the screenshot alone; two are marked as needing a
+check on the device, and say what to check.
+
+### P2 — A placed serving and an unplaced one look like the same chip
+
+Reported as **"incorrect servings"** and **"should be more than one"**, circling
+the `🍽×1` chip under *Smashed Beef Kabobs* and under *150 Calorie Chicken Summer
+Rolls* — the latter a recipe the sidebar shows as **8 srv**.
+
+The arithmetic is right. Two different objects are stacked in that cell
+(`templates/meal_planner.html`):
+
+- `makeServingChip` → `🍽×1` — **one serving placed on this day**.
+- `makeUnassignedChip` → `+7` — **seven servings cooked and not yet placed
+  anywhere**.
+
+1 + 7 = the 8 servings the recipe yields, so the board is telling the truth. But
+the two chips are the same shape, the same size and the same pill, separated only
+by a `+` prefix, `border-style: dashed`, `color: var(--text-muted)`, and a
+`title` tooltip — and a tooltip is unreachable on a touch device, which is where
+this screenshot was taken. Read at a glance the pair says "1", so a 4-serving
+cook looks like a 1-serving cook.
+
+The fix is legibility, not counting: make "placed" and "unplaced" visually
+different in kind rather than in degree, and say the total somewhere. Do **not**
+change what the numbers mean — `makeUnassignedChip`'s empty `placementId` is
+load-bearing (dropping one *creates* a placement; dropping a `🍽×` chip *moves*
+an existing one), so merging the two chip types would break the drag semantics.
+
+### P2 — The bottom dock covers the board's own bottom row
+
+The **Use It Up** dock (`.panel-dock`, `position: fixed; right: 16px; bottom:
+16px`) sits on top of the day-totals row, hiding **Saturday's and Sunday's**
+totals cells outright in the screenshot. Sunday is the only day with food on it,
+so the one populated totals cell on the whole board is the one you cannot see.
+
+This is the same collision the panel-height cap fixed *within* the dock
+(`use-it-up-by-item`, 2026-07-30) — two fixed-position things at the same corner,
+neither aware of the other. The dock needs to reserve space at the bottom of the
+scroll area rather than float over it.
+
+### P3 — The day-totals row reads "—" everywhere, so it looks broken
+
+Marked **"missing calories"** and **"macros"** against the row of dashes along
+the bottom. Mon–Fri have nothing planned, so `—` is literally correct there —
+but combined with the item above (Sat/Sun hidden under the dock) every cell the
+user can see is a dash, and a row that is *always* empty reads as a feature that
+never worked rather than as "nothing planned yet".
+
+Two things to settle together: whether an empty day should say `0 kcal` or `—`,
+and the known gap recorded in `CLAUDE.md` — `serving_ledger.day_totals()` sums
+**ledger placements only**, so a `[[Meal: X]]` card contributes nothing to the
+row. Anyone planning with meal bundles gets a permanently empty total. That gap
+is deliberate (meals are not ledger citizens) but it now has a reporter, so the
+question is what the row should *say* when it can't total something, not whether
+to start writing meal macros into the ledger.
+
+### P3 — Wasted vertical space above the board
+
+The band between the top toolbar and the day headers is mostly empty: the week
+nav is centred with wide empty gutters, and the legend occupies one line at the
+far left. On a landscape iPad that band costs roughly a row of grid height, which
+is exactly what the portrait shelf work (`planner-shelf-and-tap-to-assign`,
+2026-07-30) was buying back in the other orientation. Landscape was explicitly
+left untouched by that branch — this is the follow-up.
+
+### P3 — Half the board legend isn't wanted
+
+**"The ×N on a card is how much you cooked."** — marked *"don't care"*. That
+sentence is the second half of `#board-help` in `templates/meal_planner.html`,
+added by `planner-discoverability` (#67). The first half — what a chip is and
+where it can go — was not marked, so this is a trim rather than a revert. Note
+the interaction with the first item above: if placed-vs-unplaced chips become
+visually self-explanatory, more of this legend can go.
+
+### Needs a check on the device before any code
+
+- **"Don't see trash can."** `#trash-target` exists, is wired into the same
+  Sortable group as the chips, and is revealed by `body.dragging-serving` at
+  `z-index: 200` — above the dock's `50` — so on paper it should appear. Three
+  candidates worth eliminating in person: it only exists *during* a drag while
+  the legend advertises it as a place you can aim for; the touch drag needs a
+  200 ms hold (`delay: 200, delayOnTouchOnly`) before `onStart` fires at all; and
+  it lands at `right: 24px; bottom: 96px`, immediately above the dock that item 2
+  says is already crowding that corner.
+
+---
+
 ## Infrastructure — 2026-08-01
 
 ### ~~A cold AI sidecar hung the page, and e2e couldn't run from a worktree~~ FIXED
