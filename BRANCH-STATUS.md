@@ -28,10 +28,10 @@ against frontmatter that already exists, so nothing waits on re-deriving the cor
 - [x] A recipe claiming 244 g protein/serving can no longer be returned as a macro-gap suggestion
 - [x] The plausibility bounds flag 45/252 on the live corpus, matching the audit measurement
 - [x] Zero previously-trusted implausible recipes remain eligible
-- [ ] A day whose totals depend on an implausible recipe says so instead of stating a number
+- [x] A day whose totals depend on an implausible recipe says so instead of stating a number
 - [ ] An unplanned week no longer reads as a starvation week
-- [ ] `/nutrition-review` ranks worst-first by violation magnitude, not ascending coverage
-- [ ] `/reprocess`, `analyze_failures.sh`, and `/refresh` either work or are removed
+- [x] `/nutrition-review` ranks worst-first by violation magnitude, not ascending coverage
+- [x] `/reprocess`, `analyze_failures.sh`, and `/refresh` either work or are gated off
 - [ ] `/system-health` asserts the ten silent failures rather than reporting "ok"
 
 ---
