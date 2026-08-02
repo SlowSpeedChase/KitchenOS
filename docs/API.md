@@ -81,8 +81,21 @@ exempt. Gated routes are marked **🔒** in the table.
 | `/api/receipts/trips/<int:trip_id>` 🔒 | GET | One trip plus its purchase line items. |
 | `/api/price/trends` 🔒 | GET | Structured price-tracker data (spending, by-category totals, item trends) — JSON projection of `Price Tracker.md`. |
 | `/api/nutrition/<week>` 🔒 | GET | Structured nutrition dashboard for a week — JSON projection of `Nutrition Dashboard.md`. |
-| `/api/system-health` | GET | System health JSON: Ollama, vault, recent recipes, run/failure logs, Reminders queue. |
+| `/api/system-health` | GET | System health JSON: Ollama, vault, recent recipes, run/failure logs, Reminders queue, plus `assertions` (see below). |
 | `/system-health` | GET | Interactive system health dashboard (HTML UI). |
+
+**`assertions`** — `{checks: [...], ok, failing, unknown}` from `lib/health_assertions.run_all()`.
+Everything else in this payload reports whether a component is *running*; these report whether
+it is *working*. Each check is `{id, label, status, detail, consequence, fix}` where `status` is
+`ok` / `failing` / `unknown`, `detail` carries the current numbers, `consequence` names what
+silently stops working, and `fix` names the next action (sometimes a user action, like a Full
+Disk Access grant, which no code path can perform).
+
+Checks never raise — a probe that throws becomes `unknown`, because a health page that 500s on a
+failed probe is the same class of bug the page exists to catch. Note that
+`check_share_sheet_capture` reads `logs/batch_extract.log` rather than probing the Reminders
+store: TCC grants are per-executable, so probing from inside the API server would answer a
+question about the API server, not about the job that actually fails.
 | `/recipe/<name>` | GET | Interactive recipe detail page with live ingredient scaling (HTML UI). Ingredients you don't have are coloured and marked `•`, ones you do `✓` with the stocked amount in the tooltip, plus a summary line under the table. Colour is never the only signal (red/green is the common colour-blindness axis, and this is read at a glance in a kitchen). Nothing is marked when inventory is empty — the legend says so instead of leaving the list looking merely unstyled. |
 | `/plan-week` | GET | The Sunday-planning command center: a glanceable per-day status (slots filled + protein vs target, from `print_week.build_week_packet`) and three big actions — fill the week (`/meal-planner?week=`), review nutrition (`/nutrition-review`), print the week (`/print/week?week=`). Defaults to **next** week (`plan_week.default_week`); `?week=` overrides; prev/next nav. Unplanned weeks render an empty-state (200, not 404). Bookmarkable. |
 | `/print/week` | GET | Printable one-page "week packet": the plan grid, each day's macros vs targets, the consolidated shopping list, and the do-ahead prep. Defaults to the current ISO week; `?week=YYYY-WNN` overrides; `?tasks=1` regenerates prep (an LLM call) instead of the read-only cache. Branches ledger-vs-markdown off `generate_shopping_list`'s `source`. Recipe names link to their `/recipe-card/<name>`. Bookmarkable (in `SECTIONS`). |

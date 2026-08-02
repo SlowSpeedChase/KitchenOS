@@ -2,7 +2,7 @@
 
 **Created:** 2026-08-02
 **Design Doc:** docs/plans/2026-08-02-daily-driver-audit.md
-**Current Stage:** dev
+**Current Stage:** testing
 **Last Rebased:** 2026-08-02
 
 ## Overview
@@ -29,10 +29,10 @@ against frontmatter that already exists, so nothing waits on re-deriving the cor
 - [x] The plausibility bounds flag 45/252 on the live corpus, matching the audit measurement
 - [x] Zero previously-trusted implausible recipes remain eligible
 - [x] A day whose totals depend on an implausible recipe says so instead of stating a number
-- [ ] An unplanned week no longer reads as a starvation week
+- [x] An unplanned week no longer reads as a starvation week
 - [x] `/nutrition-review` ranks worst-first by violation magnitude, not ascending coverage
 - [x] `/reprocess`, `analyze_failures.sh`, and `/refresh` either work or are gated off
-- [ ] `/system-health` asserts the ten silent failures rather than reporting "ok"
+- [x] `/system-health` asserts the silent failures rather than reporting "ok"
 
 ---
 
@@ -47,9 +47,9 @@ against frontmatter that already exists, so nothing waits on re-deriving the cor
 
 ### Dev
 - [x] Tests written first (superpowers:test-driven-development)
-- [ ] Core implementation complete
-- [x] All tests passing (3650 passed, 1 skipped as of the plausibility-gate commit)
-- [ ] No linting/type errors
+- [x] Core implementation complete
+- [x] All tests passing (3702 passed, 1 skipped)
+- [x] No linting/type errors (ruff: no new findings vs main)
 - [ ] Code follows project patterns
 - [ ] LaunchAgent restarted if lib/, templates/, or prompts/ changed
 

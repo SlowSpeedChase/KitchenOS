@@ -150,13 +150,25 @@ def count_reminders_queue() -> int | None:
 
 
 def get_system_health() -> dict:
-    """Aggregate all health checks into a single dict for the JSON endpoint."""
+    """Aggregate all health checks into a single dict for the JSON endpoint.
+
+    ``assertions`` is the part that can report a failure. Everything above it
+    describes whether components are *running*; the ten defects found on
+    2026-08-02 were all cases of something running and not working, and this
+    page said "ok" through every one of them.
+    """
+    from lib import health_assertions
+
+    failure_logs = read_failure_logs(10)
+    run_logs = read_run_logs(10)
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "ollama": check_ollama(),
         "vault": check_vault(),
         "recent_recipes": list_recent_vault_writes(10),
-        "failure_logs": read_failure_logs(10),
-        "run_logs": read_run_logs(10),
+        "failure_logs": failure_logs,
+        "run_logs": run_logs,
         "reminders_queue": count_reminders_queue(),
+        "assertions": health_assertions.run_all(
+            run_logs=run_logs, failure_logs=failure_logs),
     }
