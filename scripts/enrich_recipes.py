@@ -299,14 +299,11 @@ def apply_response(missing: list, data: dict):
     return updates, none_fields
 
 
-def yaml_scalar(v) -> str:
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, int):
-        return str(v)
-    if isinstance(v, list):
-        return "[" + ", ".join(f'"{x}"' for x in v) + "]"
-    return f'"{v}"'
+# Values written here are raw LLM output (cuisine, protein, dietary tags, …).
+# This was a local copy that built scalars as f'"{v}"', so a single double quote
+# in a model's answer closed the scalar early and broke the recipe's frontmatter.
+# lib.frontmatter.scalar is the one authority — don't reintroduce a local copy.
+yaml_scalar = frontmatter.scalar
 
 
 def process(path: Path, client, args):

@@ -506,6 +506,12 @@ class TestFoodStoreGuard:
             "VALUES (1, 'sr_legacy', 'Watermelon, raw', 'watermelon raw', "
             "'atwater', 1, '2026-08-01')"
         )
+        # The floor covers fdc_portions too: a food list with no gram weights
+        # resolves nothing, which is the same silent garbage one table over.
+        conn.execute(
+            "INSERT INTO fdc_portions (fdc_id, portion_label, unit_norm, "
+            "gram_weight, amount) VALUES (1, 'cup', 'cup', 152.0, 1)"
+        )
         conn.commit()
         conn.close()
 
@@ -648,3 +654,67 @@ class TestSelectOnlyDedupes:
         from backfill_nutrition import select_only
         cands = [self._P("Ramen")]
         assert len(select_only(cands, ["Ramen", "Ramen"])) == 1
+
+
+class TestFoodStoreFloorCoversEveryTable:
+    """fdc_foods alone is not the food store.
+
+    The engine also needs fdc_portions (grams per unit), portion_ledger and
+    food_resolution. A DB with foods loaded but no portions passes a
+    fdc_foods-only floor and still resolves badly — the same silent-garbage
+    outcome the guard exists to prevent, one table over.
+    """
+
+    def _db(self, tmp_path, name, rows):
+        import sqlite3
+        from lib import fdc_local
+        db = tmp_path / f"{name}.db"
+        conn = sqlite3.connect(db)
+        fdc_local.ensure_schema(conn)
+        if rows.get("fdc_foods"):
+            conn.execute(
+                "INSERT INTO fdc_foods (fdc_id, data_type, description, name_norm, "
+                "kcal_source, dataset_rank, loaded_at) VALUES "
+                "(1, 'sr_legacy', 'Watermelon, raw', 'watermelon raw', 'atwater', 1, '2026-08-01')"
+            )
+        if rows.get("fdc_portions"):
+            conn.execute(
+                "INSERT INTO fdc_portions (fdc_id, portion_label, unit_norm, "
+                "gram_weight, amount) VALUES (1, 'cup', 'cup', 152.0, 1)"
+            )
+        conn.commit()
+        conn.close()
+        return db
+
+    def test_foods_without_portions_is_refused(self, tmp_path, monkeypatch):
+        import pytest
+        from backfill_nutrition import require_food_store
+        db = self._db(tmp_path, "noportions", {"fdc_foods": True})
+        monkeypatch.setenv("KITCHENOS_DB", str(db))
+        with pytest.raises(SystemExit) as e:
+            require_food_store()
+        assert "fdc_portions" in str(e.value)
+
+    def test_a_fully_loaded_store_passes(self, tmp_path, monkeypatch):
+        from backfill_nutrition import require_food_store
+        db = self._db(tmp_path, "full", {"fdc_foods": True, "fdc_portions": True})
+        monkeypatch.setenv("KITCHENOS_DB", str(db))
+        require_food_store()   # must not raise
+
+    def test_the_real_store_passes(self):
+        """The user's actual DB must satisfy whatever floor this sets."""
+        import os
+        from backfill_nutrition import require_food_store
+        real = "/Users/chaseeasterling/Dev/KitchenOS/data/kitchenos.db"
+        if not os.path.exists(real):
+            import pytest
+            pytest.skip("real DB not present")
+        prev = os.environ.get("KITCHENOS_DB")
+        os.environ["KITCHENOS_DB"] = real
+        try:
+            require_food_store()
+        finally:
+            if prev is None:
+                os.environ.pop("KITCHENOS_DB", None)
+            else:
+                os.environ["KITCHENOS_DB"] = prev
