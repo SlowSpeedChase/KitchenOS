@@ -33,6 +33,21 @@ from import_crouton import enrich_with_ollama, check_duplicate
 OBSIDIAN_RECIPES_PATH = paths.recipes_dir()
 
 
+def enrich_preserving_book_facts(recipe_data: dict) -> dict:
+    """Enrich with Ollama without letting inference overwrite the book.
+
+    enrich_with_ollama replaces list fields wholesale, which would drop the dietary
+    badges printed on the recipe's yield line in favour of the model's guess. The
+    badges are stated fact, so they win; anything extra the model proposes is kept
+    behind them.
+    """
+    book_dietary = list(recipe_data.get("dietary") or [])
+    enriched = enrich_with_ollama(recipe_data)
+    inferred = enriched.get("dietary") or []
+    enriched["dietary"] = book_dietary + [d for d in inferred if d not in book_dietary]
+    return enriched
+
+
 def book_title(epub_path: Path) -> str:
     """A human-readable source name for attribution, derived from the filename."""
     stem = epub_path.stem
@@ -172,7 +187,7 @@ def main():
             if not args.no_enrich:
                 print(f"{prefix} {recipe_name}{dup_label} ... enriching",
                       end="", flush=True)
-                recipe_data = enrich_with_ollama(recipe_data)
+                recipe_data = enrich_preserving_book_facts(recipe_data)
                 print(" ... ", end="", flush=True)
             else:
                 print(f"{prefix} {recipe_name}{dup_label} ... ", end="", flush=True)
