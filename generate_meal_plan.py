@@ -18,6 +18,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from templates.meal_plan_template import generate_meal_plan_markdown, generate_filename, get_week_start
+from lib import backup
 from lib.backup import cleanup_old_backups
 from lib.meal_plan_index import regenerate_index
 from lib.seasonality import calculate_season_score, load_seasonal_config
@@ -186,8 +187,9 @@ def main():
     # Ensure folder exists
     ensure_meal_plans_folder()
 
-    # Write file
-    filepath.write_text(content, encoding='utf-8')
+    # Write file. --force is exactly when a hand-edited plan is about to be
+    # replaced, so that is exactly when the snapshot matters.
+    backup.write_note(filepath, content)
     print(f"Created: {filepath}")
 
     # Refresh the human-readable Meal Plans Index (week → date range)

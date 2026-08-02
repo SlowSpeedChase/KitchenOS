@@ -103,3 +103,42 @@ def test_no_recipe_carries_a_duplicate_key():
     """
     bad = [v for v in _violations() if v.code == "duplicate_key"]
     assert bad == [], f"duplicate keys: {[(v.recipe, v.key) for v in bad]}"
+
+
+@needs_vault
+def test_the_hand_parser_agrees_with_real_yaml_on_the_corpus():
+    """The schema is validated against parse_recipe_file; producers use yaml.
+
+    scripts/enrich_recipes.py and Obsidian's Dataview both read these files as
+    real YAML, so a key the hand parser sees differently is a key the guard is
+    checking in a form nothing else uses. Before 2026-08-01 that gap was total
+    for block-style lists: `tags` and `cssclasses` came back as '' on all 252
+    files.
+
+    `date_added` / `last_cooked` are the one deliberate divergence — yaml
+    resolves them to datetime.date and every consumer here wants ISO strings.
+    """
+    import yaml
+    from lib import frontmatter
+
+    DATE_KEYS = {"date_added", "last_cooked"}
+    mismatches = []
+    for p in sorted(RECIPES.glob("*.md")):
+        if p.name.startswith("."):
+            continue
+        content = p.read_text(encoding="utf-8")
+        hand = parse_recipe_file(content)["frontmatter"]
+        fm_text, _ = frontmatter.split_frontmatter(content)
+        real = yaml.safe_load(fm_text) or {}
+        for key in set(hand) | set(real):
+            if key in DATE_KEYS:
+                continue
+            if hand.get(key) != real.get(key):
+                mismatches.append(
+                    f"{p.stem}: {key} hand={hand.get(key)!r} yaml={real.get(key)!r}"
+                )
+
+    assert mismatches == [], (
+        f"{len(mismatches)} key(s) parse differently:\n  "
+        + "\n  ".join(mismatches[:15])
+    )
