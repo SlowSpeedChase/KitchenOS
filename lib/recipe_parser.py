@@ -26,48 +26,106 @@ def parse_recipe_file(content: str) -> dict:
         yaml_content = match.group(1)
         body = match.group(2)
 
-        # Simple YAML parsing (handles our specific format)
-        for line in yaml_content.split('\n'):
-            line = line.strip()
-            if not line or line.startswith('#'):
+        # Deliberately not yaml.safe_load: it resolves `date_added: 2026-01-09`
+        # to a datetime.date, and every consumer in this repo treats those as
+        # ISO strings. The divergences that were *defects* are fixed below and
+        # pinned by tests/test_recipe_parser.py; the date one is kept on purpose.
+        lines = yaml_content.split('\n')
+        i = 0
+        while i < len(lines):
+            raw = lines[i]
+            i += 1
+            stripped = raw.strip()
+            if not stripped or stripped.startswith('#'):
                 continue
 
-            # Match key: value pairs
-            kv_match = re.match(r'^(\w+):\s*(.*)$', line)
-            if kv_match:
-                key = kv_match.group(1)
-                value = kv_match.group(2).strip()
+            # Indentation is meaning, not whitespace. Stripping first made an
+            # indented `- item` look like a candidate key and a nested mapping's
+            # child look top-level, so a block list read as '' and a nested
+            # `calories:` masqueraded as the legacy nutrition key.
+            if raw[:1].isspace():
+                continue
 
-                # Parse value types
-                if value.startswith('"') and value.endswith('"'):
-                    value = value[1:-1]  # Remove quotes
-                elif value == 'null':
-                    value = None
-                elif value == 'true':
-                    value = True
-                elif value == 'false':
-                    value = False
-                elif value.startswith('[') and value.endswith(']'):
-                    # Simple array parsing
-                    inner = value[1:-1].strip()
-                    if inner:
-                        # Handle quoted items
-                        value = [item.strip().strip('"') for item in inner.split(',')]
-                    else:
-                        value = []
-                else:
-                    # Try to parse as number
-                    try:
-                        if '.' in value:
-                            value = float(value)
-                        else:
-                            value = int(value)
-                    except ValueError:
-                        pass  # Keep as string
+            kv_match = re.match(r'^(\w+):\s*(.*)$', raw)
+            if not kv_match:
+                continue
 
-                frontmatter[key] = value
+            key = kv_match.group(1)
+            value = kv_match.group(2).strip()
+
+            # A bare `key:` may head a block list. Consume the indented `- item`
+            # lines that follow; an empty key with none is an empty list, which
+            # is what `dietary:` means on a recipe with no dietary tags.
+            if not value:
+                items = []
+                while i < len(lines):
+                    nxt = lines[i]
+                    if not nxt.strip():
+                        i += 1
+                        continue
+                    item = re.match(r'^\s+-\s*(.*)$', nxt)
+                    if not item:
+                        break
+                    items.append(_coerce_scalar(item.group(1).strip()))
+                    i += 1
+                frontmatter[key] = items
+                continue
+
+            if value.startswith('[') and value.endswith(']'):
+                frontmatter[key] = _split_flow_list(value[1:-1])
+                continue
+
+            frontmatter[key] = _coerce_scalar(value)
 
     return {'frontmatter': frontmatter, 'body': body}
+
+
+def _split_flow_list(inner: str) -> list:
+    """Split a flow list's body on commas that are not inside a quoted item.
+
+    A plain ``inner.split(',')`` turned ``"large, well-seasoned cast-iron
+    skillet"`` into two items, each carrying half a quote — ten corpus recipes
+    have equipment lists written that way.
+    """
+    items, buf, quote = [], [], None
+    for ch in inner:
+        if quote:
+            if ch == quote:
+                quote = None
+            buf.append(ch)
+        elif ch in ('"', "'"):
+            quote = ch
+            buf.append(ch)
+        elif ch == ',':
+            items.append(''.join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+    items.append(''.join(buf))
+    return [_coerce_scalar(x.strip()) for x in items if x.strip()]
+
+
+def _coerce_scalar(value: str):
+    """One scalar's worth of YAML, minus the date resolution.
+
+    Shared by plain values, flow-list items and block-list items so all three
+    agree — they used to disagree, which is how `peak_months` came back as
+    `['9', '10']` from a flow list while yaml.safe_load said `[9, 10]`.
+    """
+    # Single quotes matter too: one corpus file had a title in them, and the
+    # double-quote-only rule handed back a value with a leading apostrophe.
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+        return value[1:-1]
+    if value == 'null' or value == '~':
+        return None
+    if value == 'true':
+        return True
+    if value == 'false':
+        return False
+    try:
+        return float(value) if '.' in value else int(value)
+    except ValueError:
+        return value
 
 
 def extract_my_notes(content: str) -> str:

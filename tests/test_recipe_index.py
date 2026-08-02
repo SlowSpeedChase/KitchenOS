@@ -103,7 +103,12 @@ class TestGetRecipeIndex:
                 'peak_months: [5, 6, 7, 8]\nseasonal_ingredients: ["tomato", "cucumber"]\n---\n\n# Summer Salad'
             )
             result = get_recipe_index(recipes_dir)
-            assert result[0]["peak_months"] == ["5", "6", "7", "8"]
+            # Numbers, not strings. This asserted ["5", "6", …] until 2026-08-01,
+            # pinning a parser defect: the file says `[5, 6, 7, 8]` and
+            # yaml.safe_load reads ints, but the hand parser coerced flow-list
+            # items to str. `meal_planner.html` still maps parseInt over them,
+            # which is the defensive coercion that hid this.
+            assert result[0]["peak_months"] == [5, 6, 7, 8]
 
     def test_peak_months_defaults_to_none(self):
         """Missing peak_months becomes None."""
