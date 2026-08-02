@@ -29,12 +29,39 @@ import requests
 
 from lib import llm_gate
 
-try:
-    import anthropic
-    _api_key = os.getenv("ANTHROPIC_API_KEY")
-    _anthropic_client = anthropic.Anthropic(api_key=_api_key) if _api_key else None
-except ImportError:
-    _anthropic_client = None
+def _build_client():
+    """The Anthropic client, or None when unavailable/unconfigured.
+
+    Built on demand rather than at import for two reasons. The env read used to
+    happen at import time, so this module worked only because `lib.paths`'
+    ``load_dotenv`` happened to run first — an import-order coincidence, not a
+    guarantee. And ``max_retries=0`` is load-bearing: ``llm_gate`` hands this
+    call a budget which we pass as ``timeout=``, but the SDK applies that *per
+    attempt* and retries timeouts twice by default, so an 8 s budget bought up
+    to three attempts plus backoff. ``create()`` does not accept max_retries;
+    only the constructor and ``with_options()`` do.
+    """
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        return None
+    try:
+        import anthropic
+    except ImportError:
+        return None
+    return anthropic.Anthropic(api_key=api_key, max_retries=0)
+
+
+_anthropic_client = None
+_anthropic_resolved = False
+
+
+def _client():
+    """Memoised ``_build_client()`` — the SDK import costs ~250 ms."""
+    global _anthropic_client, _anthropic_resolved
+    if not _anthropic_resolved:
+        _anthropic_resolved = True
+        _anthropic_client = _build_client()
+    return _anthropic_client
 
 CLAUDE_MODEL = "claude-haiku-4-5-20251001"
 CLAUDE_MAX_TOKENS = 700
@@ -77,13 +104,14 @@ def _ingredient_display(ing: dict) -> str:
 # ---- LLM tiering (mirrors lib/task_extractor.py) --------------------------
 
 def _group_with_claude(prompt: str) -> Optional[dict]:
-    if _anthropic_client is None or not llm_gate.allowed():
+    client = _client()
+    if client is None or not llm_gate.allowed():
         return None
     budget = llm_gate.budget_s(CLAUDE_TIMEOUT_S)
     if budget <= 0:
         return None
     try:
-        message = _anthropic_client.messages.create(
+        message = client.messages.create(
             model=CLAUDE_MODEL,
             max_tokens=CLAUDE_MAX_TOKENS,
             messages=[{"role": "user", "content": prompt}],

@@ -102,3 +102,46 @@ def test_week_view_title_carries_the_date_range(tmp_db, tmp_vault):
 
     title = (plans / "2026-W28.md").read_text(encoding="utf-8").split("\n")[0]
     assert title == "# Meal Plan - Jul 6 - Jul 12, 2026"
+
+
+def test_write_week_markdown_no_ops_when_content_is_unchanged(tmp_db, tmp_vault):
+    """An unchanged rewrite must not move the file's mtime.
+
+    The plan file is rewritten on *every* ledger mutation via `_regen_weeks` —
+    including a PATCH that only records a make-again verdict, which changes
+    nothing in the rendered markdown. The tasks sidecar is mtime-keyed
+    (`sidecar_mtime >= plan_mtime`), so each of those no-op writes re-staled it
+    and re-armed an LLM round trip on the next /prep visit. /prep was measured
+    at 25.7 s in that state.
+    """
+    import os
+
+    plans = tmp_vault / "Meal Plans"
+    plans.mkdir(parents=True)
+    plan = plans / "2026-W28.md"
+    plan.write_text("placeholder", encoding="utf-8")
+
+    week_view.write_week_markdown("2026-W28")          # first write: real
+    settled = plan.read_text(encoding="utf-8")
+    os.utime(plan, (1_000_000, 1_000_000))
+    before = plan.stat().st_mtime
+
+    week_view.write_week_markdown("2026-W28")          # second: identical
+    assert plan.read_text(encoding="utf-8") == settled
+    assert plan.stat().st_mtime == before, "identical content still touched the file"
+
+
+def test_write_week_markdown_still_writes_when_content_changes(tmp_db, tmp_vault):
+    """The no-op guard must not suppress a real change."""
+    import os
+
+    plans = tmp_vault / "Meal Plans"
+    plans.mkdir(parents=True)
+    plan = plans / "2026-W28.md"
+    plan.write_text("stale content that is not the rendered view", encoding="utf-8")
+    os.utime(plan, (1_000_000, 1_000_000))
+    before = plan.stat().st_mtime
+
+    week_view.write_week_markdown("2026-W28")
+    assert plan.stat().st_mtime != before
+    assert "## Monday" in plan.read_text(encoding="utf-8")

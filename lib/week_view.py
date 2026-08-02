@@ -116,6 +116,21 @@ def write_week_markdown(week: str) -> None:
         return
     plans_dir.mkdir(parents=True, exist_ok=True)
     content = render_week_markdown(week, paths.recipes_dir())
+
+    # Skip an identical rewrite. This is called from `_regen_weeks` on *every*
+    # ledger mutation — including a PATCH that only records a make-again
+    # verdict, which changes nothing in the rendered markdown. Rewriting the
+    # same bytes still moves the mtime, and the prep-tasks sidecar is keyed on
+    # `sidecar_mtime >= plan_mtime`, so each no-op write re-staled it and
+    # re-armed a full LLM round trip on the next /prep visit (measured at
+    # 25.7 s in that state). Same reasoning as `backup.write_note`'s no-op,
+    # without the snapshot generated views don't want.
+    try:
+        if plan_file.exists() and plan_file.read_text(encoding="utf-8") == content:
+            return
+    except OSError:
+        pass  # unreadable for any reason → fall through and write
+
     plan_file.write_text(content, encoding="utf-8")
 
 

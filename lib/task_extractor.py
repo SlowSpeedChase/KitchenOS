@@ -50,7 +50,16 @@ def _client():
     if api_key:
         try:
             import anthropic
-            _anthropic_client = anthropic.Anthropic(api_key=api_key)
+            # max_retries=0 is load-bearing, not tidiness. llm_gate hands this
+            # call a budget and we pass it as `timeout=`, which the SDK applies
+            # *per attempt* — and it retries timeouts twice by default. An 8 s
+            # budget therefore bought up to three attempts plus backoff: /prep
+            # was measured at 11.2 s and later at 25.7 s behind that "8 s"
+            # ceiling, rendering a blank tab the whole time. The gate can only
+            # bound one attempt, so the attempts have to be capped here.
+            # `create()` does not accept max_retries; only the constructor and
+            # with_options() do.
+            _anthropic_client = anthropic.Anthropic(api_key=api_key, max_retries=0)
         except ImportError:
             _anthropic_client = None
     return _anthropic_client
