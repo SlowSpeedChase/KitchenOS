@@ -2,10 +2,14 @@
 
 import json
 import sqlite3
+import threading
 
 import pytest
 
 from api_server import app
+# Bound at import, before conftest's autouse fixture replaces the module
+# attribute with a no-op — these tests exercise the real threading.
+from api_server import _precompute_tasks_async as _REAL_PRECOMPUTE
 from lib import serving_ledger
 
 
@@ -628,3 +632,71 @@ class TestConsumeOnCookedTransition:
                             json={"cooked_at": "2026-07-07T18:00:00Z"})
         assert resp.status_code == 200
         assert resp.get_json()["cooked_at"] is not None
+
+
+class TestPrepPrecompute:
+    """A plan change rebuilds the prep sidecar off-request, not on the next visit."""
+
+    def test_a_ledger_mutation_schedules_a_precompute(self, client, tmp_db, tmp_vault, monkeypatch):
+        seen = []
+        import api_server
+        monkeypatch.setattr(api_server, "_precompute_tasks_async", seen.append)
+        _create_cook(client)
+        assert "2026-W28" in seen
+
+    def test_precompute_runs_off_the_request_thread(self, tmp_vault, monkeypatch):
+        """llm_gate keys on Flask's thread-local request context.
+
+        If this ever ran on the request thread it would inherit the 8 s web
+        budget — the exact ceiling that makes a real answer impossible.
+        """
+        import api_server
+        from lib import llm_gate
+        observed = {}
+
+        def fake_extract(week, force=False):
+            observed["on_page_render"] = llm_gate.on_page_render()
+            return {"week": week, "tasks": []}
+
+        monkeypatch.setattr("lib.task_extractor.extract_tasks", fake_extract)
+        with api_server.app.test_request_context("/"):
+            assert llm_gate.on_page_render() is True   # we really are in one
+            _REAL_PRECOMPUTE("2026-W28")
+            for t in threading.enumerate():
+                if t.name == "precompute-tasks-2026-W28":
+                    t.join(timeout=5)
+        assert observed.get("on_page_render") is False
+
+    def test_a_burst_of_mutations_starts_one_precompute(self, tmp_vault, monkeypatch):
+        import api_server
+        started = []
+        release = threading.Event()
+
+        def slow_extract(week, force=False):
+            started.append(week)
+            release.wait(timeout=5)
+            return {"week": week, "tasks": []}
+
+        monkeypatch.setattr("lib.task_extractor.extract_tasks", slow_extract)
+        for _ in range(5):
+            _REAL_PRECOMPUTE("2026-W28")
+        release.set()
+        for t in threading.enumerate():
+            if t.name == "precompute-tasks-2026-W28":
+                t.join(timeout=5)
+        assert len(started) == 1, f"started {len(started)} precomputes for one week"
+
+    def test_a_failing_precompute_is_swallowed(self, tmp_vault, monkeypatch):
+        """A missing sidecar is a slow page, never a broken mutation."""
+        import api_server
+
+        def boom(week, force=False):
+            raise RuntimeError("classifier exploded")
+
+        monkeypatch.setattr("lib.task_extractor.extract_tasks", boom)
+        _REAL_PRECOMPUTE("2026-W28")
+        for t in threading.enumerate():
+            if t.name == "precompute-tasks-2026-W28":
+                t.join(timeout=5)
+        # No raise reaching here is the assertion; confirm the slot was freed.
+        assert "2026-W28" not in api_server._PRECOMPUTING

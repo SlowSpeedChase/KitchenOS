@@ -69,3 +69,21 @@ def _isolate_storage_table(monkeypatch, tmp_path):
     if real.exists():
         copy.write_bytes(real.read_bytes())
     monkeypatch.setenv("KITCHENOS_STORAGE_TABLE", str(copy))
+
+
+@pytest.fixture(autouse=True)
+def _no_background_precompute(monkeypatch):
+    """Keep prep-task precompute threads out of the suite.
+
+    `_regen_weeks` spawns a daemon thread on every ledger mutation to rebuild
+    the week's prep sidecar off-request. That is right in production and wrong
+    in tests: the thread outlives the test and writes into `tmp_path` while
+    pytest is removing it, which surfaced as a teardown
+    `OSError: Directory not empty: 'Meal Plans'` in an unrelated move test.
+
+    The precompute's own tests bind the real function at import time
+    (`_REAL_PRECOMPUTE` in tests/test_api_ledger.py), so they are unaffected by
+    this patch and still exercise the threading for real.
+    """
+    import api_server
+    monkeypatch.setattr(api_server, "_precompute_tasks_async", lambda week: None)

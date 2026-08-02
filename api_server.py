@@ -13,6 +13,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 import warnings
 from datetime import date, timedelta
@@ -1362,6 +1363,46 @@ def _iso_week_of(date_str):
     return f"{y}-W{w:02d}"
 
 
+#: Weeks with a prep-task precompute in flight, so a burst of chip drags
+#: doesn't start one thread per drag. Guarded by _PRECOMPUTE_LOCK.
+_PRECOMPUTING: set = set()
+_PRECOMPUTE_LOCK = threading.Lock()
+
+
+def _precompute_tasks_async(week: str):
+    """Rebuild the week's prep-task sidecar off the request thread.
+
+    This is the half of the /prep fix that `task_extractor` cannot do for
+    itself. Inside a Flask request `llm_gate` caps inference at 8 s, but
+    classifying a real week takes Haiku ~9.5 s — so a page render can never
+    produce a real answer, and (correctly) refuses to cache the heuristic one
+    it does produce. /prep therefore paid the full budget on every single load.
+
+    A plain thread is enough: Flask's request context is thread-local, so this
+    runs *outside* one, which is exactly what `llm_gate.budget_s` keys on — the
+    caller's own 60 s applies here, nobody is waiting, and the result persists.
+    Daemon so it can never hold up a shutdown; failures are swallowed because a
+    missing sidecar is a slow page, not a broken one.
+    """
+    from lib import task_extractor
+
+    with _PRECOMPUTE_LOCK:
+        if week in _PRECOMPUTING:
+            return
+        _PRECOMPUTING.add(week)
+
+    def run():
+        try:
+            task_extractor.extract_tasks(week, force=True)
+        except Exception:
+            app.logger.exception("prep-task precompute failed for %s", week)
+        finally:
+            with _PRECOMPUTE_LOCK:
+                _PRECOMPUTING.discard(week)
+
+    threading.Thread(target=run, name=f"precompute-tasks-{week}", daemon=True).start()
+
+
 def _regen_weeks(*weeks):
     from lib import week_view
     for wk in {w for w in weeks if w}:
@@ -1369,6 +1410,9 @@ def _regen_weeks(*weeks):
             week_view.write_week_markdown(wk)
         except Exception as e:
             print(f"Warning: week view regen failed for {wk}: {e}", file=sys.stderr)
+        # The plan just changed, so the prep tasks are stale. Rebuild them now,
+        # off-request, rather than making the next visitor of /prep wait.
+        _precompute_tasks_async(wk)
 
 
 def _sync_cook_history(*recipes):

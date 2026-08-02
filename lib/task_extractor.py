@@ -343,6 +343,33 @@ def extract_tasks(week: str, force: bool = False) -> dict:
     if cached is not None and not force and _is_cache_fresh(week, cached):
         return cached
 
+    # A page render must not wait on inference it cannot finish.
+    #
+    # `llm_gate`'s web budget is 8 s and classifying a real week takes Haiku
+    # ~9.5 s, so inside a request the LLM tiers can only ever time out and fall
+    # through to the heuristic — which is then (correctly) not persisted,
+    # because an answer the clock forced is not the machine's answer. The net
+    # effect was that /prep paid the full budget on *every* load and could never
+    # warm its own cache: measured at 8.1 s twice in a row, and at 25.7 s before
+    # the SDK retry cap. Trying harder here cannot work; the fix is to stop
+    # trying and let the off-request precompute produce the real answer.
+    #
+    # A stale sidecar is genuine AI output for a plan that has usually changed
+    # very little, so it beats a heuristic recompute. With no sidecar at all we
+    # take the heuristic immediately rather than spending the budget to arrive
+    # at the same place. `force` (i.e. ?force=1) is an explicit ask and still
+    # overrides this.
+    if not force and llm_gate.on_page_render():
+        if cached is not None:
+            return cached
+        cold_steps = _collect_scheduled_steps(week)
+        cold_tasks = (
+            _normalize_classified(_heuristic_classify(cold_steps), cold_steps)
+            if cold_steps else []
+        )
+        # Deliberately not persisted — same rule as the fallback below.
+        return {"week": week, "generated_at": _now_iso(), "tasks": cold_tasks}
+
     steps = _collect_scheduled_steps(week)
     if not steps:
         payload = {"week": week, "generated_at": _now_iso(), "tasks": []}

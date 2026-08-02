@@ -287,3 +287,68 @@ def test_a_page_render_does_not_persist_a_budget_forced_heuristic(vault: Path):
 
     assert result["tasks"], "the reader still gets an answer"
     assert not (vault / "Meal Plans" / "2026-W18.tasks.json").exists()
+
+
+# --- A page render must never wait on inference it cannot finish -----------
+#
+# Measured on the real system: classifying a week takes Haiku ~9.5 s, and
+# llm_gate's web budget is 8 s. So inside a request the LLM tiers can only ever
+# time out and fall through to the heuristic — which is then deliberately not
+# persisted (an answer the clock forced isn't the machine's answer). The result
+# was /prep paying the full 8 s on *every* load, forever, and never warming its
+# own cache. The fix is to stop trying: serve what we have, instantly, and let
+# the off-request precompute produce the real answer.
+
+class TestPageRenderNeverBlocks:
+    def _on_page_render(self, monkeypatch, value=True):
+        monkeypatch.setattr(llm_gate, "on_page_render", lambda: value)
+
+    def test_stale_sidecar_is_served_rather_than_recomputed(self, vault: Path, monkeypatch):
+        with patch.object(task_extractor, "_anthropic_client", None), \
+             patch.object(task_extractor, "_classify_with_ollama", return_value=None):
+            first = task_extractor.extract_tasks("2026-W18")
+
+        # Make the sidecar stale.
+        plan = vault / "Meal Plans" / "2026-W18.md"
+        plan.write_text(plan.read_text() + "\n")
+
+        self._on_page_render(monkeypatch)
+        with patch.object(task_extractor, "_classify_with_claude") as claude, \
+             patch.object(task_extractor, "_classify_with_ollama") as ollama:
+            served = task_extractor.extract_tasks("2026-W18")
+            claude.assert_not_called()
+            ollama.assert_not_called()
+        assert served["generated_at"] == first["generated_at"]
+
+    def test_cold_page_render_falls_straight_to_the_heuristic(self, vault: Path, monkeypatch):
+        """No sidecar at all: answer instantly rather than time out first."""
+        self._on_page_render(monkeypatch)
+        with patch.object(task_extractor, "_classify_with_claude") as claude, \
+             patch.object(task_extractor, "_classify_with_ollama") as ollama:
+            result = task_extractor.extract_tasks("2026-W18")
+            claude.assert_not_called()
+            ollama.assert_not_called()
+        assert len(result["tasks"]) == 3
+
+    def test_cold_page_render_result_is_not_persisted(self, vault: Path, monkeypatch):
+        """Same rule as before: a clock-forced answer must not freeze in place."""
+        self._on_page_render(monkeypatch)
+        task_extractor.extract_tasks("2026-W18")
+        assert not (vault / "Meal Plans" / "2026-W18.tasks.json").exists()
+
+    def test_off_request_still_calls_the_model_and_persists(self, vault: Path, monkeypatch):
+        """The precompute path is where real inference belongs."""
+        self._on_page_render(monkeypatch, False)
+        with patch.object(task_extractor, "_classify_with_claude", return_value=None) as claude, \
+             patch.object(task_extractor, "_classify_with_ollama", return_value=None):
+            task_extractor.extract_tasks("2026-W18")
+            claude.assert_called_once()
+        assert (vault / "Meal Plans" / "2026-W18.tasks.json").exists()
+
+    def test_force_overrides_the_page_render_shortcut(self, vault: Path, monkeypatch):
+        """?force=1 is an explicit ask; honour it even from a request."""
+        self._on_page_render(monkeypatch)
+        with patch.object(task_extractor, "_classify_with_claude", return_value=None) as claude, \
+             patch.object(task_extractor, "_classify_with_ollama", return_value=None):
+            task_extractor.extract_tasks("2026-W18", force=True)
+            claude.assert_called_once()
