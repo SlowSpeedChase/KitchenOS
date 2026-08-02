@@ -668,7 +668,6 @@ class TestPrepPrecompute:
         assert observed.get("on_page_render") is False
 
     def test_a_burst_of_mutations_starts_one_precompute(self, tmp_vault, monkeypatch):
-        import api_server
         started = []
         release = threading.Event()
 
