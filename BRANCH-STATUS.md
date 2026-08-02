@@ -50,15 +50,32 @@ against frontmatter that already exists, so nothing waits on re-deriving the cor
 - [x] Core implementation complete
 - [x] All tests passing (3702 passed, 1 skipped)
 - [x] No linting/type errors (ruff: no new findings vs main)
-- [ ] Code follows project patterns
-- [ ] LaunchAgent restarted if lib/, templates/, or prompts/ changed
+- [x] Code follows project patterns
+- [ ] LaunchAgent restarted if lib/, templates/, or prompts/ changed (required ON MERGE — com.kitchenos.api holds lib/* in memory)
 
 ### Testing
-- [ ] Unit tests pass
-- [ ] Integration tests pass (if applicable)
-- [ ] Manual testing completed
-- [ ] Edge cases verified
-- [ ] Verified with superpowers:verification-before-completion
+- [x] Unit tests pass — 3702 passed, 1 skipped
+- [x] Integration tests pass — e2e 124 passed, 1 skipped, 1 xfailed, 3 xpassed, **1 failed
+      (pre-existing, see below)**
+- [x] Manual testing completed — assertions run against production data report 5 real
+      failures with correct figures; suggester before/after verified on the live corpus
+- [x] Edge cases verified — bound inclusivity, garbage frontmatter, null-vs-zero calories,
+      probes that raise
+- [x] Verified with superpowers:verification-before-completion
+
+**Pre-existing e2e failure, NOT introduced here.**
+`test_weekly_loop.py::test_marking_a_plan_card_cooked_creates_a_ledger_row` fails
+identically on `main` and on this branch when run in isolation (same assertion, line 281).
+Left for Phase 2, because it pins a real defect rather than a flaky test: the legacy grid
+card's 🍳 button calls `POST /api/cook`, which decrements inventory and contains **zero**
+references to the `cooks` ledger, so the test's "marking a plan card cooked creates a
+ledger row" is asserting behaviour that was never wired. The MCP `cook_recipe` tool forks
+the same way. Fixing it is the Phase 2 item "unify `/api/cook` with the ledger".
+
+Note also that this test is order-dependent: in a full-suite run it fails *earlier* (line
+272, "authored plan rendered no legacy cards") because a preceding test leaves a cook row
+on week 2099-W07, which turns that week into a board week so legacy cards stop rendering.
+Worth isolating when Phase 2 touches it.
 
 ### Docs
 - [ ] Doc obligations met per CLAUDE.md table (ARCHITECTURE / API / OPERATIONS / invariants)
