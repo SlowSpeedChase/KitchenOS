@@ -119,8 +119,9 @@ def test_a_file_with_no_frontmatter_is_left_alone():
 def test_dry_run_does_not_write(tmp_path):
     p = tmp_path / "Watermelon Feta Salad.md"
     p.write_text(RANGED, encoding="utf-8")
-    changes = normalize_file(p, apply=False)
+    changes, written = normalize_file(p, apply=False)
     assert changes                       # it reports what it would do
+    assert written is False
     assert p.read_text(encoding="utf-8") == RANGED   # but changes nothing
 
 
@@ -137,7 +138,7 @@ def test_apply_on_a_clean_file_writes_nothing(tmp_path):
     p = tmp_path / "Fine Recipe.md"
     p.write_text(CLEAN, encoding="utf-8")
     before = p.stat().st_mtime_ns
-    assert normalize_file(p, apply=True) == []
+    assert normalize_file(p, apply=True) == ([], False)
     assert p.stat().st_mtime_ns == before
     assert not (tmp_path / ".history").exists()
 
@@ -247,3 +248,76 @@ class TestLegacyKeyNeedsItsCanonicalTwin:
         import yaml
         still = check_frontmatter("NullCanonical", yaml.safe_load(out.split("---")[1]))
         assert any(v.code == "legacy_nutrition_key" for v in still)
+
+
+class TestUnrepairableWorkIsNotReportedAsSuccess:
+    """The one place the branch didn't apply its own rule to itself.
+
+    --apply returned 0 unconditionally, so a violation the tool structurally
+    cannot fix scrolled past inside up to 252 files of output while the run
+    reported success — and --check then failed forever on it. `Modified: N`
+    also counted files where nothing was written.
+    """
+
+    def _corpus(self, tmp_path, monkeypatch, **files):
+        (tmp_path / "Recipes").mkdir()
+        for name, content in files.items():
+            (tmp_path / "Recipes" / f"{name}.md").write_text(content, encoding="utf-8")
+        monkeypatch.setenv("KITCHENOS_VAULT", str(tmp_path))
+
+    def test_apply_exits_nonzero_when_something_could_not_be_repaired(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        from scripts import normalize_recipes
+        # a servings string with no recoverable number
+        self._corpus(tmp_path, monkeypatch, Vague=_doc(servings="a few"))
+        monkeypatch.setattr(sys, "argv", ["normalize_recipes.py", "--apply"])
+
+        assert normalize_recipes.main() == 1
+        out = capsys.readouterr().out
+        assert "Vague" in out
+        assert "could not" in out.lower() or "unrepaired" in out.lower()
+
+    def test_apply_exits_zero_when_everything_was_repaired(self, tmp_path, monkeypatch):
+        from scripts import normalize_recipes
+        self._corpus(tmp_path, monkeypatch, Ranged=RANGED)
+        monkeypatch.setattr(sys, "argv", ["normalize_recipes.py", "--apply"])
+        assert normalize_recipes.main() == 0
+
+    def test_modified_count_excludes_files_nothing_was_written_to(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        from scripts import normalize_recipes
+        self._corpus(tmp_path, monkeypatch, Vague=_doc(servings="a few"))
+        monkeypatch.setattr(sys, "argv", ["normalize_recipes.py", "--apply"])
+        normalize_recipes.main()
+        assert "Modified: 0 file(s)" in capsys.readouterr().out
+
+    def test_the_unrepaired_recipes_are_named_in_a_trailing_summary(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """A line scrolled past 252 files ago is not a report."""
+        from scripts import normalize_recipes
+        self._corpus(tmp_path, monkeypatch, Vague=_doc(servings="a few"))
+        monkeypatch.setattr(sys, "argv", ["normalize_recipes.py", "--apply"])
+        normalize_recipes.main()
+        tail = capsys.readouterr().out.rsplit("Modified:", 1)[-1]
+        assert "Vague" in tail
+
+
+class TestServingsChangeMarksMacrosStale:
+    """A stdout line is not a persistent record.
+
+    Changing servings invalidates the stored per-serving macros, but the only
+    signal was a console message — and on any re-run the file is conforming, so
+    the list of files needing a re-derive is never printed again.
+    """
+
+    def test_a_servings_change_flags_nutrition_for_review(self):
+        out, _ = normalize_content("Watermelon Feta Salad", RANGED)
+        assert _fm(out)["nutrition_needs_review"] is True
+
+    def test_a_file_with_no_servings_change_is_not_flagged(self):
+        content = _doc(leading="calories: 3058")
+        out, _ = normalize_content("LegacyOnly", content)
+        assert _fm(out).get("nutrition_needs_review") is not True

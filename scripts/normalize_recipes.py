@@ -38,6 +38,7 @@ from lib.recipe_schema import (
     LEGACY_NUTRITION_KEYS,
     Violation,
     check_frontmatter,
+    duplicate_keys,
     servings_low_end,
 )
 
@@ -72,8 +73,15 @@ def normalize_content(recipe: str, content: str) -> tuple[str, list[str]]:
             updates["servings"] = low
             updates["servings_inferred"] = "true"
             updates["servings_needs_review"] = "true"
+            # The stored nutrition_* values are per-serving, derived as
+            # batch / servings, so changing the count invalidates them. Marking
+            # the file is what makes that survivable: a console line scrolls
+            # away, and on any re-run the file is conforming, so the list of
+            # recipes owing a re-derive would never be printed again.
+            updates["nutrition_needs_review"] = "true"
             changes.append(
-                f"servings {fm['servings']!r} -> {low} (low end, flagged for review)"
+                f"servings {fm['servings']!r} -> {low} (low end, flagged for review; "
+                f"macros marked stale)"
             )
 
         elif v.code == "legacy_nutrition_key":
@@ -110,25 +118,62 @@ def normalize_content(recipe: str, content: str) -> tuple[str, list[str]]:
     return f"---{new_fm}---{rest}", changes
 
 
-def normalize_file(path: Path, apply: bool) -> list[str]:
-    """Normalize one recipe file. Returns the changes made (or that would be)."""
+def normalize_file(path: Path, apply: bool) -> tuple[list[str], bool]:
+    """Normalize one recipe file.
+
+    Returns ``(changes, written)``. ``written`` is what the run should count as
+    modified — a file can report changes and still be written to zero times when
+    every violation it has is unrepairable.
+    """
     content = path.read_text(encoding="utf-8")
     new_content, changes = normalize_content(path.stem, content)
 
+    written = False
     if apply and new_content != content:
         create_backup(path)
         path.write_text(new_content, encoding="utf-8")
+        written = True
 
-    return changes
+    return changes, written
 
 
-def audit(recipes_dir: Path) -> list[Violation]:
-    """Every violation across the corpus, for --check."""
+def recipe_files(recipes_dir: Path) -> list[Path]:
+    """The corpus, in a stable order.
+
+    ``Path.glob`` matches dotfiles (unlike the ``glob`` module), so an editor
+    swapfile or a stray hidden note would otherwise be normalized as a recipe —
+    and one alone would satisfy the "empty corpus" guard.
+    """
+    return sorted(p for p in recipes_dir.glob("*.md") if not p.name.startswith("."))
+
+
+def audit(recipes_dir: Path) -> tuple[list[Violation], list[str]]:
+    """Every violation across the corpus, for --check.
+
+    Returns ``(violations, unreadable)``. A file that cannot be read is reported
+    rather than allowed to abort the run — a guard that crashes on one bad file
+    tells you nothing about the other 251.
+    """
     out: list[Violation] = []
-    for p in sorted(recipes_dir.glob("*.md")):
-        fm = parse_recipe_file(p.read_text(encoding="utf-8"))["frontmatter"]
-        out.extend(check_frontmatter(p.stem, fm))
-    return out
+    unreadable: list[str] = []
+    for p in recipe_files(recipes_dir):
+        try:
+            content = p.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            unreadable.append(f"{p.stem}: {type(e).__name__}: {e}")
+            continue
+        out.extend(check_frontmatter(p.stem, parse_recipe_file(content)["frontmatter"]))
+
+        # Duplicates are invisible to the dict-based check above — the mapping
+        # has already collapsed them — so they are found in the raw text.
+        fm_text, _ = frontmatter.split_frontmatter(content)
+        for key in duplicate_keys(fm_text or ""):
+            out.append(Violation(
+                p.stem, key, "duplicate_key",
+                f"{key!r} appears more than once; YAML keeps only the last, so "
+                f"the earlier value is silently discarded",
+            ))
+    return out, unreadable
 
 
 def main() -> int:
@@ -157,35 +202,83 @@ def main() -> int:
         )
 
     if args.check:
-        violations = audit(recipes_dir)
+        violations, unreadable = audit(recipes_dir)
         for v in violations:
-            print(f"  {v.recipe[:46]:48} {v.code:22} {v.detail}")
-        total = len(list(recipes_dir.glob("*.md")))
+            # The recipe name is the join key and is what gets pasted into
+            # --only, so it is never truncated: 17 corpus names exceed 46 chars.
+            print(f"  {v.code:22} {v.recipe}\n{'':24}{v.detail}")
+        for u in unreadable:
+            print(f"  UNREADABLE             {u}")
+        total = len(recipe_files(recipes_dir))
         print(f"\n{len(violations)} violation(s) across {total} recipes")
-        return 1 if violations else 0
+        if unreadable:
+            print(f"{len(unreadable)} file(s) could not be read")
+        return 1 if (violations or unreadable) else 0
 
     if not args.apply:
         print("DRY RUN — no files will be modified (pass --apply to write)\n")
 
-    touched = servings_changed = 0
-    for p in sorted(recipes_dir.glob("*.md")):
-        changes = normalize_file(p, apply=args.apply)
+    written = 0
+    repairable = 0
+    servings_changed: list[str] = []
+    unrepaired: list[str] = []
+    failed: list[str] = []
+
+    for p in recipe_files(recipes_dir):
+        # Contain per-file failures: one unreadable note must not abort the run
+        # and swallow the trailing summary for everything already processed.
+        try:
+            changes, did_write = normalize_file(p, apply=args.apply)
+        except (OSError, UnicodeDecodeError) as e:
+            failed.append(f"{p.stem}: {type(e).__name__}: {e}")
+            print(f"{p.stem}\n    FAILED {type(e).__name__}: {e}")
+            continue
+
         if not changes:
             continue
-        touched += 1
+        if did_write:
+            written += 1
+        # What a real apply would write: any change that isn't purely a report.
+        if any(not c.startswith(("UNREPAIRED", "SKIPPED", "FAILED")) for c in changes):
+            repairable += 1
         if any(c.startswith("servings ") for c in changes):
-            servings_changed += 1
+            servings_changed.append(p.stem)
+        if any(c.startswith(("UNREPAIRED", "SKIPPED")) for c in changes):
+            unrepaired.append(p.stem)
         print(f"{p.stem}")
         for c in changes:
             print(f"    {c}")
 
-    print(f"\n{'Modified' if args.apply else 'Would modify'}: {touched} file(s)")
+    # A dry run writes nothing, so its count is what an apply *would* write —
+    # not `written`, which is structurally zero there.
+    label = "Modified" if args.apply else "Would modify"
+    print(f"\n{label}: {written if args.apply else repairable} file(s)")
+
     if servings_changed:
         print(
-            f"\n{servings_changed} file(s) had servings changed — their stored\n"
-            "per-serving macros were derived from the OLD count and are now stale.\n"
-            'Re-derive them:  .venv/bin/python backfill_nutrition.py --force --only "<name>"'
+            f"\n{len(servings_changed)} file(s) had servings changed — their stored\n"
+            "per-serving macros came from the OLD count and are now stale. Each is\n"
+            "marked nutrition_needs_review: true; re-derive them with:\n"
+            + "".join(
+                f'  .venv/bin/python backfill_nutrition.py --force --only "{n}"\n'
+                for n in servings_changed
+            )
         )
+
+    # Exit non-zero on work the tool could not do. Reporting success while
+    # --check will fail forever on the same file is the exact "silence that
+    # looks like success" shape the other guards in this tool exist to prevent.
+    if unrepaired or failed:
+        if unrepaired:
+            print(
+                f"\n{len(unrepaired)} file(s) could not be fully repaired — "
+                "--check will keep reporting these:\n"
+                + "".join(f"  {n}\n" for n in unrepaired)
+            )
+        if failed:
+            print(f"\n{len(failed)} file(s) failed to process:\n"
+                  + "".join(f"  {n}\n" for n in failed))
+        return 1
     return 0
 
 

@@ -112,7 +112,120 @@ def test_servings_low_end_returns_none_when_there_is_no_count(raw):
 
 
 def test_servings_low_end_differs_from_the_nutrition_engine_midpoint():
-    """Pins the deliberate divergence, so changing one side is a conscious act."""
+    """Pins the deliberate POLICY divergence: low end here, midpoint there."""
     from lib.nutrition_engine import _parse_servings
     assert servings_low_end("6-8") == 6
     assert _parse_servings("6-8") == 7
+
+
+@pytest.mark.parametrize("raw", [
+    "makes 24 cookies, serves 6",
+    "1 loaf (10 slices)",
+    "9x13 pan",
+    "350 degrees",
+])
+def test_the_write_time_reader_is_stricter_than_the_read_time_one(raw):
+    """Pins the deliberate PARSING divergence, not just the policy.
+
+    ``_parse_servings`` falls back to the first integer anywhere in the string
+    because it must return something for a macro calculation it is already
+    committed to. ``servings_low_end`` decides what to WRITE into the user's
+    file, where a wrong number silently rescales every stored macro — so it
+    refuses rather than guesses. If someone ever "fixes" one to match the other,
+    this fails and makes them say why.
+    """
+    from lib.nutrition_engine import _parse_servings
+    strict = servings_low_end(raw)
+    loose = _parse_servings(raw)
+    assert loose >= 1, "the engine still guesses, by design"
+    assert strict is None or strict != loose, (
+        f"{raw!r}: the write-time reader should refuse or disagree, got {strict}"
+    )
+
+
+class TestServingsLowEndDoesNotGuess:
+    """A wrong servings value is worse than no value.
+
+    The bare-integer fallback grabbed the FIRST number in arbitrary prose, so
+    "makes 24 cookies, serves 6" returned 24 — a 4x error that silently
+    rescales every per-serving macro. Returning None instead leaves the string
+    in place, which --check keeps reporting until a human resolves it.
+
+    The three values in the live corpus were all ranges and all resolved
+    correctly; these are the ones the extractor could produce next.
+    """
+
+    @pytest.mark.parametrize("raw,expected", [
+        # A range is unambiguous — take the low end.
+        ("6-8", 6),
+        ("4-6 servings (estimated)", 4),
+        ("6-8 as a side dish", 6),
+        ("6 to 8", 6),
+        ("6–8", 6),
+        # A number next to a serving word is unambiguous.
+        ("Serves 4", 4),
+        ("about 2 servings", 2),
+        ("serves 6", 6),
+        ("4 portions", 4),
+        # A bare number is unambiguous.
+        ("8", 8),
+        (8, 8),
+        (8.0, 8),
+    ])
+    def test_it_still_reads_what_is_unambiguous(self, raw, expected):
+        assert servings_low_end(raw) == expected
+
+    @pytest.mark.parametrize("raw,expected", [
+        # A yield and a serving count in one string: anchor on the serving word,
+        # never on position. The old first-integer rule returned the yield.
+        ("makes 24 cookies, serves 6", 6),
+        ("Makes about 20 meatballs, serves 5", 5),
+        ("24 cookies (12 servings)", 12),
+    ])
+    def test_a_serving_word_beats_a_yield(self, raw, expected):
+        assert servings_low_end(raw) == expected
+
+    @pytest.mark.parametrize("raw", [
+        "1 loaf (10 slices)",   # a yield with no serving count at all
+        "Makes 24 cookies",     # ditto — "makes" is a yield word, not a serving one
+        "9x13 pan",             # a pan size
+        "350 degrees",          # an oven temperature
+        "2026-08-01",           # a date
+        "a few",
+        "many servings",        # a serving word with no number
+    ])
+    def test_it_refuses_to_guess_from_prose(self, raw):
+        assert servings_low_end(raw) is None, f"guessed a number from {raw!r}"
+
+
+class TestDuplicateKeyDetection:
+    """The branch's own central hazard, guarded at the artifact rather than the producer.
+
+    check_frontmatter takes a dict, so by construction it cannot see two
+    `nutrition_calories:` lines — the corpus guard would have passed cleanly on
+    exactly the file migrate_recipes.rename_nutrition_keys used to emit. This
+    checks the raw text instead, which is the only place the duplicate exists.
+    """
+
+    def test_a_duplicate_key_is_reported(self):
+        from lib.recipe_schema import duplicate_keys
+        fm = "title: X\nnutrition_calories: 3058\nnutrition_calories: 169\n"
+        assert duplicate_keys(fm) == ["nutrition_calories"]
+
+    def test_a_clean_frontmatter_reports_nothing(self):
+        from lib.recipe_schema import duplicate_keys
+        assert duplicate_keys("title: X\nservings: 4\n") == []
+
+    def test_list_items_are_not_mistaken_for_keys(self):
+        from lib.recipe_schema import duplicate_keys
+        fm = "tags:\n  - a\n  - b\ndietary:\n  - a\n  - b\n"
+        assert duplicate_keys(fm) == []
+
+    def test_several_duplicates_are_all_reported_in_order(self):
+        from lib.recipe_schema import duplicate_keys
+        fm = "a: 1\nb: 1\na: 2\nb: 2\n"
+        assert duplicate_keys(fm) == ["a", "b"]
+
+    def test_a_key_repeated_three_times_is_reported_once(self):
+        from lib.recipe_schema import duplicate_keys
+        assert duplicate_keys("a: 1\na: 2\na: 3\n") == ["a"]

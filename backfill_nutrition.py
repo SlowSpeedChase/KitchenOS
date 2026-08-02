@@ -17,6 +17,7 @@ Usage:
 """
 
 import argparse
+import json
 import re
 import sqlite3
 import sys
@@ -78,7 +79,7 @@ def write_nutrition_to_file(filepath: Path, result) -> None:
         "nutrition_protein": result.nutrition.protein,
         "nutrition_carbs": result.nutrition.carbs,
         "nutrition_fat": result.nutrition.fat,
-        "nutrition_source": f'"{result.source}"',
+        "nutrition_source": json.dumps(str(result.source)),
         "nutrition_confidence": result.confidence,
         "serving_size": '"1 serving"',
     }
@@ -92,7 +93,13 @@ def write_nutrition_to_file(filepath: Path, result) -> None:
     updates["nutrition_coverage"] = result.coverage
     if result.unmatched:
         joined = "; ".join(result.unmatched)
-        updates["nutrition_unmatched"] = f'"{joined}"'
+        # Ingredient text is LLM-extracted from arbitrary recipe pages, so it can
+        # contain a double quote (`2" piece ginger`) or a backslash. Building the
+        # scalar with an f-string closed it early and broke the frontmatter of a
+        # recipe that had just backfilled cleanly. json.dumps emits a valid YAML
+        # double-quoted scalar for any input — same rule as lib/reminders.py:
+        # never interpolate untrusted text into a quoted context.
+        updates["nutrition_unmatched"] = json.dumps(joined)
 
     new_fm = rewrite_frontmatter(fm, updates)
     if not result.unmatched:
@@ -225,14 +232,23 @@ def require_food_store():
     from lib import inventory_db
 
     path = inventory_db.db_path()
-    conn = inventory_db.connect(path)
-    try:
+
+    # Open read-only, never through inventory_db.connect() — that creates the
+    # file and schema on demand, so the guard used to reject the empty database
+    # *it had just created*, leaving a fully-schema'd decoy behind. data/ is
+    # git-ignored, so that decoy persists invisibly and every other tool run
+    # from the same directory (api_server, mcp_server, receipt ingest) then
+    # reads and writes it instead of the real database.
+    rows = 0
+    if path.exists():
         try:
-            rows = conn.execute("SELECT COUNT(*) FROM fdc_foods").fetchone()[0]
+            conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            try:
+                rows = conn.execute("SELECT COUNT(*) FROM fdc_foods").fetchone()[0]
+            finally:
+                conn.close()
         except sqlite3.Error:
             rows = 0
-    finally:
-        conn.close()
 
     if rows == 0:
         raise SystemExit(
@@ -245,6 +261,23 @@ def require_food_store():
             "    ../../.venv/bin/python backfill_nutrition.py --force --only \"<name>\"\n"
             "(A genuinely fresh environment needs scripts/load_fdc_bulk.py first.)"
         )
+
+
+def apply_limit(candidates, limit, only):
+    """Apply --limit, refusing to silently truncate an explicit --only list.
+
+    --limit slices after --only, so `--only A --only B --only C --limit 1`
+    processed A and dropped B and C with no message — the exact silence
+    select_only exists to prevent.
+    """
+    if not limit:
+        return candidates
+    if only and limit < len(candidates):
+        raise SystemExit(
+            f"--limit {limit} would drop {len(candidates) - limit} of the "
+            f"{len(candidates)} recipes named by --only. Drop --limit, or name fewer."
+        )
+    return candidates[:limit]
 
 
 def select_only(candidates, names):
@@ -262,7 +295,10 @@ def select_only(candidates, names):
         raise SystemExit(
             f"--only: no such recipe(s) in the candidate set: {', '.join(missing)}"
         )
-    return [by_stem[n] for n in sorted(names)]
+    # dict.fromkeys dedupes while keeping the caller's order — a repeated
+    # --only used to process the file twice, which also risked two backups
+    # landing in the same second.
+    return [by_stem[n] for n in dict.fromkeys(names)]
 
 
 def main():
@@ -299,8 +335,7 @@ def main():
     candidates = collect_recipes_needing_backfill(recipes_dir, force=args.force)
     candidates = select_only(candidates, args.only)
 
-    if args.limit:
-        candidates = candidates[: args.limit]
+    candidates = apply_limit(candidates, args.limit, args.only)
 
     print(f"Recipes to process: {len(candidates)}\n")
 

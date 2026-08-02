@@ -113,17 +113,65 @@ def check_frontmatter(recipe: str, fm: dict) -> list[Violation]:
     return out
 
 
+def duplicate_keys(fm_text: str) -> list[str]:
+    """Top-level keys appearing more than once, in first-offence order.
+
+    ``check_frontmatter`` takes an already-parsed dict, so it cannot see a
+    duplicate — the mapping has already collapsed it, and PyYAML keeps only the
+    last occurrence. That blind spot matters here specifically: the duplicate
+    ``nutrition_calories:`` line ``migrate_recipes.rename_nutrition_keys`` used
+    to emit is invisible to every dict-based check, so the corpus guard would
+    have passed on exactly the artifact this branch exists to prevent.
+
+    Operates on raw text, and only on top-level keys: an indented line is a list
+    item or a continuation, never a key.
+    """
+    seen: set[str] = set()
+    dupes: list[str] = []
+    for line in fm_text.split("\n"):
+        if not line or line[:1].isspace():
+            continue
+        m = _KEY_LINE_RE.match(line)
+        if not m:
+            continue
+        key = m.group(1)
+        if key in seen and key not in dupes:
+            dupes.append(key)
+        seen.add(key)
+    return dupes
+
+
+_KEY_LINE_RE = re.compile(r"^([A-Za-z_][\w]*):")
+
+#: Words that mean "this number is a serving count". Deliberately excludes yield
+#: verbs like "makes" — "Makes 24 cookies" is a yield, not 24 servings.
+_SERVING_WORD = r"(?:serves|serving|servings|portions?|people|persons?)"
+
+
 def servings_low_end(value) -> int | None:
     """Coerce a frontmatter ``servings`` value to its LOW end, or ``None``.
 
     User decision, 2026-07-31: a range collapses to its low end, because fewer
     servings means higher per-serving calories — the conservative direction for
-    a macro target. This deliberately differs from
-    ``nutrition_engine._parse_servings``, which takes the midpoint; the
-    divergence is pinned by a test so changing either side is a conscious act.
+    a macro target.
 
-    Returns ``None`` when nothing numeric is present, so the caller can leave
-    the value alone rather than invent one.
+    **This is a *write*-time reader and is deliberately stricter than
+    ``nutrition_engine._parse_servings``, in policy AND in parsing.** The engine
+    reads a value someone else already stored and must return its best guess for
+    a macro calculation, so it takes a range's midpoint and falls back to the
+    first integer it can find anywhere in the string. This function decides what
+    to *persist into the user's file*, where a wrong number is far worse than no
+    number: `"makes 24 cookies, serves 6"` under a first-integer rule writes
+    **24**, silently rescaling every per-serving macro by 4x. So it accepts only
+    three unambiguous shapes and returns ``None`` for everything else, leaving
+    the string in place for ``--check`` to keep reporting:
+
+    1. a range — ``"4-6 servings (estimated)"`` → 4
+    2. a number anchored to a serving word — ``"Serves 4"``, ``"about 2 servings"``
+    3. a bare number — ``"8"``
+
+    Both the policy and the parsing divergence are pinned by tests, so changing
+    either side is a conscious act.
     """
     if isinstance(value, bool):  # bool is an int subclass — not a serving count
         return None
@@ -132,17 +180,30 @@ def servings_low_end(value) -> int | None:
     if not isinstance(value, str):
         return None
 
-    # A range first, so "4-6" yields 4 rather than the bare first integer rule
-    # below happening to agree. Handles hyphen, en/em dash, and "to".
+    # 1. A range, first — "serves 4-6" must yield 4, not be caught by rule 2.
+    #    Handles hyphen, en/em dash, and "to". A descending or zero pair is not
+    #    a range (this is what keeps "2026-08-01" from reading as 2026).
     rng = re.search(r"(\d+)\s*(?:-|–|—|to)\s*(\d+)", value)
     if rng:
         lo, hi = int(rng.group(1)), int(rng.group(2))
         if lo >= 1 and hi >= lo:
             return lo
 
-    single = re.search(r"\d+", value)
-    if single:
-        n = int(single.group())
+    # 2. A number anchored to a serving word, in either order. Anchoring rather
+    #    than taking the first integer is what makes a yield ("24 cookies") lose
+    #    to a serving count ("serves 6") in the same string.
+    for pattern in (rf"{_SERVING_WORD}\s*:?\s*(\d+)", rf"(\d+)\s+{_SERVING_WORD}"):
+        m = re.search(pattern, value, re.IGNORECASE)
+        if m:
+            n = int(m.group(1))
+            if n >= 1:
+                return n
+
+    # 3. A bare number, and nothing else in the string.
+    bare = re.fullmatch(r"\s*(\d+)\s*", value)
+    if bare:
+        n = int(bare.group(1))
         if n >= 1:
             return n
+
     return None
