@@ -1,5 +1,5 @@
 #!/bin/bash
-# Regenerate and validate the ops/agents/ launcher shims.
+# Regenerate and validate the launchers every LaunchAgent points at.
 #
 # Why these exist: macOS System Settings → Login Items & Extensions → Background
 # App Activity names each LaunchAgent after the *basename of ProgramArguments[0]*.
@@ -8,29 +8,57 @@
 # So every agent gets its own launcher file named exactly what should appear in
 # that list, and the plist points at the launcher.
 #
-# A bare symlink to .venv/bin/python would NOT work here: CPython locates
-# pyvenv.cfg relative to the invoked executable's directory, so a symlink outside
-# .venv/bin/ silently drops the venv's site-packages and the job runs against
-# system Python. Hence a real shim that execs the venv interpreter by full path.
+# There are two kinds of launcher, and the difference is about TCC:
 #
-# Run after a venv rebuild or when adding an agent. Safe to re-run.
+#   shim   — a bash script that execs the venv interpreter by full path.
+#            Fine for any job that needs no privacy-protected resource.
+#            A bare *symlink* to .venv/bin/python would NOT work here: CPython
+#            locates pyvenv.cfg relative to the invoked executable's directory,
+#            so a symlink outside .venv/bin/ silently drops the venv's
+#            site-packages and the job runs against system Python.
+#
+#   binary — a *copy* of the interpreter, placed inside .venv/bin/ and named for
+#            the Settings row. Required for any job needing Full Disk Access or
+#            another TCC grant. A shim cannot carry one: `exec` replaces the
+#            process image, so the process macOS evaluates is the interpreter,
+#            not the shim — and permissions attach to signed executables, not to
+#            shell scripts. macOS will happily *accept* a bash script into the
+#            Full Disk Access list and then never match it, which is exactly how
+#            batch-extract stayed denied through 77 logged failures while the
+#            list showed it as granted. A copy has no exec: it *is* the process,
+#            so the grant binds to its path. Keeping it inside .venv/bin/
+#            preserves pyvenv.cfg resolution, which a copy anywhere else breaks.
+#
+# The copy is re-signed ad hoc so it carries its own code identity rather than
+# sharing the interpreter's — granting this launcher must not silently grant
+# every other script run by the same Python.
+#
+# Run after a venv rebuild or when adding an agent. Safe to re-run: unchanged
+# bytes re-sign to the same cdhash, so an existing TCC grant survives.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$REPO/.venv/bin/python"
 AGENTS_DIR="$REPO/ops/agents"
+VENV_BIN="$REPO/.venv/bin"
 
-# "<display name>|<program>|<args...>"  — display name is the Settings row label.
+# "<display name>|<kind>|<program>|<args...>"
+#   kind = shim   → ops/agents/<display name>   (bash, execs the program)
+#   kind = binary → .venv/bin/<display name>    (copy of the program itself)
+#
+# Use `binary` only where a TCC grant is needed; it costs a 34 KB copy and a row
+# in the user's Full Disk Access list. Batch Extract needs one because
+# share-sheet URLs live in the Reminders Core Data store — see lib/reminders_url.py.
 LAUNCHERS=(
-  "KitchenOS · API|$PY|$REPO/api_server.py"
-  "KitchenOS · Batch Extract|$PY|$REPO/batch_extract.py"
-  "KitchenOS · Calendar Sync|$PY|$REPO/sync_calendar.py"
-  "KitchenOS · Cleanup iCloud|/bin/bash|$REPO/scripts/cleanup_old_icloud.sh"
-  "KitchenOS · Dashboard Update|$PY|$REPO/scripts/update_dashboard_canvas.py"
-  "KitchenOS · Enrich Recipes|$PY|$REPO/scripts/enrich_recipes.py|--out|$REPO/logs/enrich-latest.json"
-  "KitchenOS · Meal Plan|$PY|$REPO/generate_meal_plan.py"
-  "KitchenOS · Receipt Ingest|$PY|$REPO/ingest_receipts.py"
-  "KitchenOS · Verdict Nudge|$PY|$REPO/scripts/nudge_verdicts.py"
+  "KitchenOS · API|shim|$PY|$REPO/api_server.py"
+  "KitchenOS · Batch Extract|binary|$PY|$REPO/batch_extract.py"
+  "KitchenOS · Calendar Sync|shim|$PY|$REPO/sync_calendar.py"
+  "KitchenOS · Cleanup iCloud|shim|/bin/bash|$REPO/scripts/cleanup_old_icloud.sh"
+  "KitchenOS · Dashboard Update|shim|$PY|$REPO/scripts/update_dashboard_canvas.py"
+  "KitchenOS · Enrich Recipes|shim|$PY|$REPO/scripts/enrich_recipes.py|--out|$REPO/logs/enrich-latest.json"
+  "KitchenOS · Meal Plan|shim|$PY|$REPO/generate_meal_plan.py"
+  "KitchenOS · Receipt Ingest|shim|$PY|$REPO/ingest_receipts.py"
+  "KitchenOS · Verdict Nudge|shim|$PY|$REPO/scripts/nudge_verdicts.py"
 )
 
 mkdir -p "$AGENTS_DIR"
@@ -39,8 +67,9 @@ fail=0
 for entry in "${LAUNCHERS[@]}"; do
     IFS='|' read -r -a parts <<< "$entry"
     name="${parts[0]}"
-    program="${parts[1]}"
-    args=("${parts[@]:2}")
+    kind="${parts[1]}"
+    program="${parts[2]}"
+    args=("${parts[@]:3}")
 
     if [ ! -x "$program" ]; then
         echo "ERROR: interpreter missing or not executable: $program" >&2
@@ -54,22 +83,78 @@ for entry in "${LAUNCHERS[@]}"; do
         continue
     fi
 
-    # Build the exec line with each argument quoted independently.
-    exec_line="exec \"$program\""
-    for a in "${args[@]}"; do
-        exec_line="$exec_line \\
+    case "$kind" in
+    shim)
+        # Build the exec line with each argument quoted independently.
+        exec_line="exec \"$program\""
+        for a in "${args[@]}"; do
+            exec_line="$exec_line \\
      \"$a\""
-    done
+        done
 
-    cat > "$AGENTS_DIR/$name" <<EOF
+        cat > "$AGENTS_DIR/$name" <<EOF
 #!/bin/bash
 # Launcher shim — GENERATED by scripts/make-agent-launchers.sh, do not edit.
 # The filename is what macOS shows in System Settings → Login Items &
 # Extensions → Background App Activity. See ~/Dev/CLAUDE.md.
 $exec_line "\$@"
 EOF
-    chmod +x "$AGENTS_DIR/$name"
-    echo "ok: $name"
+        chmod +x "$AGENTS_DIR/$name"
+        echo "ok:     $name  (shim)"
+        ;;
+
+    binary)
+        # Resolve through both symlink hops (.venv/bin/python → python3.11 →
+        # the real framework binary) so we copy a Mach-O, not a link. Uses
+        # readlink -f rather than a system python3, which a venv-only machine
+        # is not guaranteed to have.
+        real="$(readlink -f "$program")"
+        if [ ! -f "$real" ]; then
+            echo "ERROR: cannot resolve real interpreter for '$name': $program" >&2
+            fail=1
+            continue
+        fi
+        dest="$VENV_BIN/$name"
+
+        # Copy only when the bytes differ, so a no-op re-run doesn't disturb a
+        # working TCC grant.
+        if ! cmp -s "$real" "$dest" 2>/dev/null; then
+            cp -f "$real" "$dest"
+            chmod +x "$dest"
+        fi
+
+        # Ad-hoc sign so this launcher carries its own identity. Without it the
+        # copy shares the interpreter's cdhash, and granting this would be
+        # indistinguishable from granting every script run by that Python.
+        if ! codesign --force --sign - "$dest" 2>/dev/null; then
+            echo "ERROR: could not ad-hoc sign '$dest'" >&2
+            fail=1
+            continue
+        fi
+
+        # A launcher that cannot start is worse than none: the job would fail on
+        # its timer with nobody watching.
+        if ! "$dest" -c 'import sys; sys.exit(0)' 2>/dev/null; then
+            echo "ERROR: '$dest' does not run as a Python interpreter" >&2
+            fail=1
+            continue
+        fi
+        # Prove the venv still resolves. A copy outside .venv/bin/ silently
+        # falls back to system Python and the job loses every dependency.
+        prefix="$("$dest" -c 'import sys; print(sys.prefix)' 2>/dev/null || true)"
+        if [ "$prefix" != "$REPO/.venv" ]; then
+            echo "ERROR: '$dest' resolves sys.prefix to '$prefix', expected '$REPO/.venv'" >&2
+            fail=1
+            continue
+        fi
+        echo "ok:     $name  (binary, venv ok)"
+        ;;
+
+    *)
+        echo "ERROR: unknown launcher kind '$kind' for '$name'" >&2
+        fail=1
+        ;;
+    esac
 done
 
 # Every plist must point at a launcher that exists, and never at a bare interpreter.

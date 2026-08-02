@@ -4,9 +4,17 @@
 <dict>
     <key>Label</key>
     <string>com.kitchenos.batch-extract</string>
+    <!-- ProgramArguments[0] is a *copy of the Python interpreter* named for the
+         Settings row, not a shim, because this job needs Full Disk Access to
+         read share-sheet URLs out of the Reminders store. A bash shim cannot
+         hold a TCC grant: `exec` replaces the process image, so macOS evaluates
+         the interpreter rather than the shim. Regenerate with
+         scripts/make-agent-launchers.sh; the script argument below is argv[1]
+         because the launcher itself is the interpreter. -->
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/chaseeasterling/Dev/KitchenOS/ops/agents/KitchenOS · Batch Extract</string>
+        <string>/Users/chaseeasterling/Dev/KitchenOS/.venv/bin/KitchenOS · Batch Extract</string>
+        <string>/Users/chaseeasterling/Dev/KitchenOS/batch_extract.py</string>
     </array>
     <key>RunAtLoad</key>
     <true/>

@@ -52,15 +52,26 @@ def find_stores(stores_dir: Path = STORES_DIR) -> list[Path]:
     if not stores:
         # A TCC denial does not raise: the directory stats fine and its listing
         # comes back empty. That is what a LaunchAgent sees without Full Disk
-        # Access, while the same code run from a terminal reads every store.
+        # Access, while the same code run from a terminal reads every store —
+        # so "it works when I run it by hand" proves nothing about the job.
+        #
+        # This message previously told the reader to grant the bash shim in
+        # ops/agents/. That advice was wrong and cost a real debugging session:
+        # macOS accepts a shell script into the Full Disk Access list and then
+        # never matches it, because TCC binds to signed executables and the
+        # shim's `exec` replaces the process image with the interpreter before
+        # any protected read happens. The launcher is now a signed copy of the
+        # interpreter living in .venv/bin/, which *is* the process.
         log.warning(
             "No Reminders store files (*.sqlite) under %s — an empty listing "
             "here usually means this process lacks Full Disk Access. Grant it "
-            "to whatever launchd actually execs, which since the launcher-shim "
-            "change is the SHIM, not the interpreter: "
-            "'ops/agents/KitchenOS · Batch Extract' (System Settings → Privacy "
-            "& Security → Full Disk Access, ⇧⌘G to paste the path). Granting "
-            "only .venv/bin/python covers manual terminal runs, not this job.",
+            "to '.venv/bin/KitchenOS · Batch Extract' (System Settings → "
+            "Privacy & Security → Full Disk Access, ⇧⌘G to paste the path), "
+            "then reload the agent. That file is a signed *copy* of the Python "
+            "interpreter, not a shim: TCC binds to executables, and a bash "
+            "shim's `exec` replaces the process image, so a grant on the shim "
+            "never matches anything. Regenerate it with "
+            "scripts/make-agent-launchers.sh.",
             stores_dir,
         )
     return stores

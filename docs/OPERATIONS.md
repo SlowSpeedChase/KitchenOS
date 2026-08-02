@@ -476,11 +476,11 @@ launchctl unload ~/Library/LaunchAgents/com.kitchenos.<name>.plist
 launchctl load ~/Library/LaunchAgents/com.kitchenos.<name>.plist
 ```
 
-### Launcher shims (`ops/agents/`)
+### Launchers (`ops/agents/` and `.venv/bin/`)
 
 No plist points at `.venv/bin/python` directly. Each one's `ProgramArguments[0]`
-is a launcher shim in `ops/agents/` named for what the agent *does* —
-`ops/agents/KitchenOS · Batch Extract`, and so on.
+is a launcher named for what the agent *does* — `KitchenOS · Batch Extract`,
+and so on.
 
 This is because macOS names each row in **System Settings → Login Items &
 Extensions → Background App Activity** after the basename of
@@ -489,25 +489,50 @@ nine indistinguishable rows called `python`, alongside Selene's dozen called
 `node`. The launchd `Label` is recorded (verify with `sfltool dumpbtm`) but is
 never displayed, and there is no plist key that overrides the name.
 
-The shims are generated and validated by:
+The launchers are generated and validated by:
 
 ```bash
 ./scripts/make-agent-launchers.sh
 ```
 
-Re-run it after rebuilding `.venv` or adding an agent. It rewrites every shim
-from its manifest, then fails if any `ops/*.plist` still points at a bare
-interpreter or at a launcher that doesn't exist.
+Re-run it after rebuilding `.venv` or adding an agent. It rewrites every
+launcher from its manifest, then fails if any `ops/*.plist` still points at a
+bare interpreter or at a launcher that doesn't exist.
 
-A shim must be a real script that execs the venv interpreter by full path — a
-bare symlink to `.venv/bin/python` will **not** work, because CPython locates
-`pyvenv.cfg` relative to the invoked executable's directory, so a symlink
-outside `.venv/bin/` silently drops the venv's `site-packages` and the agent
-runs against system Python.
+#### Two kinds, and when you need which
+
+**`shim`** — a bash script in `ops/agents/` that execs the venv interpreter by
+full path. The default. It must be a real script, not a bare symlink to
+`.venv/bin/python`: CPython locates `pyvenv.cfg` relative to the invoked
+executable's directory, so a symlink outside `.venv/bin/` silently drops the
+venv's `site-packages` and the agent runs against system Python.
+
+**`binary`** — a signed *copy* of the interpreter in `.venv/bin/`, named for the
+Settings row. **Required for any agent that needs a TCC grant** (Full Disk
+Access, Calendar, Reminders-store reads). A shim cannot hold one: `exec`
+replaces the process image, so the process macOS evaluates is the interpreter,
+not the shim, and TCC binds to signed executables rather than to shell scripts.
+macOS will *accept* a bash script into the Full Disk Access list and then never
+match it — which is how `batch-extract` stayed denied through 77 logged
+failures while the list showed it as granted. Only `KitchenOS · Batch Extract`
+uses this today, because share-sheet URLs live in the Reminders Core Data store
+(see `lib/reminders_url.py`).
+
+The copy is re-signed ad hoc so it has its own code identity — granting it must
+not silently grant every other script run by the same Python. It lives inside
+`.venv/bin/` so `pyvenv.cfg` still resolves; a copy anywhere else would not.
+The generator verifies this by running the copy and asserting `sys.prefix`.
+
+Because `.venv/` is git-ignored, a venv rebuild removes the binary launcher.
+Re-run the generator. Identical bytes re-sign to the same cdhash, so an existing
+Full Disk Access grant survives a regeneration — but check it, since a TCC
+denial presents as an empty result, never as an error.
 
 Adding an agent: add a line to the `LAUNCHERS` manifest in
-`scripts/make-agent-launchers.sh`, run it, and point the new plist's
-`ProgramArguments` at the single generated shim path.
+`scripts/make-agent-launchers.sh` (`<display name>|<kind>|<program>|<args...>`),
+run it, and point the new plist's `ProgramArguments` at the generated launcher.
+For a `binary` launcher the script path is `ProgramArguments[1]`, because the
+launcher itself is the interpreter.
 
 ### com.kitchenos.api
 
@@ -554,18 +579,28 @@ Access) so `lib/reminders_url.py` can read the Reminders SQLite store directly
 to recover share-sheet rich-link URLs. The grant does not follow the repo, so it
 has to be redone after a machine rebuild or a recreated `.venv`.
 
-Grant it to **both** of these (⇧⌘G in the file picker to paste a path):
+Grant it to exactly this path (⇧⌘G in the file picker to paste it):
 
 ```
-/Users/chaseeasterling/Dev/KitchenOS/ops/agents/KitchenOS · Batch Extract
-/Users/chaseeasterling/Dev/KitchenOS/.venv/bin/python
+/Users/chaseeasterling/Dev/KitchenOS/.venv/bin/KitchenOS · Batch Extract
 ```
 
-The shim is what launchd now execs, so it is the process TCC attributes the
-access to; the interpreter entry covers manual `.venv/bin/python
-batch_extract.py` runs from a terminal. Granting only the interpreter is the
-failure mode to watch for after the launcher-shim change — see the silent-denial
-note below.
+That file is a signed copy of the Python interpreter — the `binary` launcher
+kind described above — and it is what launchd runs *as the process*, so the
+grant binds to it.
+
+**Do not grant the bash shim in `ops/agents/`.** That was this runbook's advice
+until 2026-08-02 and it is wrong: macOS accepts a shell script into the Full
+Disk Access list and then never matches it, because `exec` replaces the process
+image with the interpreter before any protected read happens. The list shows it
+as granted while every run is denied — 77 consecutive failures were logged that
+way. Granting `.venv/bin/python` instead *does* work, but it hands Full Disk
+Access to every script run by that shared interpreter, which is why the
+dedicated copy exists.
+
+Manual `.venv/bin/python batch_extract.py` runs from a terminal inherit the
+terminal's own grant, so "it works when I run it by hand" proves nothing about
+the agent.
 
 Without it, a share-sheet reminder resolves no URL, is reported as an invalid
 URL, and is left unchecked to be retried forever. **The denial does not raise:**
