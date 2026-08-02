@@ -47,6 +47,10 @@ def _eligibility(macros: Optional[dict]) -> tuple[bool, list[str]]:
         return False, ["missing"]
     return macro_eligible({
         "nutrition_calories": macros.get("calories"),
+        # Protein is load-bearing for the plausibility bounds, not decoration:
+        # without it a sub-recipe claiming 244 g/serving passes on calories
+        # alone and its garbage lands in the bundle's rollup.
+        "nutrition_protein": macros.get("protein"),
         "nutrition_coverage": macros.get("coverage"),
         "servings": macros.get("servings"),
     })

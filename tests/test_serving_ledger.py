@@ -246,6 +246,18 @@ LOW_COVERAGE_MD = RECIPE_MD.replace("title: Chili", "title: Mystery Soup") \
                            .replace("nutrition_coverage: 0.95",
                                     "nutrition_coverage: 0.4")
 
+# The real Chipotle Adobo Chicken Burrito: 3009 kcal and 178 g protein claimed
+# *per serving*, with coverage 1.0 — every ingredient resolved, to the wrong
+# grams. Two placements of it reported a 6018 kcal day as `incomplete: false`.
+IMPLAUSIBLE_MD = RECIPE_MD.replace("title: Chili", "title: Burrito") \
+                          .replace("servings: 4", "servings: 2") \
+                          .replace("nutrition_calories: 500",
+                                   "nutrition_calories: 3009") \
+                          .replace("nutrition_protein: 30",
+                                   "nutrition_protein: 178") \
+                          .replace("nutrition_coverage: 0.95",
+                                   "nutrition_coverage: 1.0")
+
 
 def _write_recipe(vault, name, content):
     recipes = vault / "Recipes"
@@ -281,6 +293,53 @@ def test_day_totals_flags_missing_recipe(tmp_db, tmp_vault):
     totals = sl.day_totals("2026-W28", recipes)
     assert totals["2026-07-07"]["incomplete"] is True
     assert totals["2026-07-07"]["calories"] == 0
+
+
+def test_day_totals_excludes_implausible_recipe(tmp_db, tmp_vault):
+    """A number we cannot stand behind is not stated, and is named.
+
+    Summing it and setting `incomplete` would still put 6018 kcal in front of
+    the reader; the flag is not the fix, omission is. Matches the
+    exclude-and-name contract meal_nutrition already uses.
+    """
+    recipes = _write_recipe(tmp_vault, "Burrito", IMPLAUSIBLE_MD)
+    cook = sl.create_cook(recipe="Burrito", week="2026-W28", scale=1.0,
+                          servings_produced=2.0, date="2026-07-07", meal="dinner")
+    sl.add_placement(cook["id"], "slot", 1.0, date="2026-07-07", meal="lunch")
+    day = sl.day_totals("2026-W28", recipes)["2026-07-07"]
+    assert day["calories"] == 0
+    assert day["incomplete"] is True
+    assert day["excluded"] == ["Burrito"]
+
+
+def test_day_totals_plausible_recipe_survives_an_implausible_neighbour(tmp_db, tmp_vault):
+    recipes = _write_recipe(tmp_vault, "Chili", RECIPE_MD)
+    _write_recipe(tmp_vault, "Burrito", IMPLAUSIBLE_MD)
+    sl.create_cook(recipe="Chili", week="2026-W28", scale=1.0,
+                   servings_produced=4.0, date="2026-07-07", meal="lunch")
+    sl.create_cook(recipe="Burrito", week="2026-W28", scale=1.0,
+                   servings_produced=2.0, date="2026-07-07", meal="dinner")
+    day = sl.day_totals("2026-W28", recipes)["2026-07-07"]
+    assert day["calories"] == 500          # the chili only
+    assert day["incomplete"] is True
+    assert day["excluded"] == ["Burrito"]
+
+
+def test_day_totals_excluded_is_empty_when_everything_is_sound(tmp_db, tmp_vault):
+    recipes = _write_recipe(tmp_vault, "Chili", RECIPE_MD)
+    _mk_cook()
+    day = sl.day_totals("2026-W28", recipes)["2026-07-07"]
+    assert day["excluded"] == []
+    assert day["incomplete"] is False
+
+
+def test_day_totals_names_each_excluded_recipe_once(tmp_db, tmp_vault):
+    recipes = _write_recipe(tmp_vault, "Burrito", IMPLAUSIBLE_MD)
+    cook = sl.create_cook(recipe="Burrito", week="2026-W28", scale=1.0,
+                          servings_produced=3.0, date="2026-07-07", meal="dinner")
+    sl.add_placement(cook["id"], "slot", 1.0, date="2026-07-07", meal="lunch")
+    sl.add_placement(cook["id"], "slot", 1.0, date="2026-07-07", meal="snack")
+    assert sl.day_totals("2026-W28", recipes)["2026-07-07"]["excluded"] == ["Burrito"]
 
 
 # --- M1: validate week/date formats BEFORE any insert ----------------------

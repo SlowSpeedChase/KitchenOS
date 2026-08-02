@@ -470,12 +470,28 @@ def recipe_macros(recipe_name: str, recipes_dir) -> Optional[dict]:
 
 
 def day_totals(week: str, recipes_dir) -> dict:
+    """Per-day macro totals for a week's placed servings.
+
+    Each day carries ``excluded`` — recipes whose stored per-serving macros are
+    outside plausible bounds and were therefore left out of the sum rather than
+    added to it. Flagging such a day ``incomplete`` while still summing it was
+    the old behaviour and it is not enough: two placements of a recipe claiming
+    3009 kcal/serving reported a 6018 kcal day, and a warning beside a wrong
+    number still leaves the wrong number on screen. This mirrors the
+    exclude-and-name contract in ``meal_nutrition.meal_nutrition``.
+
+    ``implausible`` is imported inside the function because
+    ``nutrition_quality`` imports ``COVERAGE_REVIEW_THRESHOLD`` from this
+    module — a module-level import here would be circular.
+    """
+    from lib.nutrition_quality import implausible
+
     totals: dict = {}
     macro_cache: dict = {}
     for p in placements_for_week(week):
         day = totals.setdefault(p["date"], {
             "calories": 0.0, "protein": 0.0, "carbs": 0.0, "fat": 0.0,
-            "incomplete": False,
+            "incomplete": False, "excluded": [],
         })
         name = p["recipe"]
         if name not in macro_cache:
@@ -483,6 +499,16 @@ def day_totals(week: str, recipes_dir) -> dict:
         macros = macro_cache[name]
         if macros is None:
             day["incomplete"] = True
+            continue
+        # recipe_macros is macro-shaped; implausible reads an index-shaped dict.
+        bad, _reasons = implausible({
+            "nutrition_calories": macros.get("calories"),
+            "nutrition_protein": macros.get("protein"),
+        })
+        if bad:
+            day["incomplete"] = True
+            if name not in day["excluded"]:
+                day["excluded"].append(name)
             continue
         if macros["coverage"] is not None and \
                 macros["coverage"] < COVERAGE_REVIEW_THRESHOLD:

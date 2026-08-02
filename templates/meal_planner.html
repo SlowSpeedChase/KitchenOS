@@ -688,6 +688,15 @@
             color: var(--danger);
         }
 
+        /* Named exclusions. The ⚠ alone said "something is off somewhere";
+           this says which recipe, because the fix is a per-recipe one. */
+        .totals-cell .totals-excluded {
+            font-size: 10px;
+            line-height: 1.25;
+            color: var(--danger);
+            margin-top: 2px;
+        }
+
         .day-header {
             text-align: center;
             padding: 8px 4px;
@@ -3050,16 +3059,25 @@
                 const cell = document.querySelector(`.totals-cell[data-day="${day}"]`);
                 if (!cell) return;
                 const t = totals[dayDates[day]];
-                if (!t || (!t.calories && !t.protein && !t.carbs && !t.fat)) {
+                const excluded = (t && t.excluded) || [];
+                const noMacros = !t || (!t.calories && !t.protein && !t.carbs && !t.fat);
+                // A day whose only recipe was excluded totals zero — but it is
+                // not an empty day, and rendering "—" would hide the one thing
+                // worth saying about it.
+                if (noMacros && !excluded.length) {
                     cell.innerHTML = '<span class="totals-empty">—</span>';
                     return;
                 }
                 const warn = t.incomplete
                     ? ' <span class="totals-warn" title="Some recipes have missing or low-confidence nutrition data">⚠</span>'
                     : '';
+                const note = excluded.length
+                    ? `<div class="totals-excluded" title="Left out of this total: the stored per-serving macros are outside plausible bounds. Fix on the Nutrition Review page.">excludes ${escapeHtml(excluded.join(', '))}</div>`
+                    : '';
                 cell.innerHTML =
                     `<div class="totals-kcal">${Math.round(t.calories)} kcal${warn}</div>` +
-                    `<div class="totals-macros">${Math.round(t.protein)}p · ${Math.round(t.carbs)}c · ${Math.round(t.fat)}f</div>`;
+                    `<div class="totals-macros">${Math.round(t.protein)}p · ${Math.round(t.carbs)}c · ${Math.round(t.fat)}f</div>` +
+                    note;
             });
         }
 
@@ -4713,12 +4731,41 @@
          *
          * The server stays authoritative — the saved meal's `nutrition` replaces
          * this the moment a save returns. This exists only so the numbers move as
-         * you type, without a round-trip per keystroke. Keep the three checks in
-         * step with the Python: a recipe with no serving count had its batch
-         * divided by 1, so its "per-serving" macros are whole-recipe totals and
-         * scaling one by 1.5 would invent thousands of kcal.
+         * you type, without a round-trip per keystroke. Keep the checks in step
+         * with the Python: a recipe with no serving count had its batch divided
+         * by 1, so its "per-serving" macros are whole-recipe totals and scaling
+         * one by 1.5 would invent thousands of kcal.
+         *
+         * The plausibility bounds below mirror lib/nutrition_quality.py. They
+         * exist because coverage answers "did every line resolve", which every
+         * resolution *error* also answers yes — so the worst rows in the corpus
+         * carry coverage 1.0. Change one side and change the other.
          */
         const MACRO_COVERAGE_THRESHOLD = 0.8;
+        const MIN_KCAL_PER_SERVING = 50;
+        const MAX_KCAL_PER_SERVING = 1200;
+        const MAX_PROTEIN_G_PER_SERVING = 70;
+        const MAX_PROTEIN_KCAL_SHARE = 0.65;
+        const PROTEIN_SHARE_MIN_KCAL = 200;
+
+        /** Absolute per-serving bounds — mirrors nutrition_quality.implausible(). */
+        function implausibleMacros(recipe) {
+            const reasons = [];
+            const kcal = Number(recipe.nutrition_calories);
+            if (!Number.isFinite(kcal)) return reasons;   // absence is no_nutrition, not implausibility
+            if (kcal < MIN_KCAL_PER_SERVING) reasons.push('kcal_too_low');
+            else if (kcal > MAX_KCAL_PER_SERVING) reasons.push('kcal_too_high');
+
+            const protein = Number(recipe.nutrition_protein);
+            if (Number.isFinite(protein)) {
+                if (protein > MAX_PROTEIN_G_PER_SERVING) reasons.push('protein_too_high');
+                if (kcal >= PROTEIN_SHARE_MIN_KCAL &&
+                        protein * 4 > MAX_PROTEIN_KCAL_SHARE * kcal) {
+                    reasons.push('protein_share_impossible');
+                }
+            }
+            return reasons;
+        }
 
         function subRecipeEligibility(recipe) {
             if (!recipe) return { eligible: false, reasons: ['missing'] };
@@ -4733,6 +4780,7 @@
             if (recipe.servings === null || recipe.servings === undefined) {
                 reasons.push('servings_unknown');
             }
+            reasons.push(...implausibleMacros(recipe));
             return { eligible: reasons.length === 0, reasons };
         }
 
@@ -4741,6 +4789,10 @@
             no_nutrition: 'no nutrition data',
             low_coverage: 'low-confidence nutrition',
             servings_unknown: 'servings unknown',
+            kcal_too_low: 'implausibly few calories per serving',
+            kcal_too_high: 'implausibly many calories per serving',
+            protein_too_high: 'implausible protein per serving',
+            protein_share_impossible: 'more protein than the calories allow',
         };
 
         /** Recompute the modal's per-row contributions and the totals-vs-target line. */
