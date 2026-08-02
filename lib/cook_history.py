@@ -45,15 +45,34 @@ def recipe_stats(recipe: str) -> dict:
     if not rows:
         return {}
 
-    yields = [float(r["servings_produced"]) for r in rows
+    # A `cooks` row is created when a recipe is dropped onto the board, so the
+    # table is mostly a record of *intent*. Counting rows therefore measured
+    # planning, not cooking: the live ledger held 16 rows against 2 real cooks,
+    # yet 10 recipes carried `last_cooked` and 13 carried `cook_count`. Worse
+    # for this module's actual purpose — learning a recipe's true yield from
+    # what came out of the pan — a batch that was never made has no yield to
+    # observe, and a plan for next month is not the last time you made it.
+    #
+    # `cooked_at` is the signal. A verdict counts too: judging a dish asserts
+    # you made it, and the verdict nudge asks about dishes whose date has passed,
+    # so a verdict on a row nobody tapped 🍳 for is a real path.
+    cooked = [r for r in rows
+              if r["cooked_at"] is not None or r["make_again"] is not None]
+    if not cooked:
+        return {}
+
+    yields = [float(r["servings_produced"]) for r in cooked
               if r["servings_produced"] is not None]
     # A verdict of NULL means "not judged", which must not read as a bad review,
     # so verdicts are counted separately from cooks rather than defaulting to 0.
-    verdicts = [r["make_again"] for r in rows if r["make_again"] is not None]
-    dates = [r["date"] or r["cooked_at"] for r in rows if (r["date"] or r["cooked_at"])]
+    verdicts = [r["make_again"] for r in cooked if r["make_again"] is not None]
+    # Prefer when it was cooked; fall back to the planned date only for a row
+    # that *is* cooked (a verdict without a timestamp).
+    dates = [r["cooked_at"] or r["date"] for r in cooked
+             if (r["cooked_at"] or r["date"])]
 
     stats = {
-        "cook_count": len(rows),
+        "cook_count": len(cooked),
         "verdict_count": len(verdicts),
         "make_again_count": sum(1 for v in verdicts if v),
     }

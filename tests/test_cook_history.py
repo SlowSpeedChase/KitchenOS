@@ -32,9 +32,22 @@ def _fm(recipes, name):
     return parse_recipe_file((recipes / f"{name}.md").read_text(encoding="utf-8"))["frontmatter"]
 
 
-def _cook(recipe, produced, week="2026-W28", date="2026-07-07"):
+def _planned(recipe, produced, week="2026-W28", date="2026-07-07"):
+    """A cook on the plan that has NOT happened yet — no `cooked_at`."""
     return sl.create_cook(recipe=recipe, week=week, servings_produced=produced,
                           date=date, meal="dinner")
+
+
+def _cook(recipe, produced, week="2026-W28", date="2026-07-07"):
+    """A cook that actually happened.
+
+    A `cooks` row is created at *planning* time, so the ledger is mostly a
+    record of intent; `cooked_at` is what makes one a cook. These helpers used
+    to be the same function, which is how the module came to report
+    `cook_count: 2` for a pair of recipes nobody had ever made.
+    """
+    row = _planned(recipe, produced, week=week, date=date)
+    return sl.update_cook(row["id"], cooked_at=f"{date}T18:00:00Z")
 
 
 # --------------------------------------------------------------------------
@@ -215,3 +228,54 @@ class TestCookHistoryBacksUp:
         assert cook_history.sync_recipe("Chili", recipes_dir=tmp_path) is False
         assert p.stat().st_mtime_ns == before
         assert len(list((tmp_path / ".history").glob("Chili_*.md"))) == 1
+
+
+# --------------------------------------------------------------------------
+# Planned is not cooked
+# --------------------------------------------------------------------------
+#
+# A `cooks` row is created when you drop a recipe onto the board, so the table
+# is mostly a record of *intent*. Counting rows therefore measured planning:
+# the live ledger had 16 rows and 2 real cooks, yet 10 recipes carried
+# `last_cooked` and 13 carried `cook_count`. The module's own purpose — learning
+# a recipe's real yield from what actually came out of the pan — cannot work on
+# batches that were never made. Nothing consumes these fields yet, which is why
+# this is worth fixing now rather than after something starts trusting them.
+
+def test_a_planned_cook_is_not_a_cook(tmp_db):
+    _planned("Chili", 4)
+    assert cook_history.recipe_stats("Chili") == {}
+
+
+def test_planned_cooks_do_not_inflate_the_count(tmp_db):
+    _cook("Chili", 4)
+    _planned("Chili", 4)
+    _planned("Chili", 4)
+    assert cook_history.recipe_stats("Chili")["cook_count"] == 1
+
+
+def test_observed_yield_ignores_batches_never_made(tmp_db):
+    _cook("Chili", 4)
+    _planned("Chili", 40)          # a scaled-up plan for next week
+    assert cook_history.recipe_stats("Chili")["observed_servings"] == 4
+
+
+def test_last_cooked_comes_from_cooked_at_not_the_planned_date(tmp_db):
+    """A cook planned for next month must not read as the last time you made it."""
+    _cook("Chili", 4, date="2026-07-07")
+    _planned("Chili", 4, week="2026-W35", date="2026-08-26")
+    assert cook_history.recipe_stats("Chili")["last_cooked"] == "2026-07-07"
+
+
+def test_a_verdict_counts_as_having_cooked_it(tmp_db):
+    """Judging a dish asserts you made it, even if 🍳 was never tapped.
+
+    The verdict nudge asks about dishes whose date has passed, so this is a
+    real path to a verdict on a row that carries no `cooked_at`.
+    """
+    row = _planned("Chili", 4)
+    sl.update_cook(row["id"], make_again=True)
+    stats = cook_history.recipe_stats("Chili")
+    assert stats["cook_count"] == 1
+    assert stats["verdict_count"] == 1
+    assert stats["make_again_count"] == 1

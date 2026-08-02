@@ -186,6 +186,36 @@ def create_cook(recipe: str, week: str, scale: float = 1.0,
         conn.close()
 
 
+def find_recent_duplicate(recipe: str, week: str, date, meal,
+                          window_s: float) -> Optional[dict]:
+    """An identical cook created within ``window_s`` seconds, or None.
+
+    Exists to absorb a double-tap, not to prevent cooking the same dish twice:
+    the window is seconds, so a deliberate repeat later in the week still
+    creates its own row. The live ledger shows why it is needed — cooks 20 and
+    21 are the same recipe, same week, no date, no meal, created three seconds
+    apart, because the "add to this week" button renders its result only inside
+    the Freezer tab's Unscheduled tray and so looked like it had failed.
+
+    ``date``/``meal`` are matched with ``IS`` rather than ``=`` because the real
+    duplicates carry NULL for both, and NULL = NULL is never true in SQL.
+    """
+    if window_s <= 0 or not recipe or not week:
+        return None
+    conn = inventory_db.connect()
+    try:
+        row = conn.execute(
+            "SELECT id FROM cooks"
+            " WHERE recipe = ? AND week = ? AND date IS ? AND meal IS ?"
+            "   AND created_at >= datetime('now', ?)"
+            " ORDER BY id DESC LIMIT 1",
+            (recipe, week, date, meal, f"-{float(window_s)} seconds"),
+        ).fetchone()
+    finally:
+        conn.close()
+    return get_cook(row["id"]) if row else None
+
+
 def get_cook(cook_id: int) -> Optional[dict]:
     conn = inventory_db.connect()
     try:

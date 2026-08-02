@@ -487,9 +487,23 @@ def test_legacy_import_syncs_cook_history_to_the_recipe_note(client, tmp_db, tmp
 
     assert client.post("/api/week-board/2026-W28/import-legacy").status_code == 200
 
+    # A wikilink on a plan is intent, not evidence that anything was cooked, so
+    # the import must NOT invent cook history for it. This assertion used to
+    # read `cook_count: 1` — and that is exactly how 10 recipes came to carry
+    # `last_cooked` against 2 real cooks in the live vault.
+    body = (recipes / "Chili.md").read_text(encoding="utf-8")
+    assert "cook_count:" not in body, (
+        f"import wrote cook history for a meal that was only planned:\n{body}")
+
+    # The guarantee the original report was actually about — "I don't see this
+    # on the recipe page anywhere right after marking a plan card cooked" —
+    # still holds, once it is genuinely cooked.
+    cook_id = client.get("/api/week-board/2026-W28").get_json()["cooks"][0]["id"]
+    client.patch(f"/api/cooks/{cook_id}", json={"cooked_at": "2026-07-06T18:00:00Z"})
+
     body = (recipes / "Chili.md").read_text(encoding="utf-8")
     assert "cook_count: 1" in body, (
-        f"legacy import left the recipe note unsynced:\n{body}")
+        f"marking a card cooked left the recipe note unsynced:\n{body}")
     assert "observed_servings:" in body
 
 
@@ -699,3 +713,101 @@ class TestPrepPrecompute:
                 t.join(timeout=5)
         # No raise reaching here is the assertion; confirm the slot was freed.
         assert "2026-W28" not in api_server._PRECOMPUTING
+
+
+class TestCookCreationIsIdempotent:
+    """A double-tap must not become two cooks.
+
+    `POST /api/cooks` had no idempotency, and the live ledger shows the result:
+    cooks 20 and 21 are the same recipe in the same week, created three seconds
+    apart, with no date or meal — a double-tap on a recipe page's "add to this
+    week", which renders only inside the Freezer tab's Unscheduled tray, so the
+    first tap looked like it had failed. The duplicates then multiplied that
+    recipe's demand on the shopping list.
+    """
+
+    def test_an_immediate_repeat_returns_the_same_cook(self, client, tmp_db, tmp_vault):
+        first = _create_cook(client)
+        second = _create_cook(client)
+        assert first.status_code == 201
+        assert second.status_code == 200, "a repeat should not report a new creation"
+        assert second.get_json()["id"] == first.get_json()["id"]
+
+    def test_the_repeat_does_not_add_a_second_row(self, client, tmp_db, tmp_vault):
+        _create_cook(client)
+        _create_cook(client)
+        assert len(serving_ledger.cooks_for_week("2026-W28")) == 1
+
+    def test_undated_repeats_are_also_collapsed(self, client, tmp_db, tmp_vault):
+        """The real duplicates carried no date and no meal."""
+        a = _create_cook(client, date=None, meal=None)
+        b = _create_cook(client, date=None, meal=None)
+        assert b.get_json()["id"] == a.get_json()["id"]
+
+    def test_a_different_slot_is_a_different_cook(self, client, tmp_db, tmp_vault):
+        a = _create_cook(client, meal="dinner")
+        b = _create_cook(client, meal="lunch")
+        assert b.status_code == 201
+        assert b.get_json()["id"] != a.get_json()["id"]
+
+    def test_a_different_recipe_is_a_different_cook(self, client, tmp_db, tmp_vault):
+        a = _create_cook(client)
+        b = _create_cook(client, recipe="Tacos")
+        assert b.status_code == 201
+        assert b.get_json()["id"] != a.get_json()["id"]
+
+    def test_cooking_the_same_dish_twice_is_still_allowed(self, client, tmp_db, tmp_vault, monkeypatch):
+        """Deliberately making it again later must not be swallowed.
+
+        The window is short on purpose: this guards a double-tap, not a repeat.
+        """
+        import api_server
+        a = _create_cook(client)
+        monkeypatch.setattr(api_server, "COOK_DEDUPE_WINDOW_S", 0)
+        b = _create_cook(client)
+        assert b.status_code == 201
+        assert b.get_json()["id"] != a.get_json()["id"]
+
+
+class TestReadingAWeekDoesNotWriteIt:
+    """GET must not have side effects.
+
+    `GET /api/meal-plan/<week>` created `Meal Plans/<week>.md` for any week
+    asked about, and the planner's prev/next nav calls it per click with no
+    bounds. That is where 2026-W52, 2027-W01 and 2030-W20 came from — and
+    `sync_calendar.py` globs every plan file, so they shipped to the subscribed
+    calendar daily.
+    """
+
+    # NOTE: this route reads the module constant `api_server.MEAL_PLANS_PATH`,
+    # which the `tmp_vault` fixture (an env var) does not affect — so it must be
+    # patched explicitly or these tests read the developer's real vault and pass
+    # for the wrong reason.
+    @pytest.fixture
+    def plans(self, tmp_path, monkeypatch):
+        import api_server
+        d = tmp_path / "Meal Plans"
+        d.mkdir()
+        monkeypatch.setattr(api_server, "MEAL_PLANS_PATH", d)
+        return d
+
+    def test_reading_an_unplanned_week_creates_no_file(self, client, tmp_db, plans):
+        resp = client.get("/api/meal-plan/2030-W20")
+        assert resp.status_code == 200
+        assert not (plans / "2030-W20.md").exists()
+        assert list(plans.iterdir()) == [], "reading a week wrote something"
+
+    def test_it_still_returns_a_usable_empty_week(self, client, tmp_db, plans):
+        data = client.get("/api/meal-plan/2030-W20").get_json()
+        assert len(data["days"]) == 7
+        assert all(d["breakfast"] is None for d in data["days"])
+
+    def test_an_existing_plan_is_still_read(self, client, tmp_db, plans):
+        (plans / "2026-W28.md").write_text(
+            "# Meal Plan - Week 28\n\n"
+            "## Monday (Jul 6)\n"
+            "### Breakfast\n### Lunch\n### Snack\n"
+            "### Dinner\n[[Chili]]\n### Notes\n\n",
+            encoding="utf-8")
+        days = client.get("/api/meal-plan/2026-W28").get_json()["days"]
+        assert any("Chili" in json.dumps(d) for d in days)

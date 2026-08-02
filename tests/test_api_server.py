@@ -396,8 +396,16 @@ class TestApiMealPlanGet:
         assert data["days"][0]["breakfast"]["servings"] == 2
         assert data["days"][0]["lunch"] is None
 
-    def test_creates_plan_if_missing(self, tmp_path):
-        """Should auto-create meal plan file and return empty plan."""
+    def test_does_not_create_plan_if_missing(self, tmp_path):
+        """Should return an empty plan WITHOUT creating the file.
+
+        This used to assert the opposite. Creating the file on read meant the
+        planner's unbounded prev/next nav minted a plan for every week it was
+        paged past — `2026-W52`, `2027-W01` and `2030-W20` in the real vault are
+        its output — and `sync_calendar.py` globs every plan file, so they
+        shipped to the subscribed calendar daily. The file appears on the first
+        real write instead.
+        """
         meal_plans_path = tmp_path / "Meal Plans"
         meal_plans_path.mkdir()
 
@@ -409,7 +417,7 @@ class TestApiMealPlanGet:
         data = response.get_json()
         assert data["week"] == "2026-W09"
         assert all(d["breakfast"] is None for d in data["days"])
-        assert (meal_plans_path / "2026-W09.md").exists()
+        assert not (meal_plans_path / "2026-W09.md").exists()
 
     def test_invalid_week_format(self, client):
         """Should return 400 for invalid week format."""

@@ -1253,19 +1253,23 @@ def api_meal_plan_get(week):
     year = int(match.group(1))
     week_num = int(match.group(2))
 
-    MEAL_PLANS_PATH.mkdir(parents=True, exist_ok=True)
     plan_file = MEAL_PLANS_PATH / f"{week}.md"
 
-    if not plan_file.exists():
-        content = generate_meal_plan_markdown(year, week_num)
-        plan_file.write_text(content, encoding="utf-8")
-        # New week file → refresh the human-readable Meal Plans Index
-        try:
-            regenerate_index()
-        except Exception as e:
-            print(f"Warning: could not refresh meal plan index: {e}", file=sys.stderr)
-    else:
+    if plan_file.exists():
         content = plan_file.read_text(encoding="utf-8")
+    else:
+        # Reading a week must not create it. This used to write the file (and
+        # regenerate the index) for any week it was asked about, and the
+        # planner's prev/next nav calls it once per click with no bounds — so
+        # idly paging through the calendar minted plan files. `2026-W52`,
+        # `2027-W01` and `2030-W20` in the real vault are its output, not test
+        # residue, and `sync_calendar.py` globs every plan file, so they shipped
+        # to the subscribed calendar every morning at 06:05.
+        #
+        # The empty skeleton is still returned so the planner renders a usable
+        # week; the file appears on the first actual write (a cook, or the
+        # 06:00 agent), which is where `regenerate_index` now happens too.
+        content = generate_meal_plan_markdown(year, week_num)
 
     parsed = parse_meal_plan(content, year, week_num)
 
@@ -1362,6 +1366,11 @@ def _iso_week_of(date_str):
     y, w, _ = _date.fromisoformat(date_str).isocalendar()
     return f"{y}-W{w:02d}"
 
+
+#: Seconds within which an identical POST /api/cooks is treated as a repeat of
+#: the same tap rather than a second cook. Deliberately short — see
+#: serving_ledger.find_recent_duplicate.
+COOK_DEDUPE_WINDOW_S = 10.0
 
 #: Weeks with a prep-task precompute in flight, so a burst of chip drags
 #: doesn't start one thread per drag. Guarded by _PRECOMPUTE_LOCK.
@@ -1530,6 +1539,18 @@ def api_week_board_import_legacy(week):
 def api_cook_create():
     from lib import serving_ledger
     data = request.get_json(force=True, silent=True) or {}
+
+    # Absorb a double-tap. Returns 200 (not 201) so a caller can tell the
+    # difference between creating and matching. See find_recent_duplicate for
+    # why the window is seconds rather than a uniqueness constraint — cooking
+    # the same dish twice in a week is legitimate; doing it twice in three
+    # seconds is a button that didn't look like it worked.
+    existing = serving_ledger.find_recent_duplicate(
+        data.get('recipe'), data.get('week'), data.get('date'), data.get('meal'),
+        COOK_DEDUPE_WINDOW_S)
+    if existing is not None:
+        return jsonify(existing), 200
+
     # C1: a hand-edited legacy week must be converted (import + backup)
     # BEFORE its first ledger row lands, or the regen below clobbers it.
     _import_legacy_if_first_write(
