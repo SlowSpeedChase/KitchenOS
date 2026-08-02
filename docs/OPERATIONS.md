@@ -357,10 +357,14 @@ apply run names the affected recipes; re-derive exactly those:
 
 ```bash
 .venv/bin/python backfill_nutrition.py --force \
-  --only "Creamy Grape Salad Alternative" --only "Watermelon Feta Salad"
+  --only "Creamy Grape Salad Alternative" \
+  --only "Healthy Blueberry Apple Oatmeal Cake" \
+  --only "Watermelon Feta Salad"
 ```
 
-`tests/e2e/test_recipe_corpus_schema.py` fails if the corpus drifts again. A
+`tests/e2e/test_recipe_corpus_schema.py` fails if the corpus drifts again. It is
+marked `corpus`, not `e2e`, so it runs in the **default** `pytest` suite (it needs
+no server or browser) and skips visibly where there is no vault. A
 *legitimate* new key (a new producer, a new template field) is fixed by adding
 it to `lib/recipe_schema.OPTIONAL_KEYS` in the same commit that starts writing
 it — not by loosening the test.

@@ -195,6 +195,45 @@ Recovered from `Recipes/.history/` and re-derived against the real DB (13,694
 against an empty store, so this cannot recur silently. Same failure shape as the
 two other guards this branch added: **silence that looks like success.**
 
+## Code review (2026-08-01)
+
+Two independent reviewers: a general one on plan alignment and quality, and an
+adversarial one tasked only with finding ways to destroy the user's data. Both
+returned; every accepted finding is fixed and pinned by a test.
+
+**No Critical issue in the general review.** The adversarial pass found three
+data-corruption paths, all reproduced against throwaway corpora, none of which
+touched the live corpus — which was exactly its point: each precondition was
+asserted in a docstring rather than checked, so the tool's safety was a property
+of the data rather than of the code.
+
+| Fixed | Was |
+|---|---|
+| `split_frontmatter` is line-anchored | split on the *substring* `---`, so a value containing three hyphens truncated the block mid-value and new keys were written into the middle of that string. `templates/recipe_template.py` interpolates raw YouTube titles into `video_title`, so the corpus was one extraction away |
+| `remove=` consumes a key's whole value | orphaned indented continuation lines, which PyYAML folds into the *preceding* key |
+| legacy key needs its canonical twin | deleted on sight, so an orphan `calories:` lost the file's only calorie figure — the mirror of the `migrate_recipes` bug this branch had already fixed |
+| `create_backup` suffixes on collision | second-resolution stamp + `copy2` meant two writes in one second left only a backup of the *damaged* content |
+| `require_food_store` opens read-only | went through `connect()`, which *creates* the DB — so the guard rejected the empty database it had just made and left a decoy for every other tool |
+| `servings_low_end` refuses to guess | first-integer fallback read `"makes 24 cookies, serves 6"` as **24** |
+| `nutrition_unmatched` uses `json.dumps` | `f'"{text}"'` over ingredient text broke on `2" piece ginger` |
+| `--apply` exits 1 on unrepaired work | returned 0 while `--check` failed forever on the same file |
+| corpus guard detects duplicate keys | `check_frontmatter` takes a dict, so it could not see the artifact `migrate_recipes` used to emit |
+| guard marked `corpus`, runs by default | marked `e2e`, so `addopts = -m "not e2e"` meant it never ran |
+
+Also: a servings change now writes `nutrition_needs_review: true` (a console
+line scrolls away and never reprints), `--limit` refuses to truncate an explicit
+`--only` list, `--only` dedupes, dotfiles are skipped, per-file errors are
+contained, and `--check` no longer truncates the recipe name below what `--only`
+needs to be pasted.
+
+Verified after the fixes: 3578 unit tests (main 3450), the corpus guard green in
+the **default** suite, `--check` clean at 0/252, a dry run reporting 0 changes,
+zero new ruff errors, and a purpose-built 4-file corpus confirming the guard
+catches a duplicate key, an orphan legacy key and an unrepairable servings —
+with `--apply` exiting 1 and the orphan value preserved.
+
+---
+
 ## Reproducing the analysis
 
 `scripts/_analysis/` has been deleted (its findings are captured above and in the
@@ -245,8 +284,8 @@ in the main checkout.
 - [x] New invariant recorded in `CLAUDE.md`
 
 ### Review
-- [ ] Requested review (superpowers:requesting-code-review)
-- [ ] Review feedback addressed
+- [x] Requested review (superpowers:requesting-code-review) — two reviewers, general + adversarial data-safety
+- [x] Review feedback addressed (3 Critical, 5 Important, 6 Minor; each pinned by a test)
 
 ### Ready
 - [ ] Rebased on latest main (note: `git fetch` failed on 2026-07-31 — no DNS in
