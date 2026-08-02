@@ -37,7 +37,7 @@ from lib.meal_plan_parser import (
 )
 from lib.meal_nutrition import meal_nutrition
 from lib.recipe_parser import parse_recipe_file, extract_my_notes, parse_recipe_body
-from lib import recipe_refresh
+from lib import recipe_refresh, nutrition_quality
 from templates.shopping_list_template import generate_shopping_list_markdown, generate_filename as shopping_list_filename
 from templates.recipe_template import format_recipe_markdown
 from templates.meal_plan_template import (
@@ -3033,17 +3033,25 @@ def api_nutrition_review_list():
         scoped_review = fm.get("nutrition_needs_review")
         needs_review = scoped_review if scoped_review is not None else fm.get("needs_review", False)
 
+        implausible_flags = nutrition_quality.implausible(fm)[1]
         rows.append({
             "name": filepath.stem,
             "coverage": coverage,
             "confidence": confidence,
             "calories": fm.get("nutrition_calories"),
+            "protein": fm.get("nutrition_protein"),
             "needs_review": bool(needs_review),
             "unmatched": unmatched,
-            "flags": [],  # sanity_flags aren't persisted to frontmatter (Task 8)
+            "flags": implausible_flags,
+            "implausibility": nutrition_quality.implausibility_score(fm),
         })
 
-    rows.sort(key=lambda r: (r["coverage"], r["confidence"]))
+    # Worst-first by how badly the per-serving numbers violate plausible
+    # bounds, then by coverage. Sorting on coverage alone put the catastrophes
+    # at the *bottom* of the queue built to catch them: every resolution error
+    # leaves coverage at 1.0, so a recipe claiming 244 g protein per serving
+    # sorted below one that merely failed to match a garnish.
+    rows.sort(key=lambda r: (-r["implausibility"], r["coverage"], r["confidence"]))
     return jsonify(rows)
 
 

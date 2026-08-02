@@ -341,15 +341,32 @@
         return `<span class="coverage-bar-wrap"><span class="coverage-bar-fill ${coverageClass(cov)}" style="width:${pct}%"></span></span><span class="coverage-pct">${pct}%</span>`;
     }
 
+    // Human-readable reasons for the implausibility codes the API returns.
+    const IMPLAUSIBLE_LABELS = {
+        kcal_too_low: 'calories/serving implausibly low',
+        kcal_too_high: 'calories/serving implausibly high',
+        protein_too_high: 'protein/serving implausibly high',
+        protein_share_impossible: 'more protein than the calories allow',
+    };
+
     function flaggedRows() {
-        return recipesData.filter(r => r.coverage < 0.8);
+        // Low coverage means "a line didn't resolve"; implausible means "the
+        // number it did produce cannot be true". The second is the worse
+        // failure and coverage cannot see it — every resolution error leaves
+        // coverage at 1.0 — so the queue counts both.
+        return recipesData.filter(r => r.coverage < 0.8 || r.implausibility > 0);
     }
 
     function updateFlaggedCount() {
-        const n = flaggedRows().length;
+        const rows = flaggedRows();
+        const bad = rows.filter(r => r.implausibility > 0).length;
+        const thin = rows.filter(r => r.implausibility === 0).length;
+        const parts = [];
+        if (bad) parts.push(`<b>${bad}</b> with impossible per-serving numbers`);
+        if (thin) parts.push(`<b>${thin}</b> below 80% coverage`);
         document.getElementById('flagged-count').innerHTML =
-            `<b>${n}</b> recipe${n === 1 ? '' : 's'} below 80% coverage`;
-        document.getElementById('rerun-all-btn').disabled = n === 0;
+            parts.join(' · ') || '<b>0</b> recipes need attention';
+        document.getElementById('rerun-all-btn').disabled = rows.length === 0;
     }
 
     function renderTable() {
@@ -359,7 +376,15 @@
             return;
         }
         tbody.innerHTML = recipesData.map(r => {
-            const flagBadges = r.needs_review ? '<span class="badge orange">needs review</span>' : '<span class="badge green">ok</span>';
+            // An implausible recipe now sorts to the top, and its coverage bar
+            // is usually a full green one — so the row has to say why it is
+            // there, or the ranking reads as broken.
+            const implausibleBadges = (r.flags || [])
+                .map(f => `<span class="badge red">${escapeHtml(IMPLAUSIBLE_LABELS[f] || f)}</span>`)
+                .join(' ');
+            const flagBadges = implausibleBadges
+                || (r.needs_review ? '<span class="badge orange">needs review</span>'
+                                   : '<span class="badge green">ok</span>');
             const unmatchedBadge = (r.unmatched && r.unmatched.length)
                 ? ` <span class="badge red">${r.unmatched.length} unmatched</span>` : '';
             return `<tr class="recipe-row${r.name === expandedName ? ' expanded' : ''}" data-name="${escapeAttr(r.name)}">
