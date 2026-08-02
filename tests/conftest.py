@@ -41,6 +41,34 @@ def _isolate_db(request, monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_vault(request, monkeypatch, tmp_path):
+    """Never let a test read or write the real Obsidian vault.
+
+    The sibling of `_isolate_db`, and added for the same reason after the same
+    thing happened: `/add-to-meal-plan` was changed to write through the ledger,
+    whose regen resolves the vault via `paths.meal_plans_dir()` (the
+    KITCHENOS_VAULT env var) rather than the `api_server.MEAL_PLANS_PATH`
+    constant those tests were patching. Four tests therefore wrote
+    `[[Pan-Seared Salmon]]` and `[[Test Recipe]]` into the developer's real
+    2026-W18 and 2026-W07 plans. They were recoverable only because
+    `lib/backup` had snapshotted them — the vault is not in git.
+
+    Patching a module constant isolates one caller; isolating the env var
+    isolates every path that resolves the vault, which is the only version of
+    this guard that holds as code moves between the two.
+
+    Tests that request `tmp_vault` keep their own directory; this only fills in
+    for the ones that never thought about it.
+    """
+    if "tmp_vault" in request.fixturenames:
+        return
+    vault = tmp_path / "autouse_vault"
+    (vault / "Meal Plans").mkdir(parents=True, exist_ok=True)
+    (vault / "Recipes").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("KITCHENOS_VAULT", str(vault))
+
+
+@pytest.fixture(autouse=True)
 def _isolate_storage_table(monkeypatch, tmp_path):
     """Never let a test write the real config/storage_locations.json.
 

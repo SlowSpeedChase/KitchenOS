@@ -478,14 +478,20 @@ def test_suggest_meal_no_targets_null_macro_context(client, tmp_vault, tmp_path,
 
 # ---- Grid recipe card (Phase 2a) ----
 
-def test_recipe_card_renders_grid(client, tmp_path, monkeypatch):
+def test_recipe_card_renders_grid(client, tmp_vault, monkeypatch):
     """The card page renders the recipe's grid matrix; heuristic path (no LLM)."""
     from lib import recipe_grid
+    # `_anthropic_resolved` matters as much as the client itself: the client is
+    # built lazily now, so blanking only the slot lets `_client()` rebuild one
+    # from a real ANTHROPIC_API_KEY and dial out. That is what "no LLM" in this
+    # docstring is supposed to mean, and without the second line this test was
+    # making a live API call.
     monkeypatch.setattr(recipe_grid, "_anthropic_client", None)
+    monkeypatch.setattr(recipe_grid, "_anthropic_resolved", True)
     monkeypatch.setattr(recipe_grid, "_group_with_ollama", lambda prompt: None)
 
-    recipes_dir = tmp_path / "Recipes"
-    recipes_dir.mkdir()
+    recipes_dir = tmp_vault / "Recipes"
+    recipes_dir.mkdir(parents=True, exist_ok=True)
     (recipes_dir / "Brownies.md").write_text(
         '---\ntitle: "Brownies"\nservings: 9\n'
         'nutrition_calories: 180\nnutrition_protein: 3\n'

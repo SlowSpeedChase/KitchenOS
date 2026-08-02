@@ -2092,8 +2092,28 @@ def _schedule_meal_token(meal_name: str, week: str, day: str, meal: str):
     return _success_page_for_wikilink(token, day, meal, week)
 
 
+#: Monday-first, matching ISO weekday numbering and the planner's grid.
+_WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday",
+             "friday", "saturday", "sunday"]
+
+
 def _schedule_recipe_directly(recipe: str, week: str, day: str, meal: str):
-    """The original direct flow, extracted unchanged."""
+    """Put a recipe on a week from Obsidian's "Add to Meal Plan" button.
+
+    This used to write a `[[wikilink]]` straight into the plan file, with none
+    of the guards the PUT has. On a week that already has cooks, the file is
+    regenerated from the ledger by the next chip drag — so the wikilink was
+    erased — and `_import_legacy_if_first_write` skips weeks that already have
+    cooks, so it was never picked up either. The recipe disappeared with no
+    error on any surface.
+
+    It now creates a ledger cook, the same act the sidebar drop and the
+    suggester perform, so all three end in one place. The legacy import still
+    runs first, so a hand-edited week is converted (and backed up) rather than
+    clobbered.
+    """
+    from lib import serving_ledger, week_view
+
     try:
         parts = week.split('-W')
         year = int(parts[0])
@@ -2101,20 +2121,30 @@ def _schedule_recipe_directly(recipe: str, week: str, day: str, meal: str):
     except (ValueError, IndexError):
         return error_page(f"Error: Invalid week format: {week}"), 400
 
-    MEAL_PLANS_PATH.mkdir(parents=True, exist_ok=True)
-    plan_file = MEAL_PLANS_PATH / f"{week}.md"
-
-    if not plan_file.exists():
-        content = generate_meal_plan_markdown(year, week_num)
-        plan_file.write_text(content, encoding='utf-8')
-
-    content = plan_file.read_text(encoding='utf-8')
+    # `date` is the imported datetime class at module scope — don't shadow it.
     try:
-        new_content = insert_recipe_into_meal_plan(content, day, meal, recipe)
-    except ValueError as e:
-        return error_page(f"Error: {str(e)}"), 400
+        weekday = _WEEKDAYS.index((day or "").strip().lower())
+        cook_date = date.fromisocalendar(year, week_num, weekday + 1).isoformat()
+    except (ValueError, IndexError):
+        return error_page(f"Error: Invalid day: {day}"), 400
 
-    plan_file.write_text(new_content, encoding='utf-8')
+    # The Obsidian form posts title-cased slots ("Dinner"), matching the
+    # markdown headings the old wikilink path wrote into. The ledger's `meal`
+    # is a lowercase enum, so normalise rather than 500 on the user's own form.
+    slot = (meal or "").strip().lower()
+    if slot not in serving_ledger.MEALS:
+        return error_page(f"Error: Invalid meal slot: {meal}"), 400
+
+    # The Obsidian button passes the *filename*; the ledger keys on the name.
+    recipe_name = recipe[:-3] if recipe.endswith('.md') else recipe
+
+    _import_legacy_if_first_write(week, _iso_week_of(cook_date))
+    cook = serving_ledger.create_cook(
+        recipe=recipe_name, week=week, scale=1.0,
+        servings_produced=week_view.recipe_base_servings(recipe_name),
+        date=cook_date, meal=slot, initial_placement_count=1.0)
+    _regen_weeks(cook["week"], _iso_week_of(cook_date))
+    _sync_cook_history(cook["recipe"])
     return _success_page_for_wikilink(recipe, day, meal, week)
 
 

@@ -182,12 +182,19 @@ class TestAddToMealPlan:
         response = client.get('/add-to-meal-plan')
         assert response.status_code == 400
 
-    def test_post_adds_recipe_to_meal_plan(self, tmp_path):
-        """POST should append recipe wikilink to meal plan file."""
+    def test_post_adds_recipe_to_meal_plan(self, tmp_vault):
+        """POST puts the recipe on the week.
+
+        It now creates a ledger cook rather than editing the markdown directly,
+        and the plan file is regenerated from the ledger — so the wikilink still
+        lands, but by a different route. `tmp_vault` (not a patched
+        MEAL_PLANS_PATH) is what isolates it, because the regen resolves the
+        vault through KITCHENOS_VAULT.
+        """
         from templates.meal_plan_template import generate_meal_plan_markdown
 
-        meal_plans_path = tmp_path / "Meal Plans"
-        meal_plans_path.mkdir()
+        meal_plans_path = tmp_vault / "Meal Plans"
+        meal_plans_path.mkdir(parents=True, exist_ok=True)
         plan_file = meal_plans_path / "2026-W07.md"
         plan_file.write_text(generate_meal_plan_markdown(2026, 7))
 
@@ -202,13 +209,12 @@ class TestAddToMealPlan:
 
         assert response.status_code == 200
         assert b'Added!' in response.data
-        content = plan_file.read_text()
-        assert '[[Pasta Aglio E Olio]]' in content
+        assert '[[Pasta Aglio E Olio]]' in plan_file.read_text()
 
-    def test_post_creates_meal_plan_if_missing(self, tmp_path):
-        """POST should create meal plan file if it doesn't exist."""
-        meal_plans_path = tmp_path / "Meal Plans"
-        meal_plans_path.mkdir()
+    def test_post_creates_meal_plan_if_missing(self, tmp_vault):
+        """POST should create the meal plan file if it doesn't exist."""
+        meal_plans_path = tmp_vault / "Meal Plans"
+        meal_plans_path.mkdir(parents=True, exist_ok=True)
 
         with patch('api_server.MEAL_PLANS_PATH', meal_plans_path):
             with app.test_client() as client:
@@ -278,45 +284,50 @@ def test_api_recipe_save_missing_name(client):
     assert response.status_code == 400
 
 
-def test_api_recipe_detail_returns_full_recipe(client):
-    """GET /api/recipes/<name> returns full recipe data."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        recipes_path = Path(tmpdir)
-        test_file = recipes_path / "Butter Chicken.md"
-        test_file.write_text(
-            '---\n'
-            'title: "Butter Chicken"\n'
-            'cuisine: "Indian"\n'
-            'protein: "chicken"\n'
-            'servings: 4\n'
-            'prep_time: "15 min"\n'
-            'cook_time: "30 min"\n'
-            '---\n\n'
-            '# Butter Chicken\n\n'
-            '> A creamy Indian classic\n\n'
-            '## Ingredients\n\n'
-            '| Amount | Unit | Ingredient |\n'
-            '|--------|------|------------|\n'
-            '| 500 | g | chicken thighs |\n'
-            '| 2 | tbsp | butter |\n\n'
-            '## Instructions\n\n'
-            '1. Cut the chicken into pieces.\n'
-            '2. Cook in butter until done.\n\n'
-            '## My Notes\n\n'
-            '<!-- Your personal notes, ratings, and modifications go here -->\n',
-            encoding='utf-8'
-        )
+def test_api_recipe_detail_returns_full_recipe(client, tmp_vault):
+    """GET /api/recipes/<name> returns full recipe data.
 
-        with patch('api_server.OBSIDIAN_RECIPES_PATH', recipes_path):
-            response = client.get('/api/recipes/Butter%20Chicken')
-            assert response.status_code == 200
-            data = response.get_json()
-            assert data['title'] == 'Butter Chicken'
-            assert data['cuisine'] == 'Indian'
-            assert data['servings'] == 4
-            assert len(data['ingredients']) == 2
-            assert data['ingredients'][0]['item'] == 'chicken thighs'
-            assert len(data['instructions']) >= 1
+    Uses `tmp_vault` rather than patching OBSIDIAN_RECIPES_PATH: conftest's
+    autouse `_isolate_vault` now points KITCHENOS_VAULT at a temp dir for every
+    test, and `_resolve_recipes_dir` prefers the env var whenever it differs
+    from the import-time value — so the direct-patch style no longer wins.
+    """
+    recipes_path = tmp_vault / "Recipes"
+    recipes_path.mkdir(parents=True, exist_ok=True)
+    test_file = recipes_path / "Butter Chicken.md"
+    test_file.write_text(
+        '---\n'
+        'title: "Butter Chicken"\n'
+        'cuisine: "Indian"\n'
+        'protein: "chicken"\n'
+        'servings: 4\n'
+        'prep_time: "15 min"\n'
+        'cook_time: "30 min"\n'
+        '---\n\n'
+        '# Butter Chicken\n\n'
+        '> A creamy Indian classic\n\n'
+        '## Ingredients\n\n'
+        '| Amount | Unit | Ingredient |\n'
+        '|--------|------|------------|\n'
+        '| 500 | g | chicken thighs |\n'
+        '| 2 | tbsp | butter |\n\n'
+        '## Instructions\n\n'
+        '1. Cut the chicken into pieces.\n'
+        '2. Cook in butter until done.\n\n'
+        '## My Notes\n\n'
+        '<!-- Your personal notes, ratings, and modifications go here -->\n',
+        encoding='utf-8'
+    )
+
+    response = client.get('/api/recipes/Butter%20Chicken')
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['title'] == 'Butter Chicken'
+    assert data['cuisine'] == 'Indian'
+    assert data['servings'] == 4
+    assert len(data['ingredients']) == 2
+    assert data['ingredients'][0]['item'] == 'chicken thighs'
+    assert len(data['instructions']) >= 1
 
 
 def test_api_recipe_detail_not_found(client):
@@ -565,9 +576,9 @@ class TestServeImages:
 class TestAddToMealPlanDirect:
     """Regression guard for the existing direct schedule flow."""
 
-    def test_direct_schedules_recipe(self, client, tmp_path, monkeypatch):
-        plans_dir = tmp_path / "Meal Plans"
-        plans_dir.mkdir()
+    def test_direct_schedules_recipe(self, client, tmp_vault, monkeypatch):
+        plans_dir = tmp_vault / "Meal Plans"
+        plans_dir.mkdir(parents=True, exist_ok=True)
         monkeypatch.setattr('api_server.MEAL_PLANS_PATH', plans_dir)
 
         response = client.post('/add-to-meal-plan', data={
@@ -584,10 +595,10 @@ class TestAddToMealPlanDirect:
         assert plan_file.exists()
         assert '[[Pan-Seared Salmon]]' in plan_file.read_text()
 
-    def test_direct_without_mode_param_still_works(self, client, tmp_path, monkeypatch):
+    def test_direct_without_mode_param_still_works(self, client, tmp_vault, monkeypatch):
         """Backwards compat: forms posted without 'mode' default to direct."""
-        plans_dir = tmp_path / "Meal Plans"
-        plans_dir.mkdir()
+        plans_dir = tmp_vault / "Meal Plans"
+        plans_dir.mkdir(parents=True, exist_ok=True)
         monkeypatch.setattr('api_server.MEAL_PLANS_PATH', plans_dir)
 
         response = client.post('/add-to-meal-plan', data={
@@ -736,9 +747,9 @@ class TestAddToMealPlanNew:
 class TestScheduleMeal:
     """mode=schedule_meal — Screen 2 submit. Inserts [[Meal: X]] into the plan."""
 
-    def test_inserts_meal_token_into_plan(self, client, tmp_path, monkeypatch):
-        plans_dir = tmp_path / "Meal Plans"
-        plans_dir.mkdir()
+    def test_inserts_meal_token_into_plan(self, client, tmp_vault, monkeypatch):
+        plans_dir = tmp_vault / "Meal Plans"
+        plans_dir.mkdir(parents=True, exist_ok=True)
         monkeypatch.setattr('api_server.MEAL_PLANS_PATH', plans_dir)
 
         response = client.post('/add-to-meal-plan', data={
@@ -757,9 +768,9 @@ class TestScheduleMeal:
         # The wikilink is NOT a plain recipe link.
         assert '[[Pan-Seared Salmon]]' not in plan_text
 
-    def test_invalid_week_returns_error(self, client, tmp_path, monkeypatch):
-        plans_dir = tmp_path / "Meal Plans"
-        plans_dir.mkdir()
+    def test_invalid_week_returns_error(self, client, tmp_vault, monkeypatch):
+        plans_dir = tmp_vault / "Meal Plans"
+        plans_dir.mkdir(parents=True, exist_ok=True)
         monkeypatch.setattr('api_server.MEAL_PLANS_PATH', plans_dir)
 
         response = client.post('/add-to-meal-plan', data={

@@ -811,3 +811,68 @@ class TestReadingAWeekDoesNotWriteIt:
             encoding="utf-8")
         days = client.get("/api/meal-plan/2026-W28").get_json()["days"]
         assert any("Chili" in json.dumps(d) for d in days)
+
+
+class TestObsidianAddGoesThroughTheLedger:
+    """Obsidian's "Add to Meal Plan" button must not lose the recipe.
+
+    `_schedule_recipe_directly` wrote a `[[wikilink]]` straight into the plan
+    file with no ledger guard, unlike the PUT which 409s. On a week that already
+    has cooks, `week_view.write_week_markdown` regenerates that file from the
+    ledger on the very next chip drag — erasing the wikilink — and
+    `_import_legacy_if_first_write` skips weeks that already have cooks, so it
+    is never picked up either. The recipe vanishes with no error anywhere.
+    """
+
+    @pytest.fixture
+    def plans(self, tmp_path, monkeypatch):
+        import api_server
+        d = tmp_path / "Meal Plans"
+        d.mkdir()
+        monkeypatch.setattr(api_server, "MEAL_PLANS_PATH", d)
+        return d
+
+    def _post(self, client, recipe="Chili", week="2026-W28", day="Monday", meal="dinner"):
+        return client.post("/add-to-meal-plan", data={
+            "recipe": recipe, "mode": "direct",
+            "week": week, "day": day, "meal": meal})
+
+    def test_adding_creates_a_cook(self, client, tmp_db, tmp_vault, plans):
+        resp = self._post(client)
+        assert resp.status_code == 200
+        cooks = serving_ledger.cooks_for_week("2026-W28")
+        assert [c["recipe"] for c in cooks] == ["Chili"]
+
+    def test_the_cook_lands_on_the_right_day_and_slot(self, client, tmp_db, tmp_vault, plans):
+        self._post(client, day="Wednesday", meal="lunch")
+        cook = serving_ledger.cooks_for_week("2026-W28")[0]
+        assert cook["date"] == "2026-07-08"      # Wednesday of 2026-W28
+        assert cook["meal"] == "lunch"
+
+    def test_a_recipe_added_to_a_board_week_survives_a_regen(self, client, tmp_db, tmp_vault, plans):
+        """The actual failure: it used to be erased by the next mutation."""
+        _create_cook(client)                      # week is now a board week
+        self._post(client, recipe="Tacos", day="Tuesday", meal="dinner")
+        from lib import week_view
+        week_view.write_week_markdown("2026-W28")
+        names = {c["recipe"] for c in serving_ledger.cooks_for_week("2026-W28")}
+        assert "Tacos" in names
+
+    def test_the_md_suffix_from_the_obsidian_button_is_stripped(self, client, tmp_db, tmp_vault, plans):
+        """The button passes `?recipe=<file>.md`; the ledger keys on the name."""
+        self._post(client, recipe="Chili.md")
+        assert serving_ledger.cooks_for_week("2026-W28")[0]["recipe"] == "Chili"
+
+    def test_a_bad_week_is_still_rejected(self, client, tmp_db, tmp_vault, plans):
+        assert self._post(client, week="garbage").status_code == 400
+
+    def test_a_bad_day_is_still_rejected(self, client, tmp_db, tmp_vault, plans):
+        assert self._post(client, day="Blursday").status_code == 400
+
+    def test_the_forms_title_cased_slot_is_accepted(self, client, tmp_db, tmp_vault, plans):
+        """The Obsidian form posts "Dinner", matching the markdown headings."""
+        self._post(client, meal="Dinner")
+        assert serving_ledger.cooks_for_week("2026-W28")[0]["meal"] == "dinner"
+
+    def test_an_unknown_slot_is_rejected_not_500(self, client, tmp_db, tmp_vault, plans):
+        assert self._post(client, meal="Brunch").status_code == 400

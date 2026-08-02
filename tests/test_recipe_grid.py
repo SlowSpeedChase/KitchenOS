@@ -102,7 +102,10 @@ class TestBuildGrid:
         :class:`TestTheHeuristicIsNeverCached`, inverted: caching the fallback
         made ``_is_fresh`` report it fresh forever.
         """
+        # The client is built lazily now (so the env read is not import-order
+        # dependent), so pin the *resolved* state, not just the slot.
         monkeypatch.setattr(recipe_grid, "_anthropic_client", None)
+        monkeypatch.setattr(recipe_grid, "_anthropic_resolved", True)
         monkeypatch.setattr(recipe_grid, "_group_with_ollama", lambda prompt: None)
         with tempfile.TemporaryDirectory() as tmp:
             recipes_dir = Path(tmp)
@@ -151,7 +154,10 @@ class TestTheHeuristicIsNeverCached:
     """
 
     def test_no_sidecar_is_written_when_the_llm_is_unavailable(self, monkeypatch):
+        # The client is built lazily now (so the env read is not import-order
+        # dependent), so pin the *resolved* state, not just the slot.
         monkeypatch.setattr(recipe_grid, "_anthropic_client", None)
+        monkeypatch.setattr(recipe_grid, "_anthropic_resolved", True)
         monkeypatch.setattr(recipe_grid, "_group_with_ollama", lambda prompt: None)
         with tempfile.TemporaryDirectory() as tmp:
             recipes_dir = Path(tmp)
@@ -164,7 +170,10 @@ class TestTheHeuristicIsNeverCached:
 
     def test_the_ai_grid_still_arrives_after_a_cold_render(self, monkeypatch):
         """The whole point: a cold render must not poison the cache."""
+        # The client is built lazily now (so the env read is not import-order
+        # dependent), so pin the *resolved* state, not just the slot.
         monkeypatch.setattr(recipe_grid, "_anthropic_client", None)
+        monkeypatch.setattr(recipe_grid, "_anthropic_resolved", True)
         monkeypatch.setattr(recipe_grid, "_group_with_ollama", lambda prompt: None)
         with tempfile.TemporaryDirectory() as tmp:
             recipes_dir = Path(tmp)
