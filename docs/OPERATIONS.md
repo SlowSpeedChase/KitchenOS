@@ -534,6 +534,39 @@ run it, and point the new plist's `ProgramArguments` at the generated launcher.
 For a `binary` launcher the script path is `ProgramArguments[1]`, because the
 launcher itself is the interpreter.
 
+#### Every plist must declare a PATH
+
+launchd hands a job a **bare `PATH`** that excludes `/opt/homebrew/bin`. Any
+agent that shells out to a Homebrew binary therefore can't find it — and the
+failure is never an error, only a quality loss or a silent no-op. It has bitten
+twice:
+
+- **yt-dlp could not find `ffmpeg`/`ffprobe`**, so every Instagram extraction
+  fell back to *"No transcript available; using caption only"* — 12 times in a
+  single run. Caption-only extraction is what produces the malformed ingredient
+  rows the validator then has to repair (`1 whole @legion cookie butter flavor
+  (code RAHUL)`), which feeds straight into the nutrition problems.
+- **`scripts/analyze_failures.sh` could not find `claude`**, so 276 of 277
+  spawns died on "claude CLI not found" while `batch_extract` printed "Analysis
+  agent triggered in background" regardless.
+
+Every `ops/com.kitchenos.*.plist` now sets:
+
+```xml
+<key>EnvironmentVariables</key>
+<dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+</dict>
+```
+
+`scripts/make-agent-launchers.sh` fails if any plist omits it or omits
+`/opt/homebrew/bin` from it, so a new agent cannot reintroduce the bug.
+
+> **PlistBuddy and `plutil` drop XML comments.** Editing a plist with either
+> silently strips the rationale comments from it. Restore them by hand, or rely
+> on this document — which is why the explanations live here too.
+
 ### com.kitchenos.api
 
 API server for iOS Shortcut / Siri / native-app integration. Runs

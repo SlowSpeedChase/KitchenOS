@@ -1,33 +1,47 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
+<!-- NOTE: PlistBuddy and plutil rewrite this file and DROP every comment.
+     If you edit with either, restore these by hand. The durable copies of
+     this rationale live in docs/OPERATIONS.md and scripts/make-agent-launchers.sh. -->
 <dict>
-    <key>Label</key>
-    <string>com.kitchenos.batch-extract</string>
-    <!-- ProgramArguments[0] is a *copy of the Python interpreter* named for the
-         Settings row, not a shim, because this job needs Full Disk Access to
-         read share-sheet URLs out of the Reminders store. A bash shim cannot
-         hold a TCC grant: `exec` replaces the process image, so macOS evaluates
-         the interpreter rather than the shim. Regenerate with
-         scripts/make-agent-launchers.sh; the script argument below is argv[1]
-         because the launcher itself is the interpreter. -->
-    <key>ProgramArguments</key>
-    <array>
-        <string>/Users/chaseeasterling/Dev/KitchenOS/.venv/bin/KitchenOS · Batch Extract</string>
-        <string>/Users/chaseeasterling/Dev/KitchenOS/batch_extract.py</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Minute</key>
-        <integer>10</integer>
-    </dict>
-    <key>StandardOutPath</key>
-    <string>/Users/chaseeasterling/Dev/KitchenOS/logs/batch_extract.log</string>
-    <key>StandardErrorPath</key>
-    <string>/Users/chaseeasterling/Dev/KitchenOS/logs/batch_extract.log</string>
-    <key>WorkingDirectory</key>
-    <string>/Users/chaseeasterling/Dev/KitchenOS</string>
+	<!-- launchd gives a job a bare PATH that excludes /opt/homebrew/bin, so
+	     yt-dlp could not find ffmpeg/ffprobe and every Instagram extraction
+	     silently fell back to "no transcript available; using caption only" —
+	     12 times in one run, producing exactly the malformed ingredient rows
+	     the validator then has to repair. Same root cause as `claude` not
+	     being found by scripts/analyze_failures.sh. -->
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>Label</key>
+	<string>com.kitchenos.batch-extract</string>
+	<!-- ProgramArguments[0] is a *copy of the Python interpreter* named for the
+	     Settings row, not a shim, because this job needs Full Disk Access to
+	     read share-sheet URLs out of the Reminders store. A bash shim cannot
+	     hold a TCC grant: `exec` replaces the process image, so macOS evaluates
+	     the interpreter rather than the shim. Regenerate with
+	     scripts/make-agent-launchers.sh; the script below is argv[1] because
+	     the launcher itself is the interpreter. -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/chaseeasterling/Dev/KitchenOS/.venv/bin/KitchenOS · Batch Extract</string>
+		<string>/Users/chaseeasterling/Dev/KitchenOS/batch_extract.py</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Users/chaseeasterling/Dev/KitchenOS/logs/batch_extract.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/chaseeasterling/Dev/KitchenOS/logs/batch_extract.log</string>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Minute</key>
+		<integer>10</integer>
+	</dict>
+	<key>WorkingDirectory</key>
+	<string>/Users/chaseeasterling/Dev/KitchenOS</string>
 </dict>
 </plist>

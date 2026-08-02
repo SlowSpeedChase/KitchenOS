@@ -2,27 +2,29 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>Label</key>
-    <string>com.kitchenos.verdict-nudge</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/Users/chaseeasterling/Dev/KitchenOS/ops/agents/KitchenOS · Verdict Nudge</string>
-    </array>
-    <!-- 20:15 — after dinner and after cleanup, while the meal is still
-         recallable, and before the late-evening window the Meal System note
-         identifies as the hard one. Once a day: this is a cue, not a stream. -->
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>20</integer>
-        <key>Minute</key>
-        <integer>15</integer>
-    </dict>
-    <key>StandardOutPath</key>
-    <string>/Users/chaseeasterling/Dev/KitchenOS/logs/verdict_nudge.log</string>
-    <key>StandardErrorPath</key>
-    <string>/Users/chaseeasterling/Dev/KitchenOS/logs/verdict_nudge.log</string>
-    <key>WorkingDirectory</key>
-    <string>/Users/chaseeasterling/Dev/KitchenOS</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>Label</key>
+	<string>com.kitchenos.verdict-nudge</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/chaseeasterling/Dev/KitchenOS/ops/agents/KitchenOS · Verdict Nudge</string>
+	</array>
+	<key>StandardErrorPath</key>
+	<string>/Users/chaseeasterling/Dev/KitchenOS/logs/verdict_nudge.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/chaseeasterling/Dev/KitchenOS/logs/verdict_nudge.log</string>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>20</integer>
+		<key>Minute</key>
+		<integer>15</integer>
+	</dict>
+	<key>WorkingDirectory</key>
+	<string>/Users/chaseeasterling/Dev/KitchenOS</string>
 </dict>
 </plist>

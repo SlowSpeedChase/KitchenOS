@@ -2,26 +2,31 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>Label</key>
-    <string>com.kitchenos.cleanup-icloud-old</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/Users/chaseeasterling/Dev/KitchenOS/ops/agents/KitchenOS · Cleanup iCloud</string>
-    </array>
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Month</key>
-        <integer>5</integer>
-        <key>Day</key>
-        <integer>2</integer>
-        <key>Hour</key>
-        <integer>10</integer>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
-    <key>StandardOutPath</key>
-    <string>/Users/chaseeasterling/Dev/KitchenOS/logs/cleanup_old_icloud.log</string>
-    <key>StandardErrorPath</key>
-    <string>/Users/chaseeasterling/Dev/KitchenOS/logs/cleanup_old_icloud.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>Label</key>
+	<string>com.kitchenos.cleanup-icloud-old</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/chaseeasterling/Dev/KitchenOS/ops/agents/KitchenOS · Cleanup iCloud</string>
+	</array>
+	<key>StandardErrorPath</key>
+	<string>/Users/chaseeasterling/Dev/KitchenOS/logs/cleanup_old_icloud.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/chaseeasterling/Dev/KitchenOS/logs/cleanup_old_icloud.log</string>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Day</key>
+		<integer>2</integer>
+		<key>Hour</key>
+		<integer>10</integer>
+		<key>Minute</key>
+		<integer>0</integer>
+		<key>Month</key>
+		<integer>5</integer>
+	</dict>
 </dict>
 </plist>

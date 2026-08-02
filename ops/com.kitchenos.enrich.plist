@@ -2,24 +2,29 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>Label</key>
-    <string>com.kitchenos.enrich</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/Users/chaseeasterling/Dev/KitchenOS/ops/agents/KitchenOS · Enrich Recipes</string>
-    </array>
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>3</integer>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
-    <key>StandardOutPath</key>
-    <string>/Users/chaseeasterling/Dev/KitchenOS/logs/enrich.log</string>
-    <key>StandardErrorPath</key>
-    <string>/Users/chaseeasterling/Dev/KitchenOS/logs/enrich.log</string>
-    <key>WorkingDirectory</key>
-    <string>/Users/chaseeasterling/Dev/KitchenOS</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>Label</key>
+	<string>com.kitchenos.enrich</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/chaseeasterling/Dev/KitchenOS/ops/agents/KitchenOS · Enrich Recipes</string>
+	</array>
+	<key>StandardErrorPath</key>
+	<string>/Users/chaseeasterling/Dev/KitchenOS/logs/enrich.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/chaseeasterling/Dev/KitchenOS/logs/enrich.log</string>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>3</integer>
+		<key>Minute</key>
+		<integer>0</integer>
+	</dict>
+	<key>WorkingDirectory</key>
+	<string>/Users/chaseeasterling/Dev/KitchenOS</string>
 </dict>
 </plist>

@@ -167,7 +167,15 @@ EOF
     esac
 done
 
-# Every plist must point at a launcher that exists, and never at a bare interpreter.
+# Every plist must point at a launcher that exists, never at a bare interpreter,
+# and must declare a PATH that includes Homebrew.
+#
+# The PATH rule is here because launchd hands a job a bare PATH, and this repo
+# shells out to Homebrew binaries from inside agents. It has bitten twice:
+# yt-dlp could not find ffmpeg/ffprobe, so every Instagram extraction silently
+# degraded to caption-only; and scripts/analyze_failures.sh could not find
+# `claude`, so 276 of 277 spawns died while the caller reported success. Both
+# present as a quality loss or a no-op, never as an error.
 for plist in "$REPO"/ops/com.kitchenos.*.plist; do
     prog=$(/usr/libexec/PlistBuddy -c "Print :ProgramArguments:0" "$plist" 2>/dev/null || true)
     label=$(basename "$plist" .plist)
@@ -178,6 +186,17 @@ for plist in "$REPO"/ops/com.kitchenos.*.plist; do
     esac
     if [ -n "$prog" ] && [ ! -x "$prog" ]; then
         echo "ERROR: $label points at a missing launcher: $prog" >&2
+        fail=1
+    fi
+
+    agent_path=$(/usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:PATH" "$plist" 2>/dev/null || true)
+    if [ -z "$agent_path" ]; then
+        echo "ERROR: $label declares no EnvironmentVariables:PATH — launchd's bare" >&2
+        echo "       PATH excludes /opt/homebrew/bin, so any Homebrew tool this agent" >&2
+        echo "       shells out to will be silently missing." >&2
+        fail=1
+    elif [[ "$agent_path" != *"/opt/homebrew/bin"* ]]; then
+        echo "ERROR: $label's PATH omits /opt/homebrew/bin: $agent_path" >&2
         fail=1
     fi
 done

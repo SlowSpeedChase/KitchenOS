@@ -2,26 +2,28 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>Label</key>
-    <string>com.kitchenos.api</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/Users/chaseeasterling/Dev/KitchenOS/ops/agents/KitchenOS · API</string>
-    </array>
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>PORT</key>
-        <string>5001</string>
-    </dict>
-    <key>WorkingDirectory</key>
-    <string>/Users/chaseeasterling/Dev/KitchenOS</string>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>/Users/chaseeasterling/Dev/KitchenOS/logs/server.log</string>
-    <key>StandardErrorPath</key>
-    <string>/Users/chaseeasterling/Dev/KitchenOS/logs/server.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>PORT</key>
+		<string>5001</string>
+	</dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>com.kitchenos.api</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/chaseeasterling/Dev/KitchenOS/ops/agents/KitchenOS · API</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Users/chaseeasterling/Dev/KitchenOS/logs/server.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/chaseeasterling/Dev/KitchenOS/logs/server.log</string>
+	<key>WorkingDirectory</key>
+	<string>/Users/chaseeasterling/Dev/KitchenOS</string>
 </dict>
 </plist>
