@@ -4236,10 +4236,12 @@
                               () => addCookNote(cook));
                 }
             }
-            const retryBtn = card.querySelector('.retry-btn');
-            if (retryBtn) {
-                addAction('Try another suggestion ↻', () => retryBtn.click());
-            }
+            // A "Try another suggestion ↻" action lived here, keyed off a
+            // .retry-btn that only the removed preview card ever carried. No
+            // card can have one now, so the action could never appear —
+            // advertising it in the sheet would be a lie. Re-suggesting is:
+            // remove the cook, tap the empty cell again (skip_index has already
+            // advanced, so you get the next candidate).
             const removeBtn = card.querySelector('.remove-btn');
             if (removeBtn) {
                 addAction('Remove from plan', () => removeBtn.click(), 'danger');
@@ -5116,10 +5118,14 @@
         async function suggestMeal(cell) {
             // Fail closed while the board state is unknown — see saveMealPlan.
             if (boardStateUnknown) return;
-            // Board weeks own their cells via the ledger (cook/chip cards);
-            // a legacy suggested card here would be cosmetic-only (its save
-            // is already blocked) but would still flash a phantom card.
-            if (weekBoard && weekBoard.cooks.length > 0) return;
+            // NOTE: there used to be a second guard here returning early on any
+            // week with a cook on it, because accepting a suggestion built a
+            // legacy card and called debounceSave(), which the ledger blocks.
+            // One dropped recipe turns a week into a board week, so the feature
+            // died on contact — silently, with no toast — on the very page
+            // /plan-week instructs you to use ("tap a blank slot and hit
+            // suggest"). Accepting now takes the same path as a sidebar drop,
+            // so there is nothing left to guard against.
 
             const day = cell.dataset.day;
             const meal = cell.dataset.meal;
@@ -5158,18 +5164,27 @@
                 }
 
                 const suggestion = data.suggestion;
-                const card = createSuggestedCard(suggestion, cell);
-                cell.appendChild(card);
-                updateCellState(cell);
-                debounceSave();
 
-                // Show reason toast
+                // Accepting a suggestion is the same act as dropping the recipe
+                // from the sidebar, so it takes the same route — ensureLegacyImported()
+                // then createCook(). "Two ways to ask, one way to do", as the
+                // tap-to-assign path already puts it.
+                //
+                // This commits immediately rather than showing a preview card
+                // with a retry arrow. The preview only ever worked on weeks with
+                // nothing on them, and a committed cook is one tap to remove;
+                // skip_index still advances, so removing and re-tapping suggest
+                // offers the next candidate rather than the same one.
+                const recipe = allRecipes.find(r => r.name === suggestion.name);
+                const baseServings = (recipe && recipe.servings) ? recipe.servings : 4;
+                suggestionSkipIndex[cellKey] = skipIndex + 1;
+
+                await ensureLegacyImported();
+                await createCook(suggestion.name, day, meal, 1.0, baseServings);
+
                 if (suggestion.reason) {
                     showToast(suggestion.reason, 'success');
                 }
-
-                // Increment skip index for retry
-                suggestionSkipIndex[cellKey] = skipIndex + 1;
 
             } catch (err) {
                 console.error('Suggestion failed:', err);
@@ -5179,55 +5194,11 @@
             }
         }
 
-        function createSuggestedCard(suggestion, cell) {
-            const card = createGridCard(suggestion.name, 1);
-
-            // Mark new ideas
-            if (suggestion.is_new_idea) {
-                card.classList.add('new-idea');
-            }
-
-            // Flag waste-aware picks (uses food that's expiring soon)
-            if (suggestion.waste_uses && suggestion.waste_uses.length) {
-                const badge = document.createElement('span');
-                badge.className = 'waste-badge';
-                badge.textContent = '♻️ use it up';
-                badge.title = 'Uses ' + suggestion.waste_uses.join(', ');
-                card.appendChild(badge);
-            }
-
-            // Show per-serving macros so the pick's protein/calorie contribution
-            // is visible at a glance. Grey chip when the recipe's nutrition isn't
-            // trustworthy (low coverage / no servings), so it never reads as fact.
-            if (suggestion.nutrition) {
-                const chip = document.createElement('span');
-                chip.className = 'macro-chip';
-                const n = suggestion.nutrition;
-                chip.textContent = `${n.protein || 0}g P · ${n.calories || 0} kcal`;
-                if (suggestion.nutrition_unknown) {
-                    chip.classList.add('macro-unknown');
-                    chip.title = 'Nutrition unverified — low coverage or no servings set';
-                }
-                card.appendChild(chip);
-            }
-
-            // Add retry button
-            const retryBtn = document.createElement('button');
-            retryBtn.className = 'retry-btn';
-            retryBtn.innerHTML = '&#x21bb;';  // ↻
-            retryBtn.setAttribute('aria-label', 'Try another suggestion');
-            retryBtn.addEventListener('click', function(e) {
-                e.stopPropagation();
-                e.preventDefault();
-                const parentCell = card.parentElement;
-                card.remove();
-                updateCellState(parentCell);
-                suggestMeal(parentCell);
-            });
-            card.appendChild(retryBtn);
-
-            return card;
-        }
+        // createSuggestedCard() lived here. It built a legacy preview card with a
+        // retry arrow, and its only caller now commits through createCook()
+        // instead — see suggestMeal(). Removed rather than left in place: it was
+        // reachable only on a week with nothing on it, and dead code that looks
+        // live is what let the suggester sit broken without anyone noticing.
 
         // --- Utilities ---
 
