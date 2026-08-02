@@ -2,7 +2,7 @@
 
 **Created:** 2026-08-02
 **Design Doc:** docs/plans/2026-08-02-daily-driver-audit.md
-**Current Stage:** testing
+**Current Stage:** ready
 **Last Rebased:** 2026-08-02
 
 ## Overview
@@ -87,9 +87,9 @@ Worth isolating when Phase 2 touches it.
 - [ ] Feedback addressed
 
 ### Ready
-- [ ] Rebased on main
-- [ ] Final tests pass
-- [ ] All checks complete
+- [x] Rebased on main (2026-08-02, onto 4399684 — 8 commits replayed clean)
+- [x] Final tests pass — 3702 passed, 1 skipped post-rebase
+- [x] All checks complete
 
 ---
 
