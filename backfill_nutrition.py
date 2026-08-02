@@ -17,7 +17,9 @@ Usage:
 """
 
 import argparse
+import json
 import re
+import sqlite3
 import sys
 import os
 from pathlib import Path
@@ -77,7 +79,7 @@ def write_nutrition_to_file(filepath: Path, result) -> None:
         "nutrition_protein": result.nutrition.protein,
         "nutrition_carbs": result.nutrition.carbs,
         "nutrition_fat": result.nutrition.fat,
-        "nutrition_source": f'"{result.source}"',
+        "nutrition_source": json.dumps(str(result.source)),
         "nutrition_confidence": result.confidence,
         "serving_size": '"1 serving"',
     }
@@ -91,7 +93,13 @@ def write_nutrition_to_file(filepath: Path, result) -> None:
     updates["nutrition_coverage"] = result.coverage
     if result.unmatched:
         joined = "; ".join(result.unmatched)
-        updates["nutrition_unmatched"] = f'"{joined}"'
+        # Ingredient text is LLM-extracted from arbitrary recipe pages, so it can
+        # contain a double quote (`2" piece ginger`) or a backslash. Building the
+        # scalar with an f-string closed it early and broke the frontmatter of a
+        # recipe that had just backfilled cleanly. json.dumps emits a valid YAML
+        # double-quoted scalar for any input — same rule as lib/reminders.py:
+        # never interpolate untrusted text into a quoted context.
+        updates["nutrition_unmatched"] = json.dumps(joined)
 
     new_fm = rewrite_frontmatter(fm, updates)
     if not result.unmatched:
@@ -207,12 +215,102 @@ def run_fix_duplicates(recipes_dir: Path, dry_run: bool) -> None:
     print(f"\n{'[DRY RUN] ' if dry_run else ''}Files with duplicates: {changed}")
 
 
+def require_food_store():
+    """Refuse to run when the local FDC store is empty.
+
+    `data/` is git-ignored, so `data/kitchenos.db` exists only in the main
+    checkout — but `inventory_db.connect()` creates the file and schema on
+    demand, so running this from a linked worktree silently opens a *new, empty*
+    database. Every ingredient then fails to resolve and the whole corpus is
+    rewritten at ~0.3 coverage, overwriting good data with garbage that still
+    looks like a successful run.
+
+    Observed live on 2026-08-01: three recipes went from coverage 1.0 to
+    0.33/0.55/0.70, one from 357 kcal to 7, because the backfill ran from
+    .worktrees/ and built its own empty DB.
+    """
+    from lib import inventory_db
+
+    path = inventory_db.db_path()
+
+    # Open read-only, never through inventory_db.connect() — that creates the
+    # file and schema on demand, so the guard used to reject the empty database
+    # *it had just created*, leaving a fully-schema'd decoy behind. data/ is
+    # git-ignored, so that decoy persists invisibly and every other tool run
+    # from the same directory (api_server, mcp_server, receipt ingest) then
+    # reads and writes it instead of the real database.
+    rows = 0
+    if path.exists():
+        try:
+            conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            try:
+                rows = conn.execute("SELECT COUNT(*) FROM fdc_foods").fetchone()[0]
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            rows = 0
+
+    if rows == 0:
+        raise SystemExit(
+            f"fdc_foods is empty in {path}\n"
+            "Refusing to run: every ingredient would fail to resolve and the\n"
+            "recipes would be rewritten at ~0.3 coverage, destroying good data.\n"
+            "If you are in a linked worktree, data/ lives only in the main\n"
+            "checkout — point KITCHENOS_DB at it, e.g.\n"
+            "  KITCHENOS_DB=/Users/<you>/Dev/KitchenOS/data/kitchenos.db \\\n"
+            "    ../../.venv/bin/python backfill_nutrition.py --force --only \"<name>\"\n"
+            "(A genuinely fresh environment needs scripts/load_fdc_bulk.py first.)"
+        )
+
+
+def apply_limit(candidates, limit, only):
+    """Apply --limit, refusing to silently truncate an explicit --only list.
+
+    --limit slices after --only, so `--only A --only B --only C --limit 1`
+    processed A and dropped B and C with no message — the exact silence
+    select_only exists to prevent.
+    """
+    if not limit:
+        return candidates
+    if only and limit < len(candidates):
+        raise SystemExit(
+            f"--limit {limit} would drop {len(candidates) - limit} of the "
+            f"{len(candidates)} recipes named by --only. Drop --limit, or name fewer."
+        )
+    return candidates[:limit]
+
+
+def select_only(candidates, names):
+    """Narrow ``candidates`` to the recipes named in ``names``.
+
+    A name that matches nothing is an error, not a silent no-op: the caller
+    asked for a specific recipe to be re-derived, and quietly doing zero work
+    would look identical to success.
+    """
+    if not names:
+        return candidates
+    by_stem = {p.stem: p for p in candidates}
+    missing = [n for n in names if n not in by_stem]
+    if missing:
+        raise SystemExit(
+            f"--only: no such recipe(s) in the candidate set: {', '.join(missing)}"
+        )
+    # dict.fromkeys dedupes while keeping the caller's order — a repeated
+    # --only used to process the file twice, which also risked two backups
+    # landing in the same second.
+    return [by_stem[n] for n in dict.fromkeys(names)]
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Backfill nutrition data for recipes (gram-based engine)"
     )
     parser.add_argument("--dry-run", action="store_true", help="Preview without writing files")
     parser.add_argument("--limit", type=int, help="Process at most N recipes")
+    parser.add_argument(
+        "--only", action="append", default=[], metavar="NAME",
+        help="only this recipe (by filename stem); repeatable",
+    )
     parser.add_argument(
         "--force", action="store_true", help="Re-process even recipes with existing data"
     )
@@ -232,10 +330,12 @@ def main():
         print("DRY RUN — no files will be modified\n")
 
     print(f"Scanning: {recipes_dir}")
-    candidates = collect_recipes_needing_backfill(recipes_dir, force=args.force)
+    require_food_store()
 
-    if args.limit:
-        candidates = candidates[: args.limit]
+    candidates = collect_recipes_needing_backfill(recipes_dir, force=args.force)
+    candidates = select_only(candidates, args.only)
+
+    candidates = apply_limit(candidates, args.limit, args.only)
 
     print(f"Recipes to process: {len(candidates)}\n")
 

@@ -331,6 +331,67 @@ it replayed.
 .venv/bin/python migrate_inventory_db.py
 ```
 
+### Normalize recipe frontmatter (schema drift)
+
+`scripts/normalize_recipes.py` repairs frontmatter that drifts from the schema
+declared in `lib/recipe_schema.py` — the one place stating what keys a recipe
+file may carry. It fixes three classes and *reports* anything else rather than
+inventing a value:
+
+| Class | Repair |
+|---|---|
+| `servings` is a string (`"6-8"`) | rewritten to the **low end** (`6`), flagged `servings_inferred` + `servings_needs_review` |
+| legacy `calories` / `carbs` / `fat` | deleted — `nutrition_*` is the FDC-sourced authority and every affected file already has a non-null canonical value |
+| `recipe_url` | dropped (user decision, 2026-07-31) |
+
+```bash
+.venv/bin/python scripts/normalize_recipes.py            # dry run (default)
+.venv/bin/python scripts/normalize_recipes.py --check    # exit 1 on drift, never writes
+.venv/bin/python scripts/normalize_recipes.py --apply    # write (backs each file up first)
+```
+
+**A `servings` change leaves that file's macros stale.** `nutrition_*` is
+per-serving, derived as batch ÷ servings, so correcting the count without
+re-deriving ships a recipe whose serving count contradicts its own numbers. The
+apply run names the affected recipes; re-derive exactly those:
+
+```bash
+.venv/bin/python backfill_nutrition.py --force \
+  --only "Creamy Grape Salad Alternative" \
+  --only "Healthy Blueberry Apple Oatmeal Cake" \
+  --only "Watermelon Feta Salad"
+```
+
+`tests/e2e/test_recipe_corpus_schema.py` fails if the corpus drifts again. It is
+marked `corpus`, not `e2e`, so it runs in the **default** `pytest` suite (it needs
+no server or browser) and skips visibly where there is no vault. A
+*legitimate* new key (a new producer, a new template field) is fixed by adding
+it to `lib/recipe_schema.OPTIONAL_KEYS` in the same commit that starts writing
+it — not by loosening the test.
+
+#### Running either tool from a linked worktree
+
+**Both `vault/` and `data/` are git-ignored, so they exist only in the main
+checkout** — and each tool fails differently if you forget:
+
+| Env var | If unset from a worktree |
+|---|---|
+| `KITCHENOS_VAULT` | `normalize_recipes.py` exits — it refuses to report an empty corpus as clean |
+| `KITCHENOS_DB` | `backfill_nutrition.py` exits — `inventory_db.connect()` would otherwise *create* an empty `data/kitchenos.db`, resolve nothing, and rewrite every recipe at ~0.3 coverage |
+
+Both guards were added after the second failure mode happened for real on
+2026-08-01: a backfill run from `.worktrees/` took three recipes from coverage
+1.0 to 0.33/0.55/0.70 and one from 357 kcal to **7**, and reported
+`Updated: 3 / Failed: 0`. Set both:
+
+```bash
+export KITCHENOS_VAULT=~/Dev/KitchenOS/vault/KitchenOS
+export KITCHENOS_DB=~/Dev/KitchenOS/data/kitchenos.db
+```
+
+If a backfill does write garbage, `Recipes/.history/` holds a timestamped
+snapshot taken immediately before each write — that is the recovery path.
+
 ### Recipe repair: bodies and missing frontmatter
 
 Two re-runnable repair passes over `Recipes/*.md`. Both back up each file via

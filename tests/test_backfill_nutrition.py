@@ -424,3 +424,227 @@ serving_size: null
         from lib.recipe_parser import parse_recipe_file
         body = parse_recipe_file(out)["body"]
         assert "## Instructions" in body
+
+
+class TestSelectOnly:
+    """--only narrows the candidate set to explicitly named recipes.
+
+    A servings correction invalidates exactly the files it touched. --limit
+    takes the first N, which cannot express "these three".
+    """
+
+    class _P:
+        def __init__(self, stem):
+            self.stem = stem
+
+    def test_selects_a_single_named_recipe(self):
+        from backfill_nutrition import select_only
+        cands = [self._P("Alpha"), self._P("Beta"), self._P("Gamma")]
+        assert [p.stem for p in select_only(cands, ["Beta"])] == ["Beta"]
+
+    def test_selects_several_in_the_order_the_caller_asked_for(self):
+        """The user's order is information; sorting silently discarded it."""
+        from backfill_nutrition import select_only
+        cands = [self._P("Alpha"), self._P("Beta"), self._P("Gamma")]
+        assert [p.stem for p in select_only(cands, ["Gamma", "Alpha"])] == ["Gamma", "Alpha"]
+
+    def test_an_empty_name_list_is_a_no_op(self):
+        from backfill_nutrition import select_only
+        cands = [self._P("Alpha"), self._P("Beta")]
+        assert [p.stem for p in select_only(cands, [])] == ["Alpha", "Beta"]
+
+    def test_an_unknown_name_exits_rather_than_doing_nothing(self):
+        """Silently re-deriving zero recipes looks identical to success."""
+        import pytest
+        from backfill_nutrition import select_only
+        with pytest.raises(SystemExit) as e:
+            select_only([self._P("Alpha")], ["Nope"])
+        assert "Nope" in str(e.value)
+
+
+class TestFoodStoreGuard:
+    """A backfill against an empty FDC store writes garbage into real recipes.
+
+    `data/` is git-ignored, so it exists only in the main checkout. Run from a
+    linked worktree, inventory_db.connect() cheerfully *creates* an empty
+    data/kitchenos.db, the food store resolves nothing, and every recipe is
+    rewritten at ~0.3 coverage. Observed live on 2026-08-01: three recipes went
+    from coverage 1.0 to 0.33/0.55/0.70, one from 357 kcal to 7.
+
+    Same failure shape as --only matching nothing: silence that looks like work.
+    """
+
+    def test_an_empty_food_store_is_refused(self, tmp_path, monkeypatch):
+        import pytest
+        from backfill_nutrition import require_food_store
+
+        monkeypatch.setenv("KITCHENOS_DB", str(tmp_path / "empty.db"))
+        with pytest.raises(SystemExit) as e:
+            require_food_store()
+        assert "fdc_foods" in str(e.value)
+
+    def test_the_error_names_the_database_it_opened(self, tmp_path, monkeypatch):
+        import pytest
+        from backfill_nutrition import require_food_store
+
+        monkeypatch.setenv("KITCHENOS_DB", str(tmp_path / "empty.db"))
+        with pytest.raises(SystemExit) as e:
+            require_food_store()
+        assert "empty.db" in str(e.value)
+
+    def test_a_populated_food_store_passes(self, tmp_path, monkeypatch):
+        import sqlite3
+        from backfill_nutrition import require_food_store
+        from lib import fdc_local
+
+        db = tmp_path / "full.db"
+        conn = sqlite3.connect(db)
+        fdc_local.ensure_schema(conn)
+        conn.execute(
+            "INSERT INTO fdc_foods (fdc_id, data_type, description, name_norm, "
+            "kcal_source, dataset_rank, loaded_at) "
+            "VALUES (1, 'sr_legacy', 'Watermelon, raw', 'watermelon raw', "
+            "'atwater', 1, '2026-08-01')"
+        )
+        conn.commit()
+        conn.close()
+
+        monkeypatch.setenv("KITCHENOS_DB", str(db))
+        require_food_store()   # must not raise
+
+
+class TestGuardDoesNotCreateTheDatabase:
+    """The guard must not leave behind the decoy it exists to reject.
+
+    inventory_db.connect() creates the file and schema on demand, so the guard
+    stopped the corruption and then left a fully-schema'd empty DB in the
+    worktree. data/ is git-ignored, so it persists invisibly and every other
+    tool run from there — api_server, mcp_server, receipt ingest — silently
+    reads and WRITES that decoy instead of the real database.
+    """
+
+    def test_a_missing_database_is_refused_without_creating_it(self, tmp_path, monkeypatch):
+        import pytest
+        from backfill_nutrition import require_food_store
+
+        db = tmp_path / "nested" / "kitchenos.db"
+        monkeypatch.setenv("KITCHENOS_DB", str(db))
+        with pytest.raises(SystemExit):
+            require_food_store()
+
+        assert not db.exists(), "the guard created the database it refused"
+        assert not db.parent.exists(), "the guard created the data directory"
+
+    def test_an_existing_but_empty_database_is_still_refused(self, tmp_path, monkeypatch):
+        import pytest
+        import sqlite3
+        from backfill_nutrition import require_food_store
+        from lib import fdc_local
+
+        db = tmp_path / "empty.db"
+        conn = sqlite3.connect(db)
+        fdc_local.ensure_schema(conn)
+        conn.commit()
+        conn.close()
+
+        monkeypatch.setenv("KITCHENOS_DB", str(db))
+        with pytest.raises(SystemExit) as e:
+            require_food_store()
+        assert "fdc_foods" in str(e.value)
+
+    def test_a_database_without_the_schema_is_refused_not_crashed(self, tmp_path, monkeypatch):
+        import pytest
+        import sqlite3
+        from backfill_nutrition import require_food_store
+
+        db = tmp_path / "bare.db"
+        sqlite3.connect(db).close()          # exists, no tables at all
+        monkeypatch.setenv("KITCHENOS_DB", str(db))
+        with pytest.raises(SystemExit):
+            require_food_store()
+
+
+class TestUnmatchedTextIsEscaped:
+    """Ingredient text is LLM-extracted from arbitrary recipe pages.
+
+    nutrition_unmatched was built as f'"{joined}"', so an ingredient containing
+    a double quote — `2" piece ginger`, `9" tortillas` — closed the YAML scalar
+    early and broke the frontmatter of a recipe that had just been backfilled
+    successfully. Same class as the AppleScript-injection fix in lib/reminders.py:
+    never interpolate untrusted text into a quoted context.
+    """
+
+    def test_a_quote_in_an_ingredient_keeps_the_frontmatter_parseable(self, tmp_path):
+        import yaml
+        from backfill_nutrition import write_nutrition_to_file
+        from lib import frontmatter
+
+        content = (
+            '---\ntitle: "Ginger Thing"\nnutrition_calories: null\nservings: 2\n---\n\n# X\n'
+        )
+        p = tmp_path / "Ginger Thing.md"
+        p.write_text(content, encoding="utf-8")
+
+        result = make_result(100, 1, 2, 3, unmatched=['2" piece ginger', "kosher salt"])
+        write_nutrition_to_file(p, result)
+
+        fm, _ = frontmatter.split_frontmatter(p.read_text(encoding="utf-8"))
+        loaded = yaml.safe_load(fm)
+        assert loaded["nutrition_unmatched"] == '2" piece ginger; kosher salt'
+
+    def test_a_backslash_in_an_ingredient_survives(self, tmp_path):
+        import yaml
+        from backfill_nutrition import write_nutrition_to_file
+        from lib import frontmatter
+
+        content = '---\ntitle: "X"\nnutrition_calories: null\nservings: 2\n---\n\n# X\n'
+        p = tmp_path / "X.md"
+        p.write_text(content, encoding="utf-8")
+
+        result = make_result(100, 1, 2, 3, unmatched=[r"salt\pepper"])
+        write_nutrition_to_file(p, result)
+
+        fm, _ = frontmatter.split_frontmatter(p.read_text(encoding="utf-8"))
+        assert yaml.safe_load(fm)["nutrition_unmatched"] == r"salt\pepper"
+
+    def test_a_quoted_source_stays_parseable(self, tmp_path):
+        import yaml
+        from backfill_nutrition import write_nutrition_to_file
+        from lib import frontmatter
+
+        content = '---\ntitle: "X"\nnutrition_calories: null\nservings: 2\n---\n\n# X\n'
+        p = tmp_path / "Y.md"
+        p.write_text(content, encoding="utf-8")
+
+        write_nutrition_to_file(p, make_result(100, 1, 2, 3, source='we"ird'))
+        fm, _ = frontmatter.split_frontmatter(p.read_text(encoding="utf-8"))
+        assert yaml.safe_load(fm)["nutrition_source"] == 'we"ird'
+
+
+class TestLimitDoesNotSilentlyDropNamedRecipes:
+    def test_limit_cannot_silently_truncate_an_explicit_only_list(self):
+        import pytest
+        from backfill_nutrition import apply_limit
+
+        with pytest.raises(SystemExit) as e:
+            apply_limit(["a", "b", "c"], limit=1, only=["a", "b", "c"])
+        assert "--only" in str(e.value)
+
+    def test_limit_still_works_without_only(self):
+        from backfill_nutrition import apply_limit
+        assert apply_limit(["a", "b", "c"], limit=2, only=[]) == ["a", "b"]
+
+    def test_only_without_limit_is_untouched(self):
+        from backfill_nutrition import apply_limit
+        assert apply_limit(["a", "b"], limit=None, only=["a", "b"]) == ["a", "b"]
+
+
+class TestSelectOnlyDedupes:
+    class _P:
+        def __init__(self, stem):
+            self.stem = stem
+
+    def test_a_repeated_name_processes_the_file_once(self):
+        from backfill_nutrition import select_only
+        cands = [self._P("Ramen")]
+        assert len(select_only(cands, ["Ramen", "Ramen"])) == 1
