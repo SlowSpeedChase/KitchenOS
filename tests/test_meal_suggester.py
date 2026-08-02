@@ -38,6 +38,14 @@ class TestNormalizeIngredient:
 
     def test_passthrough_simple(self):
         assert normalize_ingredient("rice") == "rice"
+
+    def test_strips_template_display_annotation(self):
+        """get_recipe_index reads rendered cells back as data, so the template's
+        "*(inferred)*" marker arrives attached to the name. Left in place it stops
+        staples matching and manufactures false overlap."""
+        assert normalize_ingredient("water *(inferred)*") == "water"
+        assert normalize_ingredient("pumpkin seeds *(inferred)*") == "pumpkin seeds"
+        assert normalize_ingredient("Diced Tomatoes *(inferred)*") == "tomatoes"
         assert normalize_ingredient("soy sauce") == "soy sauce"
 
 
