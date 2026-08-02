@@ -17,6 +17,7 @@ Usage:
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -42,6 +43,16 @@ def _dish_type(recipe: dict):
     """Canonical dish_type for a recipe, or None if absent/unrecognized."""
     normalized = normalize_field("dish_type", recipe.get("dish_type"))
     return normalized if isinstance(normalized, str) else None
+
+
+def _base_name(name: str) -> str:
+    """Recipe name without its import-source suffix.
+
+    Importers disambiguate a name collision by appending the source — "Whipped Tofu
+    Ricotta (Big Vegan Flavor)". Those two notes are near-identical, so pairing one
+    with the other is a plate of the same dish twice.
+    """
+    return re.sub(r"\s*\([^)]*\)\s*$", "", name).strip().lower()
 
 
 def compose_plates(recipes, pantry, min_score=0.30, max_sides=3, limit=None):
@@ -76,6 +87,11 @@ def compose_plates(recipes, pantry, min_score=0.30, max_sides=3, limit=None):
     for main in anchors:
         main_items = {normalize_ingredient(i) for i in main["ingredient_items"]}
 
+        # A same-name note from another source is the same dish, not a side for it.
+        main_base = _base_name(main["name"])
+        excluded = {a["name"] for a in accompaniments
+                    if _base_name(a["name"]) == main_base} | {main["name"]}
+
         # at_risk=[] and macro_gap=None are load-bearing: left as None,
         # rank_candidates reads live inventory and ranks expiring items above
         # overlap, which would make this preview non-deterministic.
@@ -84,7 +100,7 @@ def compose_plates(recipes, pantry, min_score=0.30, max_sides=3, limit=None):
             main_items,
             pantry,
             limit=_RANK_DEPTH,
-            exclude_names={main["name"]},
+            exclude_names=excluded,
             at_risk=[],
             macro_gap=None,
         )

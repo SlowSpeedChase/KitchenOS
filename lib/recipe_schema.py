@@ -43,6 +43,8 @@ OPTIONAL_KEYS = frozenset({
     "nutrition_unmatched",
     # scripts/backfill_short_titles.py
     "short_title", "short_title_inferred",
+    # import_epub.py — print page of the source cookbook
+    "book_page",
     # scripts/enrich_recipes.py — sticky "this field has no value" record
     "enrich_none",
     # lib/cook_history.py sync

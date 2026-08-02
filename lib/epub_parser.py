@@ -126,6 +126,22 @@ def parse_yield(text: str) -> Optional[int]:
     return int(match.group(1))
 
 
+# Print-edition page anchors: <span epub:type="pagebreak" id="page_561" title="561"/>.
+# Read off the raw markup rather than via bs4 — the epub: namespace prefix does not
+# survive the HTML parser reliably.
+_PAGE_ANCHOR = re.compile(r'id="page[_-]?(\d+)"', re.I)
+
+
+def parse_page_number(html: str) -> Optional[int]:
+    """The print page a recipe starts on, or None if the book has no page anchors.
+
+    One recipe per document, so the lowest anchor in the file is where the recipe
+    begins — which is what you need to find it in the physical book.
+    """
+    pages = [int(m) for m in _PAGE_ANCHOR.findall(html)]
+    return min(pages) if pages else None
+
+
 def _classes(tag) -> set:
     value = tag.get("class")
     if not value:
@@ -216,6 +232,7 @@ def parse_recipe_xhtml(html: str) -> Optional[dict]:
 
     return {
         "recipe_name": recipe_name,
+        "book_page": parse_page_number(html),
         "servings": servings,
         "ingredients": ingredients,
         "instructions": instructions,

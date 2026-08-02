@@ -113,6 +113,24 @@ def test_recipe_data_matches_pipeline_contract():
     assert r["dietary"] == ["vegan"]
 
 
+def test_book_page_is_the_lowest_anchor_in_the_document():
+    """One recipe per document, so the lowest page anchor is where it starts —
+    what you need to find it in the physical book."""
+    doc = _doc("""
+    <span epub:type="pagebreak" id="page_561" title="561"/>
+    <h3 class="x11-Recipe-Title">Paged</h3>
+    <p class="x11-Recipe-Ingredients-First">1 cup rice</p>
+    <span epub:type="pagebreak" id="page_562" title="562"/>
+    <p class="x11-Recipe-Direction-First">Cook it.</p>
+    <span epub:type="pagebreak" id="page_560" title="560"/>
+    """)
+    assert parse_recipe_xhtml(doc)["book_page"] == 560
+
+
+def test_book_page_is_none_without_anchors():
+    assert parse_recipe_xhtml(FULL_RECIPE)["book_page"] is None
+
+
 def test_dietary_badges_read_off_the_yield_line():
     doc = _doc("""
     <h3 class="x11-Recipe-Title">Badged</h3>

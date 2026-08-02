@@ -50,6 +50,20 @@ def test_main_never_pairs_with_itself():
     assert plates[0]["accompaniments"] == []
 
 
+def test_source_suffixed_twin_is_not_paired_with_its_own_main():
+    """Importers disambiguate collisions by appending the source; the two notes are
+    the same dish, so one must not be served as a side for the other."""
+    recipes = [
+        R("Tofu Ricotta (Big Vegan Flavor)", "main", ["tofu", "miso", "lemon"]),
+        R("Tofu Ricotta", "dip", ["tofu", "miso", "lemon"]),
+        R("Herb Oil", "sauce", ["lemon", "miso"]),
+    ]
+    plates = compose_plates(recipes, PANTRY, min_score=0.3)
+    paired = [a["name"] for a in plates[0]["accompaniments"]]
+    assert "Tofu Ricotta" not in paired
+    assert paired == ["Herb Oil"]
+
+
 def test_min_score_suppresses_weak_pairings():
     recipes = [
         R("Chickpea Bowl", "main", ["chickpeas", "tahini"]),

@@ -84,12 +84,26 @@ def save_imported_recipe(recipe_data: dict, source_name: str) -> tuple:
         date_added=today,
     )
 
-    # The template's footer assumes a web source; restate it as a book citation.
+    # The template's footer assumes a web source; restate it as a book citation,
+    # carrying the print page so the recipe can be found in the physical book.
+    page = recipe_data.get("book_page")
+    citation = f"{source_name}, p. {page}" if page else source_name
     markdown = re.sub(
         r"\*Extracted from \[.*?\]\(.*?\) on " + re.escape(today) + r"\*",
-        f"*Imported from {source_name} on {today}*",
+        f"*Imported from {citation} on {today}*",
         markdown,
     )
+
+    # book_page is an OPTIONAL_KEYS field (lib/recipe_schema.py) written only by this
+    # importer, so it's injected here rather than added to the shared template.
+    if page:
+        markdown = re.sub(
+            r"^(recipe_source: .*)$",
+            rf"\1\nbook_page: {page}",
+            markdown,
+            count=1,
+            flags=re.M,
+        )
 
     OBSIDIAN_RECIPES_PATH.mkdir(parents=True, exist_ok=True)
     filepath = OBSIDIAN_RECIPES_PATH / generate_filename(recipe_name_for_file)
