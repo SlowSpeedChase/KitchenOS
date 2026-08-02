@@ -155,3 +155,37 @@ class TestFieldsWithNoValue:
 
     def test_marker_key_is_managed_so_it_can_be_written(self):
         assert self.KEY in enrich_recipes.MANAGED_KEYS
+
+
+class TestEnrichWritesEscapedScalars:
+    """The enricher writes LLM output straight into frontmatter.
+
+    Its local yaml_scalar was f'"{v}"' for strings and
+    '[' + ', '.join(f'"{x}"') + ']' for lists — so a cuisine or dietary tag
+    containing a double quote broke the file. It now delegates to the one
+    authority in lib.frontmatter.
+    """
+
+    def test_it_delegates_to_the_shared_helper(self):
+        from lib import frontmatter
+        from scripts import enrich_recipes
+        assert enrich_recipes.yaml_scalar is frontmatter.scalar
+
+    def test_a_quote_in_a_string_value_round_trips(self):
+        import yaml
+        from scripts.enrich_recipes import yaml_scalar
+        value = 'the 9" style'
+        assert yaml.safe_load(f"cuisine: {yaml_scalar(value)}\n")["cuisine"] == value
+
+    def test_a_quote_in_a_list_item_round_trips(self):
+        import yaml
+        from scripts.enrich_recipes import yaml_scalar
+        items = ["gluten-free", 'has a " quote']
+        out = yaml.safe_load(f"dietary: {yaml_scalar(items)}\n")
+        assert out["dietary"] == items
+
+    def test_booleans_and_ints_keep_their_yaml_type(self):
+        import yaml
+        from scripts.enrich_recipes import yaml_scalar
+        assert yaml.safe_load(f"needs_review: {yaml_scalar(True)}\n")["needs_review"] is True
+        assert yaml.safe_load(f"servings: {yaml_scalar(4)}\n")["servings"] == 4

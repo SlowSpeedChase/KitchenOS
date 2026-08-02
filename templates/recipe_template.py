@@ -6,6 +6,7 @@ import re
 from fractions import Fraction
 from urllib.parse import quote
 
+from lib import frontmatter
 from lib.ingredient_parser import parse_ingredient
 
 # Base URL baked into recipe action buttons. Override with KITCHENOS_API_BASE.
@@ -197,12 +198,12 @@ def generate_nutrition_section(recipe_data: dict) -> str:
 
 
 RECIPE_TEMPLATE = '''---
-title: "{title}"
-source_url: "{source_url}"
-source_channel: "{source_channel}"
+title: {title_yaml}
+source_url: {source_url_yaml}
+source_channel: {source_channel_yaml}
 date_added: {date_added}
-video_title: "{video_title}"
-recipe_source: "{recipe_source}"
+video_title: {video_title_yaml}
+recipe_source: {recipe_source_yaml}
 
 prep_time: {prep_time}
 cook_time: {cook_time}
@@ -232,7 +233,7 @@ tags:
 {tags}
 
 needs_review: {needs_review}
-confidence_notes: "{confidence_notes}"
+confidence_notes: {confidence_notes_yaml}
 banner: {banner}
 cssclasses:
   - recipe
@@ -265,7 +266,7 @@ cssclasses:
 <!-- Your personal notes, ratings, and modifications go here -->
 
 ---
-*Extracted from [{video_title}]({source_url}) on {date_added}*
+*Extracted from [{video_title_label}]({source_url}) on {date_added}*
 '''
 
 
@@ -402,7 +403,9 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel, date_ad
 
     # Format nullable fields
     def quote_or_null(val):
-        return f'"{val}"' if val else "null"
+        """A quoted YAML scalar, or null. Escaping is frontmatter.scalar's job:
+        these values are LLM-extracted, so `1 x 9" slice` used to break the file."""
+        return frontmatter.scalar(val) if val else "null"
 
     def num_or_null(val):
         return val if val is not None else "null"
@@ -412,17 +415,28 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel, date_ad
     banner = f'"[[{image_filename}]]"' if image_filename else "null"
     image_embed = f"![[{image_filename}]]\n\n" if image_filename else ""
 
+    # Every value below is untrusted: the title and channel come from the
+    # YouTube API, the rest from an LLM extraction. Frontmatter fields therefore
+    # go through frontmatter.scalar (which supplies its own quotes), while the
+    # body keeps the raw text — the two contexts need different escaping, so
+    # `title` / `video_title` each appear twice with different treatment.
+    title = recipe_data.get('recipe_name', 'Untitled Recipe')
+    video_title = video_title or "Unknown Video"
+
     return RECIPE_TEMPLATE.format(
-        title=recipe_data.get('recipe_name', 'Untitled Recipe'),
-        source_url=video_url,
-        source_channel=channel or "Unknown",
+        title=title,
+        title_yaml=frontmatter.scalar(title),
+        source_url_yaml=frontmatter.scalar(video_url),
+        source_channel_yaml=frontmatter.scalar(channel or "Unknown"),
         date_added=date_added or date.today().isoformat(),
+        video_title_yaml=frontmatter.scalar(video_title),
         # Escaped because it is interpolated as a markdown link *label*. Korean
         # and Japanese cooking channels routinely bracket their titles
         # ("[감자치즈빵] …"), and an unescaped "[" turns the attribution into a
         # wikilink to the bracketed fragment instead of a link to the video.
-        video_title=_escape_link_label(video_title or "Unknown Video"),
-        recipe_source=recipe_source,
+        video_title_label=_escape_link_label(video_title),
+        source_url=video_url,
+        recipe_source_yaml=frontmatter.scalar(recipe_source),
         tools_callout=tools_callout,
         prep_time=quote_or_null(prep),
         cook_time=quote_or_null(cook),
@@ -446,7 +460,7 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel, date_ad
         equipment=equipment_yaml,
         tags=tags_yaml,
         needs_review=str(recipe_data.get('needs_review', True)).lower(),
-        confidence_notes=recipe_data.get('confidence_notes', ''),
+        confidence_notes_yaml=frontmatter.scalar(recipe_data.get('confidence_notes', '')),
         banner=banner,
         image_embed=image_embed,
         description=recipe_data.get('description', ''),

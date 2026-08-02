@@ -183,3 +183,76 @@ class TestRemoveTakesContinuationLines:
         out = frontmatter.rewrite(fm, {}, {"calories"}, remove={"calories"})
         loaded = yaml.safe_load(out)
         assert loaded == {"tags": ["a", "b"], "nutrition_calories": 7}
+
+
+class TestScalarEscaping:
+    """One authority for turning a Python value into a YAML scalar.
+
+    Three writers hand-rolled this as f'"{value}"' over text that is either
+    LLM-extracted or straight from the YouTube API:
+      - templates/recipe_template.py (title, source_channel, video_title, …)
+      - scripts/enrich_recipes.py (cuisine, protein, dietary, …)
+      - backfill_nutrition.py (nutrition_unmatched, nutrition_source)
+    A single double quote in any of them closes the scalar early and breaks the
+    file's frontmatter; three hyphens can end the document. Same rule as
+    lib/reminders.py: never interpolate untrusted text into a quoted context.
+    """
+
+    def _load(self, key, value):
+        import yaml
+        from lib import frontmatter
+        return yaml.safe_load(f"{key}: {frontmatter.scalar(value)}\n")[key]
+
+    def test_a_plain_string_round_trips(self):
+        assert self._load("title", "Chili") == "Chili"
+
+    def test_a_double_quote_round_trips(self):
+        assert self._load("video_title", '2" piece ginger') == '2" piece ginger'
+
+    def test_a_triple_dash_round_trips(self):
+        assert self._load("video_title", "Noodles --- the viral one") == "Noodles --- the viral one"
+
+    def test_a_backslash_round_trips(self):
+        assert self._load("title", r"salt\pepper") == r"salt\pepper"
+
+    def test_a_colon_round_trips(self):
+        assert self._load("title", "Dinner: the sequel") == "Dinner: the sequel"
+
+    def test_a_newline_round_trips(self):
+        assert self._load("title", "line one\nline two") == "line one\nline two"
+
+    def test_a_leading_hash_is_not_read_as_a_comment(self):
+        assert self._load("title", "#1 Chili") == "#1 Chili"
+
+    def test_none_becomes_null(self):
+        from lib import frontmatter
+        assert frontmatter.scalar(None) == "null"
+        assert self._load("cook_time", None) is None
+
+    def test_booleans_are_yaml_booleans(self):
+        from lib import frontmatter
+        assert frontmatter.scalar(True) == "true"
+        assert frontmatter.scalar(False) == "false"
+        assert self._load("needs_review", True) is True
+
+    def test_numbers_are_unquoted(self):
+        from lib import frontmatter
+        assert frontmatter.scalar(4) == "4"
+        assert self._load("servings", 4) == 4
+        assert self._load("nutrition_coverage", 0.93) == 0.93
+
+    def test_a_list_round_trips_including_awkward_items(self):
+        assert self._load("dietary", ["gluten-free", 'has a " quote']) == [
+            "gluten-free", 'has a " quote'
+        ]
+
+    def test_an_empty_list_stays_an_empty_list(self):
+        assert self._load("dietary", []) == []
+
+    def test_a_numeric_string_stays_a_string(self):
+        """`servings: "4"` must not silently become an int, or vice versa."""
+        assert self._load("serving_size", "4") == "4"
+
+    def test_the_result_never_contains_a_bare_document_separator(self):
+        from lib import frontmatter
+        assert "\n---" not in frontmatter.scalar("a\n---\nb")

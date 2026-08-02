@@ -14,6 +14,7 @@ nutrition backfill and the cook-history sync cannot drift apart.
 """
 from __future__ import annotations
 
+import json
 import re
 from typing import Iterable, Optional
 
@@ -44,6 +45,35 @@ def split_frontmatter(content: str) -> tuple[Optional[str], Optional[str]]:
     if not m:
         return None, None
     return f"\n{m.group(1)}\n", content[m.end():]
+
+
+def scalar(value) -> str:
+    """Render ``value`` as a YAML scalar safe to interpolate after ``key: ``.
+
+    The one authority for this. Three writers hand-rolled it as ``f'"{value}"'``
+    over text that is either LLM-extracted or straight from the YouTube API —
+    ``templates/recipe_template.py``, ``scripts/enrich_recipes.py`` and
+    ``backfill_nutrition.py``. A single double quote in a channel's video title
+    closes the scalar early and breaks the whole file's frontmatter; three
+    hyphens can end the document mid-value. Same rule as ``lib/reminders.py``:
+    never interpolate untrusted text into a quoted context by hand.
+
+    Strings go through ``json.dumps``, whose output is always a valid YAML 1.2
+    double-quoted scalar — quotes, backslashes and newlines are escaped, and the
+    result cannot contain a bare line break, so it can never introduce a
+    document separator. Non-strings keep their YAML type (``null``, ``true``,
+    numbers, flow lists), because quoting them would silently turn a serving
+    count into a string.
+    """
+    if value is None:
+        return "null"
+    if isinstance(value, bool):          # before int — bool is an int subclass
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(scalar(v) for v in value) + "]"
+    return json.dumps(str(value), ensure_ascii=False)
 
 
 def rewrite(fm: str, updates: dict, managed_keys: Iterable[str],

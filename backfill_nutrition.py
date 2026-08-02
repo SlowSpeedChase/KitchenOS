@@ -17,7 +17,6 @@ Usage:
 """
 
 import argparse
-import json
 import re
 import sqlite3
 import sys
@@ -79,9 +78,9 @@ def write_nutrition_to_file(filepath: Path, result) -> None:
         "nutrition_protein": result.nutrition.protein,
         "nutrition_carbs": result.nutrition.carbs,
         "nutrition_fat": result.nutrition.fat,
-        "nutrition_source": json.dumps(str(result.source)),
+        "nutrition_source": frontmatter.scalar(result.source),
         "nutrition_confidence": result.confidence,
-        "serving_size": '"1 serving"',
+        "serving_size": frontmatter.scalar("1 serving"),
     }
     updates["nutrition_needs_review"] = "true" if result.needs_review else "false"
     if result.needs_review:
@@ -96,10 +95,10 @@ def write_nutrition_to_file(filepath: Path, result) -> None:
         # Ingredient text is LLM-extracted from arbitrary recipe pages, so it can
         # contain a double quote (`2" piece ginger`) or a backslash. Building the
         # scalar with an f-string closed it early and broke the frontmatter of a
-        # recipe that had just backfilled cleanly. json.dumps emits a valid YAML
-        # double-quoted scalar for any input — same rule as lib/reminders.py:
-        # never interpolate untrusted text into a quoted context.
-        updates["nutrition_unmatched"] = json.dumps(joined)
+        # recipe that had just backfilled cleanly. frontmatter.scalar is the one
+        # authority for this — same rule as lib/reminders.py: never interpolate
+        # untrusted text into a quoted context by hand.
+        updates["nutrition_unmatched"] = frontmatter.scalar(joined)
 
     new_fm = rewrite_frontmatter(fm, updates)
     if not result.unmatched:
@@ -239,20 +238,32 @@ def require_food_store():
     # git-ignored, so that decoy persists invisibly and every other tool run
     # from the same directory (api_server, mcp_server, receipt ingest) then
     # reads and writes it instead of the real database.
-    rows = 0
+    # The engine needs more than a food list: fdc_portions supplies grams per
+    # unit, without which nothing resolves even though every food is present.
+    # Flooring only fdc_foods left a partially-loaded store passing the guard and
+    # producing the same silent garbage, one table over.
+    required = ("fdc_foods", "fdc_portions")
+    counts = {name: 0 for name in required}
     if path.exists():
         try:
             conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
             try:
-                rows = conn.execute("SELECT COUNT(*) FROM fdc_foods").fetchone()[0]
+                for name in required:
+                    try:
+                        counts[name] = conn.execute(
+                            f"SELECT COUNT(*) FROM {name}"
+                        ).fetchone()[0]
+                    except sqlite3.Error:
+                        counts[name] = 0
             finally:
                 conn.close()
         except sqlite3.Error:
-            rows = 0
+            pass
 
-    if rows == 0:
+    empty = [name for name, n in counts.items() if n == 0]
+    if empty:
         raise SystemExit(
-            f"fdc_foods is empty in {path}\n"
+            f"{', '.join(empty)} empty in {path}\n"
             "Refusing to run: every ingredient would fail to resolve and the\n"
             "recipes would be rewritten at ~0.3 coverage, destroying good data.\n"
             "If you are in a linked worktree, data/ lives only in the main\n"

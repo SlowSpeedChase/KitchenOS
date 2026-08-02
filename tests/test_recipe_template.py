@@ -299,3 +299,83 @@ class TestSeasonalFrontmatter:
         result = format_recipe_markdown(recipe_data, "http://test.com", "Test", "Channel")
         assert "seasonal_ingredients: []" in result
         assert "peak_months: []" in result
+
+
+class TestFrontmatterIsEscaped:
+    """A video title is not trusted input.
+
+    Six frontmatter fields were interpolated as f'"{value}"' straight from the
+    YouTube API or an LLM extraction. A channel whose title contains a double
+    quote — or three hyphens, which end a YAML document — produced a recipe file
+    whose frontmatter did not parse. Every tool downstream reads that file.
+    """
+
+    def _render(self, **kw):
+        from templates.recipe_template import format_recipe_markdown
+        data = {"recipe_name": kw.pop("recipe_name", "Test Recipe"),
+                "ingredients": [], "instructions": []}
+        data.update(kw.pop("data", {}))
+        return format_recipe_markdown(
+            data,
+            kw.pop("video_url", "https://youtube.com/watch?v=abc"),
+            kw.pop("video_title", "A Video"),
+            kw.pop("channel", "A Channel"),
+        )
+
+    def _fm(self, content):
+        import yaml
+        from lib import frontmatter
+        fm, _ = frontmatter.split_frontmatter(content)
+        assert fm is not None, "frontmatter did not parse as a block"
+        return yaml.safe_load(fm)
+
+    def test_a_quote_in_the_video_title_keeps_the_file_parseable(self):
+        out = self._render(video_title='The 9" Skillet "Trick"')
+        assert self._fm(out)["video_title"] == 'The 9" Skillet "Trick"'
+
+    def test_a_triple_dash_in_the_video_title_does_not_end_the_document(self):
+        out = self._render(video_title="Noodles --- the viral one")
+        fm = self._fm(out)
+        assert fm["video_title"] == "Noodles --- the viral one"
+        assert fm["source_url"] == "https://youtube.com/watch?v=abc"  # still present
+
+    def test_a_quote_in_the_channel_name_is_escaped(self):
+        out = self._render(channel='Bob\'s "Kitchen"')
+        assert self._fm(out)["source_channel"] == 'Bob\'s "Kitchen"'
+
+    def test_a_quote_in_the_recipe_name_is_escaped(self):
+        out = self._render(recipe_name='The "Best" Chili')
+        assert self._fm(out)["title"] == 'The "Best" Chili'
+
+    def test_a_newline_in_the_video_title_cannot_inject_a_key(self):
+        out = self._render(video_title="Chili\nservings: 999")
+        fm = self._fm(out)
+        assert fm["video_title"] == "Chili\nservings: 999"
+        assert fm["servings"] != 999
+
+    def test_a_quote_in_confidence_notes_is_escaped(self):
+        out = self._render(data={"confidence_notes": 'guessed the 2" ginger'})
+        assert self._fm(out)["confidence_notes"] == 'guessed the 2" ginger'
+
+    def test_a_quote_in_a_quoted_optional_field_is_escaped(self):
+        out = self._render(data={"serving_size": '1 x 9" slice'})
+        assert self._fm(out)["serving_size"] == '1 x 9" slice'
+
+    def test_brackets_are_still_escaped_in_the_body_link_label(self):
+        """The Korean/Japanese bracket fix must survive the escaping change."""
+        out = self._render(video_title="[감자치즈빵] Potato Bread")
+        assert r"[\[감자치즈빵\] Potato Bread]" in out
+
+    def test_the_body_link_label_is_not_json_escaped(self):
+        """The label is markdown, not YAML — it must not gain backslash-quotes."""
+        out = self._render(video_title='The 9" Skillet')
+        body = out.split("---", 2)[2]
+        assert '9" Skillet' in body
+        assert r'9\" Skillet' not in body
+
+    def test_an_ordinary_recipe_is_unchanged_in_shape(self):
+        out = self._render()
+        fm = self._fm(out)
+        assert fm["title"] == "Test Recipe"
+        assert fm["video_title"] == "A Video"
+        assert fm["source_channel"] == "A Channel"
