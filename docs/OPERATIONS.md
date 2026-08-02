@@ -365,10 +365,28 @@ apply run names the affected recipes; re-derive exactly those:
 it to `lib/recipe_schema.OPTIONAL_KEYS` in the same commit that starts writing
 it — not by loosening the test.
 
-> **From a linked worktree**, `.env` lives only in the main checkout, so
-> `KITCHENOS_VAULT` must be set explicitly or the tool exits rather than
-> reporting an empty corpus as clean:
-> `KITCHENOS_VAULT=~/Dev/KitchenOS/vault/KitchenOS ../../.venv/bin/python scripts/normalize_recipes.py --check`
+#### Running either tool from a linked worktree
+
+**Both `vault/` and `data/` are git-ignored, so they exist only in the main
+checkout** — and each tool fails differently if you forget:
+
+| Env var | If unset from a worktree |
+|---|---|
+| `KITCHENOS_VAULT` | `normalize_recipes.py` exits — it refuses to report an empty corpus as clean |
+| `KITCHENOS_DB` | `backfill_nutrition.py` exits — `inventory_db.connect()` would otherwise *create* an empty `data/kitchenos.db`, resolve nothing, and rewrite every recipe at ~0.3 coverage |
+
+Both guards were added after the second failure mode happened for real on
+2026-08-01: a backfill run from `.worktrees/` took three recipes from coverage
+1.0 to 0.33/0.55/0.70 and one from 357 kcal to **7**, and reported
+`Updated: 3 / Failed: 0`. Set both:
+
+```bash
+export KITCHENOS_VAULT=~/Dev/KitchenOS/vault/KitchenOS
+export KITCHENOS_DB=~/Dev/KitchenOS/data/kitchenos.db
+```
+
+If a backfill does write garbage, `Recipes/.history/` holds a timestamped
+snapshot taken immediately before each write — that is the recovery path.
 
 ### Recipe repair: bodies and missing frontmatter
 

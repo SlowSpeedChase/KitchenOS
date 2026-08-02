@@ -459,3 +459,54 @@ class TestSelectOnly:
         with pytest.raises(SystemExit) as e:
             select_only([self._P("Alpha")], ["Nope"])
         assert "Nope" in str(e.value)
+
+
+class TestFoodStoreGuard:
+    """A backfill against an empty FDC store writes garbage into real recipes.
+
+    `data/` is git-ignored, so it exists only in the main checkout. Run from a
+    linked worktree, inventory_db.connect() cheerfully *creates* an empty
+    data/kitchenos.db, the food store resolves nothing, and every recipe is
+    rewritten at ~0.3 coverage. Observed live on 2026-08-01: three recipes went
+    from coverage 1.0 to 0.33/0.55/0.70, one from 357 kcal to 7.
+
+    Same failure shape as --only matching nothing: silence that looks like work.
+    """
+
+    def test_an_empty_food_store_is_refused(self, tmp_path, monkeypatch):
+        import pytest
+        from backfill_nutrition import require_food_store
+
+        monkeypatch.setenv("KITCHENOS_DB", str(tmp_path / "empty.db"))
+        with pytest.raises(SystemExit) as e:
+            require_food_store()
+        assert "fdc_foods" in str(e.value)
+
+    def test_the_error_names_the_database_it_opened(self, tmp_path, monkeypatch):
+        import pytest
+        from backfill_nutrition import require_food_store
+
+        monkeypatch.setenv("KITCHENOS_DB", str(tmp_path / "empty.db"))
+        with pytest.raises(SystemExit) as e:
+            require_food_store()
+        assert "empty.db" in str(e.value)
+
+    def test_a_populated_food_store_passes(self, tmp_path, monkeypatch):
+        import sqlite3
+        from backfill_nutrition import require_food_store
+        from lib import fdc_local
+
+        db = tmp_path / "full.db"
+        conn = sqlite3.connect(db)
+        fdc_local.ensure_schema(conn)
+        conn.execute(
+            "INSERT INTO fdc_foods (fdc_id, data_type, description, name_norm, "
+            "kcal_source, dataset_rank, loaded_at) "
+            "VALUES (1, 'sr_legacy', 'Watermelon, raw', 'watermelon raw', "
+            "'atwater', 1, '2026-08-01')"
+        )
+        conn.commit()
+        conn.close()
+
+        monkeypatch.setenv("KITCHENOS_DB", str(db))
+        require_food_store()   # must not raise

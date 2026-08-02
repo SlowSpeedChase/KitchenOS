@@ -18,6 +18,7 @@ Usage:
 
 import argparse
 import re
+import sqlite3
 import sys
 import os
 from pathlib import Path
@@ -207,6 +208,45 @@ def run_fix_duplicates(recipes_dir: Path, dry_run: bool) -> None:
     print(f"\n{'[DRY RUN] ' if dry_run else ''}Files with duplicates: {changed}")
 
 
+def require_food_store():
+    """Refuse to run when the local FDC store is empty.
+
+    `data/` is git-ignored, so `data/kitchenos.db` exists only in the main
+    checkout — but `inventory_db.connect()` creates the file and schema on
+    demand, so running this from a linked worktree silently opens a *new, empty*
+    database. Every ingredient then fails to resolve and the whole corpus is
+    rewritten at ~0.3 coverage, overwriting good data with garbage that still
+    looks like a successful run.
+
+    Observed live on 2026-08-01: three recipes went from coverage 1.0 to
+    0.33/0.55/0.70, one from 357 kcal to 7, because the backfill ran from
+    .worktrees/ and built its own empty DB.
+    """
+    from lib import inventory_db
+
+    path = inventory_db.db_path()
+    conn = inventory_db.connect(path)
+    try:
+        try:
+            rows = conn.execute("SELECT COUNT(*) FROM fdc_foods").fetchone()[0]
+        except sqlite3.Error:
+            rows = 0
+    finally:
+        conn.close()
+
+    if rows == 0:
+        raise SystemExit(
+            f"fdc_foods is empty in {path}\n"
+            "Refusing to run: every ingredient would fail to resolve and the\n"
+            "recipes would be rewritten at ~0.3 coverage, destroying good data.\n"
+            "If you are in a linked worktree, data/ lives only in the main\n"
+            "checkout — point KITCHENOS_DB at it, e.g.\n"
+            "  KITCHENOS_DB=/Users/<you>/Dev/KitchenOS/data/kitchenos.db \\\n"
+            "    ../../.venv/bin/python backfill_nutrition.py --force --only \"<name>\"\n"
+            "(A genuinely fresh environment needs scripts/load_fdc_bulk.py first.)"
+        )
+
+
 def select_only(candidates, names):
     """Narrow ``candidates`` to the recipes named in ``names``.
 
@@ -254,6 +294,8 @@ def main():
         print("DRY RUN — no files will be modified\n")
 
     print(f"Scanning: {recipes_dir}")
+    require_food_store()
+
     candidates = collect_recipes_needing_backfill(recipes_dir, force=args.force)
     candidates = select_only(candidates, args.only)
 

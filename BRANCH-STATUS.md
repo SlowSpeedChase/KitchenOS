@@ -2,7 +2,7 @@
 
 **Created:** 2026-07-31
 **Design Doc:** [docs/superpowers/plans/2026-08-01-recipe-schema-normalize.md](docs/superpowers/plans/2026-08-01-recipe-schema-normalize.md)
-**Current Stage:** review (implementation complete; the corpus write is awaiting approval)
+**Current Stage:** review (implementation complete, corpus normalized)
 **Last Rebased:** 2026-08-01 (onto `main` @ fb76b16)
 
 ## Overview
@@ -16,10 +16,9 @@ can't silently return.
 `tests/e2e/test_recipe_corpus_schema.py` fails if drift returns. 3508 unit
 tests (main: 3450), zero new ruff errors, `scripts/_analysis/` deleted.
 
-**One step is outstanding:** `scripts/normalize_recipes.py --apply` has not been
-run against the live vault — the write was blocked pending approval. Until it
-runs, the two corpus tests are RED against the real 43 violations, which is
-also the proof the guard detects drift.
+The corpus was normalized on 2026-08-01 (16 files) and both corpus tests are
+green. See "Corpus run" below, including the incident that produced a third
+guard.
 
 ## Dependencies
 
@@ -164,13 +163,37 @@ Line-surgical vs YAML round-trip was decided as the branch predicted:
 `lib.frontmatter.rewrite()` already existed as the shared line editor, so a
 second one would have been free to disagree with it.
 
-## Outstanding
+## Corpus run (2026-08-01)
 
-- [ ] `scripts/normalize_recipes.py --apply` against the live vault (blocked
-      pending approval — writes 16 files, each backed up to `Recipes/.history/`).
-- [ ] Then `backfill_nutrition.py --force --only` for the 3 servings-changed
-      recipes, or they ship a serving count contradicting their own macros.
-- [ ] Then the 2 corpus tests go green.
+`--apply` wrote **16 files** (each backed up to `Recipes/.history/`), a second
+apply reported 0, and `--check` reports **0 violations across 252 recipes**. The
+two corpus tests are green.
+
+Nutrition re-derived for the 3 servings-changed recipes. Per-serving calories
+rose exactly as the low-end decision predicts, because the engine was previously
+dividing by a range's midpoint:
+
+| Recipe | servings (engine) | kcal |
+|---|---|---|
+| Creamy Grape Salad Alternative | 5 → 4 | 357 → 446 |
+| Healthy Blueberry Apple Oatmeal Cake | 7 → 6 | 221 → 257 |
+| Watermelon Feta Salad | 7 → 6 | 169 → 197 |
+
+All three now read identically from `nutrition_engine` and `week_view`, at
+coverage 1.0 and `macro_eligible == True`.
+
+### Incident during the run — worth keeping
+
+The first re-derive attempt ran from this worktree without `KITCHENOS_DB`.
+`inventory_db.connect()` **created an empty `data/kitchenos.db`**, so the FDC
+store had 0 rows, nothing resolved, and the three recipes were rewritten at
+coverage 0.33/0.55/0.70 — one at **7 kcal**, down from 357. The run reported
+`Updated: 3, Failed: 0`.
+
+Recovered from `Recipes/.history/` and re-derived against the real DB (13,694
+`fdc_foods` rows). `backfill_nutrition.require_food_store()` now refuses to run
+against an empty store, so this cannot recur silently. Same failure shape as the
+two other guards this branch added: **silence that looks like success.**
 
 ## Reproducing the analysis
 
@@ -213,7 +236,7 @@ in the main checkout.
 ### Testing
 - [x] Unit tests pass
 - [x] Dry-run diff reviewed: 16 files, 43 violations, no UNREPAIRED/SKIPPED
-- [ ] BLOCKED: idempotency on the live corpus — needs the apply to run first (unit-tested)
+- [x] Idempotency verified on the live corpus (second apply: 0 files)
 - [x] Verified with superpowers:verification-before-completion
 
 ### Docs
