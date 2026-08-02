@@ -549,3 +549,82 @@ def test_move_cook_regenerates_the_week_markdown(client, tmp_db, tmp_vault):
     after = plan.read_text()
     assert "Chili" in cell(after, "Thursday", "Lunch")
     assert "Chili" not in cell(after, "Tuesday", "Dinner")
+
+
+# --- Closing the cook loop -------------------------------------------------
+#
+# Inventory had 0 of 239 rows ever use-stamped. Stock was incremented by
+# receipts and decremented only by a shopping-list confirm whose UI trigger is
+# unreachable dead code, so the kitchen's state only ever grew. `POST /api/cook`
+# existed but had been called 4 times ever, and the two successes predate the
+# use-stamping code. Recording a cook must close the loop by itself, from
+# whichever surface did the recording.
+
+class TestConsumeOnCookedTransition:
+    def test_marking_cooked_consumes_the_recipe(self, client, tmp_db, tmp_vault, monkeypatch):
+        calls = []
+        import api_server
+        monkeypatch.setattr(api_server.cook, "consume_recipe",
+                            lambda name, servings=1.0, **kw: calls.append((name, servings)) or {})
+        cook = _create_cook(client).get_json()
+        client.patch(f"/api/cooks/{cook['id']}", json={"cooked_at": "2026-07-07T18:00:00Z"})
+        assert calls == [("Chili", 1.5)], "cooked_at transition did not consume"
+
+    def test_scale_multiplies_what_is_consumed(self, client, tmp_db, tmp_vault, monkeypatch):
+        calls = []
+        import api_server
+        monkeypatch.setattr(api_server.cook, "consume_recipe",
+                            lambda name, servings=1.0, **kw: calls.append((name, servings)) or {})
+        cook = _create_cook(client, scale=2.0, servings_produced=8.0).get_json()
+        client.patch(f"/api/cooks/{cook['id']}", json={"cooked_at": "2026-07-07T18:00:00Z"})
+        assert calls == [("Chili", 2.0)]
+
+    def test_consuming_is_idempotent(self, client, tmp_db, tmp_vault, monkeypatch):
+        """Re-PATCHing an already-cooked row must not spend the pantry twice."""
+        calls = []
+        import api_server
+        monkeypatch.setattr(api_server.cook, "consume_recipe",
+                            lambda name, servings=1.0, **kw: calls.append((name, servings)) or {})
+        cook = _create_cook(client).get_json()
+        for _ in range(3):
+            client.patch(f"/api/cooks/{cook['id']}",
+                         json={"cooked_at": "2026-07-07T18:00:00Z"})
+        assert len(calls) == 1, f"consumed {len(calls)} times for one cook"
+
+    def test_other_patches_do_not_consume(self, client, tmp_db, tmp_vault, monkeypatch):
+        """A verdict or a note is not a cook."""
+        calls = []
+        import api_server
+        monkeypatch.setattr(api_server.cook, "consume_recipe",
+                            lambda name, servings=1.0, **kw: calls.append((name, servings)) or {})
+        cook = _create_cook(client).get_json()
+        client.patch(f"/api/cooks/{cook['id']}", json={"make_again": 1})
+        client.patch(f"/api/cooks/{cook['id']}", json={"cook_note": "too salty"})
+        client.patch(f"/api/cooks/{cook['id']}", json={"scale": 2.0})
+        assert calls == []
+
+    def test_clearing_cooked_at_does_not_consume(self, client, tmp_db, tmp_vault, monkeypatch):
+        calls = []
+        import api_server
+        monkeypatch.setattr(api_server.cook, "consume_recipe",
+                            lambda name, servings=1.0, **kw: calls.append((name, servings)) or {})
+        cook = _create_cook(client).get_json()
+        client.patch(f"/api/cooks/{cook['id']}", json={"cooked_at": "2026-07-07T18:00:00Z"})
+        client.patch(f"/api/cooks/{cook['id']}", json={"cooked_at": None})
+        assert len(calls) == 1
+
+    def test_a_failing_consume_does_not_fail_the_patch(self, client, tmp_db, tmp_vault, monkeypatch):
+        """Recording that you cooked something must survive a pantry error.
+
+        The cook record is the user's memory; inventory is derived. Losing the
+        record because a decrement raised would be the worse failure.
+        """
+        import api_server
+        def boom(*a, **kw):
+            raise RuntimeError("pantry exploded")
+        monkeypatch.setattr(api_server.cook, "consume_recipe", boom)
+        cook = _create_cook(client).get_json()
+        resp = client.patch(f"/api/cooks/{cook['id']}",
+                            json={"cooked_at": "2026-07-07T18:00:00Z"})
+        assert resp.status_code == 200
+        assert resp.get_json()["cooked_at"] is not None

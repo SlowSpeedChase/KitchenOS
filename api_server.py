@@ -50,7 +50,7 @@ from lib.ingredient_validator import validate_ingredients
 from lib.ingredient_cleaner import clean_ingredient_list
 from lib.seasonality import match_ingredients_to_seasonal, get_peak_months
 from lib.nutrition_engine import calculate_recipe_nutrition
-from lib import meal_loader, pantry as pantry_module, paths, task_extractor
+from lib import cook, meal_loader, pantry as pantry_module, paths, task_extractor
 from lib.serving_ledger import MEALS as SLOT_VOCAB
 from recipe_sources import parse_recipe_from_text
 
@@ -1512,11 +1512,40 @@ def api_cook_update(cook_id):
     before = serving_ledger.get_cook(cook_id)
     if before is None:
         return jsonify({"error": "cook not found"}), 404
-    cook = serving_ledger.update_cook(cook_id, **data)
-    _regen_weeks(before["week"], cook["week"])
+    updated = serving_ledger.update_cook(cook_id, **data)
+
+    # Recording a cook is what closes the inventory loop, and it closes here —
+    # server-side, on the NULL -> set transition of `cooked_at` — so that every
+    # surface which can mark something cooked spends the pantry exactly once,
+    # whether that's the board's 🍳, a phone, an intent, or the nightly sweep.
+    # Before this, consumption lived in a client-side call the board made
+    # alongside its PATCH, so only that one button closed it: inventory had 0 of
+    # 239 rows ever use-stamped, and `POST /api/cook` had been called four times
+    # in the system's life.
+    #
+    # Gated on the transition, not on the field being present, so re-PATCHing an
+    # already-cooked row (or editing its note afterwards) cannot spend the
+    # pantry twice.
+    if before.get("cooked_at") is None and updated.get("cooked_at"):
+        try:
+            cook.consume_recipe(
+                updated["recipe"],
+                servings=float(updated.get("scale") or 1.0),
+            )
+        except Exception:
+            # Never fail the PATCH over this. The cook record is the user's
+            # memory of what happened; inventory is derived from it. Losing the
+            # record because a decrement raised is the worse of the two
+            # failures, and a missed depletion self-heals via the expiry prune.
+            app.logger.exception(
+                "consume_recipe failed for cook %s (%s); the cook was still recorded",
+                cook_id, updated.get("recipe"),
+            )
+
+    _regen_weeks(before["week"], updated["week"])
     # Both names: a recipe rename must refresh the note it left as well.
-    _sync_cook_history(before["recipe"], cook["recipe"])
-    return jsonify(cook)
+    _sync_cook_history(before["recipe"], updated["recipe"])
+    return jsonify(updated)
 
 
 @app.route('/api/cooks/<int:cook_id>/move', methods=['POST'])
