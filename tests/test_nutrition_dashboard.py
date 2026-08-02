@@ -9,6 +9,7 @@ from lib.nutrition_dashboard import (
     calculate_daily_nutrition,
     format_daily_summary_row,
     generate_dashboard,
+    compute_dashboard,
 )
 from lib.nutrition import NutritionData
 from lib.meal_plan_parser import MealEntry
@@ -279,3 +280,111 @@ class TestGenerateDashboard:
             markdown, warnings = generate_dashboard("2026-W03", vault_path)
 
             assert any("My Macros.md not found" in w for w in warnings)
+
+
+def _dashboard_vault(tmp_dir, meals, recipe_nutrition=None):
+    """A vault with targets, one 500-kcal recipe, and the given meal plan."""
+    vault_path = Path(tmp_dir)
+    recipes_dir = vault_path / "Recipes"
+    meal_plans_dir = vault_path / "Meal Plans"
+    recipes_dir.mkdir()
+    meal_plans_dir.mkdir()
+    create_macros_file(vault_path, {'calories': 2000, 'protein': 150,
+                                    'carbs': 200, 'fat': 65})
+    create_recipe_file(recipes_dir, "Test Recipe",
+                       recipe_nutrition or {'calories': 500, 'protein': 25,
+                                            'carbs': 50, 'fat': 20})
+    create_meal_plan(meal_plans_dir, "2026-W03", meals)
+    return vault_path
+
+
+FULL_DAY = {'breakfast': 'Test Recipe', 'lunch': 'Test Recipe',
+            'snack': 'Test Recipe', 'dinner': 'Test Recipe'}
+
+
+class TestUnplannedWeeksAreNotStarvationWeeks:
+    """An empty calendar is not a diet.
+
+    The live 2026-W31 dashboard reported 715 kcal/day against a 2300 target
+    because a single Sunday dinner was the entire week. Averaged over "days
+    with any meal on them", one filled slot counts as a day's eating, so the
+    less you plan the more alarming the number gets.
+    """
+
+    def test_reports_how_much_of_the_week_is_planned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = _dashboard_vault(tmp, {'Monday': {'dinner': 'Test Recipe'}})
+            data = compute_dashboard("2026-W03", vault)
+            assert data["days_planned"] == 1
+            assert data["days_total"] == 7
+            assert data["slots_planned"] == 1
+            assert data["slots_total"] == 28
+
+    def test_warns_that_averages_cover_only_planned_days(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = _dashboard_vault(tmp, {'Monday': {'dinner': 'Test Recipe'}})
+            data = compute_dashboard("2026-W03", vault)
+            assert any("1 of 7" in w for w in data["warnings"]), data["warnings"]
+
+    def test_a_fully_planned_week_needs_no_caveat(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday',
+                    'Friday', 'Saturday', 'Sunday']
+            vault = _dashboard_vault(tmp, {d: dict(FULL_DAY) for d in days})
+            data = compute_dashboard("2026-W03", vault)
+            assert data["days_planned"] == 7
+            assert data["slots_planned"] == 28
+            assert not any("of 7 day" in w for w in data["warnings"]), data["warnings"]
+
+    def test_each_day_reports_how_many_slots_it_filled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = _dashboard_vault(tmp, {
+                'Monday': {'dinner': 'Test Recipe'},
+                'Tuesday': dict(FULL_DAY),
+            })
+            days = {d["day"]: d for d in compute_dashboard("2026-W03", vault)["days"]}
+            assert days["Monday"]["slots_filled"] == 1
+            assert days["Tuesday"]["slots_filled"] == 4
+            assert days["Wednesday"]["slots_filled"] == 0
+
+    def test_averages_still_describe_the_planned_days(self):
+        """The caveat is added; the arithmetic is not silently redefined."""
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = _dashboard_vault(tmp, {'Monday': {'dinner': 'Test Recipe'}})
+            data = compute_dashboard("2026-W03", vault)
+            assert data["averages"]["calories"] == 500
+
+
+class TestNullCaloriesAreMissingNotZero:
+    """A recipe with the key present and empty must not read as 0 kcal.
+
+    `int(fm.get('nutrition_calories', 0) or 0)` turned a null into a zero, so a
+    recipe with no macros silently *lowered* a day's total instead of being
+    reported as missing data.
+    """
+
+    def test_null_calories_returns_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recipes_dir = Path(tmp)
+            (recipes_dir / "Blank.md").write_text(
+                '---\ntitle: "Blank"\nnutrition_calories: null\n'
+                'nutrition_protein: null\n---\n\n# Blank\n', encoding="utf-8")
+            assert get_recipe_nutrition("Blank", recipes_dir) is None
+
+    def test_zero_calories_is_still_a_real_answer(self):
+        """Zero is a value (black coffee); null is an absence. Don't conflate."""
+        with tempfile.TemporaryDirectory() as tmp:
+            recipes_dir = Path(tmp)
+            create_recipe_file(recipes_dir, "Water", {'calories': 0, 'protein': 0,
+                                                      'carbs': 0, 'fat': 0})
+            assert get_recipe_nutrition("Water", recipes_dir) == NutritionData(
+                calories=0, protein=0, carbs=0, fat=0)
+
+    def test_a_null_recipe_is_reported_missing_not_counted_as_zero(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = _dashboard_vault(tmp, {'Monday': {'dinner': 'Ghost'}})
+            (vault / "Recipes" / "Ghost.md").write_text(
+                '---\ntitle: "Ghost"\nnutrition_calories: null\n---\n\n# Ghost\n',
+                encoding="utf-8")
+            data = compute_dashboard("2026-W03", vault)
+            assert any("Ghost" in w for w in data["warnings"]), data["warnings"]

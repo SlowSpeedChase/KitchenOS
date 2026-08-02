@@ -10,6 +10,10 @@ from lib.macro_targets import load_macro_targets
 from lib.meal_plan_parser import parse_meal_plan, MealEntry, flatten_to_recipes
 from lib.recipe_parser import parse_recipe_file
 
+#: The four slots a planned day can fill. One authority, so "is this day
+#: planned" and "how much of it is planned" cannot drift apart.
+MEAL_SLOTS = ('breakfast', 'lunch', 'snack', 'dinner')
+
 
 def get_recipe_nutrition(recipe_name: str, recipes_dir: Path) -> Optional[NutritionData]:
     """Load nutrition data from a recipe file.
@@ -31,15 +35,23 @@ def get_recipe_nutrition(recipe_name: str, recipes_dir: Path) -> Optional[Nutrit
     parsed = parse_recipe_file(content)
     fm = parsed['frontmatter']
 
-    # Check if recipe has nutrition data
-    if 'nutrition_calories' not in fm:
+    # A present-but-empty key is an absence, not a zero. Testing only for the
+    # key's presence and then reading it as `int(x or 0)` turned a recipe with
+    # no macros into a 0 kcal one, so instead of being reported as missing data
+    # it silently *lowered* the day's total — and the day still counted as
+    # planned. Zero stays a legitimate answer (black coffee); null does not.
+    calories = fm.get('nutrition_calories')
+    if calories is None or calories == '':
         return None
 
+    def _int(key):
+        return int(fm.get(key) or 0)
+
     return NutritionData(
-        calories=int(fm.get('nutrition_calories', 0) or 0),
-        protein=int(fm.get('nutrition_protein', 0) or 0),
-        carbs=int(fm.get('nutrition_carbs', 0) or 0),
-        fat=int(fm.get('nutrition_fat', 0) or 0),
+        calories=_int('nutrition_calories'),
+        protein=_int('nutrition_protein'),
+        carbs=_int('nutrition_carbs'),
+        fat=_int('nutrition_fat'),
     )
 
 
@@ -59,7 +71,7 @@ def calculate_daily_nutrition(
     total = NutritionData.empty()
     missing = []
 
-    for meal in ['breakfast', 'lunch', 'snack', 'dinner']:
+    for meal in MEAL_SLOTS:
         entry = day_data.get(meal)
         if not entry:
             continue
@@ -124,11 +136,21 @@ def compute_dashboard(
         {
           "week": str, "week_label": str,
           "targets": {calories, protein, carbs, fat},
-          "days": [{day, date(iso), has_meals, calories, protein, carbs, fat}],
+          "days": [{day, date(iso), has_meals, slots_filled, slots_total,
+                    calories, protein, carbs, fat}],
           "averages": {calories, protein, carbs, fat},
+          "days_planned": int, "days_total": int,
+          "slots_planned": int, "slots_total": int,
           "warnings": [str],
         }
     Days without meals have null macros.
+
+    ``averages`` is per *planned* day and always has been. The counts beside it
+    are the denominator it was missing: a week with one Sunday dinner on it
+    averaged 715 kcal against a 2300 target, which reads as a starvation week
+    rather than an unplanned one — the less you plan, the more alarming the
+    dashboard gets. Redefining the average would trade one wrong number for
+    another, so the fix is to say what it covers.
     """
     warnings = []
 
@@ -161,9 +183,15 @@ def compute_dashboard(
     daily_nutrition = []
     all_missing = []
 
+    # How much of each day is actually planned, not just whether anything is.
+    # One filled slot used to count as a day's eating, which is what made an
+    # unplanned week read as a starvation week.
+    slots_per_day = []
+
     for day_data in days:
-        has_meals = any(day_data.get(m) for m in ['breakfast', 'lunch', 'snack', 'dinner'])
-        if has_meals:
+        filled = sum(1 for m in MEAL_SLOTS if day_data.get(m))
+        slots_per_day.append(filled)
+        if filled:
             nutrition, missing = calculate_daily_nutrition(day_data, recipes_dir)
             daily_nutrition.append(nutrition)
             all_missing.extend(missing)
@@ -192,18 +220,32 @@ def compute_dashboard(
     else:
         avg = NutritionData.empty()
 
+    # State the denominator. The averages are still "per planned day" — the
+    # arithmetic is not silently redefined — but a reader comparing 715 kcal
+    # against a 2300 target deserves to know it describes one Sunday rather
+    # than a week of eating.
+    days_planned = len(days_with_meals)
+    days_total = len(days)
+    slots_planned = sum(slots_per_day)
+    if days_planned and days_planned < days_total:
+        warnings.append(
+            f"Averages cover {days_planned} of {days_total} days — the ones "
+            f"with meals planned, not the whole week."
+        )
+
     # Format week dates
     first_date = days[0]['date']
     last_date = days[6]['date']
     week_label = f"{first_date.strftime('%b %-d')} - {last_date.strftime('%b %-d')}, {first_date.year}"
 
     day_records = []
-    for day_data, nutrition in zip(days, daily_nutrition):
-        has_meals = any(day_data.get(m) for m in ['breakfast', 'lunch', 'snack', 'dinner'])
+    for day_data, nutrition, filled in zip(days, daily_nutrition, slots_per_day):
         day_records.append({
             "day": day_data['day'],
             "date": day_data['date'].isoformat(),
-            "has_meals": has_meals,
+            "has_meals": bool(filled),
+            "slots_filled": filled,
+            "slots_total": len(MEAL_SLOTS),
             "calories": nutrition.calories if nutrition else None,
             "protein": nutrition.protein if nutrition else None,
             "carbs": nutrition.carbs if nutrition else None,
@@ -222,6 +264,12 @@ def compute_dashboard(
             "calories": avg.calories, "protein": avg.protein,
             "carbs": avg.carbs, "fat": avg.fat,
         },
+        # The denominator behind `averages`, so a surface can say what the
+        # number covers instead of implying it covers the week.
+        "days_planned": days_planned,
+        "days_total": days_total,
+        "slots_planned": slots_planned,
+        "slots_total": days_total * len(MEAL_SLOTS),
         "warnings": warnings,
     }
 
