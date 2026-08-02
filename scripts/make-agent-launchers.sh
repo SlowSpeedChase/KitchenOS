@@ -116,6 +116,16 @@ EOF
         fi
         dest="$VENV_BIN/$name"
 
+        # Remove any shim left from when this agent was kind=shim. Leaving it is
+        # actively harmful: it is the file someone reaches for in the Full Disk
+        # Access picker, it looks exactly like the eight legitimate shims, and
+        # granting it silently does nothing — the failure this kind exists to
+        # fix.
+        if [ -e "$AGENTS_DIR/$name" ]; then
+            rm -f "$AGENTS_DIR/$name"
+            echo "        removed stale shim: ops/agents/$name"
+        fi
+
         # Copy only when the bytes differ, so a no-op re-run doesn't disturb a
         # working TCC grant.
         if ! cmp -s "$real" "$dest" 2>/dev/null; then
