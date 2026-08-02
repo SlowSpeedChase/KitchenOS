@@ -581,8 +581,10 @@ def test_move_cook_regenerates_the_week_markdown(client, tmp_db, tmp_vault):
 class TestConsumeOnCookedTransition:
     def test_marking_cooked_consumes_the_recipe(self, client, tmp_db, tmp_vault, monkeypatch):
         calls = []
-        import api_server
-        monkeypatch.setattr(api_server.cook, "consume_recipe",
+        # Patch where consumption actually happens — the shared helper the
+        # nightly sweep also routes through, not a name in api_server.
+        from lib import cook_sweep
+        monkeypatch.setattr(cook_sweep.cook_module, "consume_recipe",
                             lambda name, servings=1.0, **kw: calls.append((name, servings)) or {})
         cook = _create_cook(client).get_json()
         client.patch(f"/api/cooks/{cook['id']}", json={"cooked_at": "2026-07-07T18:00:00Z"})
@@ -590,8 +592,10 @@ class TestConsumeOnCookedTransition:
 
     def test_scale_multiplies_what_is_consumed(self, client, tmp_db, tmp_vault, monkeypatch):
         calls = []
-        import api_server
-        monkeypatch.setattr(api_server.cook, "consume_recipe",
+        # Patch where consumption actually happens — the shared helper the
+        # nightly sweep also routes through, not a name in api_server.
+        from lib import cook_sweep
+        monkeypatch.setattr(cook_sweep.cook_module, "consume_recipe",
                             lambda name, servings=1.0, **kw: calls.append((name, servings)) or {})
         cook = _create_cook(client, scale=2.0, servings_produced=8.0).get_json()
         client.patch(f"/api/cooks/{cook['id']}", json={"cooked_at": "2026-07-07T18:00:00Z"})
@@ -600,8 +604,10 @@ class TestConsumeOnCookedTransition:
     def test_consuming_is_idempotent(self, client, tmp_db, tmp_vault, monkeypatch):
         """Re-PATCHing an already-cooked row must not spend the pantry twice."""
         calls = []
-        import api_server
-        monkeypatch.setattr(api_server.cook, "consume_recipe",
+        # Patch where consumption actually happens — the shared helper the
+        # nightly sweep also routes through, not a name in api_server.
+        from lib import cook_sweep
+        monkeypatch.setattr(cook_sweep.cook_module, "consume_recipe",
                             lambda name, servings=1.0, **kw: calls.append((name, servings)) or {})
         cook = _create_cook(client).get_json()
         for _ in range(3):
@@ -612,8 +618,10 @@ class TestConsumeOnCookedTransition:
     def test_other_patches_do_not_consume(self, client, tmp_db, tmp_vault, monkeypatch):
         """A verdict or a note is not a cook."""
         calls = []
-        import api_server
-        monkeypatch.setattr(api_server.cook, "consume_recipe",
+        # Patch where consumption actually happens — the shared helper the
+        # nightly sweep also routes through, not a name in api_server.
+        from lib import cook_sweep
+        monkeypatch.setattr(cook_sweep.cook_module, "consume_recipe",
                             lambda name, servings=1.0, **kw: calls.append((name, servings)) or {})
         cook = _create_cook(client).get_json()
         client.patch(f"/api/cooks/{cook['id']}", json={"make_again": 1})
@@ -623,8 +631,10 @@ class TestConsumeOnCookedTransition:
 
     def test_clearing_cooked_at_does_not_consume(self, client, tmp_db, tmp_vault, monkeypatch):
         calls = []
-        import api_server
-        monkeypatch.setattr(api_server.cook, "consume_recipe",
+        # Patch where consumption actually happens — the shared helper the
+        # nightly sweep also routes through, not a name in api_server.
+        from lib import cook_sweep
+        monkeypatch.setattr(cook_sweep.cook_module, "consume_recipe",
                             lambda name, servings=1.0, **kw: calls.append((name, servings)) or {})
         cook = _create_cook(client).get_json()
         client.patch(f"/api/cooks/{cook['id']}", json={"cooked_at": "2026-07-07T18:00:00Z"})
@@ -637,10 +647,10 @@ class TestConsumeOnCookedTransition:
         The cook record is the user's memory; inventory is derived. Losing the
         record because a decrement raised would be the worse failure.
         """
-        import api_server
+        from lib import cook_sweep
         def boom(*a, **kw):
             raise RuntimeError("pantry exploded")
-        monkeypatch.setattr(api_server.cook, "consume_recipe", boom)
+        monkeypatch.setattr(cook_sweep.cook_module, "consume_recipe", boom)
         cook = _create_cook(client).get_json()
         resp = client.patch(f"/api/cooks/{cook['id']}",
                             json={"cooked_at": "2026-07-07T18:00:00Z"})

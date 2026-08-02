@@ -19,14 +19,36 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from dotenv import load_dotenv  # noqa: E402
 load_dotenv()
 
-from lib import verdict_nudge  # noqa: E402
+from lib import cook_sweep, verdict_nudge  # noqa: E402
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dry-run", action="store_true",
                     help="print what would be sent, send nothing")
+    ap.add_argument("--no-sweep", action="store_true",
+                    help="skip the assumed-cook sweep; only send the nudge")
     args = ap.parse_args()
+
+    # Sweep first: a cook nobody marked is still a cook that happened, and the
+    # nudge below asks about cooks whose day has passed — so without this it
+    # would be asking "how was it?" about rows the rest of the system still
+    # believes were never made. See lib/cook_sweep for why the plan is treated
+    # as the record.
+    if not args.no_sweep and not args.dry_run:
+        result = cook_sweep.sweep()
+        if result["marked"]:
+            shown = ", ".join(result["marked"][:5])
+            more = "…" if len(result["marked"]) > 5 else ""
+            print(f"Swept {len(result['marked'])} assumed cook(s): {shown}{more}")
+            print(f"  pantry spent for {result['consumed']}, "
+                  f"{result['failed']} failed")
+        else:
+            print("Nothing to sweep — no past cooks left unmarked.")
+    elif args.dry_run:
+        due = cook_sweep.due_cooks()
+        print(f"[dry run] would sweep {len(due)} assumed cook(s): "
+              f"{', '.join(c['recipe'] for c in due[:5])}")
 
     items = verdict_nudge.pending()
     if not items:

@@ -137,6 +137,25 @@
         @media (hover: hover) {
             .today-card:hover, .card:hover { border-color: var(--app-kitchenos); }
         }
+        /* Shares its markup with /prep — see kitchen_today.render_verdict_html.
+           Sized for a thumb: the control it replaces was two taps deep inside a
+           sheet that only appears on touch. */
+        .verdict-ask {
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 12px; flex-wrap: wrap;
+            margin: 0 0 18px; padding: 12px 16px;
+            border: 1px solid var(--border); border-radius: 10px;
+        }
+        .verdict-q { font-size: 0.95rem; }
+        .verdict-btns { display: flex; gap: 8px; }
+        .verdict-btn {
+            font-size: 1.25rem; line-height: 1;
+            min-width: 52px; min-height: 44px;
+            border: 1px solid var(--border); border-radius: 8px;
+            background: transparent; cursor: pointer;
+        }
+        .verdict-btn:active { transform: scale(0.94); }
+        .verdict-ask.answered { opacity: 0.55; }
     </style>
 </head>
 <body>
@@ -145,11 +164,40 @@
         <h1>Kitchen today</h1>
     </header>
 
+    <!--VERDICT-->
+
     <!--TODAY-->
 
     <details class="all-pages">
         <summary>All pages</summary>
         <!--SECTIONS-->
     </details>
+
+    <script>
+        // One PATCH, no navigation. Mirrors /prep's handler; both exist because
+        // the ask has to be wherever you already are.
+        document.querySelectorAll('.verdict-ask .verdict-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const ask = btn.closest('.verdict-ask');
+                const makeAgain = btn.dataset.verdict === '1';
+                ask.querySelectorAll('.verdict-btn').forEach(b => b.disabled = true);
+                try {
+                    const resp = await fetch(`/api/cooks/${ask.dataset.cookId}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ make_again: makeAgain }),
+                    });
+                    if (!resp.ok) throw new Error('save failed');
+                    ask.classList.add('answered');
+                    ask.querySelector('.verdict-q').textContent =
+                        makeAgain ? 'Noted — you\u2019d make it again. \u{1F44D}'
+                                  : 'Noted — not again. \u{1F44E}';
+                } catch (err) {
+                    ask.querySelectorAll('.verdict-btn').forEach(b => b.disabled = false);
+                    ask.querySelector('.verdict-q').textContent = 'Could not save that.';
+                }
+            });
+        });
+    </script>
 </body>
 </html>

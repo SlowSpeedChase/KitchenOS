@@ -275,6 +275,57 @@ def render_prep_html(prep: dict) -> str:
     return "\n".join(out)
 
 
+def verdict_prompt(today: Optional[date] = None) -> Optional[dict]:
+    """The single most recent cook awaiting a verdict, or None.
+
+    One, not a list. The whole point is that answering costs a tap; a queue of
+    six turns it back into a chore, which is what the existing flow already was
+    — reopen the planner, find the card, open the sheet on touch, tap ⋮, tap the
+    verdict. Two of sixteen cooks were ever judged. The next one appears after
+    this one is answered.
+    """
+    from lib import verdict_nudge
+
+    today = today or date.today()
+    pending = verdict_nudge.pending(today=today)
+    if not pending:
+        return None
+    item = pending[0]
+    return {
+        "cook_id": item["id"],
+        "recipe": item["recipe"],
+        "when": _day_word(item.get("date") or (item.get("cooked_at") or "")[:10], today),
+    }
+
+
+def render_verdict_html(prompt: Optional[dict]) -> str:
+    """The ask, rendered identically wherever it appears.
+
+    Shared by the home page and ``/prep`` so the two cannot drift into asking
+    the same question two different ways. Empty string when there is nothing to
+    ask — a card that says "no verdicts pending" is noise on every other day.
+
+    The buttons PATCH the ledger directly. No navigation, no confirm, no sheet:
+    the reason `make_again` is empty is that recording it cost five gestures.
+    """
+    if not prompt:
+        return ""
+    return (
+        '<div class="verdict-ask" data-cook-id="{cid}">'
+        '<span class="verdict-q">How was <strong>{recipe}</strong>{when}?</span>'
+        '<span class="verdict-btns">'
+        '<button class="verdict-btn" data-verdict="1" aria-label="Make again">'
+        "&#128077;</button>"
+        '<button class="verdict-btn" data-verdict="0" aria-label="Not again">'
+        "&#128078;</button>"
+        "</span></div>"
+    ).format(
+        cid=int(prompt["cook_id"]),
+        recipe=escape(str(prompt["recipe"])),
+        when=f" {escape(prompt['when'])}" if prompt.get("when") else "",
+    )
+
+
 # --- helpers ----------------------------------------------------------------
 
 def _ordinal(iso: str) -> Optional[int]:

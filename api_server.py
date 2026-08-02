@@ -51,7 +51,7 @@ from lib.ingredient_validator import validate_ingredients
 from lib.ingredient_cleaner import clean_ingredient_list
 from lib.seasonality import match_ingredients_to_seasonal, get_peak_months
 from lib.nutrition_engine import calculate_recipe_nutrition
-from lib import cook, meal_loader, pantry as pantry_module, paths, task_extractor
+from lib import cook_sweep, meal_loader, pantry as pantry_module, paths, task_extractor
 from lib.serving_ledger import MEALS as SLOT_VOCAB
 from recipe_sources import parse_recipe_from_text
 
@@ -1592,20 +1592,10 @@ def api_cook_update(cook_id):
     # already-cooked row (or editing its note afterwards) cannot spend the
     # pantry twice.
     if before.get("cooked_at") is None and updated.get("cooked_at"):
-        try:
-            cook.consume_recipe(
-                updated["recipe"],
-                servings=float(updated.get("scale") or 1.0),
-            )
-        except Exception:
-            # Never fail the PATCH over this. The cook record is the user's
-            # memory of what happened; inventory is derived from it. Losing the
-            # record because a decrement raised is the worse of the two
-            # failures, and a missed depletion self-heals via the expiry prune.
-            app.logger.exception(
-                "consume_recipe failed for cook %s (%s); the cook was still recorded",
-                cook_id, updated.get("recipe"),
-            )
+        # Shared with the nightly sweep, deliberately: whichever notices the
+        # cook happened, the pantry is spent the same way, once, with the same
+        # never-raise behaviour. See lib/cook_sweep.consume_for_cook.
+        cook_sweep.consume_for_cook(updated)
 
     _regen_weeks(before["week"], updated["week"])
     # Both names: a recipe rename must refresh the note it left as well.
@@ -3499,6 +3489,12 @@ def prep_page():
     html = _serve_page_with_claude_bar('prep.html', [
         ('<!--SUB-->', sub),
         ('<!--WEEK-->', prep["week"]),
+        # Asked here because this is a page you already open in the kitchen. The
+        # verdict-nudge agent has been sending Reminders that say "Open the
+        # planner, tap ⋮ → Make again" — directions to a chore rather than a way
+        # out of it, which is why 14 of 16 cooks carry no verdict.
+        ('<!--VERDICT-->',
+         kitchen_today.render_verdict_html(kitchen_today.verdict_prompt())),
         ('<!--PREP-->', kitchen_today.render_prep_html(prep)),
     ])
     return html, 200, {'Content-Type': 'text/html'}
@@ -3551,6 +3547,11 @@ def home_page():
     kicker = f"KitchenOS · {today.strftime('%a %b %-d')}"
     return _serve_page_with_claude_bar('home.html', [
         ('<!--KICKER-->', kicker),
+        # Above the cards: it is one line, it disappears when there is nothing
+        # to ask, and it is the only thing on this page that asks the reader for
+        # something rather than telling them something.
+        ('<!--VERDICT-->',
+         kitchen_today.render_verdict_html(kitchen_today.verdict_prompt(today))),
         ('<!--TODAY-->', kitchen_today.render_html()),
         ('<!--SECTIONS-->', web_dashboard.render_html()),
     ])
