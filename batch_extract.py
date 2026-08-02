@@ -10,6 +10,7 @@ Usage:
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -187,16 +188,56 @@ def _write_run_log(total, succeeded, skipped, failed, invalid, start_time):
     (RUNS_LOG_DIR / filename).write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
-def trigger_analysis_agent(failure_log_path: Path):
-    """Spawn the failure analysis agent in the background.
+#: Values that mean "not enabled". Matches lib/llm_gate's rule: a blank
+#: `KITCHENOS_FAILURE_ANALYSIS=` left in a shell profile is not a decision.
+_FALSEY = {"", "0", "false", "no", "off"}
 
-    Runs scripts/analyze_failures.sh detached so batch_extract doesn't wait.
+
+def _env_flag(name: str) -> bool:
+    """Is this env var set to something that means yes?"""
+    return os.getenv(name, "").strip().lower() not in _FALSEY
+
+
+def trigger_analysis_agent(failure_log_path: Path):
+    """Spawn the failure analysis agent in the background, if it is enabled.
+
+    Opt-in via ``KITCHENOS_FAILURE_ANALYSIS``, and **off by default**, for two
+    reasons found on 2026-08-02:
+
+    1. It never ran. ``scripts/analyze_failures.sh`` resolves ``claude`` off
+       ``PATH``, which under launchd is bare, so 276 of 277 spawns died on
+       "claude CLI not found" — while this function printed "Analysis agent
+       triggered in background" unconditionally, so the success message
+       outlived the corpse. Reporting a launch we did not verify is the bug;
+       printing the real reason is the fix.
+    2. It should not simply be revived. The script hands Claude
+       ``Edit,Bash,Write`` and instructs it to branch, commit, push and open a
+       PR — unattended, hourly, against a queue that does not drain (the same
+       handful of items retry forever). Wiring that back up silently, on a
+       timer, is not a change to make on the user's behalf.
+
+    Enable deliberately once the queue drains and a throttle exists:
+    ``KITCHENOS_FAILURE_ANALYSIS=1``.
     """
+    import shutil
     import subprocess
+
+    if not _env_flag("KITCHENOS_FAILURE_ANALYSIS"):
+        print("Failure analysis agent: disabled "
+              "(set KITCHENOS_FAILURE_ANALYSIS=1 to enable)")
+        return
 
     script = Path(__file__).parent / "scripts" / "analyze_failures.sh"
     if not script.exists():
         print(f"Warning: Analysis script not found at {script}", file=sys.stderr)
+        return
+
+    # The script's own `command -v claude` guard exits 1 into a log nobody
+    # reads. Check here so the reason reaches the run summary instead.
+    if shutil.which("claude") is None:
+        print("Warning: Analysis agent not started — 'claude' is not on PATH. "
+              "launchd runs with a bare PATH; give the shim an absolute path.",
+              file=sys.stderr)
         return
 
     try:

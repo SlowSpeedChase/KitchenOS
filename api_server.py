@@ -37,6 +37,7 @@ from lib.meal_plan_parser import (
 )
 from lib.meal_nutrition import meal_nutrition
 from lib.recipe_parser import parse_recipe_file, extract_my_notes, parse_recipe_body
+from lib import recipe_refresh
 from templates.shopping_list_template import generate_shopping_list_markdown, generate_filename as shopping_list_filename
 from templates.recipe_template import format_recipe_markdown
 from templates.meal_plan_template import (
@@ -1131,27 +1132,15 @@ def refresh_template():
         # Parse body for recipe data
         body_data = parse_recipe_body(body)
 
-        # Build recipe_data from frontmatter + body
-        recipe_data = {
-            'recipe_name': frontmatter.get('title', 'Untitled'),
-            'description': body_data.get('description', ''),
-            'prep_time': frontmatter.get('prep_time'),
-            'cook_time': frontmatter.get('cook_time'),
-            'total_time': frontmatter.get('total_time'),
-            'servings': frontmatter.get('servings'),
-            'difficulty': frontmatter.get('difficulty'),
-            'cuisine': frontmatter.get('cuisine'),
-            'protein': frontmatter.get('protein'),
-            'dish_type': frontmatter.get('dish_type'),
-            'dietary': frontmatter.get('dietary', []),
-            'equipment': frontmatter.get('equipment', []),
-            'ingredients': body_data.get('ingredients', []),
-            'instructions': body_data.get('instructions', []),
-            'video_tips': body_data.get('video_tips', []),
-            'needs_review': frontmatter.get('needs_review', False),
-            'confidence_notes': frontmatter.get('confidence_notes', ''),
-            'source': frontmatter.get('recipe_source', 'unknown'),
-        }
+        # Build recipe_data from frontmatter + body.
+        #
+        # This dict used to be spelled out here and had fallen behind the
+        # schema — 18 keys where the template renders 30 — so a "Refresh
+        # template" press silently returned banner, all four macros,
+        # serving_size, meal_occasion, seasonal_ingredients and peak_months as
+        # null. lib/recipe_refresh owns the mapping now so it stays in one
+        # place; see that module for why the merge below is schema-driven.
+        recipe_data = recipe_refresh.template_payload(frontmatter, body_data)
 
         # Create backup
         create_backup(filepath)
@@ -1164,6 +1153,12 @@ def refresh_template():
             channel=frontmatter.get('source_channel', ''),
             date_added=frontmatter.get('date_added')
         )
+
+        # The template has no slot for keys other producers write — short_title,
+        # the fit_* family, nutrition_coverage, cook_count, last_cooked — so a
+        # re-render drops them outright. Put back anything declared that the
+        # render lost.
+        new_content = recipe_refresh.preserve_unrendered(new_content, frontmatter)
 
         # Inject preserved notes
         if my_notes and my_notes != "<!-- Your personal notes, ratings, and modifications go here -->":
@@ -1216,7 +1211,13 @@ def reprocess_recipe():
             ['.venv/bin/python', 'extract_recipe.py', source_url],
             capture_output=True,
             text=True,
-            cwd='/Users/chaseeasterling/GitHub/KitchenOS',
+            # Resolve from this file, never a literal. This was hardcoded to
+            # ~/GitHub/KitchenOS, a path that stopped existing at the macOS 27
+            # rebuild, so every press of the "Re-extract" button baked into all
+            # 252 recipe notes raised FileNotFoundError into the generic
+            # handler below and rendered an error page. /extract (above) had
+            # already been fixed; these two drifted apart.
+            cwd=str(Path(__file__).resolve().parent),
             timeout=300
         )
 

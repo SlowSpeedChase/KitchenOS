@@ -113,6 +113,7 @@ which are optional:
 - `KITCHENOS_API_TOKEN` — bearer token gating remote (non-localhost) calls to the Siri-facing API routes; see `docs/API.md` for the exact gated-route list
 - `KITCHENOS_NO_LLM` — set to a truthy value to refuse every LLM tier, Claude and Ollama alike, for the whole process. Test infrastructure only: the e2e harness sets it so a browser test cannot race a model. Unset in normal operation; empty or `0`/`false` means enabled.
 - `KITCHENOS_STORAGE_TABLE` — overrides the path of `config/storage_locations.json`. Test infrastructure only: the e2e harness sets it so its out-of-process server teaches a throwaway copy instead of the real config. Unset in normal operation.
+- `KITCHENOS_FAILURE_ANALYSIS` — set truthy to let `batch_extract` spawn the autonomous failure-analysis agent. **Off by default, deliberately**: `scripts/analyze_failures.sh` gives Claude `Edit,Bash,Write` and tells it to branch, commit, push and open a PR, unattended, on the hourly batch timer. It also never actually ran — 276 of 277 spawns died on launchd's bare `PATH` while `batch_extract` printed "Analysis agent triggered in background" regardless. Don't enable it until the queue drains and a per-signature throttle exists.
 
 ## Where things live
 
