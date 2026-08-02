@@ -42,6 +42,87 @@ DISH_TYPE_GROUPS = {
 # because of a data gap.
 DEFAULT_GROUP = "Mains"
 
+# How much of an actual meal each dish type is.
+#
+# A pantry is mostly dry goods — flour, sugar, cocoa, baking powder, butter —
+# so ranking on ingredient coverage alone systematically favours baking. On the
+# real inventory the top five results were Blueberry Muffins, Gooey Chocolate
+# Brownies, Chewy Peanut Butter Cookies, Strawberry Brownies and Strawberry
+# Buttercream Frosting: all correct, none of them dinner. "What *can* I make"
+# and "what *should* I make" are different questions on that inventory, and the
+# page was answering the first while being asked the second.
+MEAL_TIER = {
+    "meal": ("main", "soup", "sandwich", "salad", "breakfast"),
+    "component": ("side", "bread", "sauce", "dip", "appetizer"),
+    "treat": ("snack", "drink"),
+    "dessert": ("dessert",),
+}
+
+_TIER_FOR_DISH_TYPE = {
+    dish_type: tier
+    for tier, dish_types in MEAL_TIER.items()
+    for dish_type in dish_types
+}
+
+# Coverage is multiplied by these. Weights rather than a hard sort so the
+# ranking degrades honestly: a main you're one ingredient short of (0.8 × 1.0)
+# still beats a fully-stocked dessert (1.0 × 0.35), because the card names what
+# is missing and "closest real meal" is the useful answer — but a main you're
+# missing most of (0.3) correctly sinks below it. The crossover lands near
+# "missing more than half", which is where a suggestion stops being actionable.
+_TIER_WEIGHT = {"meal": 1.0, "component": 0.7, "treat": 0.5, "dessert": 0.35}
+
+#: Same reasoning as DEFAULT_GROUP — a data gap must not bury a real recipe.
+DEFAULT_TIER = "meal"
+
+# Protein per serving at which a dish counts as properly feeding you. Set
+# against a 190 g/day target across roughly four eating occasions.
+MEAL_PROTEIN_G = 30.0
+
+# How far nutrition may move a ranking: a dish with no protein keeps 60% of its
+# score, one at or above MEAL_PROTEIN_G keeps all of it. Dish type alone was not
+# enough — muffins are `breakfast`, so they classify as a meal and came back at
+# #2 on the real pantry. They are a meal the way a scone is a meal.
+_NUTRITION_FLOOR = 0.6
+
+# Unknown macros land mid-range rather than at the floor. Missing data is not
+# evidence of poor nutrition, and burying every unmeasured recipe would quietly
+# shrink the library the same way trusting bad macros quietly corrupted it.
+_NUTRITION_UNKNOWN = 0.8
+
+
+def _nutrition_factor(protein) -> float:
+    """0.6–1.0 by how much protein a serving actually delivers."""
+    if protein is None:
+        return _NUTRITION_UNKNOWN
+    share = min(max(protein, 0.0) / MEAL_PROTEIN_G, 1.0)
+    return _NUTRITION_FLOOR + (1.0 - _NUTRITION_FLOOR) * share
+
+
+def meal_tier_for(dish_type: Optional[str]) -> str:
+    """How much of a meal this dish type is. Unknown values count as a meal."""
+    if not isinstance(dish_type, str):
+        return DEFAULT_TIER
+    return _TIER_FOR_DISH_TYPE.get(dish_type.strip().lower(), DEFAULT_TIER)
+
+
+def _trustworthy_protein(recipe: dict):
+    """Per-serving protein, but only when the macros can be believed.
+
+    Routed through the same gate the suggester uses. Without it this would
+    reintroduce the failure Phase 1 fixed, in a new place: the recipe claiming
+    244 g of protein per serving would top every list it appears in.
+    """
+    from lib.nutrition_quality import macro_eligible
+
+    eligible, _ = macro_eligible(recipe)
+    if not eligible:
+        return None
+    try:
+        return float(recipe.get("nutrition_protein"))
+    except (TypeError, ValueError):
+        return None
+
 _GROUP_FOR_DISH_TYPE = {
     dish_type: group
     for group, dish_types in DISH_TYPE_GROUPS.items()
@@ -98,6 +179,10 @@ def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
         have, total, missing, at_risk = recipe_coverage(
             ingredients, inv_phrases, staple_sets, at_risk_sets)
 
+        coverage = have / total
+        tier = meal_tier_for(recipe.get("dish_type"))
+        protein = _trustworthy_protein(recipe)
+
         recipes.append({
             "recipe": recipe["name"],
             "image": recipe.get("image"),
@@ -105,13 +190,26 @@ def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
             "group": group_for(recipe.get("dish_type")),
             "have": have,
             "total": total,
-            "coverage": have / total,
+            "coverage": coverage,
             "missing": missing,
             "at_risk": at_risk,
+            # Reported, not just used, so the page can say why something ranked
+            # where it did rather than presenting an unexplained order.
+            "meal_tier": tier,
+            "protein": protein,
+            "score": round(
+                coverage * _TIER_WEIGHT[tier] * _nutrition_factor(protein), 4),
         })
 
-    recipes.sort(key=lambda r: (r["coverage"], r["have"], -len(r["missing"])),
-                 reverse=True)
+    # Three factors, multiplied: can you make it, is it a meal, will it feed
+    # you. Protein is inside the score rather than a tiebreak because coverage
+    # almost never ties, so as a tiebreak it would never actually fire — which
+    # is how a 10 g muffin sat second on a real pantry. `have` remains the final
+    # tiebreak so the order is deterministic.
+    recipes.sort(
+        key=lambda r: (r["score"], r["protein"] or 0.0, r["have"]),
+        reverse=True,
+    )
     return {"recipes": recipes[:limit]}
 
 
