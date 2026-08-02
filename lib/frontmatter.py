@@ -19,13 +19,31 @@ from typing import Iterable, Optional
 
 _KEY_RE = re.compile(r"^([A-Za-z_][\w]*):")
 
+# The delimiters are whole *lines*, not substrings. Splitting on the substring
+# "---" truncated the block at the first value containing three hyphens —
+# `video_title: "Noodles --- the viral one"` — and since recipe_parser matches
+# line-anchored, the checker saw the whole frontmatter while the editor was
+# handed half of it, inserting new keys into the middle of that string and
+# leaving unparseable YAML with a duplicated key. No corpus file trips this
+# today, but templates/recipe_template.py interpolates raw YouTube titles into
+# video_title, so it is one extraction away.
+# The closing delimiter's own newline stays with the body: the substring split
+# this replaces left it in `rest`, and callers reconstruct as
+# f"---{fm}---{rest}" — swallowing it would glue "---" onto the first body line.
+_FRONTMATTER_RE = re.compile(r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?=\r?\n|\Z)", re.S)
+
 
 def split_frontmatter(content: str) -> tuple[Optional[str], Optional[str]]:
-    """Return ``(frontmatter_text, rest)``, or ``(None, None)`` if absent."""
-    parts = content.split("---", 2)
-    if len(parts) < 3:
+    """Return ``(frontmatter_text, rest)``, or ``(None, None)`` if absent.
+
+    ``frontmatter_text`` keeps its leading and trailing newline so that callers
+    can reconstruct the note as ``f"---{fm}---{rest}"``, which is what
+    ``apply()`` does and what every existing caller expects.
+    """
+    m = _FRONTMATTER_RE.match(content)
+    if not m:
         return None, None
-    return parts[1], parts[2]
+    return f"\n{m.group(1)}\n", content[m.end():]
 
 
 def rewrite(fm: str, updates: dict, managed_keys: Iterable[str],
@@ -47,11 +65,25 @@ def rewrite(fm: str, updates: dict, managed_keys: Iterable[str],
     out: list = []
     last_idx: dict = {}
 
+    skipping_removed_value = False
     for line in lines:
         m = _KEY_RE.match(line)
         # A leading space means this is a list item or continuation, not a key.
         key = m.group(1) if (m and not line[:1].isspace()) else None
+
+        # A removed key takes its whole value with it. Dropping only the `key:`
+        # line left `  - 12` / `  3058 total` floating, which PyYAML either
+        # rejects outright or folds into the *preceding* key's value — silent
+        # corruption of a neighbouring field. Continuation lines are exactly the
+        # indented (or blank) ones following the key, so consume them until the
+        # next top-level key.
+        if skipping_removed_value:
+            if key is None and (line.strip() == "" or line[:1].isspace()):
+                continue
+            skipping_removed_value = False
+
         if key is not None and key in dropped:
+            skipping_removed_value = True
             continue
         if key in managed:
             if key in last_idx:

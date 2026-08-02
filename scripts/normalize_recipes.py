@@ -77,6 +77,20 @@ def normalize_content(recipe: str, content: str) -> tuple[str, list[str]]:
             )
 
         elif v.code == "legacy_nutrition_key":
+            # Only safe when the canonical key actually holds a value. Every
+            # corpus file carrying a legacy key had one on 2026-08-01, but that
+            # was a property of the data, not a guarantee — deleting on sight
+            # would destroy a file's only calorie value. This is the mirror of
+            # the migrate_recipes rule: that one refuses to rename ONTO an
+            # existing key, this one refuses to delete WITHOUT one.
+            canonical = fm.get(f"nutrition_{v.key}")
+            if canonical is None:
+                changes.append(
+                    f"UNREPAIRED legacy_nutrition_key: kept {v.key!r} — "
+                    f"'nutrition_{v.key}' is missing or null, so this is the "
+                    f"only value the file has"
+                )
+                continue
             remove.add(v.key)
             changes.append(f"dropped legacy {v.key!r} (superseded by 'nutrition_{v.key}')")
 

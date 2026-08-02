@@ -205,3 +205,45 @@ def test_the_error_names_the_directory_it_looked_in(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as e:
         normalize_recipes.main()
     assert "nowhere" in str(e.value)
+
+
+class TestLegacyKeyNeedsItsCanonicalTwin:
+    """Deleting a legacy nutrition key is only safe if the canonical one exists.
+
+    lib/recipe_schema documents "every file carrying one already has a non-null
+    canonical value (verified 2026-08-01)" — but that was a property of the data,
+    not a check. Removing on sight destroys the file's only calorie value, and it
+    is the exact mirror of the migrate_recipes bug this branch fixed: that one
+    refuses to rename ONTO an existing key, this one must refuse to delete
+    WITHOUT one.
+    """
+
+    def test_a_legacy_key_is_kept_when_the_canonical_one_is_missing(self):
+        content = _doc(leading="calories: 357", nutrition_calories=None)
+        # strip the canonical line entirely
+        content = "\n".join(
+            ln for ln in content.splitlines() if not ln.startswith("nutrition_calories:")
+        ) + "\n"
+        out, changes = normalize_content("Orphan", content)
+        assert "calories: 357" in out
+        assert any("UNREPAIRED" in c or "kept" in c.lower() for c in changes), changes
+
+    def test_a_legacy_key_is_kept_when_the_canonical_one_is_null(self):
+        content = _doc(leading="calories: 357", nutrition_calories="null")
+        out, changes = normalize_content("NullCanonical", content)
+        assert "calories: 357" in out
+
+    def test_a_legacy_key_is_still_dropped_when_the_canonical_one_has_a_value(self):
+        content = _doc(leading="calories: 3058")
+        out, changes = normalize_content("Normal", content)
+        assert "\ncalories:" not in out
+        assert _fm(out)["nutrition_calories"] == 169
+
+    def test_the_kept_key_keeps_check_failing_rather_than_silently_passing(self):
+        """An unrepairable file must stay visible, not be quietly accepted."""
+        from lib.recipe_schema import check_frontmatter
+        content = _doc(leading="calories: 357", nutrition_calories="null")
+        out, _ = normalize_content("NullCanonical", content)
+        import yaml
+        still = check_frontmatter("NullCanonical", yaml.safe_load(out.split("---")[1]))
+        assert any(v.code == "legacy_nutrition_key" for v in still)
