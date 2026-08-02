@@ -141,3 +141,70 @@ class TestSameSecondBackupsDoNotClobber:
             made.append(create_backup(f))
 
         assert [p.name for p in made] == sorted(p.name for p in made)
+
+
+class TestWriteNote:
+    """One call that backs up and writes, so the safe path is the easy path.
+
+    lib/CLAUDE.md says "any code that overwrites a recipe file should call
+    backup.create_backup() first", and most writers do — but it is a convention
+    a new writer has to know about, and three did not: lib/cook_history.py
+    (syncs cook stats into real recipes automatically), import_crouton.py
+    (replaces a whole existing file, My Notes included) and
+    generate_meal_plan.py --force.
+    """
+
+    def test_it_writes_the_content(self, tmp_path):
+        from lib.backup import write_note
+        p = tmp_path / "Recipe.md"
+        write_note(p, "hello\n")
+        assert p.read_text(encoding="utf-8") == "hello\n"
+
+    def test_a_new_file_needs_no_backup(self, tmp_path):
+        from lib.backup import write_note
+        p = tmp_path / "Recipe.md"
+        write_note(p, "first write\n")
+        assert not (tmp_path / ".history").exists(), "backed up a file that did not exist"
+
+    def test_overwriting_backs_up_the_previous_content(self, tmp_path):
+        from lib.backup import write_note
+        p = tmp_path / "Recipe.md"
+        p.write_text("ORIGINAL\n", encoding="utf-8")
+        write_note(p, "REPLACEMENT\n")
+        snaps = list((tmp_path / ".history").glob("Recipe_*.md"))
+        assert len(snaps) == 1
+        assert snaps[0].read_text(encoding="utf-8") == "ORIGINAL\n"
+        assert p.read_text(encoding="utf-8") == "REPLACEMENT\n"
+
+    def test_an_unchanged_write_is_a_no_op(self, tmp_path):
+        """Re-running a sync must not fill .history with identical snapshots."""
+        from lib.backup import write_note
+        p = tmp_path / "Recipe.md"
+        p.write_text("same\n", encoding="utf-8")
+        before = p.stat().st_mtime_ns
+        assert write_note(p, "same\n") is False
+        assert p.stat().st_mtime_ns == before
+        assert not (tmp_path / ".history").exists()
+
+    def test_it_reports_whether_it_wrote(self, tmp_path):
+        from lib.backup import write_note
+        p = tmp_path / "Recipe.md"
+        assert write_note(p, "a\n") is True
+        assert write_note(p, "a\n") is False
+        assert write_note(p, "b\n") is True
+
+    def test_repeated_overwrites_each_keep_their_own_snapshot(self, tmp_path):
+        from lib.backup import write_note
+        p = tmp_path / "Recipe.md"
+        p.write_text("v0\n", encoding="utf-8")
+        for i in range(1, 4):
+            write_note(p, f"v{i}\n")
+        snaps = sorted((tmp_path / ".history").glob("Recipe_*.md"))
+        assert len(snaps) == 3, "same-second snapshots collided"
+        assert [s.read_text(encoding="utf-8") for s in snaps] == ["v0\n", "v1\n", "v2\n"]
+
+    def test_it_creates_parent_directories(self, tmp_path):
+        from lib.backup import write_note
+        p = tmp_path / "nested" / "Recipe.md"
+        write_note(p, "x\n")
+        assert p.read_text(encoding="utf-8") == "x\n"

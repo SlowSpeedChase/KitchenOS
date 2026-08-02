@@ -57,6 +57,33 @@ def create_backup(file_path: Path) -> Path:
     return backup_path
 
 
+def write_note(file_path: Path, content: str) -> bool:
+    """Write ``content`` to ``file_path``, snapshotting whatever was there first.
+
+    The safe write. ``lib/CLAUDE.md`` asks every recipe writer to call
+    ``create_backup`` first, and most do — but that is a convention a new writer
+    has to already know, and three did not: ``lib/cook_history.py`` (syncs cook
+    stats into real recipes automatically), ``import_crouton.py`` (replaces a
+    whole existing file, "My Notes" included) and ``generate_meal_plan.py
+    --force``. The vault is not in git, so a missed snapshot is unrecoverable.
+
+    Returns ``True`` if it wrote. An unchanged write is a no-op — a sync that
+    runs over the whole corpus must not fill ``.history`` with identical
+    snapshots, and must not churn mtimes that sidecar freshness checks read.
+    """
+    file_path = Path(file_path)
+
+    if file_path.exists():
+        if file_path.read_text(encoding="utf-8") == content:
+            return False
+        create_backup(file_path)
+    else:
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    file_path.write_text(content, encoding="utf-8")
+    return True
+
+
 def cleanup_old_backups(history_dir: Path, max_age_days: int = 30) -> int:
     """Remove backup files older than max_age_days.
 

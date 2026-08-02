@@ -16,6 +16,7 @@ import requests
 from datetime import date
 from pathlib import Path
 
+from lib import backup
 from lib.crouton_parser import parse_crumb_file
 from lib.normalizer import normalize_recipe_data
 from lib import paths
@@ -145,7 +146,9 @@ def save_imported_recipe(recipe_data: dict) -> tuple[Path, bool]:
     OBSIDIAN_RECIPES_PATH.mkdir(parents=True, exist_ok=True)
     filename = generate_filename(recipe_name_for_file)
     filepath = OBSIDIAN_RECIPES_PATH / filename
-    filepath.write_text(markdown, encoding="utf-8")
+    # A collision replaces the WHOLE file, "My Notes" included — the one part the
+    # user wrote. Snapshot first; write_note no-ops when nothing changed.
+    backup.write_note(filepath, markdown)
 
     return filepath, is_duplicate
 

@@ -22,7 +22,7 @@ from __future__ import annotations
 import statistics
 from typing import Optional
 
-from lib import frontmatter, inventory_db, paths
+from lib import backup, frontmatter, inventory_db, paths
 
 # Keys this module owns. Anything else in the note is left byte-identical.
 MANAGED_KEYS = frozenset({
@@ -103,8 +103,9 @@ def sync_recipe(recipe: str, recipes_dir=None) -> bool:
         updated = frontmatter.apply(original, stats, MANAGED_KEYS)
     if updated is None or updated == original:
         return False
-    path.write_text(updated, encoding="utf-8")
-    return True
+    # write_note snapshots first: this runs automatically from a cook write, so
+    # nobody is watching, and the vault is not in git.
+    return backup.write_note(path, updated)
 
 
 def sync_all(recipes_dir=None) -> dict:

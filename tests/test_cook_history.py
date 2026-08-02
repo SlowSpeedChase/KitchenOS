@@ -176,3 +176,42 @@ def test_sync_all_covers_every_cooked_recipe(tmp_db, tmp_vault, recipes):
     assert result["updated"] == 2
     assert _fm(recipes, "Chili")["cook_count"] == 1
     assert _fm(recipes, "Tacos")["cook_count"] == 1
+
+
+class TestCookHistoryBacksUp:
+    """Syncing cook stats edits a real recipe, automatically, with no prompt.
+
+    It wrote straight over the file. The vault is not in git, so a bad sync had
+    no recovery path at all.
+    """
+
+    def _recipe(self, tmp_path, name="Chili"):
+        p = tmp_path / f"{name}.md"
+        p.write_text(
+            f'---\ntitle: "{name}"\nservings: 4\n---\n\n# {name}\n\nMy hand-written notes.\n',
+            encoding="utf-8",
+        )
+        return p
+
+    def test_a_stats_write_snapshots_the_previous_file(self, tmp_path, monkeypatch):
+        from lib import cook_history
+        p = self._recipe(tmp_path)
+        monkeypatch.setattr(cook_history, "recipe_stats", lambda r: {"cook_count": 3})
+
+        assert cook_history.sync_recipe("Chili", recipes_dir=tmp_path) is True
+        snaps = list((tmp_path / ".history").glob("Chili_*.md"))
+        assert len(snaps) == 1
+        assert "My hand-written notes." in snaps[0].read_text(encoding="utf-8")
+        assert "cook_count: 3" in p.read_text(encoding="utf-8")
+
+    def test_an_unchanged_sync_writes_nothing(self, tmp_path, monkeypatch):
+        """sync_all runs over the whole corpus; it must not spam .history."""
+        from lib import cook_history
+        p = self._recipe(tmp_path)
+        monkeypatch.setattr(cook_history, "recipe_stats", lambda r: {"cook_count": 3})
+
+        cook_history.sync_recipe("Chili", recipes_dir=tmp_path)
+        before = p.stat().st_mtime_ns
+        assert cook_history.sync_recipe("Chili", recipes_dir=tmp_path) is False
+        assert p.stat().st_mtime_ns == before
+        assert len(list((tmp_path / ".history").glob("Chili_*.md"))) == 1

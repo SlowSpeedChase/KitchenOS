@@ -251,3 +251,26 @@ class TestParseCrumbFile:
         assert result["source_url"] == ""
         assert result["source_channel"] == ""
         assert result["servings"] is None
+
+
+class TestCroutonImportDoesNotClobber:
+    """An import that lands on an existing filename replaces the whole file.
+
+    Not just frontmatter — the body too, including "My Notes", which is the one
+    part of a recipe the user wrote themselves. Two Crouton recipes with the
+    same name, or a re-run of an import, silently destroyed it.
+    """
+
+    def test_an_existing_recipe_is_snapshotted_before_being_replaced(self, tmp_path):
+        from lib.backup import write_note
+
+        existing = tmp_path / "Chili.md"
+        existing.write_text(
+            '---\ntitle: "Chili"\n---\n\n# Chili\n\n## My Notes\n\nAdd more cumin next time.\n',
+            encoding="utf-8",
+        )
+        write_note(existing, '---\ntitle: "Chili"\n---\n\n# Chili\n\n## My Notes\n\n')
+
+        snaps = list((tmp_path / ".history").glob("Chili_*.md"))
+        assert len(snaps) == 1
+        assert "Add more cumin next time." in snaps[0].read_text(encoding="utf-8")
