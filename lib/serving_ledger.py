@@ -481,10 +481,17 @@ def freezer_summary(recipes_dir) -> list[dict]:
     two rows to reconcile — and prices each group so the tray can answer the
     question the freezer exists to answer: *do I need to cook tonight?*
 
-    Macros pass the same plausibility gate as ``day_totals``, and for the same
-    reason: a tray totalling 244 g of protein per serving would be a worse lie
-    than a blank. When they don't survive it, ``servings`` is still reported —
-    the food is real even when the numbers about it aren't.
+    Macros pass the ``implausible`` **bounds** only, for the reason a tray
+    totalling 244 g of protein per serving would be a worse lie than a blank.
+    When they don't survive it, ``servings`` is still reported — the food is real
+    even when the numbers about it aren't.
+
+    That is deliberately *looser* than ``day_totals``, which now applies the full
+    ``eligible_macros`` gate. The two answer different questions: the day row is
+    a claim about what you ate, so a recipe whose coverage says a third of its
+    ingredients went unresolved has no business being summed into it — while the
+    freezer is an inventory of real food, and a low-coverage portion is still a
+    portion. Don't "unify" this without deciding that question again.
     """
     from lib.nutrition_quality import implausible
 
@@ -596,11 +603,32 @@ def day_totals(week: str, recipes_dir) -> dict:
     number still leaves the wrong number on screen. This mirrors the
     exclude-and-name contract in ``meal_nutrition.meal_nutrition``.
 
-    ``implausible`` is imported inside the function because
+    The gate is ``nutrition_quality.eligible_macros`` — the same one
+    ``meal_nutrition`` applies to a plate's sub-recipes. That shared gate is what
+    makes a composite meal's card and its contribution here agree: a plate placed
+    on the board is N ordinary cooks, so
+
+        day_totals[date]  ==  meal_nutrition(meal) x outer
+
+    holds exactly, both sides being per-serving macros multiplied by the same
+    servings. Two gates would have made the same food report two numbers with
+    nothing on screen explaining the difference.
+
+    This is stricter than the bounds-only check it replaces, and the cost is
+    real: on the live corpus it excludes 107 further recipes of 403 — 90 for
+    coverage below the threshold, 9 for an unknown serving count, 8 for both.
+    Coverage fails in the *undercount* direction (unresolved ingredient lines),
+    so those days now read low rather than high. That is the honest direction —
+    a figure omitted and named beats a figure quietly missing a third of its
+    ingredients — but it is only honest if the omission is visible, which is why
+    ``week_view`` and ``print_week`` render the ``excluded`` list rather than
+    just a warning glyph.
+
+    ``eligible_macros`` is imported inside the function because
     ``nutrition_quality`` imports ``COVERAGE_REVIEW_THRESHOLD`` from this
     module — a module-level import here would be circular.
     """
-    from lib.nutrition_quality import implausible
+    from lib.nutrition_quality import eligible_macros
 
     totals: dict = {}
     macro_cache: dict = {}
@@ -613,22 +641,15 @@ def day_totals(week: str, recipes_dir) -> dict:
         if name not in macro_cache:
             macro_cache[name] = recipe_macros(name, recipes_dir)
         macros = macro_cache[name]
-        if macros is None:
-            day["incomplete"] = True
-            continue
-        # recipe_macros is macro-shaped; implausible reads an index-shaped dict.
-        bad, _reasons = implausible({
-            "nutrition_calories": macros.get("calories"),
-            "nutrition_protein": macros.get("protein"),
-        })
-        if bad:
+        # A missing recipe reaches this as None and comes back "missing", so it
+        # is named alongside the ones that failed on their numbers rather than
+        # flagging the day with nothing to act on.
+        eligible, _reasons = eligible_macros(macros)
+        if not eligible:
             day["incomplete"] = True
             if name not in day["excluded"]:
                 day["excluded"].append(name)
             continue
-        if macros["coverage"] is not None and \
-                macros["coverage"] < COVERAGE_REVIEW_THRESHOLD:
-            day["incomplete"] = True
         for k in ("calories", "protein", "carbs", "fat"):
             day[k] += macros[k] * float(p["count"])
     return totals

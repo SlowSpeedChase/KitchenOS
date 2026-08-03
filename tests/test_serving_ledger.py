@@ -277,22 +277,56 @@ def test_day_totals_sum_placed_servings(tmp_db, tmp_vault):
     assert totals["2026-07-08"]["protein"] == 30
 
 
-def test_day_totals_flags_low_coverage(tmp_db, tmp_vault):
+def test_day_totals_excludes_low_coverage(tmp_db, tmp_vault):
+    """Below the coverage threshold the number is omitted, not merely flagged.
+
+    This used to sum the recipe and set `incomplete`, which put an undercounted
+    figure on screen beside a warning that did not say what was wrong with it.
+    `meal_nutrition` already excluded-and-named the same recipe, so a plate
+    containing it reported one number on its card and a different one in the
+    day-totals row.
+    """
     recipes = _write_recipe(tmp_vault, "Mystery Soup", LOW_COVERAGE_MD)
     sl.create_cook(recipe="Mystery Soup", week="2026-W28", scale=1.0,
                    servings_produced=4.0, date="2026-07-07", meal="dinner")
-    totals = sl.day_totals("2026-W28", recipes)
-    assert totals["2026-07-07"]["incomplete"] is True
+    day = sl.day_totals("2026-W28", recipes)["2026-07-07"]
+    assert day["incomplete"] is True
+    assert day["calories"] == 0
+    assert day["excluded"] == ["Mystery Soup"]
 
 
-def test_day_totals_flags_missing_recipe(tmp_db, tmp_vault):
+def test_day_totals_excludes_unknown_servings(tmp_db, tmp_vault):
+    """A recipe with no serving count states whole-batch totals per serving.
+
+    Its batch was divided by 1, so summing it at face value adds thousands of
+    phantom kcal — the failure `meal_nutrition`'s docstring describes, which
+    `day_totals` did not check for at all.
+    """
+    no_servings = RECIPE_MD.replace("title: Chili", "title: Big Batch") \
+                           .replace("servings: 4", "servings:")
+    recipes = _write_recipe(tmp_vault, "Big Batch", no_servings)
+    sl.create_cook(recipe="Big Batch", week="2026-W28", scale=1.0,
+                   servings_produced=4.0, date="2026-07-07", meal="dinner")
+    day = sl.day_totals("2026-W28", recipes)["2026-07-07"]
+    assert day["calories"] == 0
+    assert day["incomplete"] is True
+    assert day["excluded"] == ["Big Batch"]
+
+
+def test_day_totals_names_a_missing_recipe(tmp_db, tmp_vault):
+    """A recipe that isn't there is named too, not silently dropped.
+
+    It used to set `incomplete` without saying which recipe caused it, so a day
+    could read "incomplete" with an empty `excluded` list and nothing to act on.
+    """
     recipes = tmp_vault / "Recipes"
     recipes.mkdir(parents=True, exist_ok=True)
     sl.create_cook(recipe="Ghost Recipe", week="2026-W28", scale=1.0,
                    servings_produced=2.0, date="2026-07-07", meal="dinner")
-    totals = sl.day_totals("2026-W28", recipes)
-    assert totals["2026-07-07"]["incomplete"] is True
-    assert totals["2026-07-07"]["calories"] == 0
+    day = sl.day_totals("2026-W28", recipes)["2026-07-07"]
+    assert day["incomplete"] is True
+    assert day["calories"] == 0
+    assert day["excluded"] == ["Ghost Recipe"]
 
 
 def test_day_totals_excludes_implausible_recipe(tmp_db, tmp_vault):
@@ -392,8 +426,10 @@ def test_day_totals_garbage_frontmatter_marks_incomplete(tmp_db, tmp_vault):
     recipes = _write_recipe(tmp_vault, "Garbage Stew", garbage)
     sl.create_cook(recipe="Garbage Stew", week="2026-W28", scale=1.0,
                    servings_produced=4.0, date="2026-07-07", meal="dinner")
-    totals = sl.day_totals("2026-W28", recipes)
-    assert totals["2026-07-07"]["incomplete"] is True
+    day = sl.day_totals("2026-W28", recipes)["2026-07-07"]
+    assert day["incomplete"] is True
+    # Unreadable is a kind of missing, and missing gets named like everything else.
+    assert day["excluded"] == ["Garbage Stew"]
 
 
 def test_week_board_shape(tmp_db, tmp_vault):

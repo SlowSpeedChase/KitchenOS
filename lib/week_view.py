@@ -92,6 +92,19 @@ def render_week_markdown(week: str, recipes_dir) -> str:
                 f"Totals: {round(t['calories'])} kcal ·"
                 f" {round(t['protein'])}p / {round(t['carbs'])}c /"
                 f" {round(t['fat'])}f{flag}")
+        # Separately, and NOT inside the branch above: a day whose only recipe
+        # was excluded totals zero, so the Totals line does not render at all and
+        # the day used to come out blank — no figure, no ⚠, no reason. The
+        # exclusion is the one thing worth saying about such a day.
+        #
+        # A blockquote with no [[wikilink]] is invisible to every reader of this
+        # file: extract_meals_for_day, import_legacy_week and
+        # shopping_list_generator.extract_recipe_links all match on links only.
+        if t and t["excluded"]:
+            lines.append(
+                f"> Excludes: {', '.join(t['excluded'])} — nutrition data"
+                " missing, below the coverage threshold, or outside plausible"
+                " bounds. Fix at /nutrition-review.")
         lines.append("")
         lines.append("")
     return "\n".join(lines)

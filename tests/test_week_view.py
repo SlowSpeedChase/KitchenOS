@@ -145,3 +145,63 @@ def test_write_week_markdown_still_writes_when_content_changes(tmp_db, tmp_vault
     week_view.write_week_markdown("2026-W28")
     assert plan.stat().st_mtime != before
     assert "## Monday" in plan.read_text(encoding="utf-8")
+
+
+# --- Excluded recipes must be visible in the note --------------------------
+#
+# The Totals: line only renders when some macro is non-zero, so a day whose
+# only recipe is ineligible rendered *nothing at all* — no figure, no warning,
+# no reason. The planner special-cases that case; the Obsidian note did not,
+# and the stricter macro gate makes it far more common.
+
+LOW_COVERAGE_MD = """---
+title: Mystery Soup
+servings: 4
+nutrition_calories: 500
+nutrition_protein: 30
+nutrition_carbs: 40
+nutrition_fat: 20
+nutrition_coverage: 0.4
+---
+"""
+
+
+def _write(recipes, name, body):
+    recipes.mkdir(parents=True, exist_ok=True)
+    (recipes / f"{name}.md").write_text(body, encoding="utf-8")
+
+
+def test_a_day_with_only_an_excluded_recipe_says_so(tmp_db, tmp_vault):
+    recipes = tmp_vault / "Recipes"
+    _write(recipes, "Mystery Soup", LOW_COVERAGE_MD)
+    sl.create_cook(recipe="Mystery Soup", week="2026-W28", scale=1.0,
+                   servings_produced=4.0, date="2026-07-07", meal="dinner")
+    md = week_view.render_week_markdown("2026-W28", recipes)
+    assert "Excludes: Mystery Soup" in md, \
+        "an all-excluded day rendered no explanation at all"
+
+
+def test_the_excludes_line_does_not_disturb_the_round_trip(tmp_db, tmp_vault):
+    """It must be invisible to the legacy parser — calendar sync depends on it."""
+    recipes = tmp_vault / "Recipes"
+    _write(recipes, "Mystery Soup", LOW_COVERAGE_MD)
+    sl.create_cook(recipe="Mystery Soup", week="2026-W28", scale=1.0,
+                   servings_produced=4.0, date="2026-07-07", meal="dinner")
+    md = week_view.render_week_markdown("2026-W28", recipes)
+    days = parse_meal_plan(md, 2026, 28)
+    assert days[1]["dinner"].name == "Mystery Soup"
+    # The caption carries no wikilink, so it contributes no entry of its own.
+    assert all(d[m] is None or "Excludes" not in d[m].name
+               for d in days for m in ("breakfast", "lunch", "snack", "dinner"))
+
+
+def test_a_sound_day_gets_no_excludes_line(tmp_db, tmp_vault):
+    recipes = tmp_vault / "Recipes"
+    _write(recipes, "Chili", LOW_COVERAGE_MD.replace("title: Mystery Soup", "title: Chili")
+                                            .replace("nutrition_coverage: 0.4",
+                                                     "nutrition_coverage: 0.95"))
+    sl.create_cook(recipe="Chili", week="2026-W28", scale=1.0,
+                   servings_produced=4.0, date="2026-07-07", meal="dinner")
+    md = week_view.render_week_markdown("2026-W28", recipes)
+    assert "Excludes:" not in md
+    assert "Totals:" in md
