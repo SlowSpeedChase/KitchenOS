@@ -153,11 +153,12 @@ def _merge_or_insert(conn, cook_id: int, destination: str,
             "date": date, "meal": meal, "count": count}
 
 
-def create_cook(recipe: str, week: str, scale: float = 1.0,
-                servings_produced: Optional[float] = None,
-                date: Optional[str] = None, meal: Optional[str] = None,
-                initial_placement_count: float = 1.0,
-                notes: Optional[str] = None) -> dict:
+def _validate_cook(recipe: str, week: str, servings_produced, date, meal) -> None:
+    """The rules every new cook row obeys, whether created alone or in a bundle.
+
+    Separated so ``create_bundle`` can validate *every* member before writing
+    any of them — a plate that half-lands is worse than one that is refused.
+    """
     if not recipe or not week:
         raise ValueError("recipe and week are required")
     if not _WEEK_RE.match(week):
@@ -167,16 +168,33 @@ def create_cook(recipe: str, week: str, scale: float = 1.0,
         raise ValueError("servings_produced is required and must be > 0")
     if meal is not None and meal not in MEALS:
         raise ValueError(f"meal must be one of {MEALS}")
+
+
+def _insert_cook(conn, recipe: str, week: str, date, meal, scale,
+                 servings_produced, notes,
+                 bundle_id: Optional[str] = None,
+                 bundle_name: Optional[str] = None) -> int:
+    """Write one cook row and return its id. Caller owns the transaction."""
+    cur = conn.execute(
+        "INSERT INTO cooks (recipe, week, date, meal, scale, servings_produced,"
+        " notes, bundle_id, bundle_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (recipe, week, date, meal, float(scale), float(servings_produced),
+         notes, bundle_id, bundle_name),
+    )
+    return cur.lastrowid
+
+
+def create_cook(recipe: str, week: str, scale: float = 1.0,
+                servings_produced: Optional[float] = None,
+                date: Optional[str] = None, meal: Optional[str] = None,
+                initial_placement_count: float = 1.0,
+                notes: Optional[str] = None) -> dict:
+    _validate_cook(recipe, week, servings_produced, date, meal)
     conn = inventory_db.connect()
     try:
         with conn:
-            cur = conn.execute(
-                "INSERT INTO cooks (recipe, week, date, meal, scale,"
-                " servings_produced, notes) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (recipe, week, date, meal, float(scale),
-                 float(servings_produced), notes),
-            )
-            cook_id = cur.lastrowid
+            cook_id = _insert_cook(conn, recipe, week, date, meal, scale,
+                                   servings_produced, notes)
             if date and meal and initial_placement_count > 0:
                 _merge_or_insert(conn, cook_id, "slot", date, meal,
                                  min(float(initial_placement_count),
@@ -381,39 +399,46 @@ def move_cook(cook_id: int, date: str, meal: str) -> dict:
     conn = inventory_db.connect()
     try:
         with _write_txn(conn):
-            row = conn.execute("SELECT * FROM cooks WHERE id = ?",
-                               (cook_id,)).fetchone()
-            if row is None:
-                raise ValueError(f"cook {cook_id} not found")
-            # `week` is not in _COOK_FIELDS and cooks_for_week() filters on it,
-            # so a cook whose date left its week renders on no board at all.
-            # Reject rather than half-apply: the grid shows one week, so a drag
-            # cannot produce this, but the endpoint is public.
-            year, week_no, _ = _date.fromisoformat(date).isocalendar()
-            if f"{year}-W{week_no:02d}" != row["week"]:
-                raise ValueError(
-                    f"date {date} falls outside the cook's week {row['week']}")
-
-            old_date, old_meal = row["date"], row["meal"]
-            if (old_date, old_meal) != (date, meal):
-                conn.execute("UPDATE cooks SET date = ?, meal = ? WHERE id = ?",
-                             (date, meal, cook_id))
-                # `IS` rather than `=` so a NULL old anchor matches nothing
-                # instead of everything — an unscheduled cook has no home
-                # servings to bring along.
-                movers = conn.execute(
-                    "SELECT * FROM placements WHERE cook_id = ?"
-                    " AND destination = 'slot' AND date IS ? AND meal IS ?",
-                    (cook_id, old_date, old_meal),
-                ).fetchall()
-                for p in movers:
-                    conn.execute("DELETE FROM placements WHERE id = ?",
-                                 (p["id"],))
-                    _merge_or_insert(conn, cook_id, "slot", date, meal,
-                                     float(p["count"]))
+            _move_cook_in_txn(conn, cook_id, date, meal)
     finally:
         conn.close()
     return get_cook(cook_id)
+
+
+def _move_cook_in_txn(conn, cook_id: int, date: str, meal: str) -> None:
+    """Re-anchor one cook. Caller owns validation and the transaction.
+
+    Extracted so ``move_bundle`` moves its members through the same rules in one
+    transaction — the week check and the bring-your-home-servings behaviour must
+    not fork between moving a cook and moving a plate.
+    """
+    row = conn.execute("SELECT * FROM cooks WHERE id = ?", (cook_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"cook {cook_id} not found")
+    # `week` is not in _COOK_FIELDS and cooks_for_week() filters on it, so a
+    # cook whose date left its week renders on no board at all. Reject rather
+    # than half-apply: the grid shows one week, so a drag cannot produce this,
+    # but the endpoint is public.
+    year, week_no, _ = _date.fromisoformat(date).isocalendar()
+    if f"{year}-W{week_no:02d}" != row["week"]:
+        raise ValueError(
+            f"date {date} falls outside the cook's week {row['week']}")
+
+    old_date, old_meal = row["date"], row["meal"]
+    if (old_date, old_meal) == (date, meal):
+        return
+    conn.execute("UPDATE cooks SET date = ?, meal = ? WHERE id = ?",
+                 (date, meal, cook_id))
+    # `IS` rather than `=` so a NULL old anchor matches nothing instead of
+    # everything — an unscheduled cook has no home servings to bring along.
+    movers = conn.execute(
+        "SELECT * FROM placements WHERE cook_id = ?"
+        " AND destination = 'slot' AND date IS ? AND meal IS ?",
+        (cook_id, old_date, old_meal),
+    ).fetchall()
+    for p in movers:
+        conn.execute("DELETE FROM placements WHERE id = ?", (p["id"],))
+        _merge_or_insert(conn, cook_id, "slot", date, meal, float(p["count"]))
 
 
 def cooks_for_week(week: str) -> list[dict]:
