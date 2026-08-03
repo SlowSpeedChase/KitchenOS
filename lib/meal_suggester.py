@@ -130,13 +130,25 @@ def load_at_risk_index(today=None) -> list[tuple[str, frozenset]]:
 # recipes that happen to share an inferred item.
 _DISPLAY_ANNOTATION = re.compile(r"\*\([^)]*\)\*")
 
+# Cookbook ingredient lines carry metric conversions and cross-references in
+# parentheses ("1 pound (455 g) white beans", "cashew cheese (this page)"), and a
+# prep or variety clause after a comma ("1 large yellow onion, diced"; "white beans,
+# such as great northern"). Both are noise for matching: they made "garlic cloves ,
+# peeled" and "garlic cloves" two different ingredients, and left names like
+# "yellow onion ," that match nothing at all.
+_PARENTHETICAL = re.compile(r"\([^)]*\)")
+
 
 def normalize_ingredient(item: str) -> str:
     """Normalize an ingredient name for matching.
 
-    Lowercases, strips display annotations, preparation methods and adjectives.
+    Lowercases, strips display annotations, parenthetical asides, any clause after
+    the first comma, preparation methods and adjectives.
     """
-    item = _DISPLAY_ANNOTATION.sub(" ", item).lower().strip()
+    item = _DISPLAY_ANNOTATION.sub(" ", item)
+    item = _PARENTHETICAL.sub(" ", item)
+    item = item.split(",")[0]
+    item = item.lower().strip()
     words = item.split()
     filtered = [w for w in words if w not in PREP_WORDS]
     return " ".join(filtered) if filtered else item

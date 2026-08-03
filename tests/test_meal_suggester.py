@@ -48,6 +48,23 @@ class TestNormalizeIngredient:
         assert normalize_ingredient("Diced Tomatoes *(inferred)*") == "tomatoes"
         assert normalize_ingredient("soy sauce") == "soy sauce"
 
+    def test_strips_parenthetical_asides(self):
+        """Cookbook lines carry metric conversions and cross-references."""
+        assert normalize_ingredient("(455 g) white beans") == "white beans"
+        assert normalize_ingredient("cashew cheese (this page)") == "cashew cheese"
+
+    def test_drops_clause_after_first_comma(self):
+        """Prep and variety clauses are not part of an ingredient's identity."""
+        assert normalize_ingredient("large yellow onion , diced") == "yellow onion"
+        assert normalize_ingredient("garlic cloves , peeled") == "garlic cloves"
+        assert normalize_ingredient(
+            "white beans , such as great northern") == "white beans"
+
+    def test_messy_and_clean_spellings_collapse_together(self):
+        """The whole point: both forms must resolve to the same ingredient."""
+        assert normalize_ingredient("(8 g) basil leaves, slivered") == \
+            normalize_ingredient("basil leaves")
+
 
 class TestScoreOverlap:
     """Test ingredient overlap scoring."""
