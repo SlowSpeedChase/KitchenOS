@@ -3032,7 +3032,16 @@
             const groups = [];
             const index = new Map();
             cooks.forEach(cook => {
-                if (!cook.bundle_id) { groups.push({ bundle_id: null, cooks: [cook] }); return; }
+                // date/meal on EVERY group, bundled or not — the render skips a
+                // group without them, so omitting them here silently stopped
+                // every plain cook card from being drawn at all.
+                if (!cook.bundle_id) {
+                    groups.push({
+                        bundle_id: null, bundle_name: null,
+                        date: cook.date, meal: cook.meal, cooks: [cook],
+                    });
+                    return;
+                }
                 const key = `${cook.bundle_id}|${cook.date}|${cook.meal}`;
                 const found = index.get(key);
                 if (found) { found.cooks.push(cook); return; }
