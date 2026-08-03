@@ -99,6 +99,16 @@ CREATE TABLE IF NOT EXISTS cooks (
     -- after eating, so they are deliberately separate columns.
     make_again INTEGER,
     cook_note TEXT,
+    -- A composite plate placed on the board expands to one ordinary cook per
+    -- sub-recipe, all sharing a bundle_id, so day_totals / the shopping list /
+    -- the freezer / cook_history keep seeing "one recipe per row" and need no
+    -- bundle awareness at all. `bundle_name` is denormalised on purpose: the
+    -- .meal.md file can be renamed or deleted afterwards and the week must
+    -- still render what was actually placed. Neither column is in
+    -- serving_ledger._COOK_FIELDS, so like `recipe` and `week` they are written
+    -- once and immutable. NULL on both means an ordinary standalone cook.
+    bundle_id TEXT,
+    bundle_name TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS placements (
@@ -133,7 +143,8 @@ _MIGRATIONS = {
         ("location_source", "TEXT"),
     ),
     "purchases": (("for_recipe", "TEXT"),),
-    "cooks": (("make_again", "INTEGER"), ("cook_note", "TEXT")),
+    "cooks": (("make_again", "INTEGER"), ("cook_note", "TEXT"),
+              ("bundle_id", "TEXT"), ("bundle_name", "TEXT")),
 }
 
 
@@ -204,6 +215,14 @@ def _migrate(conn: sqlite3.Connection) -> None:
         "SELECT 1 FROM inventory WHERE location_source IS NULL LIMIT 1"
     ).fetchone():
         _backfill_location_source(conn)
+    # Indexes on migrated columns belong HERE, never in _SCHEMA. connect() runs
+    # executescript(_SCHEMA) before this function, so on any pre-existing
+    # database the column does not exist yet at that moment — an index on it
+    # beside idx_cooks_week would raise "no such column" and break every single
+    # connect(), taking inventory, the ledger and the nutrition cache with it.
+    # Pinned by tests/test_inventory_db.py::
+    # test_a_pre_bundle_database_gains_the_columns_and_the_index.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_cooks_bundle ON cooks(bundle_id)")
     conn.commit()
 
 
