@@ -1641,6 +1641,52 @@ def api_cook_delete(cook_id):
     return jsonify({"status": "deleted"})
 
 
+@app.route('/api/cooks/<int:cook_id>/freeze-rest', methods=['POST'])
+@require_token
+@_ledger_error
+def api_cook_freeze_rest(cook_id):
+    """Bank a cook's leftover servings in the freezer, in one press.
+
+    Cooking six and eating one leaves five the ledger calls "unassigned" — real
+    food that nothing displayed and nothing reminded you about. Turning that
+    remainder into a rotation is the whole point of batch cooking, and it was
+    previously reachable only by hand-typing a placement count.
+
+    A no-op when nothing is left over, so a double-tap on a phone returns the
+    same cook rather than a 400.
+    """
+    from lib import serving_ledger
+    cook = serving_ledger.get_cook(cook_id)
+    if cook is None:
+        return jsonify({"error": "cook not found"}), 404
+    if cook["unassigned"] > 0:
+        serving_ledger.add_placement(cook_id, "freezer", cook["unassigned"])
+        cook = serving_ledger.get_cook(cook_id)
+    _regen_weeks(cook["week"])
+    return jsonify(cook)
+
+
+@app.route('/api/freezer', methods=['GET'])
+def api_freezer():
+    """What's banked in the freezer, grouped by recipe and oldest first.
+
+    The read half of a destination the ledger has always been able to write.
+    ``totals`` is the number that answers "do I need to cook tonight?" — it sums
+    only servings whose macros survived the plausibility gate, so an unpriced
+    recipe still contributes servings without contributing a made-up gram.
+    """
+    from lib import serving_ledger
+    rows = serving_ledger.freezer_summary(_resolve_recipes_dir())
+    return jsonify({
+        "freezer": rows,
+        "totals": {
+            "servings": round(sum(r["servings"] for r in rows), 3),
+            "protein": round(sum(r["total_protein"] or 0 for r in rows), 1),
+            "calories": round(sum(r["total_calories"] or 0 for r in rows), 1),
+        },
+    })
+
+
 @app.route('/api/placements', methods=['POST'])
 @require_token
 @_ledger_error

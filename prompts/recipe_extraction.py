@@ -15,12 +15,40 @@ NAMING_RULE = """- recipe_name is the NAME OF THE DISH, not the title of the vid
   Keep a qualifier ONLY when it distinguishes this version from the plain dish
   (e.g. "High-Protein", "Slow Cooker", "No-Bake") — those change what you cook."""
 
+# Batch cooking only buys variety if the leftovers keep, and nothing in the
+# corpus recorded whether they do. Deliberately biased toward null: a wrong
+# `true` sends a portion into the freezer to be thrown out weeks later, which is
+# worse than no answer at all.
+FREEZING_RULE = """- freezes_well: true only if the source says leftovers freeze, or the dish is
+  unambiguously freezer-safe (soups, stews, braises, chilis, curries, cooked
+  grain-and-protein dishes, baked goods, meatballs, sauces).
+  false only if it clearly does not keep: leafy salads, fried or crisp coatings,
+  dishes built on chunks of potato, cream/mayo/yogurt dressings, custards,
+  anything raw or served fresh.
+  null whenever you are unsure — that is the expected answer for most recipes."""
+
+# Used by scripts/backfill_freezes_well.py for the recipes captured before
+# `freezes_well` existed. Same rule as the extractor so a backfilled answer and
+# a freshly-extracted one mean the same thing.
+FREEZES_WELL_PROMPT = """Do this dish's leftovers survive being frozen and reheated?
+
+RECIPE: {name}
+INGREDIENTS: {ingredients}
+
+""" + FREEZING_RULE + """
+
+Answer with JSON only, no other text:
+{{"freezes_well": true, "reason": "under 12 words"}}
+{{"freezes_well": false, "reason": "under 12 words"}}
+{{"freezes_well": null, "reason": "under 12 words"}}"""
+
 SYSTEM_PROMPT = """You are a recipe extraction assistant. Given a YouTube video transcript
 and description about cooking, extract a structured recipe.
 
 Rules:
 - Extract ONLY what is shown/said in the video
 """ + NAMING_RULE + """
+""" + FREEZING_RULE + """
 - When inferring (timing, quantities, temperatures), mark with "(estimated)"
 - If a field cannot be determined, use null
 - Set needs_review: true if significant inference was required
@@ -40,6 +68,7 @@ Output valid JSON matching this schema:
   "cuisine": "string or null",
   "protein": "string or null",
   "dish_type": "string or null",
+  "freezes_well": true|false|null,
   "dietary": ["array of tags"],
   "equipment": ["array of items"],
   "ingredients": [
@@ -94,6 +123,7 @@ The description contains a written recipe - parse it accurately.
 Rules:
 - Extract EXACTLY what is written (no inference needed)
 """ + NAMING_RULE + """
+""" + FREEZING_RULE + """
 - Parse quantities and ingredients precisely
 - Number the instructions in order
 - Set needs_review: false (this is explicit text)
@@ -112,6 +142,7 @@ Output valid JSON matching this schema:
   "cuisine": "string or null",
   "protein": "string or null",
   "dish_type": "string or null",
+  "freezes_well": true|false|null,
   "dietary": ["array of tags"],
   "equipment": ["array of items"],
   "ingredients": [

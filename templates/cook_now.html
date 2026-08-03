@@ -36,11 +36,24 @@
   .missing { font-size: .85rem; opacity: .75; margin-top: .2rem; }
   .group-tag { font-size: .75rem; opacity: .6; margin-left: .4rem; }
   @media (hover: hover) { .recipe:hover .name { text-decoration: underline; } }
+  /* Above the suggestions deliberately: the cheapest meal is one already cooked,
+     so "what's banked" has to be answerable before "what could I make". */
+  #freezer { border: 1px solid var(--line); border-radius: var(--radius, 10px);
+             background: var(--surface); padding: .7rem .85rem; margin-bottom: 1rem; }
+  .freezer-head { font-weight: 600; font-size: .95rem; }
+  .freezer-sub { font-size: .8rem; opacity: .7; margin-top: .1rem; }
+  .freezer-row { display: flex; justify-content: space-between; gap: 1rem;
+                 font-size: .85rem; padding: .3rem 0; align-items: baseline; }
+  .freezer-row + .freezer-row { border-top: 1px solid var(--line); }
+  .freezer-list { margin-top: .5rem; }
+  .freezer-meta { opacity: .7; white-space: nowrap;
+                  font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
 <h1>🥘 Cook Now</h1>
 
+<div id="freezer" hidden></div>
 <div id="cook-now-chips"></div>
 <p id="hidden-note"></p>
 <div id="list">Loading…</div>
@@ -130,7 +143,13 @@ function renderList() {
     name.textContent = r.recipe;
     const tag = document.createElement("span");
     tag.className = "group-tag";
-    tag.textContent = r.group + (r.at_risk ? " ⏳" : "");
+    // Only on a batch that is *known* to freeze. `freezes_well` is null for
+    // almost the whole corpus, and labelling a null as freezable is the failure
+    // that ends with a thrown-out container weeks later.
+    const batch = r.freezes_well === true && r.servings >= 4
+      ? ` · ❄️ ${r.servings} servings` : "";
+    tag.textContent = r.group + (r.at_risk ? " ⏳" : "") + batch +
+      (r.banked ? " · in freezer" : "");
     name.appendChild(tag);
     const cov = document.createElement("span");
     cov.className = "cov";
@@ -153,8 +172,75 @@ function renderList() {
   }
 }
 
+// "3 days ago" rather than a date: the only question a frozen container raises
+// is how long it's been there.
+function frozenWhen(iso) {
+  if (!iso) return null;
+  const then = new Date(iso + "T00:00:00");
+  if (isNaN(then.getTime())) return null;
+  const days = Math.round((Date.now() - then.getTime()) / 86400000);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 14) return days + " days ago";
+  const weeks = Math.round(days / 7);
+  return weeks + " weeks ago";
+}
+
+function renderFreezer(data) {
+  const box = document.getElementById("freezer");
+  const rows = (data && data.freezer) || [];
+  // An empty freezer shows nothing at all. A tray reading "0 servings" is a
+  // permanent reminder of an absence, which is clutter, not information.
+  if (!rows.length) { box.hidden = true; return; }
+
+  const totals = (data && data.totals) || {};
+  box.hidden = false;
+  box.textContent = "";
+
+  const servings = totals.servings || 0;
+  const head = document.createElement("div");
+  head.className = "freezer-head";
+  head.textContent =
+    `🧊 ${servings} serving${servings === 1 ? "" : "s"} already cooked`;
+  box.appendChild(head);
+
+  // Only when something priced survived the plausibility gate — otherwise the
+  // line would read "0 g protein" for food that simply hasn't been measured.
+  if (totals.protein) {
+    const sub = document.createElement("div");
+    sub.className = "freezer-sub";
+    sub.textContent = `${Math.round(totals.protein)} g protein · ` +
+                      `${Math.round(totals.calories)} kcal banked`;
+    box.appendChild(sub);
+  }
+
+  const list = document.createElement("div");
+  list.className = "freezer-list";
+  for (const r of rows) {
+    const row = document.createElement("div");
+    row.className = "freezer-row";
+    const name = document.createElement("span");
+    name.textContent = `${r.recipe} × ${r.servings}`;
+    const meta = document.createElement("span");
+    meta.className = "freezer-meta";
+    const bits = [];
+    if (r.protein != null) bits.push(`${r.protein} g each`);
+    const when = frozenWhen(r.banked_on);
+    if (when) bits.push(when);
+    meta.textContent = bits.join(" · ");
+    row.append(name, meta);
+    list.appendChild(row);
+  }
+  box.appendChild(list);
+}
+
 async function load() {
   let loadError = null;
+  // Started before the await below, not after: the tray must not cost the page
+  // a second round trip before it can show a suggestion. A freezer failure
+  // resolves to null and simply leaves the tray hidden — it must never blank
+  // the list, which is the part of the page that still works without it.
+  const freezer = fetch("/api/freezer").then(r => r.json()).catch(() => null);
   try {
     const resp = await fetch("/api/cook-now?limit=60");
     const data = await resp.json();
@@ -170,6 +256,7 @@ async function load() {
   } else {
     renderList();
   }
+  renderFreezer(await freezer);
 }
 
 load();

@@ -75,9 +75,40 @@ _TIER_WEIGHT = {"meal": 1.0, "component": 0.7, "treat": 0.5, "dessert": 0.35}
 #: Same reasoning as DEFAULT_GROUP — a data gap must not bury a real recipe.
 DEFAULT_TIER = "meal"
 
-# Protein per serving at which a dish counts as properly feeding you. Set
-# against a 190 g/day target across roughly four eating occasions.
-MEAL_PROTEIN_G = 30.0
+# Protein per serving at which a dish counts as properly feeding you — read from
+# the user's own target rather than guessed.
+#
+# This was hardcoded at 30 g, with a comment claiming it was "set against a
+# 190 g/day target across roughly four eating occasions". Four times thirty is
+# 120, not 190, so the factor saturated at two-thirds of a real eating occasion
+# and a 30 g dish scored identically to a 68 g one. The ranking could not tell a
+# light meal from a heavy one, which is most of what it exists to do.
+EATING_OCCASIONS_PER_DAY = 4
+
+#: Used when My Macros.md is absent or unreadable. Deliberately 120 g — the old
+#: hardcoded 30 g x 4 — so a vault with no stated targets behaves exactly as it
+#: did before, rather than silently acquiring someone else's numbers.
+DEFAULT_DAILY_PROTEIN_G = 120.0
+
+
+def meal_protein_target() -> float:
+    """Protein per eating occasion, from My Macros.md.
+
+    Falls back to ``DEFAULT_DAILY_PROTEIN_G`` when the vault states no target,
+    and never returns zero — the value is a divisor on every render.
+    """
+    daily = None
+    try:
+        from lib import paths
+        from lib.macro_targets import load_macro_targets
+        targets = load_macro_targets(paths.vault_root())
+        if targets is not None and targets.protein:
+            daily = float(targets.protein)
+    except Exception:
+        daily = None
+    if not daily or daily <= 0:
+        daily = DEFAULT_DAILY_PROTEIN_G
+    return daily / EATING_OCCASIONS_PER_DAY
 
 # How far nutrition may move a ranking: a dish with no protein keeps 60% of its
 # score, one at or above MEAL_PROTEIN_G keeps all of it. Dish type alone was not
@@ -91,12 +122,50 @@ _NUTRITION_FLOOR = 0.6
 _NUTRITION_UNKNOWN = 0.8
 
 
-def _nutrition_factor(protein) -> float:
+def _nutrition_factor(protein, target: float) -> float:
     """0.6–1.0 by how much protein a serving actually delivers."""
     if protein is None:
         return _NUTRITION_UNKNOWN
-    share = min(max(protein, 0.0) / MEAL_PROTEIN_G, 1.0)
+    share = min(max(protein, 0.0) / target, 1.0)
     return _NUTRITION_FLOOR + (1.0 - _NUTRITION_FLOOR) * share
+
+
+# How many servings before a cooking session counts as batch cooking. Below this
+# you are paying a whole session's setup and cleanup for a single meal; above it
+# there is no further credit, because a 20-serving recipe is not five times
+# better than a 4-serving one — it's the same trip to the stove.
+BATCH_SERVINGS = 4.0
+_YIELD_FLOOR = 0.85
+
+#: Unknown yield sits at the midpoint, the same rule as unknown macros and
+#: unknown cook time: missing data is not evidence of a bad recipe.
+_YIELD_UNKNOWN = (_YIELD_FLOOR + 1.0) / 2
+
+
+def _yield_factor(servings) -> float:
+    """0.85–1.0 by how many meals one cooking session buys.
+
+    The point of a batch on a week with no time is that it feeds you more than
+    once — leftovers frozen and rotated are what make that variety rather than
+    the same dinner three nights running.
+    """
+    try:
+        count = float(servings)
+    except (TypeError, ValueError):
+        return _YIELD_UNKNOWN            # "6-8", "", None — all seen in this corpus
+    if count <= 0:
+        return _YIELD_UNKNOWN
+    if count >= BATCH_SERVINGS:
+        return 1.0
+    span = (count - 1.0) / (BATCH_SERVINGS - 1.0)
+    return _YIELD_FLOOR + (1.0 - _YIELD_FLOOR) * max(span, 0.0)
+
+
+# What's already cooked doesn't need cooking. A banked recipe is demoted hard
+# rather than hidden: it's still a true answer to "what could I eat", and the
+# freezer tray above the list links to it — but it is the wrong answer to "what
+# should I make", which is the question this page is asked.
+_BANKED_WEIGHT = 0.5
 
 
 # Cook time, deliberately the weakest of the three factors: at most a 15% swing.
@@ -170,20 +239,24 @@ def group_for(dish_type: Optional[str]) -> str:
 
 
 def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
-             today: Optional[date] = None, limit: int = 30) -> dict:
+             today: Optional[date] = None, limit: int = 30,
+             banked: Optional[set] = None,
+             protein_target: Optional[float] = None) -> dict:
     """Rank recipes by what you should actually make right now.
 
-    Four factors, multiplied: **coverage** (can you make it) × **meal tier** (is
+    Six factors, multiplied: **coverage** (can you make it) × **meal tier** (is
     it a meal) × **nutrition** (will it feed you) × **speed** (how long until
-    it's on the table). Coverage alone answered a different question than the
-    one the page is asked — on a pantry of dry goods it returned muffins,
-    brownies, cookies and frosting, all correctly and none of them dinner.
+    it's on the table) × **yield** (how many meals one session buys) ×
+    **banked** (is it already cooked and in the freezer). Coverage alone
+    answered a different question than the one the page is asked — on a pantry
+    of dry goods it returned muffins, brownies, cookies and frosting, all
+    correctly and none of them dinner.
 
     Returns ``{"recipes": [...]}``, each entry ``{recipe, image, dish_type,
     group, have, total, coverage, missing, at_risk, meal_tier, protein, minutes,
-    score}``, sorted by ``score`` descending and capped at ``limit``. The three
-    non-coverage factors are reported alongside it so a surface can explain the
-    order rather than presenting it as given.
+    servings, banked, score}``, sorted by ``score`` descending and capped at
+    ``limit``. Every non-coverage factor is reported alongside it so a surface
+    can explain the order rather than presenting it as given.
 
     Staples count as always-on-hand: they raise coverage but never
     appear in ``missing``. ``at_risk`` is True when the recipe uses an item in
@@ -196,6 +269,15 @@ def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
         from lib import paths
         from lib.recipe_index import get_recipe_index
         recipe_index = get_recipe_index(paths.recipes_dir(), include_ingredients=True)
+    if banked is None:
+        # One query for the whole library, not one per recipe.
+        from lib.serving_ledger import banked_recipes
+        try:
+            banked = banked_recipes()
+        except Exception:
+            banked = set()      # a ledger problem must not blank the suggestions
+    if protein_target is None:
+        protein_target = meal_protein_target()
 
     staple_sets = _staple_phrases()
     inv_phrases = [_phrase(it.name) for it in items]
@@ -219,6 +301,8 @@ def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
         tier = meal_tier_for(recipe.get("dish_type"))
         minutes = recipe.get("total_time_minutes")
         protein = _trustworthy_protein(recipe)
+        servings = recipe.get("servings")
+        is_banked = recipe["name"] in banked
 
         recipes.append({
             "recipe": recipe["name"],
@@ -235,11 +319,19 @@ def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
             "meal_tier": tier,
             "protein": protein,
             "minutes": minutes,
+            "servings": servings,
+            "banked": is_banked,
+            # Reported, never scored on: too sparse across the corpus to rank by.
+            # A surface can label a batch "freezes well"; it must not reorder on
+            # a field almost every recipe answers `null` to.
+            "freezes_well": recipe.get("freezes_well"),
             "score": round(
                 coverage
                 * _TIER_WEIGHT[tier]
-                * _nutrition_factor(protein)
-                * _speed_factor(minutes),
+                * _nutrition_factor(protein, protein_target)
+                * _speed_factor(minutes)
+                * _yield_factor(servings)
+                * (_BANKED_WEIGHT if is_banked else 1.0),
                 4,
             ),
         })

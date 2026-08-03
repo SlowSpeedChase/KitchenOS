@@ -52,6 +52,10 @@ OPTIONAL_KEYS = frozenset({
     "verdict_count",
     # scripts/backfill_servings.py and scripts/normalize_recipes.py
     "servings_inferred", "servings_needs_review",
+    # recipe extraction — tri-state: true / false / null. `null` is the honest
+    # answer for most of the corpus and must stay distinct from `false`, since
+    # "nobody has said" is not "it doesn't freeze".
+    "freezes_well",
 })
 
 KNOWN_KEYS = REQUIRED_KEYS | OPTIONAL_KEYS

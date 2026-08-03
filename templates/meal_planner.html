@@ -3290,9 +3290,52 @@
                 } else {
                     renderCookToast(r);
                     loadUseItUp().catch(() => {});
+                    // Asked here because this is the moment the leftovers are
+                    // physically in front of you. Deferring it means never: an
+                    // unassigned serving appears on no surface, so a batch cook
+                    // silently becomes one meal plus some containers.
+                    if (cook.unassigned > 0 && confirm(
+                            `Freeze the other ${fmtMult(cook.unassigned)} ` +
+                            `serving${cook.unassigned === 1 ? '' : 's'} of ` +
+                            `"${cook.recipe}"?`)) {
+                        await bankLeftovers(cook);
+                    }
                 }
             } catch (err) {
                 showToast('Failed to mark cooked', 'error');
+            } finally {
+                await loadWeekBoard(currentWeek);
+                ledgerBusy = false;
+            }
+        }
+
+        // POSTs the freeze. Callers own `ledgerBusy` and the board reload, because
+        // one caller runs inside markCookCooked's existing lock and would
+        // otherwise deadlock against it.
+        async function bankLeftovers(cook) {
+            const n = fmtMult(cook.unassigned);
+            try {
+                const resp = await fetch(`/api/cooks/${cook.id}/freeze-rest`,
+                                         { method: 'POST' });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    showToast(err.error || 'Failed to freeze servings', 'error');
+                    return false;
+                }
+                showToast(`Froze ${n} serving${cook.unassigned === 1 ? '' : 's'} · ` +
+                          displayNameFor(cook.recipe));
+                return true;
+            } catch (err) {
+                showToast('Failed to freeze servings', 'error');
+                return false;
+            }
+        }
+
+        async function freezeRest(cook) {
+            if (ledgerBusy) return;
+            ledgerBusy = true;
+            try {
+                await bankLeftovers(cook);
             } finally {
                 await loadWeekBoard(currentWeek);
                 ledgerBusy = false;
@@ -4205,6 +4248,18 @@
             const cookedBtn = card.querySelector('.cooked-btn');
             if (cookedBtn) {
                 addAction('Mark cooked 🍳', () => cookedBtn.click());
+            }
+
+            // Shown only when a remainder actually exists. Until now the only way
+            // to bank one was dragging a serving chip onto the sidebar tray —
+            // a gesture that needs board mode, the sidebar open, and a mouse.
+            if (card.classList.contains('cook-card') && card.dataset.cookId) {
+                const c = ((weekBoard && weekBoard.cooks) || [])
+                    .find(x => String(x.id) === String(card.dataset.cookId));
+                if (c && c.unassigned > 0) {
+                    addAction(`Freeze the rest ❄️ (${fmtMult(c.unassigned)})`,
+                              () => freezeRest(c));
+                }
             }
 
             // Was it worth making? One tap, no scale — see setCookVerdict.

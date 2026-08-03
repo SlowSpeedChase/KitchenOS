@@ -211,6 +211,7 @@ total_time: {total_time}
 servings: {servings}
 serving_size: {serving_size}
 difficulty: {difficulty}
+freezes_well: {freezes_well}
 
 nutrition_calories: {nutrition_calories}
 nutrition_protein: {nutrition_protein}
@@ -410,6 +411,16 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel, date_ad
     def num_or_null(val):
         return val if val is not None else "null"
 
+    def bool_or_null(val):
+        """`true` / `false` / `null`, and nothing else.
+
+        The value is LLM-extracted, so it arrives as "probably", "yes, but not
+        the sauce", or a whole sentence. On a tri-state field whose unknown
+        state is load-bearing, a truthy string must not become `true` —
+        "freezes: probably?" would be recorded as a confident yes.
+        """
+        return frontmatter.scalar(val) if isinstance(val, bool) else "null"
+
     # Image support
     image_filename = recipe_data.get('image_filename')
     banner = f'"[[{image_filename}]]"' if image_filename else "null"
@@ -444,6 +455,7 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel, date_ad
         servings=num_or_null(recipe_data.get('servings')),
         serving_size=quote_or_null(recipe_data.get('serving_size')),
         difficulty=quote_or_null(recipe_data.get('difficulty')),
+        freezes_well=bool_or_null(recipe_data.get('freezes_well')),
         nutrition_calories=num_or_null(recipe_data.get('nutrition_calories')),
         nutrition_protein=num_or_null(recipe_data.get('nutrition_protein')),
         nutrition_carbs=num_or_null(recipe_data.get('nutrition_carbs')),
