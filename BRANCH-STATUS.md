@@ -1,107 +1,116 @@
-# Branch Status: phase-1/honest-system
+# Branch Status: ingredient-text-fidelity
 
 **Created:** 2026-08-02
-**Design Doc:** docs/plans/2026-08-02-daily-driver-audit.md
-**Current Stage:** ready
-**Last Rebased:** 2026-08-02
+**Design Doc:** none — defect fix found while measuring the cookbook import
+**Current Stage:** testing
+**Last Rebased:** 2026-08-02 (branched from `2798992`)
 
 ## Overview
 
-Phase 1 of the daily-driver plan: **stop the system lying about itself.**
+The 145 EPUB cookbook recipes imported today carried **no nutrition at all** — 0 of
+145 had calories — so every one of them was invisible to day totals, the macro
+suggester, and the new Cook Now ranking. Backfilling them exposed why the numbers
+would have been untrustworthy anyway: **680 ingredient lines failed to resolve**, and
+half of those were not ingredients.
 
-The audit found ten defects that all fail *silently* — no error, no log line, no changed
-pixel. This branch does not try to make the numbers right (that is Phase 3). It makes the
-system honest about which numbers it cannot stand behind, and revives three controls that
-have been dead long enough that nobody remembers pressing them.
-
-Scope is deliberately "no backfill required" — every change here is evaluated at read time
-against frontmatter that already exists, so nothing waits on re-deriving the corpus.
+This branch fixes the readers, not the importer. `epub_parser` was already correct.
 
 ## Dependencies
 
-- None. Phase 0 (Full Disk Access grant, Instagram cookies) is a user action that runs in
-  parallel and blocks nothing here.
-- Phase 2 (`max_retries=0`, suggest on board weeks, consume-on-cook) is a separate branch.
+- None. Touches `lib/recipe_parser.py` and `backfill_nutrition.py` only; no overlap
+  with `phase-2/close-the-loops` or `move-cook-by-drag`.
 
 ## Acceptance criteria
 
-- [x] A recipe claiming 244 g protein/serving can no longer be returned as a macro-gap suggestion
-- [x] The plausibility bounds flag 45/252 on the live corpus, matching the audit measurement
-- [x] Zero previously-trusted implausible recipes remain eligible
-- [x] A day whose totals depend on an implausible recipe says so instead of stating a number
-- [x] An unplanned week no longer reads as a starvation week
-- [x] `/nutrition-review` ranks worst-first by violation magnitude, not ascending coverage
-- [x] `/reprocess`, `analyze_failures.sh`, and `/refresh` either work or are gated off
-- [x] `/system-health` asserts the silent failures rather than reporting "ok"
+- [x] A bolded, quantity-less table row is not read as an ingredient
+- [x] An emphasised *real* ingredient (`**flaky sea salt**`, 2 tbsp) still is
+- [x] A quantity-less real ingredient (`kosher salt, to taste`) still is
+- [x] A recipe grouped under `###` sub-headings contributes every row to nutrition
+- [x] Zero new ruff findings vs main (7 = 7, all pre-existing)
+- [x] Corpus measurably improves, and every apparent regression is explained
 
 ---
 
 ## Stages
 
 ### Planning
-- [x] Design doc exists and approved (decisions recorded 2026-08-02)
-- [x] Conflict check completed — only `move-cook-by-drag` is active, no file overlap
-- [x] Dependencies identified and noted
+- [x] Conflict check completed — `git worktree list`, no file overlap
 - [x] Branch and worktree created
-- [x] Implementation plan written (docs/plans/2026-08-02-daily-driver-audit.md §4)
 
 ### Dev
-- [x] Tests written first (superpowers:test-driven-development)
+- [x] Tests written first (superpowers:test-driven-development) — watched both fail
 - [x] Core implementation complete
-- [x] All tests passing (3702 passed, 1 skipped)
-- [x] No linting/type errors (ruff: no new findings vs main)
+- [x] All tests passing — 3861 passed, 1 skipped
+- [x] No new linting errors — ruff 7 on branch, 7 on main, identical set
 - [x] Code follows project patterns
-- [ ] LaunchAgent restarted if lib/, templates/, or prompts/ changed (required ON MERGE — com.kitchenos.api holds lib/* in memory)
+- [ ] LaunchAgent restarted (required ON MERGE — `com.kitchenos.api` holds `lib/*`
+      in memory, and `lib/recipe_parser.py` changed)
 
 ### Testing
-- [x] Unit tests pass — 3702 passed, 1 skipped
-- [x] Integration tests pass — e2e 124 passed, 1 skipped, 1 xfailed, 3 xpassed, **1 failed
-      (pre-existing, see below)**
-- [x] Manual testing completed — assertions run against production data report 5 real
-      failures with correct figures; suggester before/after verified on the live corpus
-- [x] Edge cases verified — bound inclusivity, garbage frontmatter, null-vs-zero calories,
-      probes that raise
-- [x] Verified with superpowers:verification-before-completion
-
-**Pre-existing e2e failure, NOT introduced here.**
-`test_weekly_loop.py::test_marking_a_plan_card_cooked_creates_a_ledger_row` fails
-identically on `main` and on this branch when run in isolation (same assertion, line 281).
-Left for Phase 2, because it pins a real defect rather than a flaky test: the legacy grid
-card's 🍳 button calls `POST /api/cook`, which decrements inventory and contains **zero**
-references to the `cooks` ledger, so the test's "marking a plan card cooked creates a
-ledger row" is asserting behaviour that was never wired. The MCP `cook_recipe` tool forks
-the same way. Fixing it is the Phase 2 item "unify `/api/cook` with the ledger".
-
-Note also that this test is order-dependent: in a full-suite run it fails *earlier* (line
-272, "authored plan rendered no legacy cards") because a preceding test leaves a cook row
-on week 2099-W07, which turns that week into a board week so legacy cards stop rendering.
-Worth isolating when Phase 2 touches it.
+- [x] Unit tests pass — 3861 passed, 1 skipped
+- [x] Manual verification — full-corpus dry run on branch vs main, same data
+- [x] Edge cases verified — bold-with-amount, unbolded-quantity-less, `****`,
+      section ending at the next h2
+- [ ] e2e suite not yet run
 
 ### Docs
-- [ ] Doc obligations met per CLAUDE.md table (ARCHITECTURE / API / OPERATIONS / invariants)
-- [ ] README updated (if interface changed)
-- [ ] ROADMAP usage-feedback entries updated / struck through
+- [ ] CLAUDE.md invariant updated (the group-header rule is new and belongs there)
+- [ ] docs/plans/INDEX.md entry
 
 ### Review
 - [ ] Code reviewed
-- [ ] Feedback addressed
 
 ### Ready
-- [x] Rebased on main (2026-08-02, onto 4399684 — 8 commits replayed clean)
-- [x] Final tests pass — 3702 passed, 1 skipped post-rebase
-- [x] All checks complete
+- [x] Branched from current main (`2798992`)
 
 ---
 
+## Measured effect
+
+Full-corpus `--dry-run --force`, branch vs main, identical vault and DB:
+
+| | main | branch |
+|---|---|---|
+| Unresolved ingredient lines | 821 | **698** |
+| Recipes the engine could read | 397 | **398** |
+| Mean coverage | 0.830 | 0.840 |
+| Clearing the 0.8 trust bar | 256 | **265** |
+
+57 recipes gained coverage; 7 lost it. **All 7 losses are corrections, not
+regressions** — each had a section heading that was resolving to a real food, so the
+old figure counted a heading as a successfully-resolved ingredient. Cold Tofu With
+Coconut-Ginger-Lime Crisp is the clearest: `**coconut-ginger-lime crisp**` scored
+15 g / 12 kcal, so coverage read 0.50 and the recipe carried 6 phantom kcal/serving.
+It now reads 0.46, and is honest.
+
+Live corpus after the real `--force` run:
+
+| | session start | now |
+|---|---|---|
+| Recipes with calories | 254 / 403 | **399 / 403** |
+| Trustworthy (`macro_eligible`) | 184 | **219** |
+| Cookbook imports with calories | 0 / 145 | **144 / 145** |
+| Cookbook imports trustworthy | 0 | **31** |
+
 ## Notes
 
-**Why absolute bounds and not an Atwater consistency check.** The obvious validator — does
-`4P + 4C + 9F` agree with stated calories — flags exactly **1** recipe out of 248. Calories
-and macros derive from the same per-100 g record and the same gram weights, so a wrong gram
-weight makes them wrong *proportionally*. The 244 g-protein smoothie agrees with itself to
-within 1.4%. Only absolute bounds can see resolution error.
+**Why the fix is in the reader and not the importer.** `epub_parser.SUBHEAD_MARKER`
+already tags every group header, and `import_epub.py:178` filters on it. The marker
+just doesn't survive being written to a flat markdown table — the template has no
+other way to render a group. So the information was there and was thrown away at the
+file boundary; the reader is the only place that can recover it, and fixing it there
+fixes all seven consumers at once instead of one.
 
-**Measured effect of the gate** (live corpus, real targets of 190 g protein / 2300 kcal,
-empty day). Before: Chipotle Burrito (178 g), Tofu Scramble (229 g), PB Smoothie (244 g),
-Earl Grey Pie (153 g). After: Chilaquiles (68 g), High Protein Pizza (68 g), Osso Buco
-(64 g), Chicken Gyro Bowls (61 g).
+**Still open — the other half of the 680.** ~217 lines are ingredient *text* defects
+baked into the imported files: amount-parser range splits ("to 1/2 teaspoon red
+pepper flakes"), leading package parentheticals ("(15-ounce/425 g) can chickpeas"),
+and unhandled alternatives ("potato starch or arrowroot"). Fixing
+`ingredient_parser.parse_ingredient_best` only helps on **re-import**, so these need
+either a re-import or a repair pass (`clean_ingredients.py` is the existing vehicle).
+~297 more are genuine resolver misses on clean names (`kosher salt`, `coriander
+seeds`, `organic cane sugar`) — food-store coverage, i.e. Phase 3.
+
+**4 recipes still have no nutrition** and are not a nutrition problem: their
+`## Ingredients` table has a header row and no data rows. They need re-extraction.
+A fifth, Chocolate Peanut Butter Bars, was in this group until this branch — its 6
+ingredients were real and simply unreadable.
