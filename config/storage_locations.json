@@ -9,6 +9,7 @@
     "basil": "counter",
     "bread": "counter",
     "buns": "counter",
+    "butter": "fridge",
     "butternut squash": "pantry",
     "croissants": "counter",
     "garlic": "pantry",
@@ -31,15 +32,15 @@
     "winter squash": "pantry"
   },
   "by_category": {
-    "produce": "fridge",
-    "dairy": "fridge",
-    "meat": "fridge",
-    "seafood": "fridge",
-    "frozen": "freezer",
     "bakery": "counter",
     "beverages": "pantry",
-    "pantry": "pantry",
+    "dairy": "fridge",
+    "frozen": "freezer",
     "household": "other",
-    "other": "pantry"
+    "meat": "fridge",
+    "other": "pantry",
+    "pantry": "pantry",
+    "produce": "fridge",
+    "seafood": "fridge"
   }
 }
