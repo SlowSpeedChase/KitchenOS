@@ -71,12 +71,15 @@ Full-corpus `--dry-run --force`, branch vs main, identical vault and DB:
 
 | | main | branch |
 |---|---|---|
-| Unresolved ingredient lines | 821 | **698** |
-| Recipes the engine could read | 397 | **398** |
-| Mean coverage | 0.830 | 0.840 |
-| Clearing the 0.8 trust bar | 256 | **265** |
+| Unresolved gram lines | 821 | **599** |
+| Stated weights recovered | 414 | **472** |
+| Recipes the engine could read | 397 | **399** |
+| Mean coverage | 0.830 | **0.859** |
+| Clearing the 0.8 trust bar | 256 | **280** |
 
-57 recipes gained coverage; 7 lost it. **All 7 losses are corrections, not
+92 recipes gained coverage; 2 lost it. (After the first commit alone it was 57
+gained / 7 lost — the weight and range recoveries lifted 5 of those 7 back above
+where they started.) **All 7 losses are corrections, not
 regressions** — each had a section heading that was resolving to a real food, so the
 old figure counted a heading as a successfully-resolved ingredient. Cold Tofu With
 Coconut-Ginger-Lime Crisp is the clearest: `**coconut-ginger-lime crisp**` scored
@@ -87,10 +90,13 @@ Live corpus after the real `--force` run:
 
 | | session start | now |
 |---|---|---|
-| Recipes with calories | 254 / 403 | **399 / 403** |
-| Trustworthy (`macro_eligible`) | 184 | **219** |
-| Cookbook imports with calories | 0 / 145 | **144 / 145** |
-| Cookbook imports trustworthy | 0 | **31** |
+| Recipes with calories | 254 / 403 | **400 / 403** |
+| Trustworthy (`macro_eligible`) | 184 | **235** |
+| Cookbook imports with calories | 0 / 145 | **145 / 145** |
+| Cookbook imports trustworthy | 0 | **46** |
+
+Remaining eligibility blockers: `low_coverage` 121, `kcal_too_high` 34,
+`servings_unknown` 24, `protein_too_high` 21, `kcal_too_low` 20, `no_nutrition` 3.
 
 ## Notes
 
@@ -101,7 +107,7 @@ other way to render a group. So the information was there and was thrown away at
 file boundary; the reader is the only place that can recover it, and fixing it there
 fixes all seven consumers at once instead of one.
 
-**Still open — the other half of the 680.** ~217 lines are ingredient *text* defects
+**Still open.** ~180 gram-resolution failures remain on clean names where the
 baked into the imported files: amount-parser range splits ("to 1/2 teaspoon red
 pepper flakes"), leading package parentheticals ("(15-ounce/425 g) can chickpeas"),
 and unhandled alternatives ("potato starch or arrowroot"). Fixing
