@@ -14,7 +14,9 @@ The trust rules are not new. This is a composition of three existing pieces:
   still holding in memory)
 - ``serving_ledger.recipe_macros`` — the safe frontmatter read that degrades to
   ``None`` on any per-recipe failure
-- ``nutrition_quality.macro_eligible`` — the same gate the suggester ranks on
+- ``nutrition_quality.eligible_macros`` — the same gate the suggester ranks on,
+  and the same one ``serving_ledger.day_totals`` applies to a placed serving, so
+  a plate's card and its contribution to the day-totals row cannot disagree
 
 An untrusted sub-recipe is **excluded from the totals and named**, never counted
 as zero and never counted at face value. The distinction matters most for
@@ -30,30 +32,10 @@ from pathlib import Path
 from typing import Optional
 
 from lib.meal_plan_parser import sub_multiplier
-from lib.nutrition_quality import macro_eligible
+from lib.nutrition_quality import eligible_macros
 from lib.serving_ledger import recipe_macros
 
 MACRO_KEYS = ("calories", "protein", "carbs", "fat")
-
-
-def _eligibility(macros: Optional[dict]) -> tuple[bool, list[str]]:
-    """Is this sub-recipe's macro data trustworthy? Reuses the suggester's gate.
-
-    ``recipe_macros`` returns a macro-shaped dict while ``macro_eligible`` reads
-    an index-shaped one, so translate rather than re-reading the file. A missing
-    recipe (``None``) can't be judged by the gate at all — it's simply absent.
-    """
-    if macros is None:
-        return False, ["missing"]
-    return macro_eligible({
-        "nutrition_calories": macros.get("calories"),
-        # Protein is load-bearing for the plausibility bounds, not decoration:
-        # without it a sub-recipe claiming 244 g/serving passes on calories
-        # alone and its garbage lands in the bundle's rollup.
-        "nutrition_protein": macros.get("protein"),
-        "nutrition_coverage": macros.get("coverage"),
-        "servings": macros.get("servings"),
-    })
 
 
 def meal_nutrition(
@@ -86,7 +68,7 @@ def meal_nutrition(
         if name not in cache:
             cache[name] = recipe_macros(name, recipes_dir)
         macros = cache[name]
-        eligible, reasons = _eligibility(macros)
+        eligible, reasons = eligible_macros(macros)
 
         # The rollup is per *one* serving of the bundle (a caller placing it on a
         # board at x2 scales the result), so the outer factor is 1.0 — but route

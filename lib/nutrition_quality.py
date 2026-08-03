@@ -38,6 +38,8 @@ degrades gracefully rather than returning nothing.
 
 from __future__ import annotations
 
+from typing import Optional
+
 from lib.serving_ledger import COVERAGE_REVIEW_THRESHOLD
 
 # Per-serving bounds. Calibrated against the corpus: the median recipe is 405
@@ -173,3 +175,38 @@ def macro_eligible(recipe: dict) -> tuple[bool, list[str]]:
     reasons.extend(bad_reasons)
 
     return (not reasons, reasons)
+
+
+def eligible_macros(macros: Optional[dict]) -> tuple[bool, list[str]]:
+    """``macro_eligible`` for a ``serving_ledger.recipe_macros`` dict.
+
+    ``recipe_macros`` returns a macro-shaped dict (``calories``, ``protein``,
+    ``coverage``, ``servings``) while ``macro_eligible`` reads an index-shaped
+    one (``nutrition_calories``, ...), so translate rather than re-reading the
+    file. ``None`` — an absent or unreadable recipe — cannot be judged by the
+    gate at all; it is simply ``"missing"``, and is named as such so a caller can
+    list it beside the recipes that failed on their numbers.
+
+    This lives here, in one place, because two surfaces need it and they must
+    not disagree: ``meal_nutrition`` rolls a plate up from its sub-recipes, and
+    ``serving_ledger.day_totals`` sums the same recipes as placed servings. They
+    are the same arithmetic over the same food, so a divergent gate would make a
+    plate's card and its contribution to the day row report different numbers
+    with nothing on screen explaining why. They used to: ``day_totals`` applied
+    only the plausibility bounds, so a ``servings: null`` recipe had its whole-
+    batch total summed as if per-serving and a sub-0.8 coverage recipe was
+    counted while merely flagged.
+
+    Returns ``(eligible, reasons)``; see ``macro_eligible`` for the reason codes,
+    plus ``"missing"`` from here.
+    """
+    if macros is None:
+        return False, ["missing"]
+    return macro_eligible({
+        "nutrition_calories": macros.get("calories"),
+        # Protein is load-bearing for the plausibility bounds, not decoration:
+        # without it a recipe claiming 244 g/serving passes on calories alone.
+        "nutrition_protein": macros.get("protein"),
+        "nutrition_coverage": macros.get("coverage"),
+        "servings": macros.get("servings"),
+    })

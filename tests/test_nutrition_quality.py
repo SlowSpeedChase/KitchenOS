@@ -5,6 +5,7 @@ from lib.nutrition_quality import (
     MAX_PROTEIN_G_PER_SERVING,
     MIN_KCAL_PER_SERVING,
     implausibility_score,
+    eligible_macros,
     implausible,
     macro_eligible,
 )
@@ -188,3 +189,53 @@ class TestImplausibilityScore:
 
     def test_floor_violation_scores(self):
         assert implausibility_score(_recipe(nutrition_calories=7, nutrition_protein=1)) > 0.0
+
+
+class TestEligibleMacros:
+    """The adapter that lets the meal card and the day-totals row share a gate.
+
+    `serving_ledger.recipe_macros` returns a macro-shaped dict; `macro_eligible`
+    reads an index-shaped one. Both `meal_nutrition` and `day_totals` need the
+    translation, and when they each had their own the two surfaces disagreed
+    about what they trusted while reporting the same food.
+    """
+
+    @staticmethod
+    def _macros(**over):
+        m = {"calories": 500, "protein": 30, "carbs": 40, "fat": 20,
+             "coverage": 0.95, "servings": 4}
+        m.update(over)
+        return m
+
+    def test_sound_macros_are_eligible(self):
+        assert eligible_macros(self._macros()) == (True, [])
+
+    def test_none_is_missing_not_judged(self):
+        """An absent or unreadable recipe can't be judged by the gate at all."""
+        assert eligible_macros(None) == (False, ["missing"])
+
+    def test_low_coverage_is_named(self):
+        eligible, reasons = eligible_macros(self._macros(coverage=0.4))
+        assert eligible is False
+        assert "low_coverage" in reasons
+
+    def test_unknown_servings_is_named(self):
+        """Whole-batch totals masquerading as per-serving — the worst case."""
+        eligible, reasons = eligible_macros(self._macros(servings=None))
+        assert eligible is False
+        assert "servings_unknown" in reasons
+
+    def test_implausible_bounds_are_named(self):
+        eligible, reasons = eligible_macros(self._macros(calories=3009, protein=178))
+        assert eligible is False
+        assert reasons
+
+    def test_protein_reaches_the_bounds_check(self):
+        """Protein is load-bearing, not decoration.
+
+        Without it a sub-recipe claiming 244 g/serving passes on calories alone.
+        """
+        eligible, reasons = eligible_macros(
+            self._macros(calories=1000, protein=244))
+        assert eligible is False
+        assert reasons
