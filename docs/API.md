@@ -18,6 +18,20 @@ the token-gated routes below must send `Authorization: Bearer <token>`.
 Localhost (the Mac app, local browser UI, MCP server, LaunchAgents) is always
 exempt. Gated routes are marked **🔒** in the table.
 
+Two things this does **not** currently amount to, both worth knowing before you
+rely on it:
+
+- **Coverage is partial.** 28 `/api/` routes are ungated, including mutating
+  ones (`/api/inventory/*`, `/api/pantry` PUT, `/api/shopping-list/confirm`,
+  `/api/recipes/save`). They are listed in `KNOWN_UNGATED` in
+  `tests/test_api_auth.py`, which fails if a *new* ungated route appears — so
+  the gap is pinned and visible, not closed.
+- **No browser page sends the header.** Every `fetch()` in `templates/` is
+  bare, so the moment `KITCHENOS_API_TOKEN` is set, every gated route 401s for a
+  remote browser and the planner, freezer and board stop working from any
+  machine but this one. `KitchenOSKit` does send it, so the native app is fine.
+  The token is currently unset, which is the only reason this isn't biting.
+
 ## 1. HTTP endpoints
 
 76 routes. Path | Method | Purpose.
@@ -47,11 +61,15 @@ exempt. Gated routes are marked **🔒** in the table.
 | `/meal-planner` | GET | Interactive drag-and-drop meal-planner board (HTML/JS UI). |
 | `/current/meal-plan` | GET | The current ISO week's meal plan, rendered as HTML by `lib/note_view.py`. `?week=` overrides. Wikilinks become `/recipe/<name>` links; the note's dead `kitchenos://` button becomes a working HTTP one. Keeps an "Open in Obsidian" footer link. Was a 302 to `obsidian://`, which dead-ended on a phone. |
 | `/current/shopping-list` | GET | The current ISO week's shopping list, rendered as HTML. `?week=` overrides. When no list exists yet, offers a **Generate shopping list** button that POSTs to `/generate-shopping-list` — the workflow's only phone-reachable trigger. Checkbox state is rendered read-only; the vault note stays the single source of truth. |
-| `/api/meals` | GET | List composite meal bundles (`vault/Meals/*.meal.md`). Each carries `slot` and a derived `nutrition` rollup (see below). |
-| `/api/meals` | POST | Create a meal bundle. Body `{name, sub_recipes: [{recipe, servings}], description?, tags?, slot?}`. `servings` is a **float** (1.5 splits a batch across meals) and must be > 0 — a non-positive or unparseable value is a 400. `slot` is one of `breakfast`/`lunch`/`snack`/`dinner`, defaulting to `dinner`; anything else is a 400. |
-| `/api/meals/<name>` | GET | Get one meal bundle, with `slot` and `nutrition`. |
-| `/api/meals/<name>` | PUT | Update a meal bundle (rename, edit sub-recipes/description/tags/slot). Same validation as POST, applied **before** a rename deletes the old file, so a rejected payload can't destroy the meal. Omitting `slot` keeps the stored one. |
-| `/api/meals/<name>` | DELETE | Delete a meal bundle. |
+| `/api/bundles` 🔒 | POST | Place a composite plate on a week. Body `{meal_name, week, date, meal, scale?}` — `meal_name` is the plate, `meal` is the slot. Creates **one ordinary cook per sub-recipe** sharing a `bundle_id`, each placed at its `sub_multiplier` share, so the plate's macros land in the day-totals row and every downstream consumer still sees one recipe per row. 201, or **200** with the existing bundle on a double-tap inside the dedupe window. 404 for an unknown plate. Converts a hand-edited legacy week (with a backup) before writing. |
+| `/api/bundles/<id>/move` 🔒 | POST | Re-anchor a whole plate. Body `{date, meal}`. One transaction: a date outside the members' week refuses all of them, never some. |
+| `/api/bundles/<id>` 🔒 | PATCH | Set a bundle-wide field on every member. Allowed: `cooked_at`, `make_again`, `cook_note` — anything else is a 400. `scale` is deliberately excluded: scaling a plate up usually means more protein, not more rice, so it stays a per-member PATCH on `/api/cooks/<id>`. Returns `{bundle_id, bundle_name, cooks, consumption}`; the bundle-wide verdict is what stops one plate generating a separate "was this worth making?" nudge per sub-recipe. |
+| `/api/bundles/<id>` 🔒 | DELETE | Remove a whole plate from the week. Returns `{status, cooks}`. |
+| `/api/meals` 🔒 | GET | List composite meal bundles (`vault/Meals/*.meal.md`). Each carries `slot` and a derived `nutrition` rollup (see below). |
+| `/api/meals` 🔒 | POST | Create a meal bundle. Body `{name, sub_recipes: [{recipe, servings}], description?, tags?, slot?}`. `servings` is a **float** (1.5 splits a batch across meals) and must be > 0 — a non-positive or unparseable value is a 400. `slot` is one of `breakfast`/`lunch`/`snack`/`dinner`, defaulting to `dinner`; anything else is a 400. |
+| `/api/meals/<name>` 🔒 | GET | Get one meal bundle, with `slot` and `nutrition`. |
+| `/api/meals/<name>` 🔒 | PUT | Update a meal bundle (rename, edit sub-recipes/description/tags/slot). Same validation as POST, applied **before** a rename deletes the old file, so a rejected payload can't destroy the meal. Omitting `slot` keeps the stored one. |
+| `/api/meals/<name>` 🔒 | DELETE | Delete a meal bundle. |
 | `/api/macro-targets` | GET | The daily macro target plus how it splits across slots: `{daily: {calories, protein, carbs, fat} \| null, slot_shares: {breakfast, lunch, snack, dinner}, slot_shares_normalized}`. `daily` is null when there's no `My Macros.md` — clients should then show no reference line rather than invent one. Shares come from the optional flat `share_<slot>` keys (defaults 0.25/0.30/0.35/0.10); when they don't sum to 1.0 within 1% they're rescaled proportionally and `slot_shares_normalized` is true so the UI can say so. |
 | `/api/pantry` | GET | Read the pantry adapter's item list (DB-backed, legacy JSON-shaped view). |
 | `/api/pantry` | PUT | Overwrite the pantry item list. Body `{items: [...]}`. |
@@ -118,7 +136,7 @@ question about the API server, not about the job that actually fails.
 | `/api/cooks/<int:cook_id>` 🔒 | DELETE | Delete a cook and its placements. |
 | `/api/cooks/<int:cook_id>/move` 🔒 | POST | Move a scheduled cook to another slot. Body `date` + `meal`. Re-anchors the cook **and** re-points the slot placements sitting at its old anchor, merging into any placement already at the destination; placements in other cells (planned leftovers) are left alone. Rejects a `date` outside the cook's `week` with a `400` — `cooks.week` is not updatable and `week_board()` filters on it, so such a cook would render on no board at all. |
 | `/api/cooks/<int:cook_id>/freeze-rest` 🔒 | POST | Bank the cook's `unassigned` servings in the freezer in one call. No body. A no-op returning `200` when nothing is left over, so a double-tap neither errors nor double-banks. Previously the only route into the freezer was dragging a serving chip onto the planner's sidebar tray — a gesture needing board mode, an open sidebar and a mouse. |
-| `/api/freezer` | GET | What's banked, grouped by recipe and **oldest first** (a freezer is FIFO). Returns `{freezer: [{recipe, servings, banked_on, placement_ids, protein, calories, total_protein, total_calories}], totals: {servings, protein, calories}}`. `banked_on` prefers `cooked_at` over the planned `date` over `created_at` — only the first means "this exists". Macros pass the same plausibility gate as `day_totals`, so an unpriced or implausible recipe reports `null` macros while still contributing its **servings**: the food is real even when the numbers about it aren't. |
+| `/api/freezer` 🔒 | GET | What's banked, grouped by recipe and **oldest first** (a freezer is FIFO). Returns `{freezer: [{recipe, servings, banked_on, placement_ids, protein, calories, total_protein, total_calories}], totals: {servings, protein, calories}}`. `banked_on` prefers `cooked_at` over the planned `date` over `created_at` — only the first means "this exists". Macros pass the `implausible` **bounds** only — deliberately looser than `day_totals`, which applies the full `eligible_macros` gate: the day row is a claim about what you ate, while the freezer is an inventory of real food and a low-coverage portion is still a portion. An unpriced or implausible recipe reports `null` macros while still contributing its **servings**. |
 | `/api/placements` 🔒 | POST | Create a placement — assign a cook's servings to a (destination, date, meal, count) slot. |
 | `/api/placements/<int:pid>` 🔒 | PATCH | Update a placement. |
 | `/api/placements/<int:pid>` 🔒 | DELETE | Delete a placement. |

@@ -151,12 +151,18 @@ def _plan_card(today: date) -> Card:
     cooks = serving_ledger.cooks_for_week(week)
     has_list = (paths.shopping_lists_dir() / generate_filename(week)).exists()
 
+    # A composite plate is several cook rows but one meal. Counting rows would
+    # report "9 meals planned" for three plates, which reads as a week three
+    # times fuller than it is.
+    from lib.meal_bundle import group_bundles
+    meals = len(group_bundles(cooks))
+
     if not cooks:
         line = "nothing planned yet"
     elif not has_list:
-        line = f"{_plural(len(cooks), 'meal')} planned · no shopping list yet"
+        line = f"{_plural(meals, 'meal')} planned · no shopping list yet"
     else:
-        line = f"{_plural(len(cooks), 'meal')} planned · list ready"
+        line = f"{_plural(meals, 'meal')} planned · list ready"
     return Card("🗓️", label, line, f"/plan-week?week={week}")
 
 

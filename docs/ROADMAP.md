@@ -342,13 +342,15 @@ but combined with the item above (Sat/Sun hidden under the dock) every cell the
 user can see is a dash, and a row that is *always* empty reads as a feature that
 never worked rather than as "nothing planned yet".
 
-Two things to settle together: whether an empty day should say `0 kcal` or `—`,
-and the known gap recorded in `CLAUDE.md` — `serving_ledger.day_totals()` sums
-**ledger placements only**, so a `[[Meal: X]]` card contributes nothing to the
-row. Anyone planning with meal bundles gets a permanently empty total. That gap
-is deliberate (meals are not ledger citizens) but it now has a reporter, so the
-question is what the row should *say* when it can't total something, not whether
-to start writing meal macros into the ledger.
+**The meal-bundle half of this is fixed (2026-08-03, `plates-ledger-native`).** A
+plate now expands to one ordinary cook per sub-recipe sharing `cooks.bundle_id`,
+so it contributes its macros to the row like any other cook — still without
+writing any macro into the ledger, which was the constraint. What remains is the
+narrower question this entry opened with: whether an empty day should say
+`0 kcal` or `—`, and what the row should *say* when it genuinely cannot total
+something. That case is now more common, not less: `day_totals` applies the full
+`eligible_macros` gate, so a day whose only recipe is untrusted totals zero and
+names the exclusion rather than showing a figure.
 
 ### P3 — Wasted vertical space above the board
 

@@ -32,7 +32,6 @@ from lib.backup import create_backup
 from lib.recipe_index import get_recipe_index
 from lib.meal_plan_parser import (
     flatten_to_recipes,
-    insert_recipe_into_meal_plan,
     parse_meal_plan,
     rebuild_meal_plan_markdown,
 )
@@ -1568,39 +1567,196 @@ def api_cook_create():
     return jsonify(cook), 201
 
 
-@app.route('/api/cooks/<int:cook_id>', methods=['PATCH'])
-@require_token
-@_ledger_error
-def api_cook_update(cook_id):
+def _apply_cook_patch(cook_id, data) -> tuple:
+    """Update one cook and spend the pantry if this was the cooked_at transition.
+
+    Extracted so `PATCH /api/cooks/<id>` and `PATCH /api/bundles/<id>` cannot
+    drift: the transition rule below is the only thing standing between a plate's
+    single 🍳 and N double-spends.
+
+    Returns ``(before, updated, consumption)``; ``consumption`` is None when this
+    patch did not consume. Raises ValueError for an unknown cook so the two
+    callers can shape their own 404s.
+    """
     from lib import serving_ledger
-    data = request.get_json(force=True, silent=True) or {}
     before = serving_ledger.get_cook(cook_id)
     if before is None:
-        return jsonify({"error": "cook not found"}), 404
+        raise LookupError(f"cook {cook_id} not found")
     updated = serving_ledger.update_cook(cook_id, **data)
 
-    # Recording a cook is what closes the inventory loop, and it closes here —
-    # server-side, on the NULL -> set transition of `cooked_at` — so that every
-    # surface which can mark something cooked spends the pantry exactly once,
-    # whether that's the board's 🍳, a phone, an intent, or the nightly sweep.
-    # Before this, consumption lived in a client-side call the board made
-    # alongside its PATCH, so only that one button closed it: inventory had 0 of
-    # 239 rows ever use-stamped, and `POST /api/cook` had been called four times
-    # in the system's life.
-    #
-    # Gated on the transition, not on the field being present, so re-PATCHing an
-    # already-cooked row (or editing its note afterwards) cannot spend the
-    # pantry twice.
+    # Gated on the NULL -> set transition, not on the field being present, so
+    # re-PATCHing an already-cooked row (or editing its note afterwards) cannot
+    # spend the pantry twice.
+    consumption = None
     if before.get("cooked_at") is None and updated.get("cooked_at"):
         # Shared with the nightly sweep, deliberately: whichever notices the
         # cook happened, the pantry is spent the same way, once, with the same
         # never-raise behaviour. See lib/cook_sweep.consume_for_cook.
-        cook_sweep.consume_for_cook(updated)
+        consumption = cook_sweep.consume_for_cook(updated)
+    return before, updated, consumption
+
+
+@app.route('/api/cooks/<int:cook_id>', methods=['PATCH'])
+@require_token
+@_ledger_error
+def api_cook_update(cook_id):
+    # Recording a cook is what closes the inventory loop, and it closes
+    # server-side — in _apply_cook_patch — so that every surface which can mark
+    # something cooked spends the pantry exactly once, whether that's the
+    # board's 🍳, a phone, an intent, or the nightly sweep. Before this,
+    # consumption lived in a client-side call the board made alongside its
+    # PATCH, so only that one button closed it: inventory had 0 of 239 rows ever
+    # use-stamped, and `POST /api/cook` had been called four times in the
+    # system's life.
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        before, updated, consumption = _apply_cook_patch(cook_id, data)
+    except LookupError:
+        return jsonify({"error": "cook not found"}), 404
 
     _regen_weeks(before["week"], updated["week"])
     # Both names: a recipe rename must refresh the note it left as well.
     _sync_cook_history(before["recipe"], updated["recipe"])
-    return jsonify(updated)
+    # The summary rides along so the caller can render "what this spent" without
+    # asking again. The board used to POST /api/cook for exactly that, after this
+    # PATCH had already consumed — spending the pantry twice, since
+    # `consume_recipe` is not idempotent. `None` means nothing was spent (this
+    # PATCH wasn't a cooked_at transition, or consumption failed and was logged).
+    return jsonify({**updated, "consumption": consumption})
+
+
+# --- Bundles: a composite plate on the board --------------------------------
+#
+# A plate is N ordinary cooks sharing a bundle_id, so there is no "bundle" row to
+# GET — /api/week-board/<week> already carries bundle_id/bundle_name on every
+# cook (get_cook does SELECT *) and the client groups them. These routes exist
+# only for the operations that must act on the whole plate at once.
+
+# Fields it makes sense to set across a whole plate. `scale` is deliberately
+# absent: scaling a plate up usually means more protein, not more rice, so it
+# stays a per-member PATCH on /api/cooks/<id>.
+_BUNDLE_PATCH_FIELDS = {"cooked_at", "make_again", "cook_note"}
+
+
+@app.route('/api/bundles', methods=['POST'])
+@require_token
+@_ledger_error
+def api_bundle_create():
+    """Place a composite plate on a week.
+
+    Body: {meal_name, week, date, meal, scale?}. `meal_name` is the plate,
+    `meal` is the slot — matching the /add-to-meal-plan form's vocabulary rather
+    than inventing a third naming for the same two things.
+    """
+    from lib import meal_bundle, serving_ledger
+    data = request.get_json(force=True, silent=True) or {}
+    week = data.get('week')
+    meal_name = data.get('meal_name')
+
+    # Absorb a double-tap before anything else. This matters more than the
+    # per-cook version: without it a second tap creates 2N rows, not one dupe.
+    existing = serving_ledger.find_recent_bundle(
+        meal_name, week, data.get('date'), data.get('meal'),
+        COOK_DEDUPE_WINDOW_S)
+    if existing is not None:
+        return jsonify(existing), 200
+
+    # A hand-edited legacy week must be converted (import + backup) BEFORE its
+    # first ledger row lands, or the regen below clobbers it — and afterwards the
+    # week has cooks, so the no-cooks guard could never fire again.
+    _import_legacy_if_first_write(
+        week, _iso_week_of(data["date"]) if data.get("date") else None)
+    try:
+        bundle = meal_bundle.place_meal(
+            meal_name, week, data.get('date'), data.get('meal'),
+            scale=float(data.get('scale', 1.0)))
+    except ValueError as exc:
+        # "not found" is a missing resource, not a malformed request.
+        if "not found" in str(exc):
+            return jsonify({"error": str(exc)}), 404
+        raise
+    _regen_weeks(bundle["week"],
+                 _iso_week_of(data["date"]) if data.get("date") else None)
+    # Every member, so each sub-recipe's note learns it was cooked. Syncing only
+    # the first is the omission the legacy-import path already had reported
+    # against it as "I don't see this on the recipe page anywhere".
+    _sync_cook_history(*[c["recipe"] for c in bundle["cooks"]])
+    return jsonify(bundle), 201
+
+
+@app.route('/api/bundles/<bundle_id>/move', methods=['POST'])
+@require_token
+@_ledger_error
+def api_bundle_move(bundle_id):
+    """Move a whole plate to another slot. All members or none."""
+    from lib import serving_ledger
+    data = request.get_json(force=True, silent=True) or {}
+    if serving_ledger.get_bundle(bundle_id) is None:
+        return jsonify({"error": "bundle not found"}), 404
+    bundle = serving_ledger.move_bundle(bundle_id, data.get('date'),
+                                        data.get('meal'))
+    # One week: move_bundle rejects a date outside the members' week.
+    _regen_weeks(bundle["week"])
+    _sync_cook_history(*[c["recipe"] for c in bundle["cooks"]])
+    return jsonify(bundle)
+
+
+@app.route('/api/bundles/<bundle_id>', methods=['PATCH'])
+@require_token
+@_ledger_error
+def api_bundle_update(bundle_id):
+    """Set a bundle-wide field on every member — cooked, verdict, or note.
+
+    The verdict is why this exists: without it one plate generates three separate
+    "was this worth making?" nudges for what was one dinner.
+    """
+    from lib import serving_ledger
+    data = request.get_json(force=True, silent=True) or {}
+    if not data:
+        return jsonify({"error": "no fields to update"}), 400
+    unknown = set(data) - _BUNDLE_PATCH_FIELDS
+    if unknown:
+        return jsonify({
+            "error": f"not settable across a bundle: {', '.join(sorted(unknown))}"
+                     f" (allowed: {', '.join(sorted(_BUNDLE_PATCH_FIELDS))})"
+        }), 400
+
+    bundle = serving_ledger.get_bundle(bundle_id)
+    if bundle is None:
+        return jsonify({"error": "bundle not found"}), 404
+
+    updated, consumption = [], []
+    for member in bundle["cooks"]:
+        _before, after, spent = _apply_cook_patch(member["id"], dict(data))
+        updated.append(after)
+        if spent is not None:
+            consumption.append(spent)
+
+    _regen_weeks(bundle["week"])
+    _sync_cook_history(*[c["recipe"] for c in updated])
+    return jsonify({"bundle_id": bundle_id,
+                    "bundle_name": bundle["bundle_name"],
+                    "cooks": updated, "consumption": consumption})
+
+
+@app.route('/api/bundles/<bundle_id>', methods=['DELETE'])
+@require_token
+@_ledger_error
+def api_bundle_delete(bundle_id):
+    """Remove a whole plate from the week."""
+    from lib import serving_ledger
+    bundle = serving_ledger.get_bundle(bundle_id)
+    if bundle is None:
+        return jsonify({"error": "bundle not found"}), 404
+    # Collected before the delete: afterwards the rows are gone and with them
+    # the weeks that need regenerating.
+    affected = [bundle["week"]] + [
+        _iso_week_of(p["date"]) for c in bundle["cooks"]
+        for p in c["placements"] if p.get("date")]
+    removed = serving_ledger.delete_bundle(bundle_id)
+    _regen_weeks(*affected)
+    _sync_cook_history(*[c["recipe"] for c in removed])
+    return jsonify({"status": "deleted", "cooks": len(removed)})
 
 
 @app.route('/api/cooks/<int:cook_id>/move', methods=['POST'])
@@ -1667,6 +1823,7 @@ def api_cook_freeze_rest(cook_id):
 
 
 @app.route('/api/freezer', methods=['GET'])
+@require_token
 def api_freezer():
     """What's banked in the freezer, grouped by recipe and oldest first.
 
@@ -2102,8 +2259,20 @@ def _render_schedule_prompt(recipe: str, meal_name: str, action: str, info: str 
 ''')
 
 
-def _schedule_meal_token(meal_name: str, week: str, day: str, meal: str):
-    """Insert ``[[Meal: <meal_name>]]`` into the plan slot. Mirrors _schedule_recipe_directly."""
+def _schedule_meal_bundle(meal_name: str, week: str, day: str, meal: str):
+    """Put a composite plate on a week from Obsidian's "Add to Meal Plan" button.
+
+    This used to write `[[Meal: X]]` straight into the plan file with none of the
+    ledger's guards — the same failure `_schedule_recipe_directly` records for
+    plain recipes, left in place on the meal branch. On a week that already has
+    cooks the next `week_view.write_week_markdown` erases the token, and
+    `_import_legacy_if_first_write` skips weeks that already have cooks, so it
+    was never picked up either. The plate vanished with no error on any surface.
+
+    It now creates a bundle — the same act the sidebar drop performs.
+    """
+    from lib import meal_bundle, serving_ledger
+
     try:
         parts = week.split('-W')
         year = int(parts[0])
@@ -2111,21 +2280,30 @@ def _schedule_meal_token(meal_name: str, week: str, day: str, meal: str):
     except (ValueError, IndexError):
         return error_page(f"Error: Invalid week format: {week}"), 400
 
-    MEAL_PLANS_PATH.mkdir(parents=True, exist_ok=True)
-    plan_file = MEAL_PLANS_PATH / f"{week}.md"
-    if not plan_file.exists():
-        content = generate_meal_plan_markdown(year, week_num)
-        plan_file.write_text(content, encoding='utf-8')
-
-    content = plan_file.read_text(encoding='utf-8')
-    token = f"Meal: {meal_name}"
+    # `date` is the imported datetime class at module scope — don't shadow it.
     try:
-        new_content = insert_recipe_into_meal_plan(content, day, meal, token)
-    except ValueError as e:
-        return error_page(f"Error: {str(e)}"), 400
+        weekday = _WEEKDAYS.index((day or "").strip().lower())
+        cook_date = date.fromisocalendar(year, week_num, weekday + 1).isoformat()
+    except (ValueError, IndexError):
+        return error_page(f"Error: Invalid day: {day}"), 400
 
-    plan_file.write_text(new_content, encoding='utf-8')
-    return _success_page_for_wikilink(token, day, meal, week)
+    # The Obsidian form posts title-cased slots ("Dinner"); the ledger's `meal`
+    # is a lowercase enum.
+    slot = (meal or "").strip().lower()
+    if slot not in serving_ledger.MEALS:
+        return error_page(f"Error: Invalid meal slot: {meal}"), 400
+
+    _import_legacy_if_first_write(week, _iso_week_of(cook_date))
+    try:
+        bundle = meal_bundle.place_meal(meal_name, week, cook_date, slot)
+    except ValueError as exc:
+        status = 404 if "not found" in str(exc) else 400
+        return error_page(f"Error: {exc}"), status
+    _regen_weeks(bundle["week"], _iso_week_of(cook_date))
+    _sync_cook_history(*[c["recipe"] for c in bundle["cooks"]])
+    # Unchanged confirmation copy: from the user's side this is still "the plate
+    # is on Tuesday dinner".
+    return _success_page_for_wikilink(f"Meal: {meal_name}", day, meal, week)
 
 
 #: Monday-first, matching ISO weekday numbering and the planner's grid.
@@ -2252,7 +2430,7 @@ def add_to_meal_plan():
         meal = request.form.get('meal')
         if not all([meal_name, week, day, meal]):
             return error_page("Error: meal_name, week, day, and meal are all required"), 400
-        return _schedule_meal_token(meal_name, week, day, meal)
+        return _schedule_meal_bundle(meal_name, week, day, meal)
 
     return error_page(f"Unknown mode: {mode}"), 400
 
@@ -2387,6 +2565,7 @@ def _parse_slot(data, default=meal_loader.DEFAULT_SLOT):
 
 
 @app.route('/api/meals', methods=['GET'])
+@require_token
 def api_meals_list():
     # One cache across the whole list: meals share sub-recipes, and each rollup
     # otherwise re-reads the same recipe frontmatter.
@@ -2397,6 +2576,7 @@ def api_meals_list():
 
 
 @app.route('/api/meals', methods=['POST'])
+@require_token
 def api_meals_create():
     data = request.get_json(force=True, silent=True) or {}
     name = (data.get("name") or "").strip()
@@ -2428,6 +2608,7 @@ def api_meals_create():
 
 
 @app.route('/api/meals/<name>', methods=['GET'])
+@require_token
 def api_meals_get(name):
     meal = meal_loader.load_meal(name)
     if meal is None:
@@ -2436,6 +2617,7 @@ def api_meals_get(name):
 
 
 @app.route('/api/meals/<name>', methods=['PUT'])
+@require_token
 def api_meals_update(name):
     existing = meal_loader.load_meal(name)
     if existing is None:
@@ -2477,6 +2659,7 @@ def api_meals_update(name):
 
 
 @app.route('/api/meals/<name>', methods=['DELETE'])
+@require_token
 def api_meals_delete(name):
     if not meal_loader.delete_meal(name):
         return jsonify({"error": f"meal '{name}' not found"}), 404

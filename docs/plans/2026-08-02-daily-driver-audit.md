@@ -123,7 +123,7 @@ so the coverage-1.0 catastrophes sit at the **bottom** of the queue built to cat
 
 ### 3.3 Plan — the assist is off, and looking writes files
 
-- **P0: suggest is dead on any week with a cook.** `templates/meal_planner.html:5070` returns
+- **P0: suggest is dead on any week with a cook.** `templates/meal_planner.html:5173` returns (was :5070 before that block was deleted)
   early, silently, when `weekBoard.cooks.length > 0`. One dropped recipe converts a week to
   board mode — so the feature dies on contact, while `/plan-week` step 1 instructs you to
   "tap a blank slot and hit suggest." *Verified.*
@@ -145,6 +145,13 @@ so the coverage-1.0 catastrophes sit at the **bottom** of the queue built to cat
   a board week — so the feature cannot be reached from the only flow in use, while still
   appearing in the drag handler, tap-to-assign, card sheet, save serialization, and suggest
   flattening.
+
+  > **Corrected 2026-08-03.** Two of these were already stale when written and are now
+  > resolved. `Meals/` *did* exist — the `plates` branch seeded 16 hand-authored plates into
+  > `vault/KitchenOS/Meals/` the same day this audit was written. And the resolution inverted:
+  > composite meals were **kept and made ledger-native**, not removed. A plate now expands to
+  > one ordinary cook per sub-recipe sharing `cooks.bundle_id`, both refusals are gone, and its
+  > macros land in the day-totals row. See `docs/completed/2026-08-03-plates-ledger-native.md`.
 - **Cross-week write bug:** `navigateWeek` doesn't cancel the pending `debounceSave`
   (`meal_planner.html:4269-4283`); editing a legacy week and clicking next within 500 ms
   serializes week A's cards into week B's file.
@@ -277,7 +284,9 @@ The highest value-per-hour in the audit. Nothing here needs the corpus re-derive
 ### Phase 5 — Simplify *(needs your decisions)*
 
 23. Retire the legacy markdown week model *(Decision B)*.
-24. Remove composite-meal UI, keep the parser *(Decision C)*.
+24. ~~Remove composite-meal UI, keep the parser~~ **DONE, inverted (2026-08-03):** composite
+    meals were kept and made ledger-native — a plate is now a bundle of ordinary cooks and
+    contributes its macros to the day-totals row *(Decision C)*.
 25. Freeze the native app; collapse nav from 12 rows to ~6 in two tiers *(Decision D)*.
 
 ---

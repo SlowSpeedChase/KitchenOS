@@ -371,3 +371,98 @@ def test_a_cook_can_be_dragged_to_another_slot(live_server, page, page_errors):
         "the drag reached the legacy save path"
 
     assert page_errors == [], f"planner raised: {page_errors}"
+
+
+# --------------------------------------------------------------------------
+# Composite plates
+# --------------------------------------------------------------------------
+
+def _place_plate(server, *, meal_name, week, when, meal="dinner"):
+    resp = requests.post(
+        server.url("/api/bundles"),
+        json={"meal_name": meal_name, "week": week, "date": when,
+              "meal": meal, "scale": 1.0},
+        timeout=30,
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+def _plate_kcal(server, meal_name) -> int:
+    resp = requests.get(server.url(f"/api/meals/{meal_name}"), timeout=30)
+    assert resp.status_code == 200, resp.text
+    return round(resp.json()["nutrition"]["calories"])
+
+
+PLATE = "Osso Buco Plate"
+
+
+def test_a_plate_lands_in_the_day_totals_row(live_server, page, page_errors):
+    """A composite plate contributes its macros to the day-totals row.
+
+    The first assertion in this suite on `.totals-cell` *content*, and the whole
+    reason the branch exists. The board could render three cook cards and still
+    show "—" here — that was exactly the old behaviour — so assert the number,
+    not the cards.
+    """
+    week, when = unique_week(9)
+    expected = _plate_kcal(live_server, PLATE)
+    # Otherwise a plate whose macros all got excluded would make this pass with
+    # 0 == 0, which is the exact failure the test exists to catch.
+    assert expected > 0, f"{PLATE} reports no calories; the test proves nothing"
+    _place_plate(live_server, meal_name=PLATE, week=week, when=when)
+
+    page.goto(live_server.url(f"/meal-planner?week={week}"),
+              wait_until="domcontentloaded")
+    page.wait_for_selector(".bundle-card", timeout=15_000)
+
+    # unique_week() puts the date on the Wednesday of its week.
+    cell = page.locator('.totals-cell[data-day="Wednesday"] .totals-kcal')
+    cell.wait_for(timeout=15_000)
+    text = cell.inner_text()
+    actual = int("".join(ch for ch in text.split("kcal")[0] if ch.isdigit()))
+    assert abs(actual - expected) <= 1, (
+        f"plate reports {expected} kcal on its card but the day row says {text!r}"
+    )
+    assert page_errors == [], f"planner raised: {page_errors}"
+
+
+def test_a_plate_draws_as_one_card_naming_its_members(live_server, page, page_errors):
+    week, when = unique_week(10)
+    bundle = _place_plate(live_server, meal_name=PLATE, week=week, when=when)
+
+    page.goto(live_server.url(f"/meal-planner?week={week}"),
+              wait_until="domcontentloaded")
+    page.wait_for_selector(".bundle-card", timeout=15_000)
+
+    assert page.locator(".bundle-card").count() == 1, "a plate drew as several cards"
+    card = page.locator(".bundle-card").first
+    assert PLATE in card.inner_text()
+    # Every sub-recipe is named on the card, so the plate can be read at a glance.
+    assert card.locator(".bundle-member").count() == len(bundle["cooks"])
+    assert page_errors == [], f"planner raised: {page_errors}"
+
+
+def test_dragging_a_plate_moves_every_member(live_server, page, page_errors):
+    """A silent no-op here is what a missing bundle branch in moveCookCard looks
+    like — the card snaps back and nothing happens."""
+    week, when = unique_week(11)
+    bundle = _place_plate(live_server, meal_name=PLATE, week=week, when=when)
+    target = date.fromisoformat(when).replace(day=date.fromisoformat(when).day + 1)
+
+    page.goto(live_server.url(f"/meal-planner?week={week}"),
+              wait_until="domcontentloaded")
+    page.wait_for_selector(".bundle-card", timeout=15_000)
+    page.locator(".bundle-card .card-menu-btn").first.click()
+    page.get_by_role("button", name="Move to another slot").click()
+    page.locator('.grid-cell[data-day="Thursday"][data-meal="dinner"]').first.click()
+    page.wait_for_timeout(1500)
+
+    resp = requests.get(live_server.url(f"/api/week-board/{week}"), timeout=30)
+    cooks = [c for c in resp.json()["cooks"] if c["bundle_id"] == bundle["bundle_id"]]
+    assert cooks, "the plate vanished from the board"
+    assert all(c["date"] == target.isoformat() and c["meal"] == "dinner"
+               for c in cooks), (
+        f"only some members moved: {[(c['recipe'], c['date']) for c in cooks]}"
+    )
+    assert page_errors == [], f"planner raised: {page_errors}"

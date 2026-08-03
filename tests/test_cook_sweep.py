@@ -7,10 +7,20 @@ from lib import cook_sweep, serving_ledger as sl
 
 @pytest.fixture(autouse=True)
 def _no_real_consumption(monkeypatch):
-    """Record what would be spent instead of touching inventory."""
+    """Record what would be spent instead of touching inventory.
+
+    Returns a summary dict like the real ``consume_recipe`` always does —
+    ``consume_for_cook`` reads ``None`` as "it raised", so a double that
+    returned nothing would make every successful sweep look like a failure.
+    """
     spent = []
-    monkeypatch.setattr(cook_sweep.cook_module, "consume_recipe",
-                        lambda name, servings=1.0, **kw: spent.append((name, servings)))
+
+    def _record(name, servings=1.0, **kw):
+        spent.append((name, servings))
+        return {"recipe": name, "consumed": [], "skipped_staples": [],
+                "not_tracked": [], "use_recorded": []}
+
+    monkeypatch.setattr(cook_sweep.cook_module, "consume_recipe", _record)
     return spent
 
 

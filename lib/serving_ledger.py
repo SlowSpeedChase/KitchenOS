@@ -30,6 +30,7 @@ from __future__ import annotations
 import contextlib
 import re
 import sqlite3
+import uuid
 from datetime import date as _date
 from typing import Optional
 
@@ -153,11 +154,12 @@ def _merge_or_insert(conn, cook_id: int, destination: str,
             "date": date, "meal": meal, "count": count}
 
 
-def create_cook(recipe: str, week: str, scale: float = 1.0,
-                servings_produced: Optional[float] = None,
-                date: Optional[str] = None, meal: Optional[str] = None,
-                initial_placement_count: float = 1.0,
-                notes: Optional[str] = None) -> dict:
+def _validate_cook(recipe: str, week: str, servings_produced, date, meal) -> None:
+    """The rules every new cook row obeys, whether created alone or in a bundle.
+
+    Separated so ``create_bundle`` can validate *every* member before writing
+    any of them — a plate that half-lands is worse than one that is refused.
+    """
     if not recipe or not week:
         raise ValueError("recipe and week are required")
     if not _WEEK_RE.match(week):
@@ -167,16 +169,33 @@ def create_cook(recipe: str, week: str, scale: float = 1.0,
         raise ValueError("servings_produced is required and must be > 0")
     if meal is not None and meal not in MEALS:
         raise ValueError(f"meal must be one of {MEALS}")
+
+
+def _insert_cook(conn, recipe: str, week: str, date, meal, scale,
+                 servings_produced, notes,
+                 bundle_id: Optional[str] = None,
+                 bundle_name: Optional[str] = None) -> int:
+    """Write one cook row and return its id. Caller owns the transaction."""
+    cur = conn.execute(
+        "INSERT INTO cooks (recipe, week, date, meal, scale, servings_produced,"
+        " notes, bundle_id, bundle_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (recipe, week, date, meal, float(scale), float(servings_produced),
+         notes, bundle_id, bundle_name),
+    )
+    return cur.lastrowid
+
+
+def create_cook(recipe: str, week: str, scale: float = 1.0,
+                servings_produced: Optional[float] = None,
+                date: Optional[str] = None, meal: Optional[str] = None,
+                initial_placement_count: float = 1.0,
+                notes: Optional[str] = None) -> dict:
+    _validate_cook(recipe, week, servings_produced, date, meal)
     conn = inventory_db.connect()
     try:
         with conn:
-            cur = conn.execute(
-                "INSERT INTO cooks (recipe, week, date, meal, scale,"
-                " servings_produced, notes) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (recipe, week, date, meal, float(scale),
-                 float(servings_produced), notes),
-            )
-            cook_id = cur.lastrowid
+            cook_id = _insert_cook(conn, recipe, week, date, meal, scale,
+                                   servings_produced, notes)
             if date and meal and initial_placement_count > 0:
                 _merge_or_insert(conn, cook_id, "slot", date, meal,
                                  min(float(initial_placement_count),
@@ -381,39 +400,195 @@ def move_cook(cook_id: int, date: str, meal: str) -> dict:
     conn = inventory_db.connect()
     try:
         with _write_txn(conn):
-            row = conn.execute("SELECT * FROM cooks WHERE id = ?",
-                               (cook_id,)).fetchone()
-            if row is None:
-                raise ValueError(f"cook {cook_id} not found")
-            # `week` is not in _COOK_FIELDS and cooks_for_week() filters on it,
-            # so a cook whose date left its week renders on no board at all.
-            # Reject rather than half-apply: the grid shows one week, so a drag
-            # cannot produce this, but the endpoint is public.
-            year, week_no, _ = _date.fromisoformat(date).isocalendar()
-            if f"{year}-W{week_no:02d}" != row["week"]:
-                raise ValueError(
-                    f"date {date} falls outside the cook's week {row['week']}")
-
-            old_date, old_meal = row["date"], row["meal"]
-            if (old_date, old_meal) != (date, meal):
-                conn.execute("UPDATE cooks SET date = ?, meal = ? WHERE id = ?",
-                             (date, meal, cook_id))
-                # `IS` rather than `=` so a NULL old anchor matches nothing
-                # instead of everything — an unscheduled cook has no home
-                # servings to bring along.
-                movers = conn.execute(
-                    "SELECT * FROM placements WHERE cook_id = ?"
-                    " AND destination = 'slot' AND date IS ? AND meal IS ?",
-                    (cook_id, old_date, old_meal),
-                ).fetchall()
-                for p in movers:
-                    conn.execute("DELETE FROM placements WHERE id = ?",
-                                 (p["id"],))
-                    _merge_or_insert(conn, cook_id, "slot", date, meal,
-                                     float(p["count"]))
+            _move_cook_in_txn(conn, cook_id, date, meal)
     finally:
         conn.close()
     return get_cook(cook_id)
+
+
+def _move_cook_in_txn(conn, cook_id: int, date: str, meal: str) -> None:
+    """Re-anchor one cook. Caller owns validation and the transaction.
+
+    Extracted so ``move_bundle`` moves its members through the same rules in one
+    transaction — the week check and the bring-your-home-servings behaviour must
+    not fork between moving a cook and moving a plate.
+    """
+    row = conn.execute("SELECT * FROM cooks WHERE id = ?", (cook_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"cook {cook_id} not found")
+    # `week` is not in _COOK_FIELDS and cooks_for_week() filters on it, so a
+    # cook whose date left its week renders on no board at all. Reject rather
+    # than half-apply: the grid shows one week, so a drag cannot produce this,
+    # but the endpoint is public.
+    year, week_no, _ = _date.fromisoformat(date).isocalendar()
+    if f"{year}-W{week_no:02d}" != row["week"]:
+        raise ValueError(
+            f"date {date} falls outside the cook's week {row['week']}")
+
+    old_date, old_meal = row["date"], row["meal"]
+    if (old_date, old_meal) == (date, meal):
+        return
+    conn.execute("UPDATE cooks SET date = ?, meal = ? WHERE id = ?",
+                 (date, meal, cook_id))
+    # `IS` rather than `=` so a NULL old anchor matches nothing instead of
+    # everything — an unscheduled cook has no home servings to bring along.
+    movers = conn.execute(
+        "SELECT * FROM placements WHERE cook_id = ?"
+        " AND destination = 'slot' AND date IS ? AND meal IS ?",
+        (cook_id, old_date, old_meal),
+    ).fetchall()
+    for p in movers:
+        conn.execute("DELETE FROM placements WHERE id = ?", (p["id"],))
+        _merge_or_insert(conn, cook_id, "slot", date, meal, float(p["count"]))
+
+
+def create_bundle(bundle_name: str, members: list, week: str,
+                  date: Optional[str] = None,
+                  meal: Optional[str] = None) -> dict:
+    """One composite plate as N ordinary cooks sharing a bundle id.
+
+    Every ledger row stays "one recipe at one scale", which is the entire point:
+    ``day_totals``, the shopping list, the freezer, ``cook_history``,
+    ``on_track``, ``verdict_nudge`` and ``cook_sweep`` need no bundle awareness
+    at all. The bundle is a creation transaction and a display grouping, never a
+    placement constraint — a member can still be moved or deleted on its own.
+
+    ``members`` is a list of plain dicts, ``{recipe, scale, servings_produced,
+    initial_placement_count?, notes?}``, rather than ``meal_loader`` objects:
+    ``meal_loader`` imports ``MEALS`` from this module, so the reverse import
+    would be circular. ``lib/meal_bundle.plan_bundle`` owns the Meal -> members
+    rule, including that ``initial_placement_count`` must be the member's
+    *share* — that is what makes a plate's day-total contribution equal its
+    card's figure.
+
+    All-or-nothing: every member is validated before the first INSERT and the
+    transaction rolls back on any failure, so a half-placed plate is impossible.
+
+    Returns ``{bundle_id, bundle_name, week, date, meal, cooks: [...]}``.
+    """
+    if not bundle_name:
+        raise ValueError("bundle_name is required")
+    if not members:
+        raise ValueError("a bundle needs at least one member")
+    for m in members:
+        _validate_cook(m.get("recipe"), week, m.get("servings_produced"),
+                       date, meal)
+
+    bundle_id = uuid.uuid4().hex
+    conn = inventory_db.connect()
+    try:
+        # A plain `with conn:` rather than _write_txn: BEGIN IMMEDIATE exists for
+        # check-then-write races, and this reads nothing it is about to mutate —
+        # the cook ids do not exist yet, so _merge_or_insert's SELECT can only
+        # match rows this transaction just wrote. `with conn:` already gives
+        # atomicity and rollback.
+        with conn:
+            ids = []
+            for m in members:
+                cook_id = _insert_cook(
+                    conn, m["recipe"], week, date, meal,
+                    m.get("scale", 1.0), m["servings_produced"], m.get("notes"),
+                    bundle_id=bundle_id, bundle_name=bundle_name)
+                ids.append(cook_id)
+                count = float(m.get("initial_placement_count") or 0)
+                if date and meal and count > 0:
+                    _merge_or_insert(conn, cook_id, "slot", date, meal,
+                                     min(count, float(m["servings_produced"])))
+    finally:
+        conn.close()
+    # get_cook opens its own connection, so it runs after the write commits.
+    return {"bundle_id": bundle_id, "bundle_name": bundle_name, "week": week,
+            "date": date, "meal": meal, "cooks": [get_cook(i) for i in ids]}
+
+
+def get_bundle(bundle_id: str) -> Optional[dict]:
+    """Every cook sharing ``bundle_id``, or None once the last one is gone.
+
+    ``week``/``date``/``meal`` are the *first* member's, for callers that need a
+    week to regenerate. Members may legitimately differ: moving one member out
+    of the plate is allowed, and the planner renders it as its own card there.
+    """
+    if not bundle_id:
+        return None
+    conn = inventory_db.connect()
+    try:
+        ids = [r["id"] for r in conn.execute(
+            "SELECT id FROM cooks WHERE bundle_id = ? ORDER BY id",
+            (bundle_id,)).fetchall()]
+    finally:
+        conn.close()
+    if not ids:
+        return None
+    cooks = [get_cook(i) for i in ids]
+    head = cooks[0]
+    return {"bundle_id": bundle_id, "bundle_name": head["bundle_name"],
+            "week": head["week"], "date": head["date"], "meal": head["meal"],
+            "cooks": cooks}
+
+
+def find_recent_bundle(bundle_name: str, week: str, date, meal,
+                       window_s: float) -> Optional[dict]:
+    """A bundle of the same plate placed in the same slot within ``window_s``.
+
+    The bundle counterpart of ``find_recent_duplicate``, and needed more: without
+    it a double-tapped plate creates 2N cook rows rather than one duplicate.
+    Same ``IS``-not-``=`` treatment for a NULL date/meal.
+    """
+    if window_s <= 0 or not bundle_name or not week:
+        return None
+    conn = inventory_db.connect()
+    try:
+        row = conn.execute(
+            "SELECT bundle_id FROM cooks"
+            " WHERE bundle_name = ? AND week = ? AND date IS ? AND meal IS ?"
+            "   AND bundle_id IS NOT NULL AND created_at >= datetime('now', ?)"
+            " ORDER BY id DESC LIMIT 1",
+            (bundle_name, week, date, meal, f"-{float(window_s)} seconds"),
+        ).fetchone()
+    finally:
+        conn.close()
+    return get_bundle(row["bundle_id"]) if row else None
+
+
+def delete_bundle(bundle_id: str) -> list[dict]:
+    """Remove every member. Returns them as they were, for the caller's hooks.
+
+    Read first: the caller needs the recipe names for ``_sync_cook_history`` and
+    the placement dates for ``_regen_weeks``, and after the DELETE both are gone.
+    Placements cascade via the foreign key.
+    """
+    bundle = get_bundle(bundle_id)
+    if bundle is None:
+        return []
+    conn = inventory_db.connect()
+    try:
+        with conn:
+            conn.execute("DELETE FROM cooks WHERE bundle_id = ?", (bundle_id,))
+    finally:
+        conn.close()
+    return bundle["cooks"]
+
+
+def move_bundle(bundle_id: str, date: str, meal: str) -> dict:
+    """Re-anchor every member of a plate together, in one transaction.
+
+    One transaction rather than N calls to ``move_cook`` so a plate cannot
+    half-move: if any member's new date falls outside its week, none of them
+    moves. Each member goes through ``_move_cook_in_txn``, so the week check and
+    the bring-your-home-servings rule are the same ones a single cook obeys.
+    """
+    _validate_placement("slot", date, meal)
+    bundle = get_bundle(bundle_id)
+    if bundle is None:
+        raise ValueError(f"bundle {bundle_id} not found")
+    conn = inventory_db.connect()
+    try:
+        with _write_txn(conn):
+            for cook in bundle["cooks"]:
+                _move_cook_in_txn(conn, cook["id"], date, meal)
+    finally:
+        conn.close()
+    return get_bundle(bundle_id)
 
 
 def cooks_for_week(week: str) -> list[dict]:
@@ -481,10 +656,17 @@ def freezer_summary(recipes_dir) -> list[dict]:
     two rows to reconcile — and prices each group so the tray can answer the
     question the freezer exists to answer: *do I need to cook tonight?*
 
-    Macros pass the same plausibility gate as ``day_totals``, and for the same
-    reason: a tray totalling 244 g of protein per serving would be a worse lie
-    than a blank. When they don't survive it, ``servings`` is still reported —
-    the food is real even when the numbers about it aren't.
+    Macros pass the ``implausible`` **bounds** only, for the reason a tray
+    totalling 244 g of protein per serving would be a worse lie than a blank.
+    When they don't survive it, ``servings`` is still reported — the food is real
+    even when the numbers about it aren't.
+
+    That is deliberately *looser* than ``day_totals``, which now applies the full
+    ``eligible_macros`` gate. The two answer different questions: the day row is
+    a claim about what you ate, so a recipe whose coverage says a third of its
+    ingredients went unresolved has no business being summed into it — while the
+    freezer is an inventory of real food, and a low-coverage portion is still a
+    portion. Don't "unify" this without deciding that question again.
     """
     from lib.nutrition_quality import implausible
 
@@ -596,11 +778,32 @@ def day_totals(week: str, recipes_dir) -> dict:
     number still leaves the wrong number on screen. This mirrors the
     exclude-and-name contract in ``meal_nutrition.meal_nutrition``.
 
-    ``implausible`` is imported inside the function because
+    The gate is ``nutrition_quality.eligible_macros`` — the same one
+    ``meal_nutrition`` applies to a plate's sub-recipes. That shared gate is what
+    makes a composite meal's card and its contribution here agree: a plate placed
+    on the board is N ordinary cooks, so
+
+        day_totals[date]  ==  meal_nutrition(meal) x outer
+
+    holds exactly, both sides being per-serving macros multiplied by the same
+    servings. Two gates would have made the same food report two numbers with
+    nothing on screen explaining the difference.
+
+    This is stricter than the bounds-only check it replaces, and the cost is
+    real: on the live corpus it excludes 107 further recipes of 403 — 90 for
+    coverage below the threshold, 9 for an unknown serving count, 8 for both.
+    Coverage fails in the *undercount* direction (unresolved ingredient lines),
+    so those days now read low rather than high. That is the honest direction —
+    a figure omitted and named beats a figure quietly missing a third of its
+    ingredients — but it is only honest if the omission is visible, which is why
+    ``week_view`` and ``print_week`` render the ``excluded`` list rather than
+    just a warning glyph.
+
+    ``eligible_macros`` is imported inside the function because
     ``nutrition_quality`` imports ``COVERAGE_REVIEW_THRESHOLD`` from this
     module — a module-level import here would be circular.
     """
-    from lib.nutrition_quality import implausible
+    from lib.nutrition_quality import eligible_macros
 
     totals: dict = {}
     macro_cache: dict = {}
@@ -613,22 +816,15 @@ def day_totals(week: str, recipes_dir) -> dict:
         if name not in macro_cache:
             macro_cache[name] = recipe_macros(name, recipes_dir)
         macros = macro_cache[name]
-        if macros is None:
-            day["incomplete"] = True
-            continue
-        # recipe_macros is macro-shaped; implausible reads an index-shaped dict.
-        bad, _reasons = implausible({
-            "nutrition_calories": macros.get("calories"),
-            "nutrition_protein": macros.get("protein"),
-        })
-        if bad:
+        # A missing recipe reaches this as None and comes back "missing", so it
+        # is named alongside the ones that failed on their numbers rather than
+        # flagging the day with nothing to act on.
+        eligible, _reasons = eligible_macros(macros)
+        if not eligible:
             day["incomplete"] = True
             if name not in day["excluded"]:
                 day["excluded"].append(name)
             continue
-        if macros["coverage"] is not None and \
-                macros["coverage"] < COVERAGE_REVIEW_THRESHOLD:
-            day["incomplete"] = True
         for k in ("calories", "protein", "carbs", "fat"):
             day[k] += macros[k] * float(p["count"])
     return totals

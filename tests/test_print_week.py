@@ -109,3 +109,70 @@ def test_week_label_is_human_readable(tmp_vault):
     assert "2026-W31" not in packet["week_label"]
     assert "Jul 27 - Aug 2, 2026" in packet["week_label"]
     assert packet["week"] == "2026-W31", "the id stays as the key"
+
+
+class TestLedgerWeekPacket:
+    """The ledger path had no test at all — every case here used `source: links`."""
+
+    def test_a_ledger_week_names_what_it_excluded(self, tmp_db, tmp_vault):
+        """An excluded recipe must reach the packet, not just set a ⚠.
+
+        The printed packet is read away from the screen, so "⚠" with nothing
+        naming the cause is the one place a reader cannot go and check.
+        """
+        from lib import serving_ledger as sl
+
+        vault = tmp_vault
+        (vault / "My Macros.md").write_text(
+            "---\ncalories: 2300\nprotein: 190\ncarbs: 228\nfat: 70\n---\n")
+        recipes = vault / "Recipes"
+        recipes.mkdir(parents=True, exist_ok=True)
+        _recipe(recipes, "Beef Bowl", cal=650, protein=48)
+        _recipe(recipes, "Mystery Soup", cal=400, protein=20, coverage=0.4)
+
+        sl.create_cook(recipe="Beef Bowl", week=WEEK, scale=1.0,
+                       servings_produced=2.0, date="2026-07-27", meal="dinner")
+        sl.create_cook(recipe="Mystery Soup", week=WEEK, scale=1.0,
+                       servings_produced=2.0, date="2026-07-27", meal="lunch")
+
+        packet = print_week.build_week_packet(WEEK, vault, recipes, pantry=[])
+        assert packet["source"] == "ledger"
+        monday = next(d for d in packet["days"] if d["date"] == "2026-07-27")
+        assert monday["incomplete"] is True
+        assert monday["excluded"] == ["Mystery Soup"]
+        # The sound recipe still counts; only the untrusted one is left out.
+        assert monday["macros"]["calories"] == 650
+
+    def test_a_sound_ledger_week_excludes_nothing(self, tmp_db, tmp_vault):
+        from lib import serving_ledger as sl
+
+        vault = tmp_vault
+        (vault / "My Macros.md").write_text(
+            "---\ncalories: 2300\nprotein: 190\ncarbs: 228\nfat: 70\n---\n")
+        recipes = vault / "Recipes"
+        recipes.mkdir(parents=True, exist_ok=True)
+        _recipe(recipes, "Beef Bowl", cal=650, protein=48)
+        sl.create_cook(recipe="Beef Bowl", week=WEEK, scale=1.0,
+                       servings_produced=2.0, date="2026-07-27", meal="dinner")
+
+        packet = print_week.build_week_packet(WEEK, vault, recipes, pantry=[])
+        monday = next(d for d in packet["days"] if d["date"] == "2026-07-27")
+        assert monday["excluded"] == []
+        assert monday["incomplete"] is False
+
+    def test_the_rendered_packet_names_the_exclusion(self, tmp_db, tmp_vault):
+        """On paper a ⚠ cannot be hovered — the name has to be in the ink."""
+        from lib import serving_ledger as sl
+
+        vault = tmp_vault
+        (vault / "My Macros.md").write_text(
+            "---\ncalories: 2300\nprotein: 190\ncarbs: 228\nfat: 70\n---\n")
+        recipes = vault / "Recipes"
+        recipes.mkdir(parents=True, exist_ok=True)
+        _recipe(recipes, "Mystery Soup", cal=400, protein=20, coverage=0.4)
+        sl.create_cook(recipe="Mystery Soup", week=WEEK, scale=1.0,
+                       servings_produced=2.0, date="2026-07-27", meal="dinner")
+
+        packet = print_week.build_week_packet(WEEK, vault, recipes, pantry=[])
+        html = print_week.render_packet_html(packet)
+        assert "excludes Mystery Soup" in html

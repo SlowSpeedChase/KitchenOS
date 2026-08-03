@@ -624,7 +624,11 @@ class TestConsumeOnCookedTransition:
         monkeypatch.setattr(cook_sweep.cook_module, "consume_recipe",
                             lambda name, servings=1.0, **kw: calls.append((name, servings)) or {})
         cook = _create_cook(client).get_json()
-        client.patch(f"/api/cooks/{cook['id']}", json={"make_again": 1})
+        # True, not 1: the verdict is binary by design and `_coerce_verdict`
+        # rejects a bare int, so a `1` here would 400 and pass this test without
+        # ever reaching the consumption branch it means to check.
+        assert client.patch(f"/api/cooks/{cook['id']}",
+                            json={"make_again": True}).status_code == 200
         client.patch(f"/api/cooks/{cook['id']}", json={"cook_note": "too salty"})
         client.patch(f"/api/cooks/{cook['id']}", json={"scale": 2.0})
         assert calls == []
@@ -640,6 +644,51 @@ class TestConsumeOnCookedTransition:
         client.patch(f"/api/cooks/{cook['id']}", json={"cooked_at": "2026-07-07T18:00:00Z"})
         client.patch(f"/api/cooks/{cook['id']}", json={"cooked_at": None})
         assert len(calls) == 1
+
+    def test_the_patch_returns_what_it_spent(self, client, tmp_db, tmp_vault, monkeypatch):
+        """The cooked_at transition reports its consumption on the response.
+
+        The board used to PATCH `cooked_at` and *then* POST `/api/cook` to get a
+        summary to render — but the PATCH already consumed server-side, so the
+        second call spent the pantry a second time (`consume_recipe` is not
+        idempotent). Returning the summary here is what removes the client's
+        reason to ask twice.
+        """
+        summary = {"recipe": "Chili", "consumed": [{"item": "beans", "after": 1,
+                                                    "unit": "ct", "depleted": False}],
+                   "skipped_staples": [], "not_tracked": [], "use_recorded": []}
+        from lib import cook_sweep
+        monkeypatch.setattr(cook_sweep.cook_module, "consume_recipe",
+                            lambda name, servings=1.0, **kw: summary)
+        cook = _create_cook(client).get_json()
+        resp = client.patch(f"/api/cooks/{cook['id']}",
+                            json={"cooked_at": "2026-07-07T18:00:00Z"})
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["consumption"] == summary
+        # Still the cook dict, not just the summary.
+        assert body["id"] == cook["id"]
+
+    def test_a_patch_that_does_not_consume_reports_no_consumption(
+            self, client, tmp_db, tmp_vault):
+        """A verdict is not a cook, so there is nothing to render a toast from."""
+        cook = _create_cook(client).get_json()
+        resp = client.patch(f"/api/cooks/{cook['id']}", json={"make_again": True})
+        assert resp.status_code == 200
+        assert resp.get_json()["consumption"] is None
+
+    def test_a_failing_consume_reports_no_consumption(
+            self, client, tmp_db, tmp_vault, monkeypatch):
+        """A swallowed pantry error must not be rendered as a successful spend."""
+        from lib import cook_sweep
+
+        def boom(*a, **kw):
+            raise RuntimeError("pantry exploded")
+        monkeypatch.setattr(cook_sweep.cook_module, "consume_recipe", boom)
+        cook = _create_cook(client).get_json()
+        resp = client.patch(f"/api/cooks/{cook['id']}",
+                            json={"cooked_at": "2026-07-07T18:00:00Z"})
+        assert resp.get_json()["consumption"] is None
 
     def test_a_failing_consume_does_not_fail_the_patch(self, client, tmp_db, tmp_vault, monkeypatch):
         """Recording that you cooked something must survive a pantry error.
@@ -886,3 +935,183 @@ class TestObsidianAddGoesThroughTheLedger:
 
     def test_an_unknown_slot_is_rejected_not_500(self, client, tmp_db, tmp_vault, plans):
         assert self._post(client, meal="Brunch").status_code == 400
+
+
+# --- Bundles: a plate on the board -----------------------------------------
+
+PLATE_RECIPE = """---
+title: {name}
+servings: {servings}
+nutrition_calories: 500
+nutrition_protein: 30
+nutrition_carbs: 40
+nutrition_fat: 20
+nutrition_coverage: 0.95
+---
+"""
+
+
+def _seed_plate(tmp_vault, name="Osso Buco Plate"):
+    from lib import meal_loader
+    from lib.meal_loader import Meal, SubRecipe
+
+    recipes = tmp_vault / "Recipes"
+    recipes.mkdir(parents=True, exist_ok=True)
+    for r, s in (("Osso Buco", 4), ("Garlic Toast", 2)):
+        (recipes / f"{r}.md").write_text(
+            PLATE_RECIPE.format(name=r, servings=s), encoding="utf-8")
+    meals = tmp_vault / "Meals"
+    meals.mkdir(parents=True, exist_ok=True)
+    meal_loader.save_meal(Meal(name=name, sub_recipes=[
+        SubRecipe(recipe="Osso Buco"),
+        SubRecipe(recipe="Garlic Toast", servings=0.5),
+    ]), meals_dir=meals)
+    return name
+
+
+def _post_bundle(client, **over):
+    body = dict(meal_name="Osso Buco Plate", week="2026-W28",
+                date="2026-07-07", meal="dinner", scale=1.0)
+    body.update(over)
+    return client.post("/api/bundles", json=body)
+
+
+class TestBundleRoutes:
+    def test_create_returns_the_members(self, client, tmp_db, tmp_vault):
+        _seed_plate(tmp_vault)
+        resp = _post_bundle(client)
+        assert resp.status_code == 201
+        b = resp.get_json()
+        assert b["bundle_name"] == "Osso Buco Plate"
+        assert [c["recipe"] for c in b["cooks"]] == ["Osso Buco", "Garlic Toast"]
+        assert len({c["bundle_id"] for c in b["cooks"]}) == 1
+
+    def test_the_plate_lands_in_the_day_totals(self, client, tmp_db, tmp_vault):
+        """The point of the whole branch, at the API boundary."""
+        _seed_plate(tmp_vault)
+        _post_bundle(client)
+        board = client.get("/api/week-board/2026-W28").get_json()
+        # 1 serving of Osso Buco + 0.5 of Garlic Toast, both 500 kcal/serving.
+        assert board["day_totals"]["2026-07-07"]["calories"] == 750
+        assert board["day_totals"]["2026-07-07"]["incomplete"] is False
+
+    def test_a_double_tap_returns_the_same_bundle(self, client, tmp_db, tmp_vault):
+        _seed_plate(tmp_vault)
+        first = _post_bundle(client).get_json()
+        again = _post_bundle(client)
+        assert again.status_code == 200
+        assert again.get_json()["bundle_id"] == first["bundle_id"]
+        assert len(serving_ledger.cooks_for_week("2026-W28")) == 2
+
+    def test_an_unknown_plate_is_404(self, client, tmp_db, tmp_vault):
+        _seed_plate(tmp_vault)
+        assert _post_bundle(client, meal_name="No Such Plate").status_code == 404
+
+    def test_a_bad_week_is_400(self, client, tmp_db, tmp_vault):
+        _seed_plate(tmp_vault)
+        assert _post_bundle(client, week="nonsense").status_code == 400
+
+    def test_create_regenerates_the_week_note(self, client, tmp_db, tmp_vault):
+        _seed_plate(tmp_vault)
+        _post_bundle(client)
+        md = (tmp_vault / "Meal Plans" / "2026-W28.md").read_text(encoding="utf-8")
+        assert "> Plate: Osso Buco Plate" in md
+        assert "[[Osso Buco]] x1" in md
+
+    def test_planning_a_plate_writes_no_cook_history(self, client, tmp_db, tmp_vault):
+        """Placing a plate is intent, not evidence that anything was cooked.
+
+        Same rule the legacy import obeys: counting planned rows is how 10
+        recipes came to carry `last_cooked` against 2 real cooks.
+        """
+        _seed_plate(tmp_vault)
+        _post_bundle(client)
+        for r in ("Osso Buco", "Garlic Toast"):
+            body = (tmp_vault / "Recipes" / f"{r}.md").read_text(encoding="utf-8")
+            assert "cook_count:" not in body, f"{r} invented cook history"
+
+    def test_cooking_a_plate_syncs_history_for_every_member(
+            self, client, tmp_db, tmp_vault):
+        """Not just the first: each sub-recipe's note must learn its yield."""
+        _seed_plate(tmp_vault)
+        b = _post_bundle(client).get_json()
+        client.patch(f"/api/bundles/{b['bundle_id']}",
+                     json={"cooked_at": "2026-07-07T18:00:00Z"})
+        for r in ("Osso Buco", "Garlic Toast"):
+            body = (tmp_vault / "Recipes" / f"{r}.md").read_text(encoding="utf-8")
+            assert "cook_count: 1" in body, f"{r} never learned it was cooked"
+
+    def test_a_legacy_week_is_converted_before_the_plate_lands(
+            self, client, tmp_db, tmp_vault):
+        _seed_plate(tmp_vault)
+        plans = tmp_vault / "Meal Plans"
+        plans.mkdir(parents=True, exist_ok=True)
+        (plans / "2026-W28.md").write_text(
+            "## Monday (Jul 6)\n\n### Dinner\n[[Osso Buco]]\n", encoding="utf-8")
+        _post_bundle(client)
+        recipes = [c["recipe"] for c in serving_ledger.cooks_for_week("2026-W28")]
+        # The hand-written Monday cook survived the conversion.
+        assert recipes.count("Osso Buco") == 2
+        assert (plans / "2026-W28.md.bak").exists() or \
+            list(plans.glob(".history/*")), "no backup before the first write"
+
+    def test_move_takes_every_member(self, client, tmp_db, tmp_vault):
+        _seed_plate(tmp_vault)
+        b = _post_bundle(client).get_json()
+        resp = client.post(f"/api/bundles/{b['bundle_id']}/move",
+                           json={"date": "2026-07-09", "meal": "lunch"})
+        assert resp.status_code == 200
+        assert all(c["date"] == "2026-07-09" for c in resp.get_json()["cooks"])
+
+    def test_delete_removes_every_member(self, client, tmp_db, tmp_vault):
+        _seed_plate(tmp_vault)
+        b = _post_bundle(client).get_json()
+        resp = client.delete(f"/api/bundles/{b['bundle_id']}")
+        assert resp.status_code == 200
+        assert resp.get_json()["cooks"] == 2
+        assert serving_ledger.cooks_for_week("2026-W28") == []
+
+    def test_delete_unknown_bundle_is_404(self, client, tmp_db, tmp_vault):
+        assert client.delete("/api/bundles/nope").status_code == 404
+
+    def test_patch_marks_the_whole_plate_cooked_once_each(
+            self, client, tmp_db, tmp_vault, monkeypatch):
+        """One 🍳 on a plate spends each member exactly once."""
+        calls = []
+        from lib import cook_sweep
+        monkeypatch.setattr(
+            cook_sweep.cook_module, "consume_recipe",
+            lambda name, servings=1.0, **kw: calls.append((name, servings)) or {
+                "recipe": name, "consumed": [], "skipped_staples": [],
+                "not_tracked": [], "use_recorded": []})
+        _seed_plate(tmp_vault)
+        b = _post_bundle(client).get_json()
+        resp = client.patch(f"/api/bundles/{b['bundle_id']}",
+                            json={"cooked_at": "2026-07-07T18:00:00Z"})
+        assert resp.status_code == 200
+        assert sorted(calls) == [("Garlic Toast", 0.5), ("Osso Buco", 1.0)]
+        assert len(resp.get_json()["consumption"]) == 2
+
+    def test_one_verdict_answers_for_the_whole_plate(self, client, tmp_db, tmp_vault):
+        """Otherwise verdict_nudge asks three times about one dinner."""
+        _seed_plate(tmp_vault)
+        b = _post_bundle(client).get_json()
+        client.patch(f"/api/bundles/{b['bundle_id']}", json={"make_again": True})
+        assert all(c["make_again"] is True
+                   for c in serving_ledger.get_bundle(b["bundle_id"])["cooks"])
+
+    def test_patch_rejects_a_field_that_is_not_bundle_wide(
+            self, client, tmp_db, tmp_vault):
+        """Scale is per-member — a plate scaled up is usually more protein, not
+        more rice — so it must not be settable across the bundle by accident."""
+        _seed_plate(tmp_vault)
+        b = _post_bundle(client).get_json()
+        resp = client.patch(f"/api/bundles/{b['bundle_id']}", json={"scale": 2.0})
+        assert resp.status_code == 400
+
+    def test_the_week_stays_ledger_managed(self, client, tmp_db, tmp_vault):
+        """A bundle is cooks, so the legacy PUT must still refuse the week."""
+        _seed_plate(tmp_vault)
+        _post_bundle(client)
+        resp = client.put("/api/meal-plan/2026-W28", json={"days": []})
+        assert resp.status_code == 409

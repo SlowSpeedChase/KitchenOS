@@ -1,3 +1,5 @@
+import pytest
+
 from lib import serving_ledger as sl
 from lib import week_view
 from lib.meal_plan_parser import parse_meal_plan, fmt_mult
@@ -145,3 +147,186 @@ def test_write_week_markdown_still_writes_when_content_changes(tmp_db, tmp_vault
     week_view.write_week_markdown("2026-W28")
     assert plan.stat().st_mtime != before
     assert "## Monday" in plan.read_text(encoding="utf-8")
+
+
+# --- Excluded recipes must be visible in the note --------------------------
+#
+# The Totals: line only renders when some macro is non-zero, so a day whose
+# only recipe is ineligible rendered *nothing at all* — no figure, no warning,
+# no reason. The planner special-cases that case; the Obsidian note did not,
+# and the stricter macro gate makes it far more common.
+
+LOW_COVERAGE_MD = """---
+title: Mystery Soup
+servings: 4
+nutrition_calories: 500
+nutrition_protein: 30
+nutrition_carbs: 40
+nutrition_fat: 20
+nutrition_coverage: 0.4
+---
+"""
+
+
+def _write(recipes, name, body):
+    recipes.mkdir(parents=True, exist_ok=True)
+    (recipes / f"{name}.md").write_text(body, encoding="utf-8")
+
+
+def test_a_day_with_only_an_excluded_recipe_says_so(tmp_db, tmp_vault):
+    recipes = tmp_vault / "Recipes"
+    _write(recipes, "Mystery Soup", LOW_COVERAGE_MD)
+    sl.create_cook(recipe="Mystery Soup", week="2026-W28", scale=1.0,
+                   servings_produced=4.0, date="2026-07-07", meal="dinner")
+    md = week_view.render_week_markdown("2026-W28", recipes)
+    assert "Excludes: Mystery Soup" in md, \
+        "an all-excluded day rendered no explanation at all"
+
+
+def test_the_excludes_line_does_not_disturb_the_round_trip(tmp_db, tmp_vault):
+    """It must be invisible to the legacy parser — calendar sync depends on it."""
+    recipes = tmp_vault / "Recipes"
+    _write(recipes, "Mystery Soup", LOW_COVERAGE_MD)
+    sl.create_cook(recipe="Mystery Soup", week="2026-W28", scale=1.0,
+                   servings_produced=4.0, date="2026-07-07", meal="dinner")
+    md = week_view.render_week_markdown("2026-W28", recipes)
+    days = parse_meal_plan(md, 2026, 28)
+    assert days[1]["dinner"].name == "Mystery Soup"
+    # The caption carries no wikilink, so it contributes no entry of its own.
+    assert all(d[m] is None or "Excludes" not in d[m].name
+               for d in days for m in ("breakfast", "lunch", "snack", "dinner"))
+
+
+def test_a_sound_day_gets_no_excludes_line(tmp_db, tmp_vault):
+    recipes = tmp_vault / "Recipes"
+    _write(recipes, "Chili", LOW_COVERAGE_MD.replace("title: Mystery Soup", "title: Chili")
+                                            .replace("nutrition_coverage: 0.4",
+                                                     "nutrition_coverage: 0.95"))
+    sl.create_cook(recipe="Chili", week="2026-W28", scale=1.0,
+                   servings_produced=4.0, date="2026-07-07", meal="dinner")
+    md = week_view.render_week_markdown("2026-W28", recipes)
+    assert "Excludes:" not in md
+    assert "Totals:" in md
+
+
+# --- Plates in the week note -----------------------------------------------
+
+def test_a_bundle_gets_one_caption_above_its_members(tmp_db, tmp_vault):
+    recipes = tmp_vault / "Recipes"
+    _write(recipes, "Osso Buco", LOW_COVERAGE_MD.replace(
+        "title: Mystery Soup", "title: Osso Buco").replace(
+        "nutrition_coverage: 0.4", "nutrition_coverage: 0.95"))
+    _write(recipes, "Garlic Toast", LOW_COVERAGE_MD.replace(
+        "title: Mystery Soup", "title: Garlic Toast").replace(
+        "nutrition_coverage: 0.4", "nutrition_coverage: 0.95"))
+    sl.create_bundle("Osso Buco Plate", [
+        {"recipe": "Osso Buco", "scale": 1.0, "servings_produced": 4.0,
+         "initial_placement_count": 1.0},
+        {"recipe": "Garlic Toast", "scale": 0.5, "servings_produced": 1.0,
+         "initial_placement_count": 0.5},
+    ], "2026-W28", date="2026-07-07", meal="dinner")
+    md = week_view.render_week_markdown("2026-W28", recipes)
+    assert md.count("> Plate: Osso Buco Plate") == 1, "caption not once per plate"
+    assert "[[Osso Buco]] x1" in md
+    assert "[[Garlic Toast]] x0.5" in md
+    # NOT the bundle form: [[Meal: X]] would parse back as a meal and re-derive
+    # the sub-recipes from the file rather than from the ledger.
+    assert "[[Meal:" not in md
+
+
+def test_the_plate_caption_does_not_disturb_the_round_trip(tmp_db, tmp_vault):
+    recipes = tmp_vault / "Recipes"
+    _write(recipes, "Osso Buco", LOW_COVERAGE_MD.replace(
+        "title: Mystery Soup", "title: Osso Buco").replace(
+        "nutrition_coverage: 0.4", "nutrition_coverage: 0.95"))
+    sl.create_bundle("Osso Buco Plate", [
+        {"recipe": "Osso Buco", "scale": 1.0, "servings_produced": 4.0,
+         "initial_placement_count": 1.0},
+    ], "2026-W28", date="2026-07-07", meal="dinner")
+    md = week_view.render_week_markdown("2026-W28", recipes)
+    days = parse_meal_plan(md, 2026, 28)
+    assert days[1]["dinner"].name == "Osso Buco"
+    assert days[1]["dinner"].kind == "recipe"
+
+
+def test_import_legacy_week_keeps_the_bundle_together(tmp_db, tmp_vault):
+    """A [[Meal: X]] link becomes N cooks that still know they are one plate.
+
+    It used to flatten to N independent cooks and lose the bundle at that
+    moment, so the board could never draw the plate it had just imported.
+    """
+    from lib import meal_loader
+    from lib.meal_loader import Meal, SubRecipe
+
+    recipes = tmp_vault / "Recipes"
+    for n in ("Osso Buco", "Garlic Toast"):
+        _write(recipes, n, LOW_COVERAGE_MD.replace("title: Mystery Soup", f"title: {n}")
+                                          .replace("nutrition_coverage: 0.4",
+                                                   "nutrition_coverage: 0.95"))
+    meals = tmp_vault / "Meals"
+    meals.mkdir(parents=True, exist_ok=True)
+    meal_loader.save_meal(Meal(name="Osso Buco Plate", sub_recipes=[
+        SubRecipe(recipe="Osso Buco"),
+        SubRecipe(recipe="Garlic Toast", servings=0.5),
+    ]), meals_dir=meals)
+
+    plans = tmp_vault / "Meal Plans"
+    plans.mkdir(parents=True, exist_ok=True)
+    (plans / "2026-W28.md").write_text(
+        "## Tuesday (Jul 7)\n\n### Dinner\n[[Meal: Osso Buco Plate]]\n", encoding="utf-8")
+
+    week_view.import_legacy_week("2026-W28")
+    cooks = sl.cooks_for_week("2026-W28")
+    assert [c["recipe"] for c in cooks] == ["Osso Buco", "Garlic Toast"]
+    assert len({c["bundle_id"] for c in cooks}) == 1
+    assert all(c["bundle_name"] == "Osso Buco Plate" for c in cooks)
+
+
+def test_an_imported_plate_reports_its_own_macros_not_its_whole_batches(
+        tmp_db, tmp_vault):
+    """The plain-entry path places the whole batch; a plate places each share.
+
+    Importing a plate used to create fully-placed cooks, so a legacy week
+    reported 4 + 1 servings' worth of macros where the plate is 1 + 0.5.
+    """
+    from lib import meal_loader
+    from lib.meal_loader import Meal, SubRecipe
+    from lib.meal_nutrition import meal_nutrition
+
+    recipes = tmp_vault / "Recipes"
+    for n in ("Osso Buco", "Garlic Toast"):
+        _write(recipes, n, LOW_COVERAGE_MD.replace("title: Mystery Soup", f"title: {n}")
+                                          .replace("nutrition_coverage: 0.4",
+                                                   "nutrition_coverage: 0.95"))
+    meals = tmp_vault / "Meals"
+    meals.mkdir(parents=True, exist_ok=True)
+    plate = Meal(name="Osso Buco Plate", sub_recipes=[
+        SubRecipe(recipe="Osso Buco"),
+        SubRecipe(recipe="Garlic Toast", servings=0.5),
+    ])
+    meal_loader.save_meal(plate, meals_dir=meals)
+    plans = tmp_vault / "Meal Plans"
+    plans.mkdir(parents=True, exist_ok=True)
+    (plans / "2026-W28.md").write_text(
+        "## Tuesday (Jul 7)\n\n### Dinner\n[[Meal: Osso Buco Plate]]\n", encoding="utf-8")
+
+    week_view.import_legacy_week("2026-W28")
+    day = sl.day_totals("2026-W28", recipes)["2026-07-07"]
+    card = meal_nutrition(plate, recipes)
+    assert day["calories"] == pytest.approx(card["calories"])
+
+
+def test_an_unknown_meal_still_imports_as_a_plain_cook(tmp_db, tmp_vault):
+    """Falls through to the existing behaviour rather than dropping the slot."""
+    recipes = tmp_vault / "Recipes"
+    recipes.mkdir(parents=True, exist_ok=True)
+    (tmp_vault / "Meals").mkdir(parents=True, exist_ok=True)
+    plans = tmp_vault / "Meal Plans"
+    plans.mkdir(parents=True, exist_ok=True)
+    (plans / "2026-W28.md").write_text(
+        "## Tuesday (Jul 7)\n\n### Dinner\n[[Meal: No Such Plate]]\n", encoding="utf-8")
+
+    week_view.import_legacy_week("2026-W28")
+    cooks = sl.cooks_for_week("2026-W28")
+    assert [c["recipe"] for c in cooks] == ["No Such Plate"]
+    assert cooks[0]["bundle_id"] is None

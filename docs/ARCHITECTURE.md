@@ -296,9 +296,16 @@ in `docs/setup/`.
   sub-recipe is excluded from the totals and named in `excluded`, never counted
   as zero. Surfaced on `/api/meals`, on `/api/meal-plan/<week>`'s meal slots,
   and in the planner's meal editor, which measures the rollup against
-  `daily_target × share[slot]` (`macro_targets.load_slot_shares`). Meals are
-  *not* ledger citizens: a meal card still contributes nothing to a board
-  week's day-totals row.
+  `daily_target × share[slot]` (`macro_targets.load_slot_shares`). Meals **are**
+  ledger citizens as of the plates-ledger-native branch — but as a *bundle of
+  ordinary cooks*, not a row of their own: `lib/meal_bundle.py` expands a plate
+  into one cook per sub-recipe sharing `cooks.bundle_id`/`bundle_name`, so a
+  plate's macros land in the board week's day-totals row while every downstream
+  consumer keeps seeing one recipe per row. Each member is placed at its
+  `sub_multiplier` share, which makes `day_totals == meal_nutrition × outer`
+  exact. Nothing about the rollup is stored — it stays derived at read time, and
+  `day_totals` now shares the same `nutrition_quality.eligible_macros` gate so
+  the card and the day row cannot disagree.
 - **Serving ledger & board mode** — `lib/serving_ledger.py` models a week as
   *cooks* (one preparation of a recipe at a fractional scale) and *placements*
   (where each cook's servings go: a date/meal slot, freezer, etc.), stored in
@@ -308,7 +315,10 @@ in `docs/setup/`.
   hand-edited plans still work). `import-legacy` converts a hand-edited week
   into the ledger once. Exposed via `/api/cooks`, `/api/placements`, and
   `/api/week-board/<week>`; driven by the planner board's serving chips,
-  scale stepper, and freezer/trash targets.
+  scale stepper, and freezer/trash targets. `/api/bundles` (POST / move / PATCH
+  / DELETE) performs the operations that must act on a whole plate at once;
+  there is no bundle GET, because `/api/week-board/<week>` already carries
+  `bundle_id`/`bundle_name` on every cook and the client groups them.
 - **Recipe detail page** — `/recipe/<name>` serves an interactive page with
   live ingredient scaling; the planner and Use-It-Up suggestions link into it.
 - **Nutrition review** — `/nutrition-review` + `/api/nutrition-review/*` is a

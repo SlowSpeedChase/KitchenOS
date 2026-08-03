@@ -267,3 +267,63 @@ def test_backfill_marks_a_row_the_router_disagrees_with_as_manual(tmp_db):
     assert row["location_source"] == "manual", (
         "a row the router would place elsewhere was stamped as router-placed"
     )
+
+
+# --- Bundle columns --------------------------------------------------------
+#
+# A composite plate placed on the board expands to one ordinary cook per
+# sub-recipe, all sharing a bundle id. See lib/meal_bundle.py.
+
+def test_cooks_carries_the_bundle_columns(tmp_db):
+    conn = idb.connect()
+    try:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(cooks)")}
+    finally:
+        conn.close()
+    assert {"bundle_id", "bundle_name"} <= cols
+
+
+def test_a_pre_bundle_database_gains_the_columns_and_the_index(tmp_db):
+    """The migration path, which is the one that runs on the live DB.
+
+    `connect()` runs `executescript(_SCHEMA)` *before* `_migrate`, so the
+    `cooks` table has no `bundle_id` at the moment _SCHEMA executes. Putting
+    `CREATE INDEX ... ON cooks(bundle_id)` in _SCHEMA beside `idx_cooks_week`
+    therefore raises "no such column" and breaks **every** connect() on an
+    existing database — inventory, ledger and nutrition cache alike. The index
+    has to be created after the ALTERs, and this test is what pins that.
+    """
+    # Build a database the way it looked before the bundle columns existed.
+    conn = sqlite3.connect(tmp_db)
+    conn.executescript("""
+        CREATE TABLE cooks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recipe TEXT NOT NULL,
+            week TEXT NOT NULL,
+            date TEXT,
+            meal TEXT,
+            scale REAL NOT NULL DEFAULT 1.0,
+            servings_produced REAL NOT NULL,
+            cooked_at TEXT,
+            notes TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO cooks (recipe, week, servings_produced) VALUES ('Chili', '2026-W28', 4.0);
+    """)
+    conn.commit()
+    conn.close()
+
+    conn = idb.connect()          # must not raise
+    try:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(cooks)")}
+        indexes = {r["name"] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index'")}
+        row = conn.execute("SELECT recipe, bundle_id FROM cooks").fetchone()
+    finally:
+        conn.close()
+
+    assert {"bundle_id", "bundle_name"} <= cols
+    assert "idx_cooks_bundle" in indexes
+    # The pre-existing row survives, unbundled.
+    assert row["recipe"] == "Chili"
+    assert row["bundle_id"] is None

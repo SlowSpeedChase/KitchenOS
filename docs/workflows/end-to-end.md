@@ -83,7 +83,7 @@ For each URL: fetch metadata + transcript + first comment → try recipe-link in
 
 ## 2. Plan — putting recipes onto a week
 
-Three ways meals land on a meal plan. Output is always `Meal Plans/<week>.md` with `[[Recipe Name]]` wikilinks under each day's slots.
+Three ways meals land on a meal plan. Output is always `Meal Plans/<week>.md` with `[[Recipe Name]]` wikilinks under each day's slots — regenerated from the serving ledger on every mutation, so it is a read-only view rather than the source of truth. A composite plate renders as a `> Plate: <name>` caption above its member links.
 
 ### 2a. Auto-generated empty template (LaunchAgent)
 - `com.kitchenos.mealplan` runs daily at 6:00 AM.
@@ -105,9 +105,11 @@ Three ways meals land on a meal plan. Output is always `Meal Plans/<week>.md` wi
 ### 2c. Recipe-page button (Obsidian)
 Each recipe markdown contains an **Add to Meal Plan** button (Obsidian Buttons plugin) that opens `http://chases-mac-mini.taila69703.ts.net:5001/add-to-meal-plan?recipe=<file>` in the browser. The form has three branches:
 
-1. **Schedule directly** → pick week / day / slot → API inserts the wikilink into the meal plan.
+1. **Schedule directly** → pick week / day / slot → API creates a **ledger cook** (not a raw wikilink) and regenerates the week note from it.
 2. **Add to existing meal** → pick a meal from `vault/Meals/` → API appends this recipe to that meal's `sub_recipes` and offers an optional "now schedule it" prompt.
 3. **Create new meal** → name + recipes → API writes `vault/Meals/<Name>.meal.md` and offers the same schedule prompt.
+
+Scheduling a *plate* (branches 2 and 3's prompt) creates a **bundle** — one ledger cook per sub-recipe sharing a `bundle_id` — so it survives the next regeneration and its macros reach the week's day totals. It used to write a raw `[[Meal: X]]` token, which the next ledger write silently erased.
 
 This is the primary way to go from "I'm reading a recipe" to "this is in next week's plan" without leaving Obsidian.
 

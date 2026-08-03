@@ -59,8 +59,8 @@ def _markdown_week(week: str, vault_path: Path) -> tuple[list[dict], dict, list[
         macros = None
         if drec["has_meals"]:
             macros = {k: drec[k] for k in ("calories", "protein", "carbs", "fat")}
-        days.append({"day": drec["day"], "date": drec["date"],
-                     "slots": slots, "macros": macros, "incomplete": False})
+        days.append({"day": drec["day"], "date": drec["date"], "slots": slots,
+                     "macros": macros, "incomplete": False, "excluded": []})
     return days, dash["targets"], dash["warnings"]
 
 
@@ -93,11 +93,17 @@ def _ledger_week(week: str, recipes_dir: Path,
         t = totals.get(date_iso)
         macros = None
         incomplete = False
+        excluded: list[str] = []
         if t:
             macros = {k: round(t[k]) for k in ("calories", "protein", "carbs", "fat")}
             incomplete = bool(t.get("incomplete"))
-        days.append({"day": day_name, "date": date_iso,
-                     "slots": slots, "macros": macros, "incomplete": incomplete})
+            # Carried through so the packet can NAME the untrusted recipes. This
+            # is printed and read away from the screen, so a bare ⚠ is the one
+            # warning a reader cannot go and investigate.
+            excluded = list(t.get("excluded") or [])
+        days.append({"day": day_name, "date": date_iso, "slots": slots,
+                     "macros": macros, "incomplete": incomplete,
+                     "excluded": excluded})
     return days, []
 
 
@@ -184,12 +190,22 @@ def _fmt(x: float) -> str:
     return str(int(x)) if float(x).is_integer() else str(x)
 
 
-def _macro_cell(macros: Optional[dict], targets: dict, incomplete: bool) -> str:
+def _macro_cell(macros: Optional[dict], targets: dict, incomplete: bool,
+                excluded: Optional[list] = None) -> str:
+    """The day's macros against target, naming anything left out of them.
+
+    `excluded` is rendered rather than folded into the ⚠, because this page is
+    printed: a warning glyph on paper cannot be hovered, clicked, or chased back
+    to the recipe that caused it. A day whose only recipe was excluded has no
+    macros at all, so the exclusion is the entire content of the cell.
+    """
+    names = ", ".join(escape(n) for n in (excluded or []))
+    note = f" <span class='warn'>excludes {names}</span>" if names else ""
     if not macros:
-        return "<span class='empty'>—</span>"
+        return note.strip() or "<span class='empty'>—</span>"
     warn = " <span class='warn' title='low-confidence or missing nutrition'>⚠</span>" if incomplete else ""
     return (f"{macros['protein']}/{targets['protein']}g P · "
-            f"{macros['calories']}/{targets['calories']} kcal{warn}")
+            f"{macros['calories']}/{targets['calories']} kcal{warn}{note}")
 
 
 def render_packet_html(packet: dict, base_url: str = "") -> str:
@@ -204,7 +220,8 @@ def render_packet_html(packet: dict, base_url: str = "") -> str:
     rows = []
     for d in packet["days"]:
         cells = "".join(f"<td>{_slot_html(d['slots'][m], base_url)}</td>" for m in _MEALS)
-        macro = _macro_cell(d["macros"], targets, d["incomplete"])
+        macro = _macro_cell(d["macros"], targets, d["incomplete"],
+                            d.get("excluded"))
         rows.append(f"<tr><td class='day'>{escape(d['day'])}</td>{cells}"
                     f"<td class='macros'>{macro}</td></tr>")
     grid = (f"<table class='week-grid'><thead>{head}</thead>"
