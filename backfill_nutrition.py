@@ -17,7 +17,6 @@ Usage:
 """
 
 import argparse
-import re
 import sqlite3
 import sys
 import os
@@ -31,7 +30,11 @@ load_dotenv()
 from lib import frontmatter, paths
 from lib.backup import create_backup
 from lib.nutrition_engine import calculate_recipe_nutrition
-from lib.recipe_parser import parse_recipe_file, parse_ingredient_table
+from lib.recipe_parser import (
+    extract_ingredients_section,
+    parse_recipe_file,
+    parse_ingredient_table,
+)
 
 # Scalar frontmatter keys this tool manages — de-duplicated and (re)written.
 # Limiting to scalars keeps multi-line list keys (tags:, dietary:) untouched.
@@ -44,11 +47,16 @@ _MANAGED_KEYS = {
 
 
 def extract_ingredients(body: str) -> list[dict]:
-    """Extract structured ingredients from recipe body markdown."""
-    match = re.search(r"## Ingredients\n\n((?:\|[^\n]+\n)+)", body)
-    if not match:
-        return []
-    return parse_ingredient_table(match.group(1))
+    """Extract structured ingredients from recipe body markdown.
+
+    The section boundary belongs to `recipe_parser.extract_ingredients_section`,
+    which CLAUDE.md names the only extractor. This function used to carry a third
+    copy of the regex — `((?:\\|[^\\n]+\\n)+)` — which matched one contiguous run
+    of rows and so lost every group after the first blank line, exactly the defect
+    the invariant was written about.
+    """
+    section = extract_ingredients_section(body)
+    return parse_ingredient_table(section) if section else []
 
 
 def rewrite_frontmatter(fm: str, updates: dict) -> str:
