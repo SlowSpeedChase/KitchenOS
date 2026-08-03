@@ -3274,21 +3274,26 @@
             if (ledgerBusy) return;
             ledgerBusy = true;
             try {
-                await fetch(`/api/cooks/${cook.id}`, {
+                // The PATCH consumes server-side on the cooked_at transition and
+                // reports what it spent. Do NOT also POST /api/cook to get a
+                // summary — that was the old shape, and it spent the pantry a
+                // second time because `consume_recipe` is not idempotent.
+                const resp = await fetch(`/api/cooks/${cook.id}`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ cooked_at: new Date().toISOString() })
-                });
-                const resp = await fetch('/api/cook', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ recipe: cook.recipe, servings: cook.scale })
                 });
                 const r = await resp.json();
                 if (r.error) {
                     showToast(r.error, 'error');
                 } else {
-                    renderCookToast(r);
+                    // null means consumption failed and was logged server-side;
+                    // the cook is still recorded, so say so without a spend list.
+                    if (r.consumption) {
+                        renderCookToast(r.consumption);
+                    } else {
+                        showToast('Marked cooked', 'success');
+                    }
                     loadUseItUp().catch(() => {});
                     // Asked here because this is the moment the leftovers are
                     // physically in front of you. Deferring it means never: an

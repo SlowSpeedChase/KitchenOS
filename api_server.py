@@ -1591,16 +1591,22 @@ def api_cook_update(cook_id):
     # Gated on the transition, not on the field being present, so re-PATCHing an
     # already-cooked row (or editing its note afterwards) cannot spend the
     # pantry twice.
+    consumption = None
     if before.get("cooked_at") is None and updated.get("cooked_at"):
         # Shared with the nightly sweep, deliberately: whichever notices the
         # cook happened, the pantry is spent the same way, once, with the same
         # never-raise behaviour. See lib/cook_sweep.consume_for_cook.
-        cook_sweep.consume_for_cook(updated)
+        consumption = cook_sweep.consume_for_cook(updated)
 
     _regen_weeks(before["week"], updated["week"])
     # Both names: a recipe rename must refresh the note it left as well.
     _sync_cook_history(before["recipe"], updated["recipe"])
-    return jsonify(updated)
+    # The summary rides along so the caller can render "what this spent" without
+    # asking again. The board used to POST /api/cook for exactly that, after this
+    # PATCH had already consumed — spending the pantry twice, since
+    # `consume_recipe` is not idempotent. `None` means nothing was spent (this
+    # PATCH wasn't a cooked_at transition, or consumption failed and was logged).
+    return jsonify({**updated, "consumption": consumption})
 
 
 @app.route('/api/cooks/<int:cook_id>/move', methods=['POST'])

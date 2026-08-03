@@ -624,7 +624,11 @@ class TestConsumeOnCookedTransition:
         monkeypatch.setattr(cook_sweep.cook_module, "consume_recipe",
                             lambda name, servings=1.0, **kw: calls.append((name, servings)) or {})
         cook = _create_cook(client).get_json()
-        client.patch(f"/api/cooks/{cook['id']}", json={"make_again": 1})
+        # True, not 1: the verdict is binary by design and `_coerce_verdict`
+        # rejects a bare int, so a `1` here would 400 and pass this test without
+        # ever reaching the consumption branch it means to check.
+        assert client.patch(f"/api/cooks/{cook['id']}",
+                            json={"make_again": True}).status_code == 200
         client.patch(f"/api/cooks/{cook['id']}", json={"cook_note": "too salty"})
         client.patch(f"/api/cooks/{cook['id']}", json={"scale": 2.0})
         assert calls == []
@@ -640,6 +644,51 @@ class TestConsumeOnCookedTransition:
         client.patch(f"/api/cooks/{cook['id']}", json={"cooked_at": "2026-07-07T18:00:00Z"})
         client.patch(f"/api/cooks/{cook['id']}", json={"cooked_at": None})
         assert len(calls) == 1
+
+    def test_the_patch_returns_what_it_spent(self, client, tmp_db, tmp_vault, monkeypatch):
+        """The cooked_at transition reports its consumption on the response.
+
+        The board used to PATCH `cooked_at` and *then* POST `/api/cook` to get a
+        summary to render — but the PATCH already consumed server-side, so the
+        second call spent the pantry a second time (`consume_recipe` is not
+        idempotent). Returning the summary here is what removes the client's
+        reason to ask twice.
+        """
+        summary = {"recipe": "Chili", "consumed": [{"item": "beans", "after": 1,
+                                                    "unit": "ct", "depleted": False}],
+                   "skipped_staples": [], "not_tracked": [], "use_recorded": []}
+        from lib import cook_sweep
+        monkeypatch.setattr(cook_sweep.cook_module, "consume_recipe",
+                            lambda name, servings=1.0, **kw: summary)
+        cook = _create_cook(client).get_json()
+        resp = client.patch(f"/api/cooks/{cook['id']}",
+                            json={"cooked_at": "2026-07-07T18:00:00Z"})
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["consumption"] == summary
+        # Still the cook dict, not just the summary.
+        assert body["id"] == cook["id"]
+
+    def test_a_patch_that_does_not_consume_reports_no_consumption(
+            self, client, tmp_db, tmp_vault):
+        """A verdict is not a cook, so there is nothing to render a toast from."""
+        cook = _create_cook(client).get_json()
+        resp = client.patch(f"/api/cooks/{cook['id']}", json={"make_again": True})
+        assert resp.status_code == 200
+        assert resp.get_json()["consumption"] is None
+
+    def test_a_failing_consume_reports_no_consumption(
+            self, client, tmp_db, tmp_vault, monkeypatch):
+        """A swallowed pantry error must not be rendered as a successful spend."""
+        from lib import cook_sweep
+
+        def boom(*a, **kw):
+            raise RuntimeError("pantry exploded")
+        monkeypatch.setattr(cook_sweep.cook_module, "consume_recipe", boom)
+        cook = _create_cook(client).get_json()
+        resp = client.patch(f"/api/cooks/{cook['id']}",
+                            json={"cooked_at": "2026-07-07T18:00:00Z"})
+        assert resp.get_json()["consumption"] is None
 
     def test_a_failing_consume_does_not_fail_the_patch(self, client, tmp_db, tmp_vault, monkeypatch):
         """Recording that you cooked something must survive a pantry error.

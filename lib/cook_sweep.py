@@ -37,26 +37,31 @@ from lib import inventory_db, serving_ledger
 log = logging.getLogger(__name__)
 
 
-def consume_for_cook(cook: dict) -> bool:
+def consume_for_cook(cook: dict) -> Optional[dict]:
     """Spend the pantry for one cook. Never raises.
 
     Shared by the sweep and by ``PATCH /api/cooks/<id>``'s cooked_at transition
     so the two cannot drift: whichever notices the cook happened, the pantry is
     spent the same way, once, with the same failure behaviour.
 
-    Returns True if consumption ran without error. A failure is logged and
-    swallowed because the cook record is the user's memory of what happened and
-    inventory is derived from it — losing the record over a decrement error is
-    the worse outcome.
+    Returns ``consume_recipe``'s summary, or ``None`` if it raised. A failure is
+    logged and swallowed because the cook record is the user's memory of what
+    happened and inventory is derived from it — losing the record over a
+    decrement error is the worse outcome.
+
+    The summary is returned rather than a bool so the PATCH can report what it
+    spent. The board used to get that summary by POSTing ``/api/cook`` right
+    after its PATCH, which spent the pantry a *second* time — ``consume_recipe``
+    is not idempotent. Callers must treat ``None`` as "nothing to show", never
+    as an empty spend.
     """
     try:
-        cook_module.consume_recipe(
+        return cook_module.consume_recipe(
             cook["recipe"], servings=float(cook.get("scale") or 1.0))
-        return True
     except Exception:
         log.exception("consume_recipe failed for cook %s (%s); cook still recorded",
                       cook.get("id"), cook.get("recipe"))
-        return False
+        return None
 
 
 def due_cooks(today: Optional[str] = None) -> list[dict]:
@@ -99,7 +104,9 @@ def sweep(today: Optional[str] = None) -> dict:
             failed += 1
             continue
         marked.append(updated["recipe"])
-        if consume_for_cook(updated):
+        # `is not None`: the summary is a dict now, and "ran but decremented
+        # nothing" is a success, not a failure.
+        if consume_for_cook(updated) is not None:
             consumed += 1
         else:
             failed += 1
