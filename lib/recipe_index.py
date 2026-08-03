@@ -74,6 +74,10 @@ def get_recipe_index(recipes_dir: Path, include_ingredients: bool = False) -> li
             # same lenient read and the same "unknown" handling.
             entry["total_time"] = fm.get("total_time") or None
             entry["total_time_minutes"] = parse_minutes(fm.get("total_time"))
+            # `or None` would collapse False into None and lose the whole point
+            # of the tri-state: "doesn't freeze" is not "nobody has said".
+            freezes = fm.get("freezes_well")
+            entry["freezes_well"] = freezes if isinstance(freezes, bool) else None
             if include_ingredients:
                 body_data = parse_recipe_body(parsed["body"])
                 entry["ingredient_items"] = [ing["item"] for ing in body_data.get("ingredients", [])]
@@ -87,6 +91,7 @@ def get_recipe_index(recipes_dir: Path, include_ingredients: bool = False) -> li
             entry.setdefault("short_title", None)
             entry.setdefault("total_time", None)
             entry.setdefault("total_time_minutes", None)
+            entry.setdefault("freezes_well", None)
             if include_ingredients:
                 entry["ingredient_items"] = []
 

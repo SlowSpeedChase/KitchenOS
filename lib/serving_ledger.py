@@ -431,7 +431,7 @@ def freezer_contents() -> list[dict]:
     try:
         rows = conn.execute(
             "SELECT p.id AS placement_id, p.count, c.id AS cook_id, c.recipe,"
-            " c.week AS cook_week, c.date AS cook_date, c.created_at"
+            " c.week AS cook_week, c.date AS cook_date, c.cooked_at, c.created_at"
             " FROM placements p JOIN cooks c ON c.id = p.cook_id"
             " WHERE p.destination = 'freezer' AND p.count > 0"
             " ORDER BY c.created_at",
@@ -439,6 +439,92 @@ def freezer_contents() -> list[dict]:
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+def banked_recipes() -> set:
+    """Names of recipes with servings currently in the freezer.
+
+    The cheap half of ``freezer_summary``, for callers that only need to know
+    *whether* something is banked. The suggester asks this once per render and
+    tests it against the whole library, so it must not pay to read macros and
+    recipe files it will never look at.
+    """
+    conn = inventory_db.connect()
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT c.recipe FROM placements p"
+            " JOIN cooks c ON c.id = p.cook_id"
+            " WHERE p.destination = 'freezer' AND p.count > 0",
+        ).fetchall()
+        return {r["recipe"] for r in rows}
+    finally:
+        conn.close()
+
+
+def _banked_on(row: dict) -> Optional[str]:
+    """The day a frozen serving actually became food.
+
+    ``date`` is an intention and ``created_at`` is when the row was typed;
+    ``cooked_at`` is the only one of the three that means "this exists". Same
+    precedence as ``cook_history``, for the same reason.
+    """
+    for value in (row.get("cooked_at"), row.get("cook_date"), row.get("created_at")):
+        if value:
+            return str(value)[:10]
+    return None
+
+
+def freezer_summary(recipes_dir) -> list[dict]:
+    """The freezer as a list of meals, oldest first.
+
+    Groups placements by recipe — cooking Chili twice is one thing to eat, not
+    two rows to reconcile — and prices each group so the tray can answer the
+    question the freezer exists to answer: *do I need to cook tonight?*
+
+    Macros pass the same plausibility gate as ``day_totals``, and for the same
+    reason: a tray totalling 244 g of protein per serving would be a worse lie
+    than a blank. When they don't survive it, ``servings`` is still reported —
+    the food is real even when the numbers about it aren't.
+    """
+    from lib.nutrition_quality import implausible
+
+    groups: dict = {}
+    for row in freezer_contents():
+        name = row["recipe"]
+        group = groups.setdefault(name, {
+            "recipe": name, "servings": 0.0,
+            "placement_ids": [], "banked_on": None,
+        })
+        group["servings"] = round(group["servings"] + float(row["count"]), 3)
+        group["placement_ids"].append(row["placement_id"])
+        day = _banked_on(row)
+        if day and (group["banked_on"] is None or day < group["banked_on"]):
+            group["banked_on"] = day
+
+    out = []
+    for group in groups.values():
+        macros = recipe_macros(group["recipe"], recipes_dir)
+        protein = calories = None
+        if macros is not None:
+            # recipe_macros is macro-shaped; implausible reads an index-shaped dict.
+            bad, _reasons = implausible({
+                "nutrition_calories": macros.get("calories"),
+                "nutrition_protein": macros.get("protein"),
+            })
+            if not bad:
+                protein, calories = macros["protein"], macros["calories"]
+        group["protein"] = protein
+        group["calories"] = calories
+        group["total_protein"] = (
+            round(protein * group["servings"], 1) if protein is not None else None)
+        group["total_calories"] = (
+            round(calories * group["servings"], 1) if calories is not None else None)
+        out.append(group)
+
+    # Oldest first: a freezer is FIFO or it's an archaeology site. Undated rows
+    # sort last rather than first — "unknown" is not evidence of age.
+    out.sort(key=lambda g: (g["banked_on"] or "9999-99-99", g["recipe"]))
+    return out
 
 
 def placements_for_week(week: str) -> list[dict]:
