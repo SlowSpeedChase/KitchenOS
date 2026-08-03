@@ -99,6 +99,32 @@ def _nutrition_factor(protein) -> float:
     return _NUTRITION_FLOOR + (1.0 - _NUTRITION_FLOOR) * share
 
 
+# Cook time, deliberately the weakest of the three factors: at most a 15% swing.
+# Given two meals you can equally make and that will equally feed you, the faster
+# one is the better answer — but speed must never promote a snack over dinner,
+# which is the failure this whole ranking exists to fix.
+FAST_MINUTES = 20.0
+SLOW_MINUTES = 90.0
+_SPEED_FLOOR = 0.85
+
+#: 147 of 254 recipes carry no readable time, so unknown sits at the midpoint
+#: rather than the floor — the same rule as unknown macros. Penalising missing
+#: data would bury more than half the library for not having been measured.
+_SPEED_UNKNOWN = (_SPEED_FLOOR + 1.0) / 2
+
+
+def _speed_factor(minutes) -> float:
+    """0.85–1.0 by how quickly it can be on the table."""
+    if minutes is None:
+        return _SPEED_UNKNOWN
+    if minutes <= FAST_MINUTES:
+        return 1.0
+    if minutes >= SLOW_MINUTES:
+        return _SPEED_FLOOR
+    span = (minutes - FAST_MINUTES) / (SLOW_MINUTES - FAST_MINUTES)
+    return 1.0 - (1.0 - _SPEED_FLOOR) * span
+
+
 def meal_tier_for(dish_type: Optional[str]) -> str:
     """How much of a meal this dish type is. Unknown values count as a meal."""
     if not isinstance(dish_type, str):
@@ -123,6 +149,7 @@ def _trustworthy_protein(recipe: dict):
     except (TypeError, ValueError):
         return None
 
+
 _GROUP_FOR_DISH_TYPE = {
     dish_type: group
     for group, dish_types in DISH_TYPE_GROUPS.items()
@@ -144,12 +171,21 @@ def group_for(dish_type: Optional[str]) -> str:
 
 def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
              today: Optional[date] = None, limit: int = 30) -> dict:
-    """Rank recipes by ingredient coverage against current inventory.
+    """Rank recipes by what you should actually make right now.
 
-    Returns ``{"recipes": [...]}``, each entry
-    ``{recipe, image, dish_type, group, have, total, coverage, missing, at_risk}``,
-    sorted by coverage (then have count, then fewest missing) descending and capped at
-    ``limit``. Staples count as always-on-hand: they raise coverage but never
+    Four factors, multiplied: **coverage** (can you make it) × **meal tier** (is
+    it a meal) × **nutrition** (will it feed you) × **speed** (how long until
+    it's on the table). Coverage alone answered a different question than the
+    one the page is asked — on a pantry of dry goods it returned muffins,
+    brownies, cookies and frosting, all correctly and none of them dinner.
+
+    Returns ``{"recipes": [...]}``, each entry ``{recipe, image, dish_type,
+    group, have, total, coverage, missing, at_risk, meal_tier, protein, minutes,
+    score}``, sorted by ``score`` descending and capped at ``limit``. The three
+    non-coverage factors are reported alongside it so a surface can explain the
+    order rather than presenting it as given.
+
+    Staples count as always-on-hand: they raise coverage but never
     appear in ``missing``. ``at_risk`` is True when the recipe uses an item in
     the expiry window (per ``use_it_up.at_risk_items``).
     """
@@ -181,6 +217,7 @@ def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
 
         coverage = have / total
         tier = meal_tier_for(recipe.get("dish_type"))
+        minutes = recipe.get("total_time_minutes")
         protein = _trustworthy_protein(recipe)
 
         recipes.append({
@@ -197,15 +234,22 @@ def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
             # where it did rather than presenting an unexplained order.
             "meal_tier": tier,
             "protein": protein,
+            "minutes": minutes,
             "score": round(
-                coverage * _TIER_WEIGHT[tier] * _nutrition_factor(protein), 4),
+                coverage
+                * _TIER_WEIGHT[tier]
+                * _nutrition_factor(protein)
+                * _speed_factor(minutes),
+                4,
+            ),
         })
 
-    # Three factors, multiplied: can you make it, is it a meal, will it feed
-    # you. Protein is inside the score rather than a tiebreak because coverage
-    # almost never ties, so as a tiebreak it would never actually fire — which
-    # is how a 10 g muffin sat second on a real pantry. `have` remains the final
-    # tiebreak so the order is deterministic.
+    # Four factors, multiplied: can you make it, is it a meal, will it feed you,
+    # and how long until it's on the table. Protein and time sit inside the
+    # score rather than acting as tiebreaks because coverage almost never ties,
+    # so a tiebreak would never actually fire — which is how a 10 g muffin sat
+    # second on a real pantry. `have` remains the final tiebreak so the order is
+    # deterministic.
     recipes.sort(
         key=lambda r: (r["score"], r["protein"] or 0.0, r["have"]),
         reverse=True,

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from lib import short_title
 from lib.recipe_parser import parse_recipe_file, parse_recipe_body
+from lib.recipe_time import parse_minutes
 
 FILTER_FIELDS = ("cuisine", "protein", "difficulty", "meal_occasion", "dish_type", "peak_months")
 NUTRITION_FIELDS = ("nutrition_calories", "nutrition_protein", "nutrition_carbs", "nutrition_fat")
@@ -67,6 +68,12 @@ def get_recipe_index(recipes_dir: Path, include_ingredients: bool = False) -> li
             entry["nutrition_coverage"] = fm.get("nutrition_coverage")
             entry["servings"] = fm.get("servings") or None
             entry["short_title"] = fm.get("short_title") or None
+            # Parsed here rather than at each consumer: `total_time` is prose
+            # ("(estimated) 10-15 minutes for the meatballs…") and 147 of 254
+            # recipes have none, so every caller would otherwise reimplement the
+            # same lenient read and the same "unknown" handling.
+            entry["total_time"] = fm.get("total_time") or None
+            entry["total_time_minutes"] = parse_minutes(fm.get("total_time"))
             if include_ingredients:
                 body_data = parse_recipe_body(parsed["body"])
                 entry["ingredient_items"] = [ing["item"] for ing in body_data.get("ingredients", [])]
@@ -78,6 +85,8 @@ def get_recipe_index(recipes_dir: Path, include_ingredients: bool = False) -> li
             entry.setdefault("nutrition_coverage", None)
             entry.setdefault("servings", None)
             entry.setdefault("short_title", None)
+            entry.setdefault("total_time", None)
+            entry.setdefault("total_time_minutes", None)
             if include_ingredients:
                 entry["ingredient_items"] = []
 
