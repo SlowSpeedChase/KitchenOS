@@ -24,8 +24,24 @@ DAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday",
 
 def _slot_lines(date_iso: str, meal: str, cooks: list[dict]) -> list[str]:
     lines: list[str] = []
+    # A plate's members are consecutive here (cooks_for_week orders by id and a
+    # bundle's rows are written in one transaction), so a caption is emitted
+    # whenever the bundle changes.
+    #
+    # Deliberately NOT `[[Meal: X]] x1` as the slot's line. extract_meals_for_day
+    # takes the *first* wikilink in a slot, so that form would parse back as a
+    # meal and flatten_to_recipes would re-derive the sub-recipes from the
+    # .meal.md file rather than from the ledger — if the plate has been edited
+    # since it was placed, the week note would stop describing what is actually
+    # on the board. A `>` line carries no wikilink and so is invisible to
+    # extract_meals_for_day, import_legacy_week and extract_recipe_links alike.
+    last_bundle = None
     for cook in cooks:
         if cook["date"] == date_iso and cook["meal"] == meal:
+            bundle = cook.get("bundle_id")
+            if bundle and bundle != last_bundle:
+                lines.append(f"> Plate: {cook['bundle_name']}")
+            last_bundle = bundle
             lines.append(f"[[{cook['recipe']}]] x{fmt_mult(cook['scale'])}")
             frozen = sum(p["count"] for p in cook["placements"]
                          if p["destination"] == "freezer")
@@ -176,8 +192,13 @@ def import_legacy_week(week: str) -> list[int]:
     for slot placements — they never represent a cook, so they are
     dropped before parsing. Callers must guard against weeks that already
     have ledger rows (cooks or placements); this function does not.
+    A ``[[Meal: X]]`` entry becomes a *bundle* — one cook per sub-recipe that
+    still knows which plate it came from. It used to flatten into N independent
+    cooks, losing the bundle at the moment of conversion, so the board could
+    never draw the plate it had just imported.
     Returns the created cook ids.
     """
+    from lib import meal_bundle, meal_loader
     from lib.meal_plan_parser import parse_meal_plan, flatten_to_recipes
     plan_file = paths.meal_plans_dir() / f"{week}.md"
     imported: list[int] = []
@@ -193,6 +214,27 @@ def import_legacy_week(week: str) -> list[int]:
             entry = day_data.get(meal)
             if entry is None:
                 continue
+
+            if entry.kind == "meal":
+                meal_def = meal_loader.load_meal(entry.name,
+                                                 meals_dir=paths.meals_dir())
+                if meal_def is not None and meal_def.sub_recipes:
+                    # Each member is placed at its SHARE, not at its whole batch
+                    # like the plain path below. That difference is the point: a
+                    # plate of a 4-serving main and a half-batch side is one
+                    # plate, and placing everything reported 4 + 1 servings'
+                    # worth of macros where the plate is 1 + 0.5. This is a
+                    # visible number change on any legacy week holding a plate.
+                    bundle = serving_ledger.create_bundle(
+                        meal_def.name,
+                        meal_bundle.plan_bundle(meal_def, entry.servings),
+                        week, date=date_iso, meal=meal)
+                    imported.extend(c["id"] for c in bundle["cooks"])
+                    continue
+                # Unknown or empty meal: fall through, so it lands as one plain
+                # cook named after the bundle — what flatten_to_recipes already
+                # does with an unresolvable [[Meal: X]].
+
             for sub in flatten_to_recipes(entry, meals_dir=paths.meals_dir()):
                 scale = float(sub.servings)
                 servings_produced = recipe_base_servings(sub.name) * scale
