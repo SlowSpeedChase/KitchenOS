@@ -817,3 +817,55 @@ class TestClaudeMacroPrompt:
         sent = mock_client.messages.create.call_args.kwargs["messages"][0]["content"]
         assert "Remaining macro gap" in sent
         assert "48g protein" in sent
+
+
+class TestQualifiedStapleOnEitherSide:
+    """A staple stays a staple when the qualifier follows it, not just precedes it.
+
+    `_is_pantry` matched a staple exactly or as a *suffix* — "kosher salt".endswith
+    (" salt") — which fixed the prefix-qualified case. The mirror case was left
+    open: "garlic cloves" is `garlic` plus a form noun, so it slipped the filter
+    and counted as genuine shared shopping. Measured on the live library it drove
+    **77 of 144** plate pairings and every one of Jammy Zucchini's 31, and it
+    inflates `use_it_up`, `cook_now` and POST /api/recipes/by-ingredients the same
+    way, since all four share this scorer.
+
+    The distinction that matters: a *form* of the staple is the staple, but a
+    *transformation* of it is a different food. Garlic powder is not garlic — that
+    is the compound-food trap the audit files under Phase 4.
+    """
+
+    PANTRY = {"garlic", "onion", "salt", "olive oil", "butter"}
+
+    def _is(self, name):
+        from lib.meal_suggester import _is_pantry
+        return _is_pantry(name, self.PANTRY)
+
+    def test_a_form_noun_after_the_staple_is_still_the_staple(self):
+        assert self._is("garlic cloves")
+        assert self._is("garlic clove")
+
+    def test_other_form_nouns(self):
+        assert self._is("garlic head")
+        assert self._is("onion bulb")
+
+    def test_the_prefix_qualified_case_still_works(self):
+        assert self._is("kosher salt")
+        assert self._is("extra-virgin olive oil")
+
+    def test_a_transformation_is_a_different_food(self):
+        """garlic powder != garlic — this is the whole reason the rule is narrow.
+
+        Note "garlic salt" is deliberately NOT asserted here: it already matches
+        the staple `salt` through the pre-existing suffix rule, which is defensible
+        for a salt-based seasoning and is not what this change is about.
+        """
+        assert not self._is("garlic powder")
+        assert not self._is("onion powder")
+
+    def test_an_unrelated_food_is_not_a_staple(self):
+        assert not self._is("garlic bread")
+        assert not self._is("chicken thighs")
+
+    def test_the_bare_staple_still_matches(self):
+        assert self._is("garlic")

@@ -185,17 +185,45 @@ def _gap_fit(macros: dict, gap: dict) -> float:
     return round(MACRO_PROTEIN_WEIGHT * fill_p + MACRO_CALORIE_WEIGHT * fill_c, 3)
 
 
+#: Nouns naming the *form* a staple is sold or measured in. "garlic cloves" is
+#: garlic; "garlic powder" is not, and neither is "garlic bread" — a
+#: transformation or a different dish is a different food, which is the
+#: compound-food trap the audit files under Phase 4. Keep this list to words that
+#: describe shape or packaging only.
+_STAPLE_FORM_NOUNS = {
+    "clove", "cloves", "head", "heads", "bulb", "bulbs",
+    "leaf", "leaves", "sprig", "sprigs", "stalk", "stalks",
+}
+
+
 def _is_pantry(name: str, pantry: set) -> bool:
     """Whether a normalized ingredient is a pantry staple.
 
-    Exact match, or a qualified form of one — "kosher salt", "extra-virgin olive
-    oil" and "freshly ground black pepper" are the staple, not new ingredients.
-    Without this they survive the pantry filter and manufacture overlap between
-    any two recipes that season their food.
+    Exact match, or a qualified form of one. The qualifier can sit on either
+    side, and both directions had to be fixed separately:
+
+    - **Before** the staple — "kosher salt", "extra-virgin olive oil", "freshly
+      ground black pepper". Handled by the suffix test.
+    - **After** it — "garlic cloves", "onion bulb". This one was open until
+      2026-08-02 and mattered more than it looks: with `garlic` slipping the
+      filter, it counted as genuine shared shopping in **77 of 144** composed
+      plate pairings, and inflated every overlap score in `use_it_up`, `cook_now`
+      and POST /api/recipes/by-ingredients, which share this scorer.
+
+    The trailing form is deliberately restricted to `_STAPLE_FORM_NOUNS` rather
+    than "any single extra word", because "garlic powder" and "garlic bread" are
+    different foods and must keep scoring as real ingredients.
     """
     if name in pantry:
         return True
-    return any(name.endswith(" " + staple) for staple in pantry)
+    if any(name.endswith(" " + staple) for staple in pantry):
+        return True
+    words = name.split()
+    return (
+        len(words) > 1
+        and words[-1] in _STAPLE_FORM_NOUNS
+        and " ".join(words[:-1]) in pantry
+    )
 
 
 def score_overlap(
