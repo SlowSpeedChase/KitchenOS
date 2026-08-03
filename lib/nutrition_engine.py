@@ -27,7 +27,8 @@ from typing import Optional
 
 from lib import (fdc_local, food_db, food_resolver, gram_equivalent,
                  inventory_db, resolution_guard, units)
-from lib.ingredient_text import apply_aliases, clean_for_matching
+from lib.ingredient_text import (apply_aliases, clean_for_matching,
+                                 recover_range_remnant)
 from lib.nutrition import NutritionData
 
 # Below this line confidence, a recipe is flagged needs_review.
@@ -434,6 +435,12 @@ def calculate_recipe_nutrition(
         unit = ing.get("unit", "") or ""
         if not item:
             continue
+
+        # "1 1/2 to 2 teaspoons dijon mustard" reaches us as (1.5, "whole",
+        # "to 2 teaspoons dijon mustard") — the real unit stranded in the name.
+        # Repair before both resolution and gram conversion, since the stray
+        # leading number also derails the food match.
+        amount, unit, item = recover_range_remnant(amount, unit, item)
 
         is_negligible = (unit or "").strip().lower() == "to taste"
         if not is_negligible:

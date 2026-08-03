@@ -14,6 +14,18 @@ import yaml
 
 _ALIASES_PATH = Path(__file__).resolve().parent.parent / "config" / "food_aliases.yml"
 
+# The unit `ingredient_parser` invents when it cannot read one. Only a row
+# carrying exactly this is a candidate for range recovery — a row with a real
+# unit parsed fine and must not be rewritten.
+_FABRICATED_UNIT = "whole"
+
+# "to 2 teaspoons ...", "to 1 1/2 cups ..." — the tail of a range whose low end
+# was captured as the row's amount. The number may be a mixed fraction.
+_RANGE_REMNANT = re.compile(
+    r"^to\s+(\d+(?:\.\d+)?(?:\s+\d+\s*/\s*\d+)?|\d+\s*/\s*\d+)\s+([A-Za-z]+)\s+(.*)$",
+    re.I | re.S,
+)
+
 # Prep/serving vocabulary for trailing-segment stripping (see _strip_prep_tail).
 # Adverbs/participles that describe *how* an ingredient is prepped, not what
 # it is, plus filler words from serving/timing asides ("plus more for
@@ -89,3 +101,49 @@ def _aliases() -> dict:
 
 def apply_aliases(item: str) -> str:
     return _aliases().get((item or "").lower(), item)
+
+
+def recover_range_remnant(amount, unit: str, item: str):
+    """Rebuild a row whose amount range was split across the amount and the name.
+
+    `ingredient_parser` reads "1 1/2 to 2 teaspoons dijon mustard" as amount
+    `1.5`, unit `whole` (its default for an unreadable unit) and item
+    "to 2 teaspoons dijon mustard" — so the real unit is stranded in the name and
+    `to_grams` has nothing to convert. Returns `(amount, unit, item)` repaired, or
+    the inputs unchanged when this is not that defect.
+
+    Deliberately narrow. It fires only when the stored unit is exactly the
+    fabricated `whole`, only when the stranded word is a unit this system knows,
+    and only when both ends of the range parse — anything else is left for the
+    normal estimation path, which is the same posture as `gram_equivalent`.
+
+    The recovered amount is the **midpoint**, matching
+    `units.parse_amount_to_float`, which already averages "3-4" to 3.5. This is
+    the same range; it just happens to be split across two columns.
+    """
+    from lib import units
+
+    if (unit or "").strip().lower() != _FABRICATED_UNIT:
+        return amount, unit, item
+
+    match = _RANGE_REMNANT.match((item or "").strip())
+    if not match:
+        return amount, unit, item
+
+    high_text, candidate_unit, rest = match.groups()
+    rest = rest.strip()
+    if not rest:
+        return amount, unit, item
+
+    # A bare count range ("to 2 chipotle peppers") strands a *food* word, not a
+    # unit. Recovering it would invent a unit the recipe never gave.
+    if units.get_unit_family(candidate_unit) in ("count", "other"):
+        return amount, unit, item
+
+    low = units.parse_amount_to_float(amount)
+    high = units.parse_amount_to_float(high_text)
+    if low is None or high is None or high < low:
+        return amount, unit, item
+
+    midpoint = (low + high) / 2
+    return (f"{midpoint:g}", candidate_unit, rest)
