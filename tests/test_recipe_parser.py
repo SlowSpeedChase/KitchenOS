@@ -339,3 +339,65 @@ class TestFlowListRespectsQuotes:
 
     def test_numbers_still_coerce_inside_a_mixed_list(self):
         assert self._fm('peak_months: [9, "10", 11]')["peak_months"] == [9, "10", 11]
+
+
+class TestGroupHeaderRowsAreNotIngredients:
+    """A bolded, quantity-less row labels the group below it — it is not food.
+
+    `lib/epub_parser.py` knows this: `SUBHEAD_MARKER` tags every group header it
+    parses, and `import_epub.py:178` filters on it. But the marker lives only in
+    memory — the recipe is written as a *flat* markdown table (the template has
+    no other way to render a group), so the fact is gone by the time anything
+    reads the file back. 123 rows across the cookbook imports therefore reach the
+    nutrition engine as ingredients named `**for serving**`, `**sauce**` and
+    `**salad**`, resolve to nothing, and drag `nutrition_coverage` down for every
+    recipe that groups its ingredients.
+
+    Every consumer of `parse_ingredient_table` is a data consumer — the nutrition
+    engine, the shopping list, `clean_ingredients`, the migrations, and
+    `parse_recipe_body` (which feeds `recipe_index`, so the suggester, Cook Now
+    and Use It Up too). None of them want a header row, and `/recipe/<name>`
+    paints one red as "not in stock". Dropping it here fixes all of them at once,
+    while the markdown file keeps the row so Obsidian still renders the group.
+    """
+
+    def _rows(self, table):
+        from lib.recipe_parser import parse_ingredient_table
+        return parse_ingredient_table(table)
+
+    def test_a_bolded_quantityless_row_is_dropped(self):
+        table = (
+            "| Amount | Unit | Ingredient |\n"
+            "|--------|------|------------|\n"
+            "| | | **for serving** |\n"
+            "| 2 | tbsp | olive oil |\n"
+        )
+        assert [r["item"] for r in self._rows(table)] == ["olive oil"]
+
+    def test_the_ingredients_around_a_header_survive(self):
+        table = (
+            "| Amount | Unit | Ingredient |\n"
+            "|--------|------|------------|\n"
+            "| 1 | lb | chicken thighs |\n"
+            "| | | **for the spice rub** |\n"
+            "| 2 | tsp | smoked paprika |\n"
+        )
+        assert [r["item"] for r in self._rows(table)] == ["chicken thighs", "smoked paprika"]
+
+    def test_a_bolded_row_that_carries_an_amount_is_still_an_ingredient(self):
+        """Bold alone doesn't make it a header — a quantity means it's food."""
+        table = (
+            "| Amount | Unit | Ingredient |\n"
+            "|--------|------|------------|\n"
+            "| 2 | tbsp | **flaky sea salt** |\n"
+        )
+        assert [r["item"] for r in self._rows(table)] == ["**flaky sea salt**"]
+
+    def test_an_unbolded_quantityless_row_is_still_an_ingredient(self):
+        """Plenty of real ingredients carry no amount ("salt, to taste")."""
+        table = (
+            "| Amount | Unit | Ingredient |\n"
+            "|--------|------|------------|\n"
+            "| | | kosher salt, to taste |\n"
+        )
+        assert [r["item"] for r in self._rows(table)] == ["kosher salt, to taste"]
