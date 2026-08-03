@@ -47,6 +47,13 @@ def _inline(text: str) -> str:
 
     def link(m: re.Match) -> str:
         target, label = m.group(1), m.group(2) or m.group(1)
+        # `[[Meal: X]]` names a composite plate, not a recipe, so /recipe/<X>
+        # would be a guaranteed 404 — the plate has no page of its own. Legacy
+        # weeks still carry this form (rebuild_meal_plan_markdown writes it), so
+        # render the label as plain text rather than a link that cannot be
+        # honoured. Same posture as dropping a button whose action has no route.
+        if target.startswith("Meal:"):
+            return label
         return f'<a class="wl" href="/recipe/{quote(target)}">{label}</a>'
 
     # The pattern runs against already-escaped text; [[ ]] and | survive escaping

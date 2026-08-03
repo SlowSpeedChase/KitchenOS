@@ -747,13 +747,40 @@ class TestAddToMealPlanNew:
 class TestScheduleMeal:
     """mode=schedule_meal — Screen 2 submit. Inserts [[Meal: X]] into the plan."""
 
-    def test_inserts_meal_token_into_plan(self, client, tmp_vault, monkeypatch):
+    def _seed(self, tmp_vault, monkeypatch):
+        from lib import meal_loader
+        from lib.meal_loader import Meal, SubRecipe
         plans_dir = tmp_vault / "Meal Plans"
         plans_dir.mkdir(parents=True, exist_ok=True)
         monkeypatch.setattr('api_server.MEAL_PLANS_PATH', plans_dir)
+        recipes = tmp_vault / "Recipes"
+        recipes.mkdir(parents=True, exist_ok=True)
+        for r in ("Pan-Seared Salmon", "Rice Pilaf"):
+            (recipes / f"{r}.md").write_text(
+                f"---\ntitle: {r}\nservings: 2\n---\n", encoding="utf-8")
+        meals = tmp_vault / "Meals"
+        meals.mkdir(parents=True, exist_ok=True)
+        meal_loader.save_meal(Meal(name="Salmon Dinner", sub_recipes=[
+            SubRecipe(recipe="Pan-Seared Salmon"),
+            SubRecipe(recipe="Rice Pilaf", servings=0.5),
+        ]), meals_dir=meals)
+        return plans_dir
+
+    def test_scheduling_a_plate_creates_a_bundle(self, client, tmp_db, tmp_vault,
+                                                 monkeypatch):
+        """It used to write a raw [[Meal: X]] with none of the ledger's guards.
+
+        On a week with cooks the next regen erased it, and
+        _import_legacy_if_first_write skips weeks that already have cooks, so it
+        was never picked up either — the plate vanished, silently. Exactly the
+        failure _schedule_recipe_directly was rewritten to fix, left in place on
+        the meal branch.
+        """
+        from lib import serving_ledger
+        plans_dir = self._seed(tmp_vault, monkeypatch)
 
         response = client.post('/add-to-meal-plan', data={
-            'recipe': 'Pan-Seared Salmon',  # carried through, not used here
+            'recipe': 'Pan-Seared Salmon',
             'mode': 'schedule_meal',
             'meal_name': 'Salmon Dinner',
             'week': '2026-W19',
@@ -763,10 +790,41 @@ class TestScheduleMeal:
 
         assert response.status_code == 200
         assert b'Added!' in response.data
+
+        cooks = serving_ledger.cooks_for_week('2026-W19')
+        assert [c["recipe"] for c in cooks] == ["Pan-Seared Salmon", "Rice Pilaf"]
+        assert len({c["bundle_id"] for c in cooks}) == 1
+        assert all(c["bundle_name"] == "Salmon Dinner" for c in cooks)
+        assert all(c["meal"] == "dinner" for c in cooks)
+
+        # The regenerated note describes the ledger, not a raw token.
         plan_text = (plans_dir / "2026-W19.md").read_text()
-        assert '[[Meal: Salmon Dinner]]' in plan_text
-        # The wikilink is NOT a plain recipe link.
-        assert '[[Pan-Seared Salmon]]' not in plan_text
+        assert '> Plate: Salmon Dinner' in plan_text
+        assert '[[Meal: Salmon Dinner]]' not in plan_text
+
+    def test_a_scheduled_plate_survives_the_next_regen(self, client, tmp_db,
+                                                       tmp_vault, monkeypatch):
+        """The actual symptom: it used to disappear on the next ledger write."""
+        from lib import serving_ledger, week_view
+        plans_dir = self._seed(tmp_vault, monkeypatch)
+        client.post('/add-to-meal-plan', data={
+            'recipe': 'Pan-Seared Salmon', 'mode': 'schedule_meal',
+            'meal_name': 'Salmon Dinner', 'week': '2026-W19',
+            'day': 'Tuesday', 'meal': 'Dinner'})
+
+        week_view.write_week_markdown('2026-W19')
+        plan_text = (plans_dir / "2026-W19.md").read_text()
+        assert '> Plate: Salmon Dinner' in plan_text
+        assert len(serving_ledger.cooks_for_week('2026-W19')) == 2
+
+    def test_scheduling_an_unknown_plate_is_an_error(self, client, tmp_db,
+                                                     tmp_vault, monkeypatch):
+        self._seed(tmp_vault, monkeypatch)
+        response = client.post('/add-to-meal-plan', data={
+            'recipe': 'X', 'mode': 'schedule_meal',
+            'meal_name': 'No Such Plate', 'week': '2026-W19',
+            'day': 'Tuesday', 'meal': 'Dinner'})
+        assert response.status_code == 404
 
     def test_invalid_week_returns_error(self, client, tmp_vault, monkeypatch):
         plans_dir = tmp_vault / "Meal Plans"
