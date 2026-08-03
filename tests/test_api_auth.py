@@ -87,3 +87,61 @@ def test_cook_remote_with_valid_token_allowed(client, monkeypatch):
         "/api/cook", json={"recipe": "Anything"},
         headers={"Authorization": "Bearer secret"}, **REMOTE)
     assert resp.status_code == 200
+
+
+@pytest.mark.parametrize("method,path", [
+    ("GET", "/api/meals"),
+    ("POST", "/api/meals"),
+    ("GET", "/api/meals/Osso%20Buco%20Plate"),
+    ("PUT", "/api/meals/Osso%20Buco%20Plate"),
+    ("DELETE", "/api/meals/Osso%20Buco%20Plate"),
+    ("GET", "/api/freezer"),
+])
+def test_meal_and_freezer_routes_are_gated(client, monkeypatch, method, path):
+    """The plate CRUD and the freezer are ledger-adjacent and must gate like it.
+
+    These six shipped ungated while every neighbouring ledger route was gated —
+    `/api/meals` can rewrite or delete a hand-authored plate, and `/api/freezer`
+    reads the whole kitchen's banked stock.
+    """
+    monkeypatch.setenv("KITCHENOS_API_TOKEN", "secret")
+    resp = client.open(path, method=method, json={}, **REMOTE)
+    assert resp.status_code == 401, f"{method} {path} answered a remote caller"
+
+
+# The set of /api/ routes deliberately left open, so that adding a *new* ungated
+# route is a conscious act rather than an oversight. Two things this list is NOT:
+# it is not an assertion that these are safe to expose, and it is not security on
+# its own — `require_token` is a no-op unless KITCHENOS_API_TOKEN is set, and it
+# is currently unset. See the note in docs/API.md.
+KNOWN_UNGATED = {
+    "api_recipe_save", "api_recipe_import_text", "api_macro_targets",
+    "api_pantry_get", "api_pantry_put",
+    "api_shopping_list_preview", "api_shopping_list_confirm",
+    "api_tasks_get", "api_task_mark_done",
+    "api_inventory_list", "api_use_it_up", "api_cook_now",
+    "api_inventory_add", "api_inventory_paste", "api_inventory_remove",
+    "api_inventory_update", "api_inventory_extend", "api_inventory_set_expiry",
+    "api_inventory_set_category", "api_inventory_move", "api_inventory_freeze",
+    "api_inventory_bulk",
+    "api_receipt_paste", "api_receipt_prompt",
+    "api_claude_notes_get", "api_claude_notes_post", "api_claude_send",
+    "api_system_health",
+}
+
+
+def test_no_new_api_route_is_silently_ungated():
+    """A new /api/ route must either gate itself or be added to KNOWN_UNGATED."""
+    import re
+    from pathlib import Path
+
+    src = Path(api_server.__file__).read_text(encoding="utf-8")
+    decorated = re.compile(
+        r"@app\.route\(\s*['\"](/api[^'\"]*)['\"].*?\)\n((?:@\w+(?:\(.*?\))?\n)*)def (\w+)",
+        re.S)
+    ungated = {m.group(3) for m in decorated.finditer(src)
+               if "require_token" not in m.group(2)}
+    assert ungated - KNOWN_UNGATED == set(), \
+        "new ungated /api route(s) — gate them or add them to KNOWN_UNGATED"
+    assert KNOWN_UNGATED - ungated == set(), \
+        "KNOWN_UNGATED lists route(s) that are now gated — drop them from the list"

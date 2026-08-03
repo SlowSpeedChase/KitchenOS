@@ -1673,6 +1673,7 @@ def api_cook_freeze_rest(cook_id):
 
 
 @app.route('/api/freezer', methods=['GET'])
+@require_token
 def api_freezer():
     """What's banked in the freezer, grouped by recipe and oldest first.
 
@@ -2393,6 +2394,7 @@ def _parse_slot(data, default=meal_loader.DEFAULT_SLOT):
 
 
 @app.route('/api/meals', methods=['GET'])
+@require_token
 def api_meals_list():
     # One cache across the whole list: meals share sub-recipes, and each rollup
     # otherwise re-reads the same recipe frontmatter.
@@ -2403,6 +2405,7 @@ def api_meals_list():
 
 
 @app.route('/api/meals', methods=['POST'])
+@require_token
 def api_meals_create():
     data = request.get_json(force=True, silent=True) or {}
     name = (data.get("name") or "").strip()
@@ -2434,6 +2437,7 @@ def api_meals_create():
 
 
 @app.route('/api/meals/<name>', methods=['GET'])
+@require_token
 def api_meals_get(name):
     meal = meal_loader.load_meal(name)
     if meal is None:
@@ -2442,6 +2446,7 @@ def api_meals_get(name):
 
 
 @app.route('/api/meals/<name>', methods=['PUT'])
+@require_token
 def api_meals_update(name):
     existing = meal_loader.load_meal(name)
     if existing is None:
@@ -2483,6 +2488,7 @@ def api_meals_update(name):
 
 
 @app.route('/api/meals/<name>', methods=['DELETE'])
+@require_token
 def api_meals_delete(name):
     if not meal_loader.delete_meal(name):
         return jsonify({"error": f"meal '{name}' not found"}), 404
