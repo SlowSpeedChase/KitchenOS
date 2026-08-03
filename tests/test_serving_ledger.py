@@ -562,3 +562,155 @@ def test_move_cook_preserves_scale_verdict_and_note(tmp_db):
     assert moved["servings_produced"] == 6.0
     assert moved["recipe"] == "Chili"
     assert moved["week"] == "2026-W28"
+
+
+# --- Bundles: a composite plate as N ordinary cooks -------------------------
+#
+# The whole point of the shape: every row stays "one recipe at one scale", so
+# day_totals, the shopping list, the freezer, cook_history, on_track,
+# verdict_nudge and cook_sweep need no bundle awareness at all. The bundle is a
+# creation transaction and a display grouping, never a placement constraint.
+
+def _members():
+    return [
+        {"recipe": "Osso Buco", "scale": 1.0, "servings_produced": 4.0,
+         "initial_placement_count": 1.0},
+        {"recipe": "Garlic Toast", "scale": 0.5, "servings_produced": 2.0,
+         "initial_placement_count": 0.5},
+    ]
+
+
+def test_create_bundle_writes_one_cook_per_sub_recipe(tmp_db, tmp_vault):
+    b = sl.create_bundle("Osso Buco Plate", _members(), "2026-W28",
+                         date="2026-07-07", meal="dinner")
+    assert b["bundle_name"] == "Osso Buco Plate"
+    assert [c["recipe"] for c in b["cooks"]] == ["Osso Buco", "Garlic Toast"]
+    assert {c["bundle_id"] for c in b["cooks"]} == {b["bundle_id"]}
+    assert all(c["bundle_name"] == "Osso Buco Plate" for c in b["cooks"])
+    # Each keeps its own scale and yield — they are ordinary cooks.
+    assert [c["scale"] for c in b["cooks"]] == [1.0, 0.5]
+    assert [c["servings_produced"] for c in b["cooks"]] == [4.0, 2.0]
+
+
+def test_bundle_members_are_placed_at_their_share(tmp_db, tmp_vault):
+    """The placement count is the member's share, not 1.0 and not the batch.
+
+    This is what makes a plate's day-total contribution equal its card figure:
+    day_totals multiplies per-serving macros by placement.count, and
+    meal_nutrition multiplies them by sub_multiplier(1.0, sub.servings).
+    """
+    b = sl.create_bundle("Osso Buco Plate", _members(), "2026-W28",
+                         date="2026-07-07", meal="dinner")
+    placed = {c["recipe"]: sum(p["count"] for p in c["placements"])
+              for c in b["cooks"]}
+    assert placed == {"Osso Buco": 1.0, "Garlic Toast": 0.5}
+    # Cooking a batch and eating one serving leaves the rest unassigned.
+    assert {c["recipe"]: c["unassigned"] for c in b["cooks"]} == {
+        "Osso Buco": 3.0, "Garlic Toast": 1.5}
+
+
+def test_create_bundle_is_all_or_nothing(tmp_db, tmp_vault):
+    bad = _members() + [{"recipe": "Beans", "scale": 1.0, "servings_produced": 0}]
+    with pytest.raises(ValueError):
+        sl.create_bundle("Broken Plate", bad, "2026-W28",
+                         date="2026-07-07", meal="dinner")
+    assert sl.cooks_for_week("2026-W28") == [], "a rejected plate half-landed"
+
+
+def test_create_bundle_rejects_an_empty_member_list(tmp_db, tmp_vault):
+    with pytest.raises(ValueError):
+        sl.create_bundle("Empty Plate", [], "2026-W28",
+                         date="2026-07-07", meal="dinner")
+
+
+def test_a_plain_cook_has_no_bundle(tmp_db, tmp_vault):
+    cook = _mk_cook()
+    assert cook["bundle_id"] is None
+    assert cook["bundle_name"] is None
+
+
+def test_bundle_columns_are_immutable(tmp_db, tmp_vault):
+    """Like `recipe` and `week`: written once, never patched."""
+    b = sl.create_bundle("Osso Buco Plate", _members(), "2026-W28",
+                         date="2026-07-07", meal="dinner")
+    with pytest.raises(ValueError):
+        sl.update_cook(b["cooks"][0]["id"], bundle_name="Something Else")
+    with pytest.raises(ValueError):
+        sl.update_cook(b["cooks"][0]["id"], bundle_id="deadbeef")
+
+
+def test_deleting_one_member_leaves_the_rest_bundled(tmp_db, tmp_vault):
+    """The bundle shrinks. No orphan, no cleanup — the bundle IS its members."""
+    b = sl.create_bundle("Osso Buco Plate", _members(), "2026-W28",
+                         date="2026-07-07", meal="dinner")
+    sl.delete_cook(b["cooks"][0]["id"])
+    survivors = sl.get_bundle(b["bundle_id"])
+    assert [c["recipe"] for c in survivors["cooks"]] == ["Garlic Toast"]
+
+
+def test_deleting_the_last_member_retires_the_bundle(tmp_db, tmp_vault):
+    b = sl.create_bundle("Osso Buco Plate", _members(), "2026-W28",
+                         date="2026-07-07", meal="dinner")
+    for c in b["cooks"]:
+        sl.delete_cook(c["id"])
+    assert sl.get_bundle(b["bundle_id"]) is None
+
+
+def test_delete_bundle_removes_every_member_and_its_placements(tmp_db, tmp_vault):
+    b = sl.create_bundle("Osso Buco Plate", _members(), "2026-W28",
+                         date="2026-07-07", meal="dinner")
+    removed = sl.delete_bundle(b["bundle_id"])
+    assert [c["recipe"] for c in removed] == ["Osso Buco", "Garlic Toast"]
+    assert sl.cooks_for_week("2026-W28") == []
+    assert sl.placements_for_week("2026-W28") == []
+
+
+def test_move_bundle_re_anchors_every_member(tmp_db, tmp_vault):
+    b = sl.create_bundle("Osso Buco Plate", _members(), "2026-W28",
+                         date="2026-07-07", meal="dinner")
+    moved = sl.move_bundle(b["bundle_id"], "2026-07-09", "lunch")
+    assert all(c["date"] == "2026-07-09" and c["meal"] == "lunch"
+               for c in moved["cooks"])
+    # Home servings came along, so the new cell holds the plate's macros.
+    placed = {(p["date"], p["meal"]) for c in moved["cooks"]
+              for p in c["placements"]}
+    assert placed == {("2026-07-09", "lunch")}
+
+
+def test_move_bundle_outside_its_week_is_refused_whole(tmp_db, tmp_vault):
+    """One transaction, so a plate cannot half-move."""
+    b = sl.create_bundle("Osso Buco Plate", _members(), "2026-W28",
+                         date="2026-07-07", meal="dinner")
+    with pytest.raises(ValueError):
+        sl.move_bundle(b["bundle_id"], "2026-07-20", "lunch")
+    still = sl.get_bundle(b["bundle_id"])
+    assert all(c["date"] == "2026-07-07" for c in still["cooks"])
+
+
+def test_a_member_can_still_be_moved_on_its_own(tmp_db, tmp_vault):
+    """Permitted by design: you really did move the rice to Tuesday.
+
+    Forbidding it would need a new invariant inside move_cook and break the
+    "every consumer works unchanged" premise. The planner groups by
+    (bundle_id, date, meal), so it renders as its own card there.
+    """
+    b = sl.create_bundle("Osso Buco Plate", _members(), "2026-W28",
+                         date="2026-07-07", meal="dinner")
+    sl.move_cook(b["cooks"][1]["id"], "2026-07-08", "lunch")
+    cooks = {c["recipe"]: c for c in sl.get_bundle(b["bundle_id"])["cooks"]}
+    assert cooks["Osso Buco"]["date"] == "2026-07-07"
+    assert cooks["Garlic Toast"]["date"] == "2026-07-08"
+
+
+def test_find_recent_bundle_absorbs_a_double_tap(tmp_db, tmp_vault):
+    b = sl.create_bundle("Osso Buco Plate", _members(), "2026-W28",
+                         date="2026-07-07", meal="dinner")
+    hit = sl.find_recent_bundle("Osso Buco Plate", "2026-W28",
+                                "2026-07-07", "dinner", window_s=10)
+    assert hit is not None and hit["bundle_id"] == b["bundle_id"]
+    # Outside the window it is a deliberate second plate, not a double-tap.
+    assert sl.find_recent_bundle("Osso Buco Plate", "2026-W28",
+                                 "2026-07-07", "dinner", window_s=0) is None
+    # A different slot is a different plate.
+    assert sl.find_recent_bundle("Osso Buco Plate", "2026-W28",
+                                 "2026-07-07", "lunch", window_s=10) is None

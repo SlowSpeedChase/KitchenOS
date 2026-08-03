@@ -30,6 +30,7 @@ from __future__ import annotations
 import contextlib
 import re
 import sqlite3
+import uuid
 from datetime import date as _date
 from typing import Optional
 
@@ -439,6 +440,155 @@ def _move_cook_in_txn(conn, cook_id: int, date: str, meal: str) -> None:
     for p in movers:
         conn.execute("DELETE FROM placements WHERE id = ?", (p["id"],))
         _merge_or_insert(conn, cook_id, "slot", date, meal, float(p["count"]))
+
+
+def create_bundle(bundle_name: str, members: list, week: str,
+                  date: Optional[str] = None,
+                  meal: Optional[str] = None) -> dict:
+    """One composite plate as N ordinary cooks sharing a bundle id.
+
+    Every ledger row stays "one recipe at one scale", which is the entire point:
+    ``day_totals``, the shopping list, the freezer, ``cook_history``,
+    ``on_track``, ``verdict_nudge`` and ``cook_sweep`` need no bundle awareness
+    at all. The bundle is a creation transaction and a display grouping, never a
+    placement constraint — a member can still be moved or deleted on its own.
+
+    ``members`` is a list of plain dicts, ``{recipe, scale, servings_produced,
+    initial_placement_count?, notes?}``, rather than ``meal_loader`` objects:
+    ``meal_loader`` imports ``MEALS`` from this module, so the reverse import
+    would be circular. ``lib/meal_bundle.plan_bundle`` owns the Meal -> members
+    rule, including that ``initial_placement_count`` must be the member's
+    *share* — that is what makes a plate's day-total contribution equal its
+    card's figure.
+
+    All-or-nothing: every member is validated before the first INSERT and the
+    transaction rolls back on any failure, so a half-placed plate is impossible.
+
+    Returns ``{bundle_id, bundle_name, week, date, meal, cooks: [...]}``.
+    """
+    if not bundle_name:
+        raise ValueError("bundle_name is required")
+    if not members:
+        raise ValueError("a bundle needs at least one member")
+    for m in members:
+        _validate_cook(m.get("recipe"), week, m.get("servings_produced"),
+                       date, meal)
+
+    bundle_id = uuid.uuid4().hex
+    conn = inventory_db.connect()
+    try:
+        # A plain `with conn:` rather than _write_txn: BEGIN IMMEDIATE exists for
+        # check-then-write races, and this reads nothing it is about to mutate —
+        # the cook ids do not exist yet, so _merge_or_insert's SELECT can only
+        # match rows this transaction just wrote. `with conn:` already gives
+        # atomicity and rollback.
+        with conn:
+            ids = []
+            for m in members:
+                cook_id = _insert_cook(
+                    conn, m["recipe"], week, date, meal,
+                    m.get("scale", 1.0), m["servings_produced"], m.get("notes"),
+                    bundle_id=bundle_id, bundle_name=bundle_name)
+                ids.append(cook_id)
+                count = float(m.get("initial_placement_count") or 0)
+                if date and meal and count > 0:
+                    _merge_or_insert(conn, cook_id, "slot", date, meal,
+                                     min(count, float(m["servings_produced"])))
+    finally:
+        conn.close()
+    # get_cook opens its own connection, so it runs after the write commits.
+    return {"bundle_id": bundle_id, "bundle_name": bundle_name, "week": week,
+            "date": date, "meal": meal, "cooks": [get_cook(i) for i in ids]}
+
+
+def get_bundle(bundle_id: str) -> Optional[dict]:
+    """Every cook sharing ``bundle_id``, or None once the last one is gone.
+
+    ``week``/``date``/``meal`` are the *first* member's, for callers that need a
+    week to regenerate. Members may legitimately differ: moving one member out
+    of the plate is allowed, and the planner renders it as its own card there.
+    """
+    if not bundle_id:
+        return None
+    conn = inventory_db.connect()
+    try:
+        ids = [r["id"] for r in conn.execute(
+            "SELECT id FROM cooks WHERE bundle_id = ? ORDER BY id",
+            (bundle_id,)).fetchall()]
+    finally:
+        conn.close()
+    if not ids:
+        return None
+    cooks = [get_cook(i) for i in ids]
+    head = cooks[0]
+    return {"bundle_id": bundle_id, "bundle_name": head["bundle_name"],
+            "week": head["week"], "date": head["date"], "meal": head["meal"],
+            "cooks": cooks}
+
+
+def find_recent_bundle(bundle_name: str, week: str, date, meal,
+                       window_s: float) -> Optional[dict]:
+    """A bundle of the same plate placed in the same slot within ``window_s``.
+
+    The bundle counterpart of ``find_recent_duplicate``, and needed more: without
+    it a double-tapped plate creates 2N cook rows rather than one duplicate.
+    Same ``IS``-not-``=`` treatment for a NULL date/meal.
+    """
+    if window_s <= 0 or not bundle_name or not week:
+        return None
+    conn = inventory_db.connect()
+    try:
+        row = conn.execute(
+            "SELECT bundle_id FROM cooks"
+            " WHERE bundle_name = ? AND week = ? AND date IS ? AND meal IS ?"
+            "   AND bundle_id IS NOT NULL AND created_at >= datetime('now', ?)"
+            " ORDER BY id DESC LIMIT 1",
+            (bundle_name, week, date, meal, f"-{float(window_s)} seconds"),
+        ).fetchone()
+    finally:
+        conn.close()
+    return get_bundle(row["bundle_id"]) if row else None
+
+
+def delete_bundle(bundle_id: str) -> list[dict]:
+    """Remove every member. Returns them as they were, for the caller's hooks.
+
+    Read first: the caller needs the recipe names for ``_sync_cook_history`` and
+    the placement dates for ``_regen_weeks``, and after the DELETE both are gone.
+    Placements cascade via the foreign key.
+    """
+    bundle = get_bundle(bundle_id)
+    if bundle is None:
+        return []
+    conn = inventory_db.connect()
+    try:
+        with conn:
+            conn.execute("DELETE FROM cooks WHERE bundle_id = ?", (bundle_id,))
+    finally:
+        conn.close()
+    return bundle["cooks"]
+
+
+def move_bundle(bundle_id: str, date: str, meal: str) -> dict:
+    """Re-anchor every member of a plate together, in one transaction.
+
+    One transaction rather than N calls to ``move_cook`` so a plate cannot
+    half-move: if any member's new date falls outside its week, none of them
+    moves. Each member goes through ``_move_cook_in_txn``, so the week check and
+    the bring-your-home-servings rule are the same ones a single cook obeys.
+    """
+    _validate_placement("slot", date, meal)
+    bundle = get_bundle(bundle_id)
+    if bundle is None:
+        raise ValueError(f"bundle {bundle_id} not found")
+    conn = inventory_db.connect()
+    try:
+        with _write_txn(conn):
+            for cook in bundle["cooks"]:
+                _move_cook_in_txn(conn, cook["id"], date, meal)
+    finally:
+        conn.close()
+    return get_bundle(bundle_id)
 
 
 def cooks_for_week(week: str) -> list[dict]:
