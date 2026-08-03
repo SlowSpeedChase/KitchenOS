@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -122,12 +123,20 @@ def load_at_risk_index(today=None) -> list[tuple[str, frozenset]]:
         return []
 
 
+# The recipe template annotates rendered ingredient rows ("water *(inferred)*"),
+# and get_recipe_index reads those cells straight back as ingredient_items. Left in
+# place the annotation is treated as part of the name, so "water *(inferred)*" never
+# matches the pantry staple "water" and manufactures false overlap between any two
+# recipes that happen to share an inferred item.
+_DISPLAY_ANNOTATION = re.compile(r"\*\([^)]*\)\*")
+
+
 def normalize_ingredient(item: str) -> str:
     """Normalize an ingredient name for matching.
 
-    Lowercases, strips preparation methods and adjectives.
+    Lowercases, strips display annotations, preparation methods and adjectives.
     """
-    item = item.lower().strip()
+    item = _DISPLAY_ANNOTATION.sub(" ", item).lower().strip()
     words = item.split()
     filtered = [w for w in words if w not in PREP_WORDS]
     return " ".join(filtered) if filtered else item
@@ -164,6 +173,19 @@ def _gap_fit(macros: dict, gap: dict) -> float:
     return round(MACRO_PROTEIN_WEIGHT * fill_p + MACRO_CALORIE_WEIGHT * fill_c, 3)
 
 
+def _is_pantry(name: str, pantry: set) -> bool:
+    """Whether a normalized ingredient is a pantry staple.
+
+    Exact match, or a qualified form of one — "kosher salt", "extra-virgin olive
+    oil" and "freshly ground black pepper" are the staple, not new ingredients.
+    Without this they survive the pantry filter and manufacture overlap between
+    any two recipes that season their food.
+    """
+    if name in pantry:
+        return True
+    return any(name.endswith(" " + staple) for staple in pantry)
+
+
 def score_overlap(
     recipe_items: list[str],
     planned_items: set[str],
@@ -180,7 +202,7 @@ def score_overlap(
         (score 0.0-1.0, set of shared ingredient names)
     """
     normalized = [normalize_ingredient(item) for item in recipe_items]
-    non_pantry = [n for n in normalized if n not in pantry]
+    non_pantry = [n for n in normalized if not _is_pantry(n, pantry)]
 
     if not non_pantry:
         return 0.0, set()
