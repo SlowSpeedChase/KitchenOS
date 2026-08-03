@@ -46,6 +46,17 @@ _REFERENT_SHIFT = re.compile(r"\bof\b|\bper\b|\beach\b|\byield\b|\bcooked\b|\bdr
 # Source-page price noise, e.g. "$0.82" — discardable without losing meaning.
 _PRICE_ONLY = re.compile(r"^\$\s?\d+(?:\.\d+)?$")
 
+# A US/metric gloss of ONE quantity — "15-ounce/425 g", "1-pound/455 g". The
+# hyphen is part of the attributive form ("a 15-ounce can"), not a range.
+_DUAL = re.compile(
+    rf"^\s*(\d+(?:\.\d+)?)\s*-?\s*({_UNIT_ALT})\s*/\s*(\d+(?:\.\d+)?)\s*-?\s*({_UNIT_ALT})\s*$",
+    re.I,
+)
+_METRIC_UNITS = {"g", "gram", "grams", "gr", "kg", "kilogram", "kilograms"}
+# 14 oz is 396.9 g and cookbooks print 400 g; 5% absorbs that rounding while
+# still refusing a transposed digit.
+_AGREEMENT_TOLERANCE = 0.05
+
 
 def extract(item: str) -> tuple[str, float | None]:
     """Return (item without the weight aside, grams) — grams None if unrecoverable.
@@ -66,6 +77,25 @@ def extract(item: str) -> tuple[str, float | None]:
             continue
         hit = _SINGLE.match(inner)
         if not hit:
+            # A US/metric pair states one weight twice, so the two halves can
+            # corroborate each other — a stronger guarantee than the lone figure
+            # above, which is taken on faith. Recovered only when they agree.
+            dual = _DUAL.match(inner)
+            if dual:
+                left = float(dual.group(1)) * _MASS_G[dual.group(2).lower()]
+                right = float(dual.group(3)) * _MASS_G[dual.group(4).lower()]
+                if min(left, right) <= 0:
+                    continue
+                if abs(left - right) / max(left, right) > _AGREEMENT_TOLERANCE:
+                    continue  # a typo or a shifted referent, not a gloss
+                # Prefer the figure the author wrote in metric: it is the exact
+                # one, where the US side is the rounded attributive form.
+                grams = right if dual.group(4).lower() in _METRIC_UNITS else left
+                if not 0 < grams <= 5000:
+                    continue
+                cleaned = re.sub(r"\s{2,}", " ",
+                                 item[:m.start()] + item[m.end():]).strip(" ,;")
+                return cleaned, round(grams, 2)
             # A price scraped from the source page often rides along in the same
             # aside — "(130g, $0.82)". The weight is still unambiguous once the
             # price clause is dropped, so split and retry rather than decline.

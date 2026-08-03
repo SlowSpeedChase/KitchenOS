@@ -718,3 +718,55 @@ class TestFoodStoreFloorCoversEveryTable:
                 os.environ.pop("KITCHENOS_DB", None)
             else:
                 os.environ["KITCHENOS_DB"] = prev
+
+
+class TestIngredientsSectionHasOneExtractor:
+    """`backfill_nutrition` must read the section the way everything else does.
+
+    CLAUDE.md names `recipe_parser.extract_ingredients_section()` the only
+    ingredients-section extractor, and records that two near-copies of the regex
+    both dropped ingredients silently. `backfill_nutrition.extract_ingredients`
+    was a third copy carrying the same defect: `## Ingredients\\n\\n((?:\\|[^\\n]+\\n)+)`
+    matches one *contiguous* run of table rows, so a recipe grouped under `###`
+    sub-headings loses every row after the first blank line — and returns nothing
+    at all when the table doesn't start immediately after the heading.
+
+    Measured on the live corpus this cost one recipe outright (Chocolate Peanut
+    Butter Bars, 6 ingredients invisible, reported by the backfill as "skipped —
+    no ingredients"). Small, but it is the exact failure the invariant exists to
+    prevent, and a grouped recipe is normal in a cookbook.
+    """
+
+    def test_a_grouped_table_contributes_every_row(self):
+        from backfill_nutrition import extract_ingredients
+        body = (
+            "## Ingredients\n\n"
+            "### Peanut Butter Base\n\n"
+            "| Amount | Unit | Ingredient |\n"
+            "|--------|------|------------|\n"
+            "| 1 | cup | peanut butter |\n\n"
+            "### Chocolate Topping\n\n"
+            "| Amount | Unit | Ingredient |\n"
+            "|--------|------|------------|\n"
+            "| 200 | g | dark chocolate |\n\n"
+            "## Instructions\n\n"
+            "1. Mix.\n"
+        )
+        assert [r["item"] for r in extract_ingredients(body)] == [
+            "peanut butter", "dark chocolate",
+        ]
+
+    def test_the_section_still_ends_at_the_next_h2(self):
+        """Instructions must not be read as ingredients."""
+        from backfill_nutrition import extract_ingredients
+        body = (
+            "## Ingredients\n\n"
+            "| Amount | Unit | Ingredient |\n"
+            "|--------|------|------------|\n"
+            "| 2 | tbsp | olive oil |\n\n"
+            "## Instructions\n\n"
+            "| Amount | Unit | Ingredient |\n"
+            "|--------|------|------------|\n"
+            "| 9 | x | not an ingredient |\n"
+        )
+        assert [r["item"] for r in extract_ingredients(body)] == ["olive oil"]

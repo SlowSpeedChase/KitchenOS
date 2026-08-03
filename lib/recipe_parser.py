@@ -309,6 +309,24 @@ def parse_recipe_body(body: str) -> dict:
     return result
 
 
+def _is_group_header(amount: str, unit: str, item: str) -> bool:
+    """Whether a table row labels the group below it rather than naming a food.
+
+    `epub_parser._subhead_row` writes group headers as bolded, quantity-less rows
+    because the recipe template renders one flat table — a group can only *be* a
+    row. It tags them with `SUBHEAD_MARKER` in memory, but that marker dies at the
+    file boundary, so this signature is all a reader gets back.
+
+    Both halves are load-bearing. Bold alone is not enough: `**flaky sea salt**`
+    with an amount is an emphasised ingredient. Quantity-less alone is not enough
+    either — "kosher salt, to taste" carries no amount and is real food.
+    """
+    if amount.strip() or unit.strip():
+        return False
+    stripped = item.strip()
+    return len(stripped) > 4 and stripped.startswith("**") and stripped.endswith("**")
+
+
 def parse_ingredient_table(table_text: str) -> List[dict]:
     """
     Parse a markdown ingredient table into structured data.
@@ -347,11 +365,15 @@ def parse_ingredient_table(table_text: str) -> List[dict]:
         if len(cells) == 2:
             # Old format: Amount | Ingredient
             amount_cell, ingredient_cell = cells
+            if _is_group_header(amount_cell, "", ingredient_cell):
+                continue
             combined = f"{amount_cell} {ingredient_cell}".strip()
             parsed = parse_ingredient(combined)
             ingredients.append(parsed)
         elif len(cells) == 3:
             # New format: Amount | Unit | Ingredient
+            if _is_group_header(cells[0], cells[1], cells[2]):
+                continue
             ingredients.append({
                 "amount": cells[0] if cells[0] else "1",
                 "unit": cells[1] if cells[1] else "whole",

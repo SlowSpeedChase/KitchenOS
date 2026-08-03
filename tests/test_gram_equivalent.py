@@ -30,12 +30,19 @@ class TestRecovers:
 
 
 class TestRefusesWhenAmbiguous:
-    """Silently wrong weights corrupt nutrition, so doubt means decline."""
+    """Silently wrong weights corrupt nutrition, so doubt means decline.
+
+    Two cases moved OUT of this list on 2026-08-02, deliberately reversing an
+    earlier decision: "(14-ounce/400g)" and "(15-ounce/440g)" were refused as
+    "two systems". They are not two systems — they are one quantity glossed in
+    both, which is the imported cookbook's house style across 58 rows. They are
+    now recovered *when the halves agree*, and their coverage is pinned by
+    TestCorroboratedDualUnitPackage below. A pair that disagrees is still refused
+    here, so the module's posture is unchanged: doubt still declines.
+    """
 
     @pytest.mark.parametrize("item", [
         "ears of corn (about 600-650g of corn kernels)",   # a range, and of kernels
-        "block of extra-firm tofu, drained (14-ounce/400g)",  # two systems
-        "cannellini beans (15-ounce/440g)",
         "chicken (about 2 to 3 lb)",
         "water (1 1/2 cups)",
         "rice (250 g cooked)",                             # weighed after cooking
@@ -81,3 +88,68 @@ class TestPriceNoise:
 
     def test_a_non_price_companion_still_declines(self):
         assert extract("pear (120g, chopped fine)")[1] is None
+
+
+class TestCorroboratedDualUnitPackage:
+    """A US/metric pair states one weight twice, so the halves can check each other.
+
+    This module deliberately rejected "(15-ounce/440g)" as "mixing two systems",
+    and that was right for the corpus it was written against. The EPUB import
+    changed the input: the cookbook's house style glosses every package in both
+    systems — "(15-ounce/425 g) cans chickpeas" — 58 rows across 49 recipes. That
+    is not two systems in conflict, it is one quantity written twice, and 15 oz
+    really is 425 g.
+
+    So the pair is recovered only when the two halves AGREE, which is a stronger
+    guarantee than the single-figure case this module already trusts: two
+    independent statements corroborating each other, rather than one taken on
+    faith. A pair that disagrees is a typo or a referent shift, and is still
+    refused.
+    """
+
+    def test_an_agreeing_pair_yields_the_metric_figure(self):
+        from lib.gram_equivalent import extract
+        _, grams = extract("(15-ounce/425 g) cans chickpeas, drained")
+        assert grams == 425.0
+
+    def test_rounding_in_the_book_still_agrees(self):
+        """14 oz is 396.9 g; the book prints 400 g. Well within tolerance."""
+        from lib.gram_equivalent import extract
+        _, grams = extract("(14-ounce/400 g) block extra-firm tofu")
+        assert grams == 400.0
+
+    def test_a_disagreeing_pair_is_refused(self):
+        from lib.gram_equivalent import extract
+        _, grams = extract("(15-ounce/900 g) cans chickpeas")
+        assert grams is None
+
+    def test_a_pound_gram_pair_agrees(self):
+        from lib.gram_equivalent import extract
+        _, grams = extract("(1-pound/455 g) white beans")
+        assert grams == 455.0
+
+    def test_a_lone_figure_still_works(self):
+        """The existing single-quantity path must be untouched."""
+        from lib.gram_equivalent import extract
+        _, grams = extract("light brown sugar (165 g)")
+        assert grams == 165.0
+
+    def test_a_span_is_still_refused(self):
+        """"(about 600-650g of corn kernels)" is a range AND a referent shift."""
+        from lib.gram_equivalent import extract
+        _, grams = extract("6 ears corn (about 600-650g of corn kernels)")
+        assert grams is None
+
+    def test_a_referent_shift_inside_a_pair_is_still_refused(self):
+        """The module checks for a shifted referent *within* the aside, and a pair
+        is held to the same rule — "(15-ounce/425 g drained)" weighs something
+        other than what the line calls for.
+
+        Note what this deliberately does NOT cover: "(15-ounce/425 g) cans
+        chickpeas , drained and rinsed" is still recovered at 425 g, even though
+        draining sheds liquid. That is the same known gap the audit files under
+        "frying medium counted as eaten", not something this change should decide.
+        """
+        from lib.gram_equivalent import extract
+        _, grams = extract("(15-ounce/425 g drained) can chickpeas")
+        assert grams is None
