@@ -455,7 +455,7 @@ def test_dragging_a_plate_moves_every_member(live_server, page, page_errors):
     page.wait_for_selector(".bundle-card", timeout=15_000)
     page.locator(".bundle-card .card-menu-btn").first.click()
     page.get_by_role("button", name="Move to another slot").click()
-    page.locator(f'.grid-cell[data-day="Thursday"][data-meal="dinner"]').first.click()
+    page.locator('.grid-cell[data-day="Thursday"][data-meal="dinner"]').first.click()
     page.wait_for_timeout(1500)
 
     resp = requests.get(live_server.url(f"/api/week-board/{week}"), timeout=30)
