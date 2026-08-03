@@ -1563,6 +1563,31 @@
             color: var(--text-muted);
             margin-top: 3px;
         }
+        /* A plate's member row: name on the left, its own compact stepper on the
+           right, because scale is per-member (more protein, not more rice). */
+        .sub-recipe-chip.bundle-member {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 4px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .sub-recipe-chip.bundle-member > span:first-child {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .sub-recipe-chip.bundle-member .scale-btn {
+            flex: none;
+            min-width: 18px;
+            line-height: 1;
+            padding: 0 3px;
+        }
+        .sub-recipe-chip.bundle-member .scale-value {
+            flex: none;
+            font-variant-numeric: tabular-nums;
+        }
 
         /* --- Today's Prep panel --- */
         .panel-dock {
@@ -2559,19 +2584,25 @@
                                 closeSidebar();
                                 return;
                             }
+                            // Plate drops go through the ledger too, regardless of
+                            // whether this week is board-backed yet — same as a
+                            // recipe drop. A plate is N cooks, so the first one
+                            // converts a legacy week (ensureLegacyImported).
                             if (item.classList.contains('meal-card')) {
-                                if (boardMode) {
-                                    // Meal bundles aren't modeled as a single ledger cook yet.
-                                    item.remove();
-                                    showToast('Meal bundles aren\'t supported on the board yet — add individual recipes.', 'error');
-                                    closeSidebar();
-                                    return;
-                                }
-                                // Meals replace whatever was in the slot (per design)
                                 const name = item.dataset.name;
-                                cell.querySelectorAll('.grid-card').forEach(c => c.remove());
-                                const gridCard = createMealGridCard(name, 1);
-                                item.replaceWith(gridCard);
+                                item.remove();  // placeholder; board re-render replaces it
+                                (async () => {
+                                    await ensureLegacyImported();
+                                    await createBundle(name, cell.dataset.day, cell.dataset.meal);
+                                })();
+                                closeSidebar();
+                                // LOAD-BEARING. This branch used to fall through to
+                                // updateCellState + debounceSave() below, which is
+                                // saveMealPlan() -> PUT /api/meal-plan/<week> — the
+                                // legacy write that strips every scale on the week.
+                                // The recipe branch above returns for exactly this
+                                // reason; do not delete this one.
+                                return;
                             }
                             // If target cell had an existing card, move it to source cell (swap)
                             const existingCards = cell.querySelectorAll('.grid-card');
@@ -2992,6 +3023,144 @@
             return card;
         }
 
+        // A plate is N cooks sharing bundle_id. Grouped by (bundle_id, date, meal),
+        // NOT by bundle_id alone: a member dragged out of the plate keeps its id
+        // but now lives in another cell, and drawing it inside a card it isn't in
+        // would be a lie. It renders as its own card there — which is honest, you
+        // really did move the rice. Mirrors lib/meal_bundle.group_bundles.
+        function groupBundles(cooks) {
+            const groups = [];
+            const index = new Map();
+            cooks.forEach(cook => {
+                if (!cook.bundle_id) { groups.push({ bundle_id: null, cooks: [cook] }); return; }
+                const key = `${cook.bundle_id}|${cook.date}|${cook.meal}`;
+                const found = index.get(key);
+                if (found) { found.cooks.push(cook); return; }
+                const group = {
+                    bundle_id: cook.bundle_id,
+                    bundle_name: cook.bundle_name,
+                    date: cook.date,
+                    meal: cook.meal,
+                    cooks: [cook],
+                };
+                groups.push(group);
+                index.set(key, group);
+            });
+            return groups;
+        }
+
+        function createBundleCard(group) {
+            const card = document.createElement('div');
+            // `cook-card` is load-bearing and must stay: onAdd's first-statement
+            // branch, onEnd's debounceSave() gate, and renderBoardIfActive's
+            // unconditional clear all key on it. Adding a fourth class is free;
+            // dropping the third silently restores the legacy-PUT clobber.
+            card.className = 'grid-card cook-card bundle-card is-meal';
+            card.dataset.bundleId = group.bundle_id;
+            card.dataset.name = group.bundle_name;
+            card.dataset.kind = 'meal';
+            card.dataset.cookIds = group.cooks.map(c => c.id).join(',');
+
+            const verdicts = group.cooks.map(c => c.make_again);
+            const agreed = verdicts.every(v => v === verdicts[0]) ? verdicts[0] : null;
+            card.dataset.makeAgain = (agreed === null || agreed === undefined)
+                ? '' : String(agreed);
+
+            const header = document.createElement('div');
+            header.className = 'meal-header';
+            header.textContent = group.bundle_name;
+            header.title = group.bundle_name;
+
+            const removeBtn = document.createElement('button');
+            removeBtn.className = 'remove-btn';
+            removeBtn.innerHTML = '&times;';
+            removeBtn.setAttribute('aria-label', 'Remove plate');
+            removeBtn.addEventListener('click', function(e) {
+                e.stopPropagation(); e.preventDefault();
+                deleteBundle(group);
+            });
+
+            const cookedBtn = document.createElement('button');
+            cookedBtn.className = 'cooked-btn';
+            cookedBtn.innerHTML = '🍳';
+            cookedBtn.title = 'Mark the whole plate cooked';
+            cookedBtn.setAttribute('aria-label', 'Mark plate cooked');
+            cookedBtn.addEventListener('click', function(e) {
+                e.stopPropagation(); e.preventDefault();
+                markBundleCooked(group);
+            });
+
+            const menuBtn = document.createElement('button');
+            menuBtn.className = 'card-menu-btn';
+            menuBtn.innerHTML = '⋮';
+            menuBtn.title = 'More actions';
+            menuBtn.setAttribute('aria-label', 'More actions');
+            menuBtn.addEventListener('click', function(e) {
+                e.stopPropagation(); e.preventDefault();
+                openCardSheet(card);
+            });
+
+            if (card.dataset.makeAgain) {
+                const badge = document.createElement('span');
+                badge.className = 'verdict-badge';
+                badge.textContent = card.dataset.makeAgain === 'true' ? '👍' : '👎';
+                badge.title = card.dataset.makeAgain === 'true' ? 'Make again' : 'Not again';
+                card.appendChild(badge);
+            }
+
+            card.appendChild(header);
+            card.appendChild(removeBtn);
+
+            // Scale stays PER MEMBER: a plate scaled up usually means more
+            // protein, not more rice. Each row gets its own compact stepper,
+            // calling the same adjustScale the plain cook card uses.
+            group.cooks.forEach(cook => {
+                const row = document.createElement('div');
+                row.className = 'sub-recipe-chip bundle-member';
+
+                const label = document.createElement('span');
+                label.textContent = displayNameFor(cook.recipe);
+                label.title = cook.recipe;
+
+                const minus = document.createElement('button');
+                minus.className = 'scale-btn scale-minus';
+                minus.textContent = '−';
+                minus.setAttribute('aria-label', `Less ${cook.recipe}`);
+                minus.addEventListener('click', function(e) {
+                    e.stopPropagation(); e.preventDefault();
+                    adjustScale(cook, -0.5);
+                });
+
+                const value = document.createElement('span');
+                value.className = 'scale-value';
+                value.textContent = `${fmtMult(cook.scale)}×`;
+
+                const plus = document.createElement('button');
+                plus.className = 'scale-btn scale-plus';
+                plus.textContent = '+';
+                plus.setAttribute('aria-label', `More ${cook.recipe}`);
+                plus.addEventListener('click', function(e) {
+                    e.stopPropagation(); e.preventDefault();
+                    adjustScale(cook, 0.5);
+                });
+
+                row.appendChild(label);
+                row.appendChild(minus);
+                row.appendChild(value);
+                row.appendChild(plus);
+                card.appendChild(row);
+            });
+
+            // No macro line on the card, deliberately. Deriving one client-side
+            // would be a third implementation of the eligibility gate, and
+            // reading it off the meal file would show the plate's *current*
+            // rollup rather than what was placed. The day-totals row is now the
+            // honest number, and putting it there is the point of the change.
+            card.appendChild(cookedBtn);
+            card.appendChild(menuBtn);
+            return card;
+        }
+
         // --- Board render ---
 
         function renderFreezerTab() {
@@ -3102,18 +3271,29 @@
                 // ledger.
                 document.querySelectorAll('.grid-card').forEach(c => c.remove());
 
+                // One card per group: a plate draws as a single card holding its
+                // members, a standalone cook draws as it always did.
+                groupBundles(weekBoard.cooks).forEach(group => {
+                    if (!group.date || !group.meal) return;
+                    const homeCell = findCell(group.date, group.meal);
+                    if (!homeCell) return;
+                    homeCell.appendChild(group.bundle_id
+                        ? createBundleCard(group)
+                        : createCookCard(group.cooks[0]));
+                });
+
+                // Chips stay per-member and per-placement — cards were drawn above.
                 weekBoard.cooks.forEach(cook => {
-                    if (cook.date && cook.meal) {
-                        const homeCell = findCell(cook.date, cook.meal);
-                        if (homeCell) homeCell.appendChild(createCookCard(cook));
-                    }
                     cook.placements.forEach(p => {
                         if (p.destination !== 'slot') return;
                         const cell = findCell(p.date, p.meal);
                         if (!cell) return;
                         const isHome = p.date === cook.date && p.meal === cook.meal;
+                        // A plate's members all sit in one cell, so unlabelled
+                        // "🍽×1" chips would be indistinguishable. Label them.
+                        const label = (isHome && !cook.bundle_id) ? null : cook.recipe;
                         chipTrayFor(cell).appendChild(
-                            makeServingChip(cook.id, p.id, p.count, isHome ? null : cook.recipe));
+                            makeServingChip(cook.id, p.id, p.count, label));
                     });
                     if (cook.unassigned > 1e-6 && cook.date && cook.meal) {
                         const homeCell = findCell(cook.date, cook.meal);
@@ -3436,6 +3616,12 @@
         // NOT the legacy grid path: that ends in saveMealPlan(), which PUTs
         // scale-less meal-plan data over ledger-authored Markdown.
         async function moveCookCard(card, cell) {
+            // A plate is N cooks; they move together. FIRST statement, so the
+            // ledger path is reached before anything that could fall through to
+            // debounceSave(). Without it a bundle card has no dataset.cookId, so
+            // the early return below would make dragging a plate a silent no-op
+            // — the card snaps back and nothing happens, which reads as broken.
+            if (card.dataset.bundleId) return moveBundleCard(card, cell);
             const cookId = card.dataset.cookId;
             if (!cookId) return;
             const date = dayDates[cell.dataset.day];
@@ -3468,6 +3654,137 @@
                 await loadWeekBoard(currentWeek);
                 ledgerBusy = false;
             }
+        }
+
+        // --- Plates (bundles) ---
+        // Each mirrors its single-cook sibling: same ledgerBusy guard, same
+        // always-reload finally, so a plate and a cook behave identically.
+
+        async function createBundle(mealName, day, meal) {
+            if (ledgerBusy) return;
+            ledgerBusy = true;
+            try {
+                const resp = await fetch('/api/bundles', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        meal_name: mealName, week: currentWeek,
+                        date: dayDates[day], meal: meal, scale: 1.0
+                    })
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    showToast(err.error || 'Failed to add the plate', 'error');
+                    return;
+                }
+                await loadWeekBoard(currentWeek);
+            } catch (err) { showToast('Failed to add the plate', 'error'); }
+            finally { ledgerBusy = false; }
+        }
+
+        async function moveBundleCard(card, cell) {
+            const bundleId = card.dataset.bundleId;
+            if (!bundleId) return;
+            const date = dayDates[cell.dataset.day];
+            const meal = cell.dataset.meal;
+            if (ledgerBusy) {
+                showToast('Busy — try again', 'error');
+                await loadWeekBoard(currentWeek);
+                return;
+            }
+            ledgerBusy = true;
+            try {
+                const resp = await fetch(`/api/bundles/${bundleId}/move`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ date, meal })
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    showToast(err.error || 'Failed to move the plate', 'error');
+                }
+            } catch (err) {
+                showToast('Failed to move the plate', 'error');
+            } finally {
+                await loadWeekBoard(currentWeek);
+                ledgerBusy = false;
+            }
+        }
+
+        async function patchBundle(group, body, failMsg) {
+            if (ledgerBusy) return null;
+            ledgerBusy = true;
+            try {
+                const resp = await fetch(`/api/bundles/${group.bundle_id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    showToast(err.error || failMsg, 'error');
+                    return null;
+                }
+                return await resp.json();
+            } catch (err) { showToast(failMsg, 'error'); return null; }
+            finally { await loadWeekBoard(currentWeek); ledgerBusy = false; }
+        }
+
+        async function markBundleCooked(group) {
+            const n = group.cooks.length;
+            if (!confirm(`Mark "${group.bundle_name}" cooked? This subtracts ` +
+                         `the ingredients of all ${n} recipes from your inventory.`)) return;
+            const result = await patchBundle(
+                group, { cooked_at: new Date().toISOString() },
+                'Failed to mark the plate cooked');
+            if (!result) return;
+            // One toast for the plate, not N. Each member's summary is merged so
+            // the reader sees what the whole dinner cost.
+            const merged = { consumed: [], use_recorded: [], not_tracked: [], skipped_staples: [] };
+            (result.consumption || []).forEach(c => {
+                Object.keys(merged).forEach(k => { merged[k] = merged[k].concat(c[k] || []); });
+            });
+            renderCookToast(merged);
+            loadUseItUp().catch(() => {});
+        }
+
+        async function setBundleVerdict(group, makeAgain) {
+            await patchBundle(group, { make_again: makeAgain },
+                              'Failed to save the verdict');
+        }
+
+        async function addBundleNote(group) {
+            const existing = group.cooks[0] && group.cooks[0].cook_note || '';
+            const note = prompt(`Note for "${group.bundle_name}"`, existing);
+            if (note === null) return;
+            await patchBundle(group, { cook_note: note }, 'Failed to save note');
+        }
+
+        async function deleteBundle(group) {
+            const n = group.cooks.length;
+            if (!confirm(`Remove "${group.bundle_name}" and all ${n} of its recipes ` +
+                         `from this week?`)) return;
+            if (ledgerBusy) return;
+            ledgerBusy = true;
+            try {
+                const resp = await fetch(`/api/bundles/${group.bundle_id}`,
+                                         { method: 'DELETE' });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    showToast(err.error || 'Failed to remove the plate', 'error');
+                }
+            } catch (err) { showToast('Failed to remove the plate', 'error'); }
+            finally { await loadWeekBoard(currentWeek); ledgerBusy = false; }
+        }
+
+        // The card carries its own member ids, so it identifies its group exactly
+        // — including the case where one member was moved away and the same
+        // bundle_id now spans two cells.
+        function bundleGroupFromCard(card) {
+            if (!card.dataset.bundleId || !weekBoard) return null;
+            const ids = card.dataset.cookIds;
+            return groupBundles(weekBoard.cooks).find(
+                g => g.bundle_id && g.cooks.map(c => c.id).join(',') === ids) || null;
         }
 
         function wireChipSortables() {
@@ -4216,6 +4533,22 @@
                 return btn;
             }
 
+            // A plate has no single recipe to open, so it offers its own file
+            // and its members individually rather than one arbitrary link.
+            const bundleGroup = card.dataset.bundleId ? bundleGroupFromCard(card) : null;
+            if (bundleGroup) {
+                addAction('Open plate', () => {
+                    window.location.href = 'obsidian://open?vault=KitchenOS&file='
+                        + encodeURIComponent('Meals/' + card.dataset.name);
+                });
+                bundleGroup.cooks.forEach(c => {
+                    addAction(`Open ${displayNameFor(c.recipe)}`, () => {
+                        window.location.href = 'obsidian://open?vault=KitchenOS&file='
+                            + encodeURIComponent('Recipes/' + c.recipe);
+                    });
+                });
+            }
+
             const link = card.querySelector('.grid-card-name-link');
             if (link) {
                 addAction('Open recipe', () => { window.location.href = link.href; });
@@ -4223,7 +4556,10 @@
 
             // The single-pointer path WCAG 2.2 SC 2.5.7 requires for the card
             // drag, and the only route into a move on a desktop mouse-less setup.
-            if (card.classList.contains('cook-card') && card.dataset.cookId) {
+            // Works for a plate too: armRecipe -> placeArmedRecipe -> moveCookCard,
+            // which branches to moveBundleCard on its first statement.
+            if (card.classList.contains('cook-card')
+                    && (card.dataset.cookId || card.dataset.bundleId)) {
                 addAction('Move to another slot', () => armRecipe(card));
             }
 
@@ -4248,11 +4584,45 @@
             }
 
             if (card.dataset.kind === 'meal') {
-                addAction('Edit meal', () => openMealEditor(card.dataset.name));
+                addAction('Edit plate', () => openMealEditor(card.dataset.name));
             }
             const cookedBtn = card.querySelector('.cooked-btn');
             if (cookedBtn) {
                 addAction('Mark cooked 🍳', () => cookedBtn.click());
+            }
+
+            // Per member, not per plate: the remainders genuinely differ — three
+            // servings of osso buco and half a batch of dip are not one number.
+            if (bundleGroup) {
+                bundleGroup.cooks.forEach(c => {
+                    if (c.unassigned > 0) {
+                        addAction(
+                            `Freeze the rest of ${displayNameFor(c.recipe)} ❄️ (${fmtMult(c.unassigned)})`,
+                            () => freezeRest(c));
+                    }
+                });
+
+                // One verdict for one dinner. Without this a plate generates a
+                // separate "was this worth making?" nudge per sub-recipe.
+                const current = card.dataset.makeAgain;   // '' | 'true' | 'false'
+                const verdict = document.createElement('div');
+                verdict.className = 'segment';
+                [['Make again 👍', 'true', true], ['Not again', 'false', false]].forEach(
+                    ([label, flag, value]) => {
+                        const btn = document.createElement('button');
+                        btn.textContent = label;
+                        if (current === flag) btn.className = 'selected';
+                        btn.addEventListener('click', () => {
+                            closeCardSheet();
+                            setBundleVerdict(bundleGroup, current === flag ? null : value);
+                        });
+                        verdict.appendChild(btn);
+                    });
+                actions.appendChild(verdict);
+
+                const hasNote = bundleGroup.cooks.some(c => c.cook_note);
+                addAction(hasNote ? '📝 Edit note' : '📝 Add a note',
+                          () => addBundleNote(bundleGroup));
             }
 
             // Shown only when a remainder actually exists. Until now the only way
@@ -4414,16 +4784,11 @@
             }
 
             if (isMeal) {
-                // Mirrors the meal branch of the grid Sortable's onAdd, including
-                // its board-mode limit.
-                if (boardMode) {
-                    showToast('Meal bundles aren\'t supported on the board yet — add individual recipes.', 'error');
-                    return;
-                }
-                cell.querySelectorAll('.grid-card').forEach(c => c.remove());
-                cell.appendChild(createMealGridCard(name, 1));
-                updateCellState(cell);
-                debounceSave();
+                // Mirrors the meal branch of the grid Sortable's onAdd. Both
+                // gestures must change together — leaving one behind means
+                // dragging a plate works and tapping one silently doesn't.
+                await ensureLegacyImported();
+                await createBundle(name, cell.dataset.day, cell.dataset.meal);
                 return;
             }
 
