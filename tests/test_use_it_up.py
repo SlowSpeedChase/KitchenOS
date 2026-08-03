@@ -554,3 +554,69 @@ class TestRenderByItem:
             use_it_up.suggest([_item("Dragonfruit", SOON)], BY_ITEM_RECIPES, today=TODAY))
         assert "## Dragonfruit" in md
         assert "improvise" in md
+
+
+class TestStaplesMustNotSwallowPerishables:
+    """A staple entry must not cover a perishable ingredient by token subset.
+
+    `_is_staple` uses `_covers`, which matches when the staple's tokens contain
+    the item's — so the entry "lime juice" makes a plain `Lime` row a staple.
+    That is the worst failure direction available here: staples carry no
+    `expires`, are skipped by `prune_expired`, and are excluded from
+    `at_risk_items` entirely, so fresh limes would silently stop ageing out and
+    stop being decremented on cook.
+
+    Caught live on 2026-08-02 while adding the dry spice rack to
+    `config/pantry_staples.json`: "lemon juice" and "lime juice" were proposed,
+    and five existing tests failed because limes stopped being at-risk. Both were
+    dropped. This test states the rule directly so the next person adding a
+    staple sees why, rather than rediscovering it through five unrelated
+    failures.
+    """
+
+    #: Perishables that must never be reachable from a staple entry.
+    PERISHABLE = [
+        "Lime", "Lemon", "Ginger", "Cilantro", "Parsley", "Basil",
+        "Green Onion", "Scallions", "Tomato", "Avocado", "Spinach",
+    ]
+
+    #: Offenders that predate this guard. Listed rather than silently excluded so
+    #: they stay visible: `onion` has been a staple since well before the spice
+    #: rack, and it covers `Green Onion` — so scallions have never aged out or
+    #: appeared in Use It Up. Real, but a separate fix with its own blast radius
+    #: (changing how `onion` matches touches every onion row in the pantry).
+    KNOWN_PREEXISTING = {("Green Onion", "onion")}
+
+    def test_no_configured_staple_covers_a_perishable(self):
+        from lib.meal_suggester import load_pantry_staples
+        from lib.use_it_up import _covers, _phrase
+        offenders = {
+            (p, s)
+            for p in self.PERISHABLE
+            for s in load_pantry_staples()
+            if _covers(_phrase(s), _phrase(p))
+        }
+        new = offenders - self.KNOWN_PREEXISTING
+        assert new == set(), (
+            "a staple entry covers a perishable, which would hide it from "
+            f"Use It Up and from expiry pruning: {sorted(new)}"
+        )
+
+    def test_the_known_preexisting_offender_still_exists(self):
+        """Fails once `onion`/`Green Onion` is fixed, so the allowance gets removed
+        rather than quietly outliving the problem it documents."""
+        from lib.meal_suggester import load_pantry_staples
+        from lib.use_it_up import _covers, _phrase
+        staples = load_pantry_staples()
+        for perishable, staple in self.KNOWN_PREEXISTING:
+            assert staple in staples, f"{staple!r} is no longer a staple — drop this allowance"
+            assert _covers(_phrase(staple), _phrase(perishable)), (
+                f"{staple!r} no longer covers {perishable!r} — remove it from "
+                "KNOWN_PREEXISTING"
+            )
+
+    def test_the_rule_would_catch_the_juice_case(self):
+        """Proves the guard above is not vacuous."""
+        from lib.use_it_up import _covers, _phrase
+        assert _covers(_phrase("lime juice"), _phrase("Lime"))
+        assert _covers(_phrase("lemon juice"), _phrase("Lemon"))
