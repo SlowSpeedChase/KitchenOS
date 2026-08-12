@@ -75,6 +75,25 @@
         .banner.warn { background: var(--tint-warning); color: var(--warning); }
         .banner.dup { background: var(--tint-alert); color: var(--alert); }
         .hidden { display: none; }
+        /* The committed state. A toast alone cannot carry this: it is gone in
+           3.5s, it renders at the bottom of the *viewport* (off-screen when a
+           long receipt has been scrolled), and it leaves the preview table and
+           an apparently-live Confirm button behind — indistinguishable from
+           nothing having happened. This block replaces the button in place,
+           where the thumb already is, and persists. */
+        .result { margin-top: 14px; border-radius: 12px; padding: 16px;
+                  border: 1px solid; }
+        .result.ok   { background: var(--tint-done);    border-color: var(--done);    color: var(--done); }
+        .result.warn { background: var(--tint-warning); border-color: var(--warning); color: var(--warning); }
+        .result.dup  { background: var(--tint-alert);   border-color: var(--alert);   color: var(--alert); }
+        .result h2 { font-size: 17px; font-weight: 700; margin-bottom: 5px; }
+        .result .detail { font-size: 14px; line-height: 1.45; opacity: .85; }
+        .result .row { margin-top: 14px; }
+        .result a.linkbtn, .result button {
+            font: inherit; font-size: 14px; font-weight: 600; text-decoration: none;
+            display: inline-block; border-radius: 10px; padding: 9px 16px;
+            background: var(--raised); color: var(--text); border: 1px solid var(--border);
+        }
         .toast {
             position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
             background: rgba(29,29,31,.92); color: rgba(255,255,255,1); padding: 12px 20px; border-radius: 10px;
@@ -114,10 +133,11 @@
         <div class="step-label">Step 3 · Review, then confirm</div>
         <div id="banners"></div>
         <div id="tableWrap"></div>
-        <div class="row" style="margin-top: 14px;">
+        <div class="row" id="commitRow" style="margin-top: 14px;">
             <button class="commit" id="commitBtn" onclick="doCommit()">Confirm &amp; ingest</button>
             <span class="sub" id="totalLine"></span>
         </div>
+        <div class="result hidden" id="resultBox"></div>
     </div>
 
     <div class="toast" id="toast"></div>
@@ -147,6 +167,24 @@
     function dollars(cents) {
         if (cents === null || cents === undefined) return '—';
         return '$' + (cents / 100).toFixed(2);
+    }
+
+    // Every string rendered below — item names, units, categories, the date —
+    // is LLM-extracted from a photographed receipt, i.e. untrusted. Same rule
+    // as lib/reminders.py and lib/frontmatter.scalar(): never hand-interpolate
+    // untrusted text into a markup context.
+    function esc(v) {
+        if (v === null || v === undefined) return '';
+        return String(v).replace(/[&<>"']/g, c => (
+            { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+        ));
+    }
+
+    // Fee lines (sales tax) are recorded as purchases but never stocked, so the
+    // count shown to a human must exclude them — "23 items" for 22 jars is the
+    // kind of small lie that makes the whole number untrustworthy.
+    function stockedCount(items) {
+        return (items || []).filter(it => it.category !== 'fee').length;
     }
 
     async function loadPrompt() {
@@ -179,10 +217,11 @@
         }
         if (data.problems && data.problems.length) {
             banners.innerHTML += '<div class="banner warn">Needs review: '
-                + data.problems.join('; ') + '. It will still be filed, flagged for review.</div>';
+                + esc(data.problems.join('; ')) + '. The trip will be filed and flagged, '
+                + 'but nothing is added to inventory until it is reviewed.</div>';
         } else {
             banners.innerHTML += '<div class="banner ok">Line totals reconcile. '
-                + (data.count || 0) + ' items ready.</div>';
+                + stockedCount(data.items) + ' items ready to stock.</div>';
         }
 
         const lineSum = (data.items || []).reduce((s, it) => s + (it.total_cents || 0), 0);
@@ -193,11 +232,11 @@
         let rows = '';
         for (const it of (data.items || [])) {
             const fee = it.category === 'fee' ? ' class="fee"' : '';
-            rows += `<tr${fee}><td>${it.canonical_name || ''}</td>`
-                + `<td class="num">${it.quantity ?? ''} ${it.unit || ''}</td>`
+            rows += `<tr${fee}><td>${esc(it.canonical_name)}</td>`
+                + `<td class="num">${esc(it.quantity ?? '')} ${esc(it.unit)}</td>`
                 + `<td class="num">${dollars(it.total_cents)}</td>`
-                + `<td>${it.category || ''}</td><td>${it.location || ''}</td>`
-                + `<td>${it.for_recipe || '—'}</td></tr>`;
+                + `<td>${esc(it.category)}</td><td>${esc(it.location)}</td>`
+                + `<td>${esc(it.for_recipe) || '—'}</td></tr>`;
         }
         wrap.innerHTML = '<table><thead><tr><th>Item</th><th class="num">Qty</th>'
             + '<th class="num">Total</th><th>Category</th><th>Location</th><th>For recipe</th>'
@@ -213,22 +252,67 @@
         } catch (e) { showToast(e.message, true); }
     }
 
+    // Only status 'ingested' stocks inventory: receipt_ingest.ingest_parsed
+    // returns before the stock loop on both 'needs_review' and 'skipped', so
+    // saying "added to inventory" on those would be a plain lie.
+    function renderResult(data) {
+        const box = document.getElementById('resultBox');
+        const n = stockedCount(data.items);
+        const when = esc(data.date || 'no date');
+        let cls, head, detail;
+
+        if (data.status === 'skipped') {
+            cls = 'dup';
+            head = 'Already ingested — nothing was added';
+            detail = 'This exact receipt was filed before, so it was skipped. '
+                   + 'Your inventory is unchanged — no duplicates were created.';
+        } else if (data.status === 'needs_review') {
+            cls = 'warn';
+            head = 'Filed and flagged for review';
+            detail = 'The trip and its prices were recorded (' + dollars(data.total_cents)
+                   + ' · ' + when + '), but the totals did not reconcile, so the '
+                   + n + ' items were <strong>not</strong> added to inventory yet.';
+        } else {
+            cls = 'ok';
+            head = '✓ Ingested — ' + n + ' items are in your inventory';
+            detail = dollars(data.total_cents) + ' · ' + when
+                   + ' · recorded as a shopping trip, with prices logged for tracking.';
+        }
+
+        box.className = 'result ' + cls;
+        box.innerHTML = '<h2>' + head + '</h2><div class="detail">' + detail + '</div>'
+            + '<div class="row"><a class="linkbtn" href="/review">View inventory</a>'
+            + '<button onclick="clearAll()">Paste another</button></div>';
+        // Replace the button rather than sitting beside it: leaving a live-looking
+        // Confirm control under a success message invites a second tap.
+        document.getElementById('commitRow').classList.add('hidden');
+        box.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+
     async function doCommit() {
         const text = document.getElementById('jsonInput').value;
         const btn = document.getElementById('commitBtn');
         btn.disabled = true;
+        btn.textContent = 'Ingesting…';
         try {
             const data = await apiPost('/api/receipt/paste', { json: text, commit: true });
-            if (data.status === 'skipped') showToast('Already ingested — nothing added');
-            else if (data.status === 'needs_review') showToast('Filed, flagged for review');
-            else showToast('Ingested ' + (data.count || 0) + ' items ✓');
-        } catch (e) { showToast(e.message, true); btn.disabled = false; }
+            renderResult(data);
+        } catch (e) {
+            showToast(e.message, true);
+            btn.disabled = false;
+            btn.textContent = 'Confirm & ingest';
+        }
     }
 
     function clearAll() {
         document.getElementById('jsonInput').value = '';
         document.getElementById('previewCard').classList.add('hidden');
-        document.getElementById('commitBtn').disabled = false;
+        document.getElementById('resultBox').className = 'result hidden';
+        document.getElementById('commitRow').classList.remove('hidden');
+        const btn = document.getElementById('commitBtn');
+        btn.disabled = false;
+        btn.textContent = 'Confirm & ingest';
+        window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
     loadPrompt();
