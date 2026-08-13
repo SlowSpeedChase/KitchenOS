@@ -410,9 +410,11 @@ def health():
 def api_recipes():
     """Return recipe metadata for meal planner sidebar.
 
-    Optional query param:
+    Optional query params:
         ingredient: case-insensitive substring. When provided, only recipes
             whose ingredient list contains a match are returned.
+        include_ingredients: when set to "1" or "true", the full recipe index
+            is returned with ingredient_items on each row.
     """
     ingredient = request.args.get("ingredient", "").strip()
     now = time.time()
@@ -428,6 +430,13 @@ def api_recipes():
             if any(term in item.lower() for item in r.get("ingredient_items", []))
         ]
         return jsonify(matches)
+
+    if request.args.get("include_ingredients", "").strip() in ("1", "true"):
+        cache = _recipe_ingredient_cache
+        if cache["data"] is None or (now - cache["timestamp"]) > RECIPE_CACHE_TTL:
+            cache["data"] = get_recipe_index(OBSIDIAN_RECIPES_PATH, include_ingredients=True)
+            cache["timestamp"] = now
+        return jsonify(cache["data"])
 
     if _recipe_cache["data"] is None or (now - _recipe_cache["timestamp"]) > RECIPE_CACHE_TTL:
         _recipe_cache["data"] = get_recipe_index(OBSIDIAN_RECIPES_PATH)
