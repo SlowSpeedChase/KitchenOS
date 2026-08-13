@@ -60,6 +60,9 @@ struct KitchenOSShortcuts: AppShortcutsProvider {
                 "Ask \(.applicationName)",
                 "Ask \(.applicationName) about my meals",
                 "Talk to \(.applicationName)",
+                "Ask \(.applicationName) what's for dinner",
+                "Ask \(.applicationName) what to cook",
+                "Ask \(.applicationName) to plan my week",
             ],
             shortTitle: "Ask KitchenOS",
             systemImageName: "bubble.left.and.bubble.right"
