@@ -68,3 +68,17 @@ public struct RecipeEntityQuery: EntityStringQuery {
 
     public func suggestedEntities() async throws -> [RecipeEntity] { [] }
 }
+
+// System-driven reindex hooks (iOS/macOS 27): the OS calls these on its own schedule.
+// The corpus is small (~252 recipes) and the server returns the full index in one call,
+// so a targeted per-id reindex would cost the same round-trip — both hooks do a full pass.
+extension RecipeEntityQuery: IndexedEntityQuery {
+    public func reindexAllEntities(indexDescription: CSSearchableIndexDescription) async throws {
+        try await RecipeIndexer.reindexAll()
+    }
+
+    public func reindexEntities(for identifiers: [String],
+                                indexDescription: CSSearchableIndexDescription) async throws {
+        try await RecipeIndexer.reindexAll()
+    }
+}
