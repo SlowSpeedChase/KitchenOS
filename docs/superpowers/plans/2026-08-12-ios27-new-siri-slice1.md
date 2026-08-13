@@ -677,7 +677,7 @@ xcrun devicectl device install app --device AC76BD14-9BDF-50F9-9087-3E7229EBF38D
 
 - [ ] **Step 3: On-device verification (user, iPhone)**
 
-- [ ] Enter the token in KitchenOS → Settings → API token; tap "Test connection" — expect success.
+- [ ] ~~Enter the token in KitchenOS → Settings → API token; tap "Test connection" — expect success.~~ **N/A for slice 1** — token activation was skipped in Step 1, so there is no token to enter; the intents reach the API unauthenticated over the tailnet. Do not set one until slice 2.
 - [ ] Tap "Reindex recipes" once (seeds the index with ingredient keywords).
 - [ ] Say: "Ask KitchenOS what's on my meal plan this week" — spoken answer from real data.
 - [ ] Within ~5 minutes, follow up: "what about Thursday dinner?" — the answer uses context from the first question (multi-turn).
@@ -686,7 +686,8 @@ xcrun devicectl device install app --device AC76BD14-9BDF-50F9-9087-3E7229EBF38D
 - [ ] Decline flow: provoke a proposal, decline it, ask an unrelated question — Siri must NOT re-prompt the declined add.
 - [ ] Long-session probe: after a long chatty session (many tool-heavy turns), confirm a follow-up still answers — and if it fails once, confirm the NEXT ask recovers (the session resets on failure rather than staying broken).
 - [ ] Spotlight: search an ingredient that appears in no recipe title (e.g. "garam masala") — recipes surface.
-- [ ] Note whether any phrase works without saying "KitchenOS" (observation for the phrase-token question; record in BRANCH-STATUS notes).
+- [x] Note whether any phrase works without saying "KitchenOS" (observation for the phrase-token question; record in BRANCH-STATUS notes).
+  **Answered 2026-08-12 ~21:59 CDT, on-device:** app-less natural phrasing does **not** route. A natural meal-plan question without the app name produced Siri's generic fallback ("I can't search within KitchenOS directly. You'll need to open the app to view your meal plan.") and the intent never executed — no corresponding request in `server.log`, and the wording matches no in-app failure string. This confirms the phrase-token question at Task 6: with no assistant schema (C3), literal App Shortcut phrase match is the only route in, so every invocation must include "KitchenOS". Mitigation: the phrase list was broadened with natural-leaning variants (all keeping the app-name token) in KitchenOSShortcuts.swift.
 
 - [ ] **Step 4: Record results**
 
