@@ -167,6 +167,59 @@ class TestConfigLookups:
         assert lookup_density("green beans") is None
         assert lookup_density("baked beans") is None
 
+    def test_small_seed_densities(self):
+        # These had no density at all, so every volume-measured seed line
+        # ("1 tsp poppy seed") converted to 0 g and was reported as unmatched —
+        # dragging nutrition_coverage down on recipes whose macros were fine.
+        # Values are derived from the FDC portion weights already in the food
+        # store, not estimated.
+        assert lookup_density("poppy seed") == pytest.approx(0.58, abs=0.02)
+        assert lookup_density("poppy seeds") == pytest.approx(0.58, abs=0.02)
+        assert lookup_density("sesame seeds") == pytest.approx(0.61, abs=0.02)
+        assert lookup_density("white sesame seeds") == pytest.approx(0.61, abs=0.02)
+        assert lookup_density("chia seeds") == pytest.approx(0.71, abs=0.02)
+
+    def test_seed_density_matches_fdc_portion_weight(self):
+        # The density is only useful if it reproduces the gram weight USDA
+        # publishes for the same volume. 1 tsp poppy seed is 2.8 g (FDC 171330);
+        # 1 tbsp sesame seed is 9.0 g (FDC 170150).
+        assert to_grams("1", "tsp", "poppy seed").grams == pytest.approx(2.8, abs=0.2)
+        assert to_grams("1", "tbsp", "sesame seeds").grams == pytest.approx(9.0, abs=0.5)
+
+    def test_sesame_seeds_key_does_not_capture_sesame_oil(self):
+        # "sesame oil" is a long-standing key at a very different density.
+        # Adding "sesame seeds" must not disturb it in either direction.
+        assert lookup_density("sesame oil") == pytest.approx(0.92, abs=0.02)
+        assert lookup_density("toasted sesame oil") == pytest.approx(0.92, abs=0.02)
+
+    def test_onion_key_does_not_capture_onion_powder_or_scallions(self):
+        # Same hazard as the beans case above, and the reason a bare "onion"
+        # key could not be added alone: substring matching would have caught
+        # "onion powder" — 31 of the 53 volume-measured onion rows in the
+        # corpus — and weighed a dried spice as though it were fresh onion,
+        # roughly 40% heavy. Each distinct form carries its own key so the
+        # longest-match rule picks the specific one over the generic.
+        assert lookup_density("onion") == pytest.approx(0.68, abs=0.02)
+        assert lookup_density("finely chopped red onion") == pytest.approx(0.68, abs=0.02)
+        assert lookup_density("onion, grated") == pytest.approx(0.68, abs=0.02)
+
+        assert lookup_density("onion powder") == pytest.approx(0.48, abs=0.02)
+        assert lookup_density("granulated onion powder") == pytest.approx(0.48, abs=0.02)
+
+        assert lookup_density("green onion") == pytest.approx(0.41, abs=0.02)
+        assert lookup_density("green onions") == pytest.approx(0.41, abs=0.02)
+        # The "scallions" alias predates this change but pointed at a key that
+        # did not exist, so it silently fell through to no match at all.
+        assert lookup_density("scallions") == pytest.approx(0.41, abs=0.02)
+
+    def test_dried_onion_not_weighed_as_fresh(self):
+        # Dehydrated flakes are a third of fresh onion by volume. Without its
+        # own key "onion flakes" would substring-match "onion" and come out
+        # twice as heavy as it is.
+        assert lookup_density("onion flakes") == pytest.approx(0.34, abs=0.03)
+        assert lookup_density("dried onion flakes") == pytest.approx(0.34, abs=0.03)
+        assert lookup_density("dehydrated minced onion") == pytest.approx(0.34, abs=0.03)
+
 
 class TestAggregatorRegression:
     """The aggregator now derives its tables from lib.units — ensure parity."""
