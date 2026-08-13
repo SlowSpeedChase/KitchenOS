@@ -684,6 +684,7 @@ xcrun devicectl device install app --device AC76BD14-9BDF-50F9-9087-3E7229EBF38D
 - [ ] Say: "Ask KitchenOS to suggest something high-protein with the chicken I have" — completes even if tools take a while (LongRunningIntent).
 - [ ] Say: "add it to Thursday dinner" — Siri asks to confirm out loud; confirm; verify the row appears on the web planner.
 - [ ] Decline flow: provoke a proposal, decline it, ask an unrelated question — Siri must NOT re-prompt the declined add.
+- [ ] Long-session probe: after a long chatty session (many tool-heavy turns), confirm a follow-up still answers — and if it fails once, confirm the NEXT ask recovers (the session resets on failure rather than staying broken).
 - [ ] Spotlight: search an ingredient that appears in no recipe title (e.g. "garam masala") — recipes surface.
 - [ ] Note whether any phrase works without saying "KitchenOS" (observation for the phrase-token question; record in BRANCH-STATUS notes).
 
