@@ -47,7 +47,7 @@ public struct RecipeEntity: AppEntity, IndexedEntity, Identifiable {
 
 // RecipeEntity conforms to IndexedEntity (semantic index) above. Indexing is driven both
 // manually via RecipeIndexer (app launch + Settings button) and by the system through the
-// IndexedEntityQuery conformance below (iOS/macOS 27 floor).
+// IndexedEntityQuery conformance below (iOS/macOS 27 floor). The `indexDescription` parameter is ignored — the app maintains a single default index.
 public struct RecipeEntityQuery: EntityStringQuery {
     public init() {}
 

@@ -34,6 +34,10 @@ public struct AskKitchenOSIntent: AppIntent, LongRunningIntent {
         } catch KitchenOSError.unreachable {
             return .result(dialog: "I can't reach KitchenOS right now.")
         } catch {
+            // A failure here can be session-permanent (e.g. the transcript outgrew the
+            // context window) — and a kept session would be reused and re-fail on every
+            // retry within the idle window. Drop it so the next ask starts fresh.
+            await Self.voiceSessions.reset()
             return .result(dialog: "Something went wrong reaching the assistant.")
         }
 

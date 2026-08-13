@@ -69,7 +69,7 @@ branches are gone, both surfaces coexist in one app):
 
 ## Native / Siri — pending polish
 
-Genuinely open items surfaced by the superpowers specs/plans, not yet built:
+Genuinely open items surfaced by the superpowers specs/plans — struck items shipped on the ios27-new-siri branch:
 
 - ~~**CoreSpotlight ingredient-keyword enrichment**~~ **SHIPPED 2026-08-12**
   (`ios27-new-siri` branch, slice 1). C3 v1 indexed title/cuisine/protein only;
