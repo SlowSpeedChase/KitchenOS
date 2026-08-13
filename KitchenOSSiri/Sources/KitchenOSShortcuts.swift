@@ -17,7 +17,12 @@ struct KitchenOSShortcuts: AppShortcutsProvider {
         )
         AppShortcut(
             intent: GetMealPlanIntent(),
-            phrases: ["What's on my \(.applicationName) meal plan"],
+            phrases: [
+                "What's on my \(.applicationName) meal plan",
+                "Show my \(.applicationName) meal plan",
+                "What's for dinner this week in \(.applicationName)",
+                "What am I cooking this week in \(.applicationName)",
+            ],
             shortTitle: "Meal Plan",
             systemImageName: "calendar"
         )
@@ -44,6 +49,8 @@ struct KitchenOSShortcuts: AppShortcutsProvider {
             phrases: [
                 "Find a \(.applicationName) recipe",
                 "Find me something in \(.applicationName)",
+                "Search \(.applicationName) for a recipe",
+                "Find recipes in \(.applicationName)",
             ],
             shortTitle: "Smart Find",
             systemImageName: "sparkles"
@@ -63,6 +70,8 @@ struct KitchenOSShortcuts: AppShortcutsProvider {
                 "Ask \(.applicationName) what's for dinner",
                 "Ask \(.applicationName) what to cook",
                 "Ask \(.applicationName) to plan my week",
+                "Ask \(.applicationName) what's on my meal plan this week",
+                "\(.applicationName), what's for dinner",
             ],
             shortTitle: "Ask KitchenOS",
             systemImageName: "bubble.left.and.bubble.right"
