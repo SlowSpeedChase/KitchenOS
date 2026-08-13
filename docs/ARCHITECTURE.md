@@ -2,8 +2,8 @@
 
 KitchenOS is a local-first kitchen operating system: a synchronous Flask API
 (port 5001, run as the `com.kitchenos.api` LaunchAgent on the Mac mini) sits in
-front of an Obsidian vault and a SQLite database, with a native iOS 26 /
-macOS 26 app (`KitchenOSKit` + `KitchenOSSiri`) as the on-device client. AI is
+front of an Obsidian vault and a SQLite database, with a native iOS 27 /
+macOS 27 app (`KitchenOSKit` + `KitchenOSSiri`) as the on-device client. AI is
 hybrid, not a single model: local Ollama (`mistral:7b`) handles recipe
 extraction, nutrition resolution, and seasonal matching; the Claude API is
 load-bearing for receipt parsing and meal suggestions/resolvers/tasks when
@@ -253,8 +253,8 @@ building two products from shared code:
   `Shell/AppShell.swift` branches `#if os(macOS)` for a sidebar layout vs.
   `#else` for an iOS `TabView`.
 
-`supportedDestinations: [macOS, iOS]` with `deploymentTarget` iOS 26 /
-macOS 26. The app registers `AppShortcutsProvider` (`KitchenOSShortcuts`)
+`supportedDestinations: [macOS, iOS]` with `deploymentTarget` iOS 27 /
+macOS 27. The app registers `AppShortcutsProvider` (`KitchenOSShortcuts`)
 for Siri/Shortcuts, uses on-device Foundation Models for the AI layer, and
 indexes content via CoreSpotlight (`RecipeIndexer`). This tier is converged
 on `main` (the historical iOS-Siri vs. macOS-extraction branch split has

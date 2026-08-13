@@ -27,7 +27,7 @@ The native tier — entirely undocumented here until now — is built and merged
 converged via `docs/superpowers/plans/2026-06-24-convergence-plan.md`; both
 branches are gone, both surfaces coexist in one app):
 
-- **`KitchenOSSiri`** — single XcodeGen target building **iOS 26 + macOS 26**
+- **`KitchenOSSiri`** — single XcodeGen target building **iOS 27 + macOS 27**
   (bundle `com.kitchenos.siri`), multiplatform: macOS gets the `AppShell` sidebar
   (Cook / Plan / Stock / System sections), iOS/iPadOS gets the tab-based
   Assistant/Plan/Cook/Search/Settings surface. Both platforms share
@@ -71,11 +71,18 @@ branches are gone, both surfaces coexist in one app):
 
 Genuinely open items surfaced by the superpowers specs/plans, not yet built:
 
-- **CoreSpotlight ingredient-keyword enrichment + reindex cadence** (C3
-  follow-up). C3 v1 indexes title/cuisine/protein only — ingredient keywords
-  need a backend "all recipes with ingredients" endpoint that doesn't exist yet.
-  Reindexing today is launch-time + a manual Settings button; no background/
-  periodic cadence.
+- ~~**CoreSpotlight ingredient-keyword enrichment**~~ **SHIPPED 2026-08-12**
+  (`ios27-new-siri` branch, slice 1). C3 v1 indexed title/cuisine/protein only;
+  the backend gap is closed — `GET /api/recipes?include_ingredients=1` (gated)
+  returns `ingredient_items` per row, and `RecipeIndexer.reindexAll` folds them
+  into `attributeSet.keywords`. See
+  `docs/superpowers/specs/2026-08-12-ios27-new-siri-design.md`.
+- ~~**System-driven reindex**~~ **SHIPPED, slice-1 half (2026-08-12)**:
+  `RecipeEntityQuery` now conforms to `IndexedEntityQuery`, so the system can
+  trigger reindexing itself rather than relying solely on launch-time + the
+  manual Settings button. **Background reindex cadence is still open** — there
+  is no periodic/BG trigger yet; freshness remains "last run with the Mac
+  reachable" until the on-phone store lands (slice 2). See the spec above.
 - **`AppShell` `ComingSoonView` fallback** (`KitchenOSSiri/Sources/Shell/AppShell.swift`):
   a placeholder view still exists for any `SidebarSection` the `detail(for:)`
   switch doesn't explicitly handle. As of this audit every current section

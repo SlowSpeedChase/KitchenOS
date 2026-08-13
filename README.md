@@ -177,7 +177,7 @@ Full commands live in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 ## Native App (iOS / macOS)
 
 `KitchenOSSiri` (the app) and `KitchenOSKit` (a shared Swift package) build
-a single, multiplatform Xcode project targeting iOS 26 and macOS 26. The
+a single, multiplatform Xcode project targeting iOS 27 and macOS 27. The
 app talks to the same Flask API server as everything else — over Tailscale
 when off the local network — and adds:
 

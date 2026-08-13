@@ -72,7 +72,7 @@ Five entry points, all converge on `extract_recipe.py` (or `import_crouton.py` f
 ```
 
 ### 1e. Native app (Siri / App Intents)
-- The native `KitchenOSSiri` app (iOS 26 / macOS 26 — `KitchenOSKit` + `KitchenOSSiri`) is a first-class capture *and* query surface, not just a Shortcut wrapper. Its own **Extraction** screens let you capture a recipe directly in-app, and its registered `AppShortcutsProvider` exposes Siri/App Intents for hands-free capture and lookup ("find recipes with chicken," "what's for dinner Tuesday," "add X to Thursday's dinner").
+- The native `KitchenOSSiri` app (iOS 27 / macOS 27 — `KitchenOSKit` + `KitchenOSSiri`) is a first-class capture *and* query surface, not just a Shortcut wrapper. Its own **Extraction** screens let you capture a recipe directly in-app, and its registered `AppShortcutsProvider` exposes Siri/App Intents for hands-free capture and lookup ("find recipes with chicken," "what's for dinner Tuesday," "add X to Thursday's dinner").
 - Every intent routes through the shared `KitchenOSClient` to the same Flask API (Tailscale hostname on iOS, localhost on macOS), with a bearer token attached automatically when `KITCHENOS_API_TOKEN` is configured. Write-capable intents require an explicit Siri confirmation before mutating the meal plan.
 - Full intent table and backing endpoints: `docs/API.md` § 3.
 
