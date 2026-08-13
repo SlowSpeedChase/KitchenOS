@@ -641,7 +641,11 @@ git commit -m "docs: iOS 27 floor, include_ingredients param, Decision D resolve
 - Consumes: existing `require_token` (`api_server.py:69`), `KeychainCredentialStore`, Settings token field.
 - Produces: a live bearer gate; the deployed build on the iPhone.
 
-- [ ] **Step 1: Set the token and restart the server (Mac, main checkout)**
+- [ ] ~~**Step 1: Set the token and restart the server (Mac, main checkout)**~~
+  **SKIPPED — decided 2026-08-12:** activating the token breaks the web planner from
+  remote browsers (no browser page sends the bearer header; `/api/meal-plan` is gated).
+  Deferred to slice 2, which adds a browser-compatible auth path first. Do NOT run the
+  commands below until then. (Kept for reference:)
 
 ```bash
 TOKEN=$(openssl rand -hex 24)

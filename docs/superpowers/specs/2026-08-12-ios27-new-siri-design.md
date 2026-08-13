@@ -131,10 +131,15 @@ generated vault views.
 
 ## Security
 
-- **Set `KITCHENOS_API_TOKEN` for real.** `require_token` is a no-op today (env unset).
-  Generate a token into the git-ignored `.env`, restart `com.kitchenos.api`, store it on the
-  phone via the existing `KeychainCredentialStore` (Settings field + Bearer header already
-  wired). Localhost stays exempt — Mac app and web UI unaffected.
+- **Set `KITCHENOS_API_TOKEN` for real — deferred to slice 2 (decided 2026-08-12).**
+  `require_token` is a no-op today (env unset). Activating it was slice-1 scope until
+  execution surfaced the conflict API.md already documents: no browser page sends the
+  bearer header, and the web planner's `/api/meal-plan` calls are gated — so the planner
+  breaks in browsers on other machines over Tailscale (only localhost browsing is exempt).
+  Decision: keep the token unset until slice 2 ships a browser-compatible auth path
+  (tailnet IP allowlist per Selene's pattern, or a session cookie) alongside the inventory
+  write gating; then activate. Native-app wiring (Keychain field + Bearer header) is
+  already in place and needs no change at activation time.
 - **Gate what Siri writes** (with S2): move `/api/inventory/add|remove|update` behind
   `@require_token` and delete them from `KNOWN_UNGATED` (the pinned auth test enforces the
   bookkeeping both directions). Any new route ships gated; S1.2 adds none.
