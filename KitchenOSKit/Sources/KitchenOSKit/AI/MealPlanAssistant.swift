@@ -6,7 +6,12 @@ final class ProposalStore: @unchecked Sendable {
     private let lock = NSLock()
     private var value: PendingMealAddition?
     func set(_ v: PendingMealAddition?) { lock.lock(); value = v; lock.unlock() }
-    func take() -> PendingMealAddition? { lock.lock(); defer { lock.unlock() }; return value }
+    func take() -> PendingMealAddition? {
+        lock.lock(); defer { lock.unlock() }
+        let v = value
+        value = nil
+        return v
+    }
 }
 
 /// On-device conversational assistant that plans over real KitchenOS data via tools.
@@ -74,7 +79,9 @@ public final class MealPlanAssistant {
         try await session.respond(to: message).content
     }
 
-    /// A pending proposal produced during the last reply, if any.
+    /// A pending proposal produced during the last reply, if any. Consumes it: a proposal
+    /// returned here is cleared, so calling again (or on the next turn) returns nil even if
+    /// the user declined — a stale proposal must never re-prompt on a later question.
     public func pendingProposal() -> PendingMealAddition? { proposals.take() }
     public func clearProposal() { proposals.set(nil) }
 

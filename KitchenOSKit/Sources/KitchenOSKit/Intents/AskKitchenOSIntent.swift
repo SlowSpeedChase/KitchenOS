@@ -4,11 +4,14 @@ import AppIntents
 /// meal-planning assistant (RecipeAI + tools) so new Siri can answer over real
 /// KitchenOS data. Any plan change the model proposes is gated behind a native
 /// Siri confirmation before KitchenOS writes it — the assistant never writes on its own.
-public struct AskKitchenOSIntent: AppIntent {
+public struct AskKitchenOSIntent: AppIntent, LongRunningIntent {
     public static var title: LocalizedStringResource = "Ask KitchenOS"
     public static var description = IntentDescription(
         "Ask KitchenOS anything about your recipes and meal plan; it answers using your real data."
     )
+
+    /// One live assistant shared across invocations = Siri follow-ups keep context.
+    @MainActor static let voiceSessions = IdleSessionStore<MealPlanAssistant>()
 
     @Parameter(title: "Request", requestValueDialog: "What can I help you with?")
     public var request: String
@@ -21,10 +24,13 @@ public struct AskKitchenOSIntent: AppIntent {
             return .result(dialog: "The KitchenOS assistant needs Apple Intelligence enabled.")
         }
 
-        let assistant = await MealPlanAssistant(surface: .voice)
+        let assistant = await Self.voiceSessions.current { MealPlanAssistant(surface: .voice) }
         let reply: String
         do {
-            reply = Self.plainSpoken(try await assistant.reply(to: request))
+            let raw = try await performBackgroundTask {
+                try await assistant.reply(to: request)
+            }
+            reply = Self.plainSpoken(raw)
         } catch KitchenOSError.unreachable {
             return .result(dialog: "I can't reach KitchenOS right now.")
         } catch {
@@ -44,6 +50,7 @@ public struct AskKitchenOSIntent: AppIntent {
             )
         } catch {
             // User declined the change — keep the assistant's answer, skip the write.
+            await assistant.clearProposal()
             return .result(dialog: IntentDialog(stringLiteral: reply))
         }
 
