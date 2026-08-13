@@ -1,10 +1,14 @@
 import Foundation
 
 public extension KitchenOSClient {
-    /// The full recipe index. The server returns every recipe when the
-    /// `ingredient` filter is empty.
-    func allRecipes() async throws -> [RecipeSummary] {
-        try await findRecipes(ingredient: "")
+    /// The full recipe index. With `includeIngredients`, each summary carries its
+    /// `ingredient_items` (feeds the Spotlight keyword donation).
+    func allRecipes(includeIngredients: Bool = false) async throws -> [RecipeSummary] {
+        guard includeIngredients else { return try await findRecipes(ingredient: "") }
+        var comps = URLComponents(url: baseURL.appendingPathComponent("/api/recipes"),
+                                  resolvingAgainstBaseURL: false)!
+        comps.queryItems = [URLQueryItem(name: "include_ingredients", value: "1")]
+        return try await getJSON(comps.url!)
     }
 
     /// Search recipes for a structured query, reusing the existing `/api/recipes?ingredient=`

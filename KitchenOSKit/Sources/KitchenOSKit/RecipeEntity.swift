@@ -7,13 +7,17 @@ public struct RecipeEntity: AppEntity, IndexedEntity, Identifiable {
     public var id: String          // recipe name
     public var cuisine: String?
     public var proteinName: String?
+    public var ingredientItems: [String]?
 
-    public init(id: String, cuisine: String? = nil, proteinName: String? = nil) {
+    public init(id: String, cuisine: String? = nil, proteinName: String? = nil,
+                ingredientItems: [String]? = nil) {
         self.id = id; self.cuisine = cuisine; self.proteinName = proteinName
+        self.ingredientItems = ingredientItems
     }
 
     public init(_ summary: RecipeSummary) {
         self.id = summary.name; self.cuisine = summary.cuisine; self.proteinName = summary.protein
+        self.ingredientItems = summary.ingredientItems
     }
 
     public static var typeDisplayRepresentation: TypeDisplayRepresentation { "Recipe" }
@@ -30,7 +34,10 @@ public struct RecipeEntity: AppEntity, IndexedEntity, Identifiable {
         let facets = [cuisine, proteinName].compactMap { $0 }
         if !facets.isEmpty {
             set.contentDescription = facets.joined(separator: " · ")
-            set.keywords = facets
+        }
+        let keywords = facets + (ingredientItems ?? [])
+        if !keywords.isEmpty {
+            set.keywords = keywords
         }
         return set
     }
