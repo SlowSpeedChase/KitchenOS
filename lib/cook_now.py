@@ -357,8 +357,7 @@ def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
             ),
         })
 
-    # Four factors, multiplied: can you make it, is it a meal, will it feed you,
-    # and how long until it's on the table. Protein and time sit inside the
+    # Seven factors, multiplied — see the docstring. Protein and time sit inside the
     # score rather than acting as tiebreaks because coverage almost never ties,
     # so a tiebreak would never actually fire — which is how a 10 g muffin sat
     # second on a real pantry. `have` remains the final tiebreak so the order is
