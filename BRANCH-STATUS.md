@@ -33,14 +33,14 @@ Demote all-staples recipes in Cook Now: recipe_coverage reports a staple_count (
 - [x] LaunchAgent restarted if lib/, templates/, or prompts/ changed (not needed — lib was modified but API server not in use for testing)
 
 ### Testing
-- [ ] Unit tests pass
-- [ ] Integration tests pass (if applicable)
+- [x] Unit tests pass
+- [x] Integration tests pass (if applicable)
 - [ ] Manual testing completed
 - [ ] Edge cases verified
 - [ ] Verified with superpowers:verification-before-completion
 
 ### Docs
-- [ ] Doc obligations met per CLAUDE.md table (ARCHITECTURE / API / OPERATIONS / invariants)
+- [x] Doc obligations met per CLAUDE.md table (ARCHITECTURE / API / OPERATIONS / invariants)
 - [ ] README updated (if interface changed)
 - [ ] docs/plans/INDEX.md updated
 - [ ] Code comments where needed
