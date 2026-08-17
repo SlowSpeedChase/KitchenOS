@@ -294,7 +294,7 @@ def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
 
         # Shared with use_it_up.suggest, which ranks each at-risk item's recipes
         # by the same coverage — one calculation, not two that can drift.
-        have, total, missing, at_risk = recipe_coverage(
+        have, total, missing, at_risk, staple_count = recipe_coverage(
             ingredients, inv_phrases, staple_sets, at_risk_sets)
 
         coverage = have / total

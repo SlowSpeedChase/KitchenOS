@@ -248,13 +248,17 @@ def _matches(item: Phrase, ingredient_phrases: list[Phrase]) -> bool:
 def recipe_coverage(ingredients: list[str], inv_phrases: list[Phrase],
                     staple_sets: list[Phrase],
                     at_risk_sets: Optional[list[Phrase]] = None
-                    ) -> tuple[int, int, list[str], bool]:
+                    ) -> tuple[int, int, list[str], bool, int]:
     """How much of a recipe you already have.
 
-    Returns ``(have, total, missing, uses_at_risk)``. Staples count as
-    always-on-hand: they raise coverage and never appear in ``missing``.
-    Matching is presence-only, not quantity-aware. ``uses_at_risk`` is False
-    whenever ``at_risk_sets`` is omitted.
+    Returns ``(have, total, missing, uses_at_risk, staple_count)``. Staples
+    count as always-on-hand: they raise coverage and never appear in
+    ``missing``. ``staple_count`` is how many ingredients the staple rule
+    credited — whether or not they also matched an inventory row (staples are
+    real inventory rows now, so most do both). ``cook_now`` demotes a recipe
+    whose entire list is staples; ``suggest`` discards the count. Matching is
+    presence-only, not quantity-aware. ``uses_at_risk`` is False whenever
+    ``at_risk_sets`` is omitted.
 
     The single authority for this calculation. ``cook_now.generate`` ranks the
     whole library by it and ``suggest`` ranks each at-risk item's recipes by it —
@@ -266,19 +270,23 @@ def recipe_coverage(ingredients: list[str], inv_phrases: list[Phrase],
 
     One pass on purpose: it runs over the whole library (252 recipes x ~10
     ingredients) on a page with a 135 ms budget, and ``_ingredient_phrase`` is
-    the expensive part — so at-risk is detected here rather than in a second
-    loop that would parse every ingredient twice.
+    the expensive part — so at-risk and the staple count are detected here
+    rather than in a second loop that would parse every ingredient twice.
     """
     missing: list[str] = []
+    staple_count = 0
     uses_at_risk = False
     for ing in ingredients:
         phrase = _ingredient_phrase(ing)
-        if not (_is_staple(phrase, staple_sets) or _matches(phrase, inv_phrases)):
+        is_staple = _is_staple(phrase, staple_sets)
+        if is_staple:
+            staple_count += 1
+        if not (is_staple or _matches(phrase, inv_phrases)):
             missing.append(ing)
         if at_risk_sets and not uses_at_risk and _matches(phrase, at_risk_sets):
             uses_at_risk = True
     total = len(ingredients)
-    return total - len(missing), total, missing, uses_at_risk
+    return total - len(missing), total, missing, uses_at_risk, staple_count
 
 
 def suggest(items: list, recipe_index: list[dict], today: Optional[date] = None,
@@ -331,7 +339,7 @@ def suggest(items: list, recipe_index: list[dict], today: Optional[date] = None,
         if not uses:
             continue
 
-        have, total, missing, _ = recipe_coverage(ingredients, inv_phrases, staple_sets)
+        have, total, missing, _, _ = recipe_coverage(ingredients, inv_phrases, staple_sets)
         matched[recipe["name"]] = ({
             "recipe": recipe["name"],
             "display_name": recipe.get("display_name") or recipe["name"],
