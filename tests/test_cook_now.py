@@ -1,6 +1,7 @@
 """Tests for the Cook-Now coverage suggester."""
 
 import re
+import pytest
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -189,3 +190,58 @@ class TestTemplateGroupsMatchTaxonomy:
     def test_desserts_is_a_real_group(self):
         """Guards DEFAULT_ON's `!== "Desserts"` filter from becoming a no-op."""
         assert "Desserts" in cook_now.DISH_TYPE_GROUPS
+
+
+class TestAllStaplesDemotion:
+    """A recipe made entirely of staples must sink, not squat.
+
+    Plain Rice (rice + salt + olive oil, all pantry staples) is perpetually
+    at 100% coverage because staples never age out — before this factor it
+    outranked every partially-covered real dinner, forever.
+    """
+
+    def test_all_staples_flag_reported(self):
+        result = cook_now.generate([_item("Rice")], RECIPES, today=TODAY)
+        rice = next(r for r in result["recipes"] if r["recipe"] == "Plain Rice")
+        chicken = next(r for r in result["recipes"] if r["recipe"] == "Chicken Dinner")
+        assert rice["all_staples"] is True
+        assert chicken["all_staples"] is False
+
+    def test_every_entry_carries_the_flag(self):
+        result = cook_now.generate([_item("Chicken")], RECIPES, today=TODAY)
+        assert result["recipes"], "fixture produced no entries"
+        assert all(isinstance(r["all_staples"], bool) for r in result["recipes"])
+
+    def test_sinks_below_a_partially_covered_real_main(self):
+        # Only chicken on hand: Chicken Dinner is 2/3 covered (rice is a
+        # staple, broccoli missing) — a real dinner you're one item short of.
+        # Plain Rice is 100% covered but every bit of it is the staple
+        # assumption. The near-miss dinner must outrank the squatter.
+        items = [_item("Chicken")]
+        result = cook_now.generate(items, RECIPES, today=TODAY)
+        names = [r["recipe"] for r in result["recipes"]]
+        assert names.index("Chicken Dinner") < names.index("Plain Rice")
+
+    def test_one_real_ingredient_escapes_demotion(self):
+        # Same coverage (100%), same default tier/nutrition/speed/yield —
+        # the only differing factor is the demotion, so the score ratio IS
+        # the weight. Pins that a single real ingredient escapes entirely.
+        recipes = RECIPES + [
+            {"name": "Garlic Butter Chicken",
+             "ingredient_items": ["chicken", "butter", "salt"]},
+        ]
+        items = [_item("Chicken"), _item("Rice")]
+        result = cook_now.generate(items, recipes, today=TODAY)
+        gbc = next(r for r in result["recipes"]
+                   if r["recipe"] == "Garlic Butter Chicken")
+        rice = next(r for r in result["recipes"] if r["recipe"] == "Plain Rice")
+        assert gbc["all_staples"] is False
+        assert rice["all_staples"] is True
+        assert gbc["score"] > rice["score"]
+        assert rice["score"] == pytest.approx(
+            gbc["score"] * cook_now._ALL_STAPLES_WEIGHT, abs=1e-3)
+
+    def test_demoted_harder_than_banked(self):
+        # A banked demotion expires (the freezer empties); all-staples never
+        # does. Pinned so future tuning keeps that ordering argument.
+        assert cook_now._ALL_STAPLES_WEIGHT < cook_now._BANKED_WEIGHT
