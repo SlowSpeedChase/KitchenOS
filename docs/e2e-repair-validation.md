@@ -7,10 +7,9 @@ first `E   ` assertion line for each), map it with the triage table in §5, and 
 not retry more than once, do not edit files, do not `git` anything but the read-only
 commands shown.
 
-Working directory for every command: the worktree holding branch `e2e-repair`. From the
-main checkout that is `/Users/chaseeasterling/Dev/KitchenOS/.worktrees/e2e-repair`
-(if that worktree is gone, use the checkout where `git branch --show-current` prints
-`e2e-repair`, or `main` after merge).
+Working directory for every command: `/Users/chaseeasterling/Dev/KitchenOS` on branch
+`main` (the repairs merged as PR #73, commit `406ea02`). If you are handed a different
+worktree/branch, use that path instead and report which.
 
 Python is always the main checkout's venv: `/Users/chaseeasterling/Dev/KitchenOS/.venv/bin/python`
 (a worktree has no `.venv` of its own). `PY` below means that path.
@@ -23,13 +22,14 @@ copies of the data; `com.kitchenos.api` on :5001 is irrelevant to every command 
 ## 1. Pre-flight
 
 ```bash
-cd /Users/chaseeasterling/Dev/KitchenOS/.worktrees/e2e-repair
+cd /Users/chaseeasterling/Dev/KitchenOS
 git branch --show-current
 git status --short
 ```
-Expected: `e2e-repair` on its own line; `git status --short` prints **nothing** (clean tree).
-If either differs → STOP, report the actual branch/status. (Another agent session moves
-branches in the *main* checkout; this worktree should not be affected, but check.)
+Expected: `main` on its own line; `git status --short` prints nothing, or only
+`M config/item_aliases.json` (a local edit another session keeps uncommitted — ignore it).
+Any other branch or modified file → STOP, report the actual branch/status (another agent
+session moves branches in this checkout).
 
 Confirm the data the harness copies exists (it lives only in the main checkout):
 ```bash
@@ -45,12 +45,12 @@ is an environment problem, not a repair failure.
 PY=/Users/chaseeasterling/Dev/KitchenOS/.venv/bin/python
 $PY -m pytest tests/ -q --ignore=tests/e2e -p no:cacheprovider 2>&1 | tail -2
 ```
-Expected summary line contains: `4064 passed, 1 skipped`
-(4065 collected: the 4058 of the brief plus **seven new tests** —
+Expected summary line contains: `4073 passed`
+(main after #72 + #73; this branch added seven tests —
 `tests/test_cook_now.py::TestGenerate::test_per_group_limit_keeps_every_group_reachable`
-and the six in `tests/test_daily_self_clean.py`;
-the 1 skipped is `tests/test_shopping_list_generator.py:49: No meal plan for 2026-W04`, a
-data-dependent skip that predates this branch.)
+and the six in `tests/test_daily_self_clean.py`. `1 skipped` may also appear:
+`tests/test_shopping_list_generator.py:49: No meal plan for 2026-W04` is data-dependent
+and predates this work — PASS-WITH-NOTE, not a failure.)
 
 ## 3. Each repaired test ALONE (order-dependence was one of the defects)
 
@@ -102,7 +102,7 @@ If any `FAILED` line appears → STOP, report every `FAILED …` line verbatim.
 | `test_weekly_loop.py::test_cook_verdict_reaches_the_recipe_note` — `did not write observed yield` | Repair #6 (PATCH `cooked_at` before asserting) | "R6: cooked row did not sync `observed_servings`" (product `cook_history`) |
 | same — `cook_count: 1` missing | another test cooked Creamy Garlic Tofu | "R6: median/count shifted — grep tests/e2e for that recipe" |
 | `tests/test_daily_self_clean.py::…` | Repair #8 (**product**: `generate_meal_plan.refresh_inventory_views()` runs before the "file exists" return; `check_expiry_pruning` counts rows past the 3-day grace) | "R8: <E line>" |
-| Unit summary ≠ `4064 passed, 1 skipped` | collection changed | report the line; if `4063 passed, 2 skipped` name the extra `SKIPPED` test (`-rs`) |
+| Unit summary without `4073 passed` | collection changed | report the line; name any `SKIPPED`/`FAILED` test (`-rs`) |
 | `FileNotFoundError … vault/KitchenOS` | environment (harness data), not a repair | "ENV: data_root did not resolve to the main checkout" |
 | Server boot timeout / `server exited with code` | environment (port/venv) | "ENV: <last 20 lines of the error>" |
 
