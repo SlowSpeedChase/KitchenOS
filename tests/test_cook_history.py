@@ -279,3 +279,25 @@ def test_a_verdict_counts_as_having_cooked_it(tmp_db):
     assert stats["cook_count"] == 1
     assert stats["verdict_count"] == 1
     assert stats["make_again_count"] == 1
+
+
+class TestCookedRecipeNames:
+    def test_planned_but_never_cooked_is_absent(self, recipes):
+        """A cooks row is created at PLANNING time. Counting rows measured
+        planning, not cooking: the live ledger held 16 rows against 2 real
+        cooks. This is the regression that guards never_cooked."""
+        _write_recipe(recipes, "Lamb Ragu")
+        _planned("Lamb Ragu", 4)
+        assert cook_history.cooked_recipe_names() == set()
+
+    def test_cooked_at_makes_it_cooked(self, recipes):
+        _write_recipe(recipes, "Lamb Ragu")
+        _cook("Lamb Ragu", 4)
+        assert cook_history.cooked_recipe_names() == {"Lamb Ragu"}
+
+    def test_a_verdict_alone_makes_it_cooked(self, recipes):
+        """Judging a dish asserts you made it, even with no cooked_at stamp."""
+        _write_recipe(recipes, "Shakshuka")
+        row = _planned("Shakshuka", 2)
+        sl.update_cook(row["id"], make_again=True)
+        assert cook_history.cooked_recipe_names() == {"Shakshuka"}
