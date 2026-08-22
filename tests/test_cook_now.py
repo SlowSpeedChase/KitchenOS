@@ -46,6 +46,33 @@ class TestGenerate:
         result = cook_now.generate(items, RECIPES, today=TODAY, limit=2)
         assert len(result["recipes"]) <= 2
 
+    def test_per_group_limit_keeps_every_group_reachable(self):
+        """A low-tier group must not be squeezed out by a higher-tier one.
+
+        Desserts carry a 0.35 tier weight, so with a single global cap they sit
+        below every main and a chip-sized payload never contains one — the
+        real-pantry case: best dessert ranked 264th. per_group caps within the
+        group, and the list stays one ranking (mains first, desserts after).
+        """
+        recipes = [
+            {"name": f"Main {i}", "dish_type": "main",
+             "ingredient_items": ["rice"]} for i in range(3)
+        ] + [
+            {"name": f"Sweet {i}", "dish_type": "dessert",
+             "ingredient_items": ["rice"]} for i in range(3)
+        ]
+        items = [_item("Rice")]
+        flat = cook_now.generate(items, recipes, today=TODAY, limit=2)
+        assert {r["group"] for r in flat["recipes"]} == {"Mains"}, (
+            "global cap: the tier weight alone decides, desserts never appear")
+
+        grouped = cook_now.generate(items, recipes, today=TODAY, limit=2,
+                                    per_group=True)
+        got = grouped["recipes"]
+        assert [r["group"] for r in got] == ["Mains", "Mains", "Desserts", "Desserts"]
+        assert [r["score"] for r in got] == sorted(
+            (r["score"] for r in got), reverse=True), "still one ranking"
+
     def test_staples_count_as_on_hand_never_missing(self):
         # Plain Rice = rice (have) + salt + olive oil (both staples). With rice
         # on hand it is fully covered and nothing is listed missing.

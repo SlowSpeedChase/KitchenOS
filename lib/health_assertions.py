@@ -30,6 +30,7 @@ import os
 import shutil
 from datetime import date, datetime
 from pathlib import Path
+from typing import Optional
 
 OK = "ok"
 FAILING = "failing"
@@ -240,31 +241,44 @@ def check_inventory_consumption() -> dict:
     )
 
 
-def check_expiry_pruning() -> dict:
-    """Is auto-age-out running? The project's own principle depends on it."""
+def check_expiry_pruning(today: Optional[date] = None) -> dict:
+    """Is auto-age-out running? The project's own principle depends on it.
+
+    Measures what ``inventory.prune_expired`` actually promises: nothing more
+    than ``PRUNE_GRACE_DAYS`` past its date. A row that expired yesterday is
+    *supposed* to still be here (the grace exists so a one-day-late ingest does
+    not erase real food), so counting every ``expires < today`` row made this
+    check FAILING on a kitchen whose prune was working — and unable to
+    distinguish that from a prune that never ran.
+    """
+    from datetime import timedelta
+    from lib.inventory import PRUNE_GRACE_DAYS
+    today = today or date.today()
+    cutoff = (today - timedelta(days=PRUNE_GRACE_DAYS)).isoformat()
     try:
         from lib import inventory_db
         conn = inventory_db.read_conn()
-        expired = conn.execute(
+        overdue = conn.execute(
             "SELECT COUNT(*) FROM inventory "
             "WHERE expires IS NOT NULL AND expires < ?",
-            (date.today().isoformat(),),
+            (cutoff,),
         ).fetchone()[0]
     except Exception as e:
         return _check("expiry_pruning", "Expired stock is pruned",
                       UNKNOWN, f"probe failed: {e}",
                       "Unknown whether inventory self-cleans.")
 
-    if expired == 0:
+    if overdue == 0:
         return _check("expiry_pruning", "Expired stock is pruned", OK,
-                      "no expired rows present", "", "")
+                      f"no rows more than {PRUNE_GRACE_DAYS} days past expiry", "", "")
     return _check(
         "expiry_pruning", "Expired stock is pruned", FAILING,
-        f"{expired} expired row(s) still in inventory",
+        f"{overdue} row(s) more than {PRUNE_GRACE_DAYS} days past expiry",
         "Expired food is credited against shopping lists, so the list omits "
         "things you need to buy.",
-        "prune_expired() is called from generate_meal_plan.py after its "
-        "'file already exists' early return, so it rarely runs. Move it.",
+        "The daily self-clean is generate_meal_plan.refresh_inventory_views(), "
+        "run by com.kitchenos.mealplan at 06:00 — check "
+        "logs/meal_plan_generator.log for 'Aged out' / 'self-clean failed'.",
     )
 
 

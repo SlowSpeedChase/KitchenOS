@@ -741,6 +741,13 @@ Auto-generates weekly meal plan templates 2 weeks in advance. Runs
 agent does not trigger an immediate run, it only fires at the next 6:00am
 `StartCalendarInterval`.
 
+It is also the **daily inventory self-clean**: every run (not only the one
+that creates a new plan file) calls `refresh_inventory_views()` — `prune_expired()`
+(drops perishables more than `PRUNE_GRACE_DAYS` = 3 days past their date) then
+rewrites `Use It Up.md` and `Cook Now.md`. `/system-health → expiry_pruning`
+measures the same threshold. Look for `Aged out N expired item(s)` or
+`inventory self-clean failed` in `logs/meal_plan_generator.log`.
+
 ```bash
 cp ops/com.kitchenos.mealplan.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.kitchenos.mealplan.plist

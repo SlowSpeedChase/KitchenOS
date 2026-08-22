@@ -74,10 +74,24 @@ def test_every_recipe_carries_a_group(client, tmp_db, tmp_vault):
         assert recipe["group"] in cook_now.DISH_TYPE_GROUPS
 
 
-def test_limit_is_respected(client, tmp_db, tmp_vault):
-    _setup_vault(tmp_vault)
-    resp = client.get("/api/cook-now?limit=2")
-    assert len(resp.get_json()["recipes"]) <= 2
+def test_limit_caps_each_chip_group(client, tmp_db, tmp_vault):
+    """`limit` is per chip group, so every chip keeps depth.
+
+    Used to assert `len(recipes) <= limit` over the whole payload. That cap,
+    taken after the meal-tier weighting, is exactly how the Desserts, Snacks
+    and Drinks chips went dead on the real pantry: nothing in those groups
+    ever ranked inside a global top-60. What the old assertion protected —
+    the limit is honoured, not ignored — is kept: no group exceeds it.
+    """
+    _setup_vault(tmp_vault)   # one main, one breakfast, one side
+    resp = client.get("/api/cook-now?limit=1")
+    recipes = resp.get_json()["recipes"]
+    per_group = {}
+    for r in recipes:
+        per_group[r["group"]] = per_group.get(r["group"], 0) + 1
+    assert per_group and all(n <= 1 for n in per_group.values()), per_group
+    # ...and a group with a cookable recipe is present, not squeezed out.
+    assert set(per_group) == {"Mains", "Breakfast", "Sides"}, per_group
 
 
 def test_limit_zero_returns_empty_list(client, tmp_db, tmp_vault):

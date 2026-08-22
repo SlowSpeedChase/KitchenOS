@@ -2843,6 +2843,11 @@ def api_cook_now():
     Returns {recipes: [...]} — see lib/cook_now.generate. Each entry carries a
     `group` (the chip it belongs to); the page filters client-side from this one
     payload, so there is no per-chip round trip and no server-side filtering.
+
+    `limit` caps each chip *group*, not the whole list. The page's chips are a
+    filter over this payload, so every group with cookable recipes must be in
+    it; a global cap taken after the meal-tier weighting left Desserts, Snacks
+    and Drinks with nothing behind their chips (see cook_now.generate).
     """
     from lib import cook_now
 
@@ -2851,7 +2856,7 @@ def api_cook_now():
         limit = 30  # absent or unparseable
     elif limit < 0:
         limit = 0  # clamp instead of slicing from the end
-    return jsonify(cook_now.generate(limit=limit))
+    return jsonify(cook_now.generate(limit=limit, per_group=True))
 
 
 @app.route('/api/cook', methods=['POST'])
