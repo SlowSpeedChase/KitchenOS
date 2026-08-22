@@ -172,18 +172,19 @@ def at_risk(items, today: date) -> list[dict]:
     The window itself is KitchenOS's (-2/+3 days, staples excluded); this only
     reshapes it. Items are named, never counted: "3 items expiring" is not
     something anyone can act on.
-    """
-    from lib.expiry import expiry_status
 
-    out = []
-    for name, item in _at_risk_items(items, today):
-        expires = getattr(item, "expires", None)
-        out.append({
-            "item": name,
-            "status": expiry_status(expires, today),
-            "expires": expires,
-        })
-    return out
+    ``at_risk_items`` yields ``(status, item)`` — status first. Unpacking that
+    backwards put the status string in the name field, which is invisible in a
+    monkeypatched test and obvious on a real fridge.
+    """
+    return [
+        {
+            "item": getattr(item, "name", None),
+            "status": status,
+            "expires": getattr(item, "expires", None),
+        }
+        for status, item in _at_risk_items(items, today)
+    ]
 
 
 def look(recipe_index, items, today: date) -> list[dict]:

@@ -144,8 +144,8 @@ class _Item:
 class TestAtRisk:
     def test_expired_and_soon_only_most_urgent_first(self, monkeypatch):
         monkeypatch.setattr(kb, "_at_risk_items", lambda items, today: [
-            ("ground beef", _Item("ground beef", "2026-08-21")),
-            ("cilantro", _Item("cilantro", "2026-08-24")),
+            ("expired", _Item("ground beef", "2026-08-21")),
+            ("soon", _Item("cilantro", "2026-08-24")),
         ])
         result = kb.at_risk(["ignored"], TODAY)
         assert result == [
@@ -156,6 +156,23 @@ class TestAtRisk:
     def test_empty_on_a_clean_fridge(self, monkeypatch):
         monkeypatch.setattr(kb, "_at_risk_items", lambda items, today: [])
         assert kb.at_risk([], TODAY) == []
+
+
+class TestAtRiskAgainstTheRealWindow:
+    """No monkeypatch. The seam's tuple order is exactly what went wrong here,
+    and a fake that encodes the wrong contract cannot catch a wrong contract.
+    """
+
+    def test_names_the_food_not_the_status(self):
+        from lib.inventory import InventoryItem
+
+        items = [
+            InventoryItem(name="ground beef", quantity=1.0, expires="2026-08-21"),
+            InventoryItem(name="cilantro", quantity=1.0, expires="2026-08-24"),
+        ]
+        result = kb.at_risk(items, TODAY)
+        assert [r["item"] for r in result] == ["ground beef", "cilantro"]
+        assert [r["status"] for r in result] == ["expired", "soon"]
 
 
 class TestLook:
