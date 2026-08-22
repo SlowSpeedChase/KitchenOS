@@ -54,6 +54,28 @@ def cooked_recipe_names() -> set[str]:
     return {r["recipe"] for r in rows if _is_cooked(r)}
 
 
+def never_cooked(recipe_index: list[dict], limit: int = 1) -> list[dict]:
+    """Library recipes the ledger has never seen cooked, oldest arrival first.
+
+    The index is passed in, never loaded here: callers that need several
+    library-wide answers must parse the recipe files once and share the result.
+
+    Matching is case-insensitive because the ledger's ``recipe`` string can
+    drift in case from the filename (``_recipe_path`` already tolerates this).
+
+    Known limitation: a recipe cooked in a hand-edited week the ledger never
+    took over has no rows at all and reads as never-cooked. The failure mode is
+    suggesting something you made once, inside a block whose job is suggestion.
+    """
+    cooked = {n.strip().lower() for n in cooked_recipe_names()}
+    fresh = [r for r in recipe_index
+             if (r.get("name") or "").strip().lower() not in cooked]
+    fresh.sort(key=lambda r: (r.get("added") is None,
+                              r.get("added") or "",
+                              r.get("name") or ""))
+    return fresh[:limit]
+
+
 def recipe_stats(recipe: str) -> dict:
     """Ledger aggregates for one recipe, or ``{}`` if it has never been cooked."""
     conn = inventory_db.connect()

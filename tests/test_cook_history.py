@@ -301,3 +301,45 @@ class TestCookedRecipeNames:
         row = _planned("Shakshuka", 2)
         sl.update_cook(row["id"], make_again=True)
         assert cook_history.cooked_recipe_names() == {"Shakshuka"}
+
+
+def _idx(name, added):
+    """A recipe_index entry, trimmed to the keys never_cooked reads."""
+    return {"name": name, "display_name": name, "added": added}
+
+
+class TestNeverCooked:
+    def test_oldest_arrival_first(self, recipes):
+        index = [_idx("New One", "2026-08-01"), _idx("Old One", "2026-04-12")]
+        result = cook_history.never_cooked(index, limit=2)
+        assert [r["name"] for r in result] == ["Old One", "New One"]
+
+    def test_excludes_recipes_actually_cooked(self, recipes):
+        _write_recipe(recipes, "Old One")
+        _cook("Old One", 4)
+        index = [_idx("New One", "2026-08-01"), _idx("Old One", "2026-04-12")]
+        result = cook_history.never_cooked(index, limit=2)
+        assert [r["name"] for r in result] == ["New One"]
+
+    def test_planned_only_still_counts_as_never_cooked(self, recipes):
+        _write_recipe(recipes, "Old One")
+        _planned("Old One", 4)
+        index = [_idx("Old One", "2026-04-12")]
+        assert [r["name"] for r in cook_history.never_cooked(index)] == ["Old One"]
+
+    def test_matching_is_case_insensitive(self, recipes):
+        """_recipe_path tolerates case drift between ledger and filename, so
+        this must too, or a drifted name reappears as a suggestion forever."""
+        _write_recipe(recipes, "Old One")
+        _cook("old one", 4)
+        index = [_idx("Old One", "2026-04-12")]
+        assert cook_history.never_cooked(index) == []
+
+    def test_undated_recipes_sort_last(self, recipes):
+        index = [_idx("Undated", None), _idx("Dated", "2026-04-12")]
+        result = cook_history.never_cooked(index, limit=2)
+        assert [r["name"] for r in result] == ["Dated", "Undated"]
+
+    def test_limit_is_respected(self, recipes):
+        index = [_idx("A", "2026-01-01"), _idx("B", "2026-02-01")]
+        assert len(cook_history.never_cooked(index, limit=1)) == 1
