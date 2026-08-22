@@ -244,30 +244,44 @@ def test_repeated_extend_taps_accumulate(live_server, page, page_errors):
 def test_extending_a_lapsed_row_moves_it_out_of_the_expired_block(
     live_server, page, page_errors
 ):
-    """The rescued row must visibly leave the top, not sit there looking untouched."""
+    """The rescued row must visibly leave the expired block, not sit there looking
+    untouched.
+
+    Position is asserted *relative to this test's own two filler rows*, never as
+    an absolute index. The list is the copied real inventory plus every row the
+    session's tests seeded, so "index 0" held only while the developer's kitchen
+    had nothing expired in it — two real rows inside the prune grace window put
+    the fixture at index 1 and failed the test with nothing wrong.
+    """
     name = "E2E Resort Yogurt"
+    soon, later = "E2E Resort Filler A", "E2E Resort Filler B"
     _seed(live_server, [
         _item(name, expires=(date.today() - timedelta(days=2)).isoformat()),
-        # Two healthy rows to sort below/above, so position is meaningful.
-        _item("E2E Resort Filler A",
-              expires=(date.today() + timedelta(days=1)).isoformat()),
-        _item("E2E Resort Filler B",
-              expires=(date.today() + timedelta(days=90)).isoformat()),
+        # Two healthy rows to sort between: one expiring tomorrow, one in 90 days.
+        _item(soon, expires=(date.today() + timedelta(days=1)).isoformat()),
+        _item(later, expires=(date.today() + timedelta(days=90)).isoformat()),
     ])
 
     _open_review(page, live_server)
     row = _row(page, name)
     assert "expired" in row.locator(".sub").inner_text()
     before = _row_index(page, name)
-    assert before == 0, f"expired row should start at the top, was {before}"
+    # Expired rows rank above every healthy row, so the fixture starts above
+    # both fillers — that is what "at the top" actually protected.
+    assert before < _row_index(page, soon) < _row_index(page, later), (
+        f"expired row should sort above both healthy fillers: "
+        f"{before} vs {_row_index(page, soon)}, {_row_index(page, later)}")
 
     row.locator("button[data-d='7']").click()
     page.wait_for_timeout(1500)
 
-    # today+7 is well past the 'soon' threshold, so it should sort below the
-    # row expiring tomorrow.
+    # today+7 is well past the 'soon' threshold, so it now sorts below the row
+    # expiring tomorrow — and still above the one expiring in 90 days, proving
+    # it was re-placed by date rather than merely dropped to the bottom.
     after = _row_index(page, name)
-    assert after > before, f"row did not move (still at index {after})"
+    assert _row_index(page, soon) < after < _row_index(page, later), (
+        f"rescued row did not re-sort between the fillers: {after} vs "
+        f"{_row_index(page, soon)}, {_row_index(page, later)}")
     assert "expired" not in row.locator(".sub").inner_text()
     assert page_errors == [], page_errors
 
