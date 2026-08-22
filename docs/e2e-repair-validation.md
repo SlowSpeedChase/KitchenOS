@@ -45,9 +45,10 @@ is an environment problem, not a repair failure.
 PY=/Users/chaseeasterling/Dev/KitchenOS/.venv/bin/python
 $PY -m pytest tests/ -q --ignore=tests/e2e -p no:cacheprovider 2>&1 | tail -2
 ```
-Expected summary line contains: `4058 passed, 1 skipped`
-(4059 collected: the 4058 of the brief plus **one new test**,
-`tests/test_cook_now.py::TestGenerate::test_per_group_limit_keeps_every_group_reachable`;
+Expected summary line contains: `4064 passed, 1 skipped`
+(4065 collected: the 4058 of the brief plus **seven new tests** —
+`tests/test_cook_now.py::TestGenerate::test_per_group_limit_keeps_every_group_reachable`
+and the six in `tests/test_daily_self_clean.py`;
 the 1 skipped is `tests/test_shopping_list_generator.py:49: No meal plan for 2026-W04`, a
 data-dependent skip that predates this branch.)
 
@@ -100,7 +101,8 @@ If any `FAILED` line appears → STOP, report every `FAILED …` line verbatim.
 | same — fails in the suite too | product: legacy-card → `/api/cook` → import-legacy → `/api/cooks` chain | "R5-product: ledger conversion broken" |
 | `test_weekly_loop.py::test_cook_verdict_reaches_the_recipe_note` — `did not write observed yield` | Repair #6 (PATCH `cooked_at` before asserting) | "R6: cooked row did not sync `observed_servings`" (product `cook_history`) |
 | same — `cook_count: 1` missing | another test cooked Creamy Garlic Tofu | "R6: median/count shifted — grep tests/e2e for that recipe" |
-| Unit summary ≠ `4058 passed, 1 skipped` | collection changed | report the line; if `4057 passed, 2 skipped` name the extra `SKIPPED` test (`-rs`) |
+| `tests/test_daily_self_clean.py::…` | Repair #8 (**product**: `generate_meal_plan.refresh_inventory_views()` runs before the "file exists" return; `check_expiry_pruning` counts rows past the 3-day grace) | "R8: <E line>" |
+| Unit summary ≠ `4064 passed, 1 skipped` | collection changed | report the line; if `4063 passed, 2 skipped` name the extra `SKIPPED` test (`-rs`) |
 | `FileNotFoundError … vault/KitchenOS` | environment (harness data), not a repair | "ENV: data_root did not resolve to the main checkout" |
 | Server boot timeout / `server exited with code` | environment (port/venv) | "ENV: <last 20 lines of the error>" |
 

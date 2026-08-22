@@ -139,6 +139,39 @@ def ensure_meal_plans_folder():
         print(f"Created folder: {MEAL_PLANS_PATH}")
 
 
+def refresh_inventory_views() -> dict:
+    """The daily self-clean: age out long-expired perishables, then re-render
+    the inventory-derived notes whose content drifts with the calendar.
+
+    Lives in this script because `com.kitchenos.mealplan` is the one agent that
+    runs every morning — but it must run on **every** run, not only on the one
+    day a week the plan file does not exist yet. It used to sit after the
+    "File already exists" early return, so "daily" was true one day in seven
+    and /system-health reported expired stock still being credited against
+    shopping lists. Never raises: a view failure must not block the plan.
+    """
+    from lib.inventory import prune_expired
+    from lib import use_it_up, cook_now
+    out = {"pruned": 0, "views": []}
+    try:
+        out["pruned"] = prune_expired()
+        if out["pruned"]:
+            print(f"Aged out {out['pruned']} expired item(s) from inventory")
+    except Exception as e:
+        print(f"Warning: inventory self-clean failed: {e}", file=sys.stderr)
+    # Each view on its own: one note failing to render must not skip the other.
+    for label, write in (("Use It Up.md", use_it_up.write_note),
+                         ("Cook Now.md", cook_now.write_note)):
+        try:
+            write()
+            out["views"].append(label)
+        except Exception as e:
+            print(f"Warning: {label} refresh failed: {e}", file=sys.stderr)
+    if out["views"]:
+        print("Updated " + ", ".join(out["views"]))
+    return out
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate weekly meal plan templates")
     parser.add_argument('--week', type=str, help='Week to generate (e.g., 2026-W03)')
@@ -161,6 +194,11 @@ def main():
 
     print(f"Target: {year}-W{week:02d}")
     print(f"File: {filepath}")
+
+    # Daily self-clean first — independent of whether this week's plan already
+    # exists, which it does six mornings out of seven. A dry run writes nothing.
+    if not args.dry_run:
+        refresh_inventory_views()
 
     # Check if file exists
     if filepath.exists() and not args.force:
@@ -196,22 +234,6 @@ def main():
     index_path = regenerate_index()
     if index_path:
         print(f"Updated index: {index_path.name}")
-
-    # Daily: self-clean inventory (age out long-expired perishables) and refresh
-    # the Use-It-Up waste suggestions, since expiry status drifts day to day.
-    try:
-        from lib.inventory import prune_expired
-        from lib import use_it_up
-        pruned = prune_expired()
-        if pruned:
-            print(f"Aged out {pruned} expired item(s) from inventory")
-        use_it_up.write_note()
-        print("Updated Use It Up.md")
-        from lib import cook_now
-        cook_now.write_note()
-        print("Updated Cook Now.md")
-    except Exception as e:
-        print(f"Warning: use-it-up refresh failed: {e}", file=sys.stderr)
 
     # Cleanup old recipe backups (runs daily with meal plan generation)
     if RECIPES_HISTORY_PATH.exists():
