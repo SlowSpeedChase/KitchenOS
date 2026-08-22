@@ -217,3 +217,96 @@ def look(recipe_index, items, today: date) -> list[dict]:
             })
             break
     return out
+
+
+# Loader seams — one per data source, so `build` can be tested without a vault,
+# a DB or a sidecar, and so every real call site lives in exactly one place.
+
+def _load_recipe_index():
+    from lib import paths
+    from lib.recipe_index import get_recipe_index
+    return get_recipe_index(paths.recipes_dir(), include_ingredients=True)
+
+
+def _load_inventory():
+    from lib.inventory import read_inventory
+    return read_inventory()
+
+
+def _load_cooks(week: str):
+    from lib import serving_ledger
+    return serving_ledger.cooks_for_week(week)
+
+
+def _load_sidecar(week: str):
+    """``(payload, is_fresh)``. NEVER regenerates — see the module docstring."""
+    from lib import task_extractor
+    cached = task_extractor.load_cached_tasks(week)
+    if cached is None:
+        return None, False
+    return cached, task_extractor._is_cache_fresh(week, cached)
+
+
+def _load_verdict(today: date):
+    from lib import kitchen_today
+    return kitchen_today.verdict_prompt(today)
+
+
+def _safe(label: str, fallback, degraded: list[str], build):
+    """Run one component, or record why it is missing.
+
+    A block that quietly drops a line is indistinguishable from a day with
+    nothing to say, so every failure names itself in ``degraded`` rather than
+    vanishing.
+    """
+    try:
+        return build()
+    except Exception:
+        if label not in degraded:
+            degraded.append(label)
+        return fallback
+
+
+def _apply_display_names(plate_items: list[dict], recipe_index: list[dict]) -> None:
+    """Rewrite plate recipe names to their `short_title` override, in place."""
+    display = {r.get("name"): r.get("display_name") for r in recipe_index}
+    for item in plate_items:
+        item["recipe"] = display.get(item["recipe"]) or item["recipe"]
+
+
+def build(today: Optional[date] = None) -> dict:
+    """Assemble the whole kitchen block for one day."""
+    from lib import plan_week
+
+    today = today or date.today()
+    week = plan_week.current_week(today)
+    degraded: list[str] = []
+
+    recipe_index = _safe("recipe-index", [], degraded, _load_recipe_index)
+    inventory = _safe("inventory", [], degraded, _load_inventory)
+    cooks = _safe("ledger", [], degraded, lambda: _load_cooks(week))
+    cached, fresh = _safe("tasks-sidecar", (None, False), degraded,
+                          lambda: _load_sidecar(week))
+    if cached is not None and not fresh:
+        degraded.append("tasks-sidecar-stale")
+    verdict = _safe("verdict", None, degraded, lambda: _load_verdict(today))
+
+    plate_items = _safe("plate", [], degraded, lambda: plate(today, cooks))
+    # The ledger stores the note basename; the block renders what a surface
+    # should show. Resolved here because this is where the index is already in
+    # hand — `plate` itself stays index-free and therefore trivially testable.
+    _apply_display_names(plate_items, recipe_index)
+
+    return {
+        "date": today.isoformat(),
+        "week": week,
+        "plate": plate_items,
+        "next": _safe("next", None, degraded,
+                      lambda: next_action(today, week, cached, fresh,
+                                          plate_items, verdict)),
+        "at_risk": _safe("at-risk", [], degraded,
+                         lambda: at_risk(inventory, today)),
+        "look": _safe("look", [], degraded,
+                      lambda: look(recipe_index, inventory, today)),
+        "degraded": degraded,
+    }

@@ -215,3 +215,72 @@ class TestLook:
             {"display_name": "Shakshuka"}])
         monkeypatch.setattr(kb, "_in_season", lambda idx, today: [])
         assert [r["reason"] for r in kb.look([], [], TODAY)] == ["never-cooked"]
+
+
+class TestBuild:
+    def test_parses_the_recipe_library_exactly_once(self, monkeypatch):
+        """cook_now and use_it_up each re-read every recipe file when called
+        bare. Building four parts of one block that way is the full-vault scan
+        that made the old canvas homepage unusable on a phone."""
+        calls = []
+        monkeypatch.setattr(kb, "_load_recipe_index", lambda: calls.append(1) or [])
+        monkeypatch.setattr(kb, "_load_inventory", lambda: [])
+        monkeypatch.setattr(kb, "_load_cooks", lambda week: [])
+        monkeypatch.setattr(kb, "_load_sidecar", lambda week: (None, False))
+        monkeypatch.setattr(kb, "_load_verdict", lambda today: None)
+        kb.build(TODAY)
+        assert calls == [1]
+
+    def test_a_failing_component_degrades_and_names_itself(self, monkeypatch):
+        def boom(*a, **kw):
+            raise RuntimeError("inventory is cold")
+        monkeypatch.setattr(kb, "_load_recipe_index", lambda: [])
+        monkeypatch.setattr(kb, "_load_inventory", boom)
+        monkeypatch.setattr(kb, "_load_cooks", lambda week: [])
+        monkeypatch.setattr(kb, "_load_sidecar", lambda week: (None, False))
+        monkeypatch.setattr(kb, "_load_verdict", lambda today: None)
+
+        result = kb.build(TODAY)
+        assert result["at_risk"] == []
+        assert "inventory" in result["degraded"]
+        assert result["week"] == "2026-W34"
+
+    def test_stale_sidecar_is_named_in_degraded(self, monkeypatch):
+        monkeypatch.setattr(kb, "_load_recipe_index", lambda: [])
+        monkeypatch.setattr(kb, "_load_inventory", lambda: [])
+        monkeypatch.setattr(kb, "_load_cooks", lambda week: [])
+        monkeypatch.setattr(kb, "_load_sidecar", lambda week: ({"tasks": []}, False))
+        monkeypatch.setattr(kb, "_load_verdict", lambda today: None)
+        assert "tasks-sidecar-stale" in kb.build(TODAY)["degraded"]
+
+    def test_fresh_sidecar_is_not_named(self, monkeypatch):
+        monkeypatch.setattr(kb, "_load_recipe_index", lambda: [])
+        monkeypatch.setattr(kb, "_load_inventory", lambda: [])
+        monkeypatch.setattr(kb, "_load_cooks", lambda week: [])
+        monkeypatch.setattr(kb, "_load_sidecar", lambda week: ({"tasks": []}, True))
+        monkeypatch.setattr(kb, "_load_verdict", lambda today: None)
+        assert "tasks-sidecar-stale" not in kb.build(TODAY)["degraded"]
+
+    def test_plate_renders_the_short_title_override(self, monkeypatch):
+        """The ledger stores the note basename; surfaces show display_name."""
+        monkeypatch.setattr(kb, "_load_recipe_index", lambda: [
+            {"name": "Chicken Tinga With Charred Onion",
+             "display_name": "Chicken Tinga"}])
+        monkeypatch.setattr(kb, "_load_inventory", lambda: [])
+        monkeypatch.setattr(kb, "_load_cooks", lambda week: [
+            _cook("Chicken Tinga With Charred Onion", "2026-08-22",
+                  [_slot("2026-08-22", "dinner")])])
+        monkeypatch.setattr(kb, "_load_sidecar", lambda week: (None, False))
+        monkeypatch.setattr(kb, "_load_verdict", lambda today: None)
+        assert kb.build(TODAY)["plate"][0]["recipe"] == "Chicken Tinga"
+
+    def test_payload_carries_every_documented_key(self, monkeypatch):
+        monkeypatch.setattr(kb, "_load_recipe_index", lambda: [])
+        monkeypatch.setattr(kb, "_load_inventory", lambda: [])
+        monkeypatch.setattr(kb, "_load_cooks", lambda week: [])
+        monkeypatch.setattr(kb, "_load_sidecar", lambda week: (None, False))
+        monkeypatch.setattr(kb, "_load_verdict", lambda today: None)
+        result = kb.build(TODAY)
+        assert set(result) == {"date", "week", "plate", "next",
+                               "at_risk", "look", "degraded"}
+        assert result["date"] == "2026-08-22"
