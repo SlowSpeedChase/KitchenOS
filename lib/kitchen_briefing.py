@@ -64,3 +64,45 @@ def plate(today: date, cooks: list[dict]) -> list[dict]:
         seen.add(key)
         out.append(row)
     return out
+
+
+def next_action(today: date, week: str, cached: Optional[dict], fresh: bool,
+                plate_items: list[dict], verdict: Optional[dict]) -> Optional[dict]:
+    """The one thing to do about the kitchen today.
+
+    A strict ladder, not a ranking: today's prep step, then a do-ahead worth
+    pulling forward, then the pending verdict, then — only when nothing is
+    planned at all — planning the week. When every rung is empty the line is
+    omitted rather than filled with something weaker.
+
+    ``cached``/``fresh`` come from ``task_extractor.load_cached_tasks`` and
+    ``_is_cache_fresh``. A stale or missing sidecar simply skips the first two
+    rungs: regenerating it is an LLM pass this endpoint must never make.
+    """
+    if fresh and cached:
+        tasks = cached.get("tasks") or []
+        day_name = today.strftime("%A")
+
+        todays = [t for t in tasks
+                  if t.get("day") == day_name and not t.get("done")]
+        if todays:
+            return {"kind": "prep", "text": todays[0].get("text") or "",
+                    "detail": None}
+
+        ahead = [t for t in tasks
+                 if t.get("day") != day_name
+                 and t.get("can_do_ahead")
+                 and not t.get("done")]
+        if ahead:
+            return {"kind": "ahead", "text": ahead[0].get("text") or "",
+                    "detail": f"do-ahead for {ahead[0].get('day')}"}
+
+    if verdict:
+        return {"kind": "verdict",
+                "text": f"how did {verdict.get('recipe')} go?",
+                "detail": verdict.get("when")}
+
+    if not plate_items:
+        return {"kind": "plan-week", "text": "plan the week", "detail": week}
+
+    return None

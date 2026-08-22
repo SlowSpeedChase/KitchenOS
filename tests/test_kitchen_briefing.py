@@ -68,3 +68,67 @@ class TestPlate:
 
     def test_empty_when_nothing_is_placed(self):
         assert kb.plate(TODAY, []) == []
+
+
+def _task(text, day, can_do_ahead=False, done=False):
+    return {"id": "abc123", "text": text, "recipe": "Chicken Tinga",
+            "day": day, "can_do_ahead": can_do_ahead, "done": done}
+
+
+def _cached(*tasks):
+    return {"tasks": list(tasks)}
+
+
+PLATE = [{"meal": "dinner", "recipe": "Chicken Tinga", "leftover": False}]
+VERDICT = {"cook_id": 7, "recipe": "Lamb Ragu", "when": "Thursday"}
+
+
+class TestNextAction:
+    def test_todays_prep_wins(self):
+        cached = _cached(_task("brown the chorizo", "Saturday"),
+                         _task("chop onions", "Sunday", can_do_ahead=True))
+        result = kb.next_action(TODAY, "2026-W34", cached, True, PLATE, VERDICT)
+        assert result == {"kind": "prep", "text": "brown the chorizo", "detail": None}
+
+    def test_done_tasks_are_skipped(self):
+        cached = _cached(_task("brown the chorizo", "Saturday", done=True))
+        result = kb.next_action(TODAY, "2026-W34", cached, True, PLATE, VERDICT)
+        assert result["kind"] == "verdict"
+
+    def test_do_ahead_is_second(self):
+        cached = _cached(_task("chop onions", "Monday", can_do_ahead=True))
+        result = kb.next_action(TODAY, "2026-W34", cached, True, PLATE, VERDICT)
+        assert result == {"kind": "ahead", "text": "chop onions",
+                          "detail": "do-ahead for Monday"}
+
+    def test_other_day_without_the_flag_is_not_offered(self):
+        cached = _cached(_task("simmer", "Monday", can_do_ahead=False))
+        result = kb.next_action(TODAY, "2026-W34", cached, True, PLATE, VERDICT)
+        assert result["kind"] == "verdict"
+
+    def test_stale_sidecar_skips_prep_entirely(self):
+        """A stale sidecar must fall through, never regenerate."""
+        cached = _cached(_task("brown the chorizo", "Saturday"))
+        result = kb.next_action(TODAY, "2026-W34", cached, False, PLATE, VERDICT)
+        assert result["kind"] == "verdict"
+
+    def test_missing_sidecar_falls_through(self):
+        result = kb.next_action(TODAY, "2026-W34", None, False, PLATE, VERDICT)
+        assert result["kind"] == "verdict"
+
+    def test_verdict_is_third(self):
+        result = kb.next_action(TODAY, "2026-W34", None, False, PLATE, VERDICT)
+        assert result == {"kind": "verdict",
+                          "text": "how did Lamb Ragu go?", "detail": "Thursday"}
+
+    def test_empty_plate_falls_to_plan_the_week(self):
+        result = kb.next_action(TODAY, "2026-W34", None, False, [], None)
+        assert result == {"kind": "plan-week", "text": "plan the week",
+                          "detail": "2026-W34"}
+
+    def test_plan_week_does_not_fire_when_the_plate_is_full(self):
+        assert kb.next_action(TODAY, "2026-W34", None, False, PLATE, None) is None
+
+    def test_verdict_outranks_plan_week_even_on_an_empty_plate(self):
+        result = kb.next_action(TODAY, "2026-W34", None, False, [], VERDICT)
+        assert result["kind"] == "verdict"
