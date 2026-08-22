@@ -2767,6 +2767,31 @@ def api_task_mark_done(week, task_id):
     return jsonify(result), status
 
 
+# ----- Briefing (the kitchen block Selene's 06:00 digest carries) -----
+
+@app.route('/api/briefing/kitchen', methods=['GET'])
+@require_token
+def api_briefing_kitchen():
+    """Today's plate, the next kitchen action, urgent expiry, three suggestions.
+
+    Read-only and cheap by contract: it never regenerates the LLM task sidecar,
+    because the caller is a 06:00 digest that must not hang. Components that
+    cannot be computed are absent and named in ``degraded`` rather than
+    silently missing.
+    """
+    from lib import kitchen_briefing
+
+    raw = request.args.get("date")
+    today = None
+    if raw:
+        try:
+            today = date.fromisoformat(raw)
+        except ValueError:
+            return jsonify({"error": "Invalid date. Expected YYYY-MM-DD"}), 400
+
+    return jsonify(kitchen_briefing.build(today))
+
+
 # ----- Inventory (receipt-to-pantry; same DB table the pantry API adapts) -----
 
 @app.route('/api/inventory', methods=['GET'])
