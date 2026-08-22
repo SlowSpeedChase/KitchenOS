@@ -106,3 +106,113 @@ def next_action(today: date, week: str, cached: Optional[dict], fresh: bool,
         return {"kind": "plan-week", "text": "plan the week", "detail": week}
 
     return None
+
+
+# Seams. Each wraps one existing library call so the assembly logic above can be
+# tested without a vault, and so the real call sites stay in exactly one place.
+
+def _at_risk_items(items, today):
+    from lib.use_it_up import at_risk_items
+    return at_risk_items(items, today=today)
+
+
+def _never_cooked(recipe_index, limit):
+    from lib import cook_history
+    return cook_history.never_cooked(recipe_index, limit=limit)
+
+
+def _fully_covered(recipe_index, items, today):
+    """Recipes whose every non-staple ingredient is already in inventory.
+
+    ``cook_now.generate`` returns ``{"recipes": [...]}`` and keys each entry's
+    name as ``recipe``, so results are mapped back onto index entries here.
+    All three seams then return the same shape and ``look`` stays uniform.
+    """
+    from lib import cook_now
+    ranked = cook_now.generate(items=items, recipe_index=recipe_index,
+                               today=today).get("recipes") or []
+    by_name = {r.get("name"): r for r in recipe_index}
+    out = []
+    for entry in ranked:
+        if entry.get("missing"):
+            continue
+        name = entry.get("recipe")
+        out.append(by_name.get(name) or {"name": name, "display_name": name})
+    return out
+
+
+def _in_season(recipe_index, today):
+    """Recipes whose frontmatter peak_months includes this month.
+
+    Read straight off the index — `get_recipe_index` already carries
+    `peak_months`, so no ingredient re-matching is needed.
+    """
+    month = today.month
+    return [r for r in recipe_index if month in (r.get("peak_months") or [])]
+
+
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def _saved_on(added: Optional[str]) -> Optional[str]:
+    """`2026-04-12` -> `saved 12 Apr`. None for an undated arrival."""
+    if not added:
+        return None
+    try:
+        d = date.fromisoformat(added[:10])
+    except ValueError:
+        return None
+    return f"saved {d.day} {_MONTHS[d.month - 1]}"
+
+
+def at_risk(items, today: date) -> list[dict]:
+    """Inventory in the actionable expiry window, most urgent first.
+
+    The window itself is KitchenOS's (-2/+3 days, staples excluded); this only
+    reshapes it. Items are named, never counted: "3 items expiring" is not
+    something anyone can act on.
+    """
+    from lib.expiry import expiry_status
+
+    out = []
+    for name, item in _at_risk_items(items, today):
+        expires = getattr(item, "expires", None)
+        out.append({
+            "item": name,
+            "status": expiry_status(expires, today),
+            "expires": expires,
+        })
+    return out
+
+
+def look(recipe_index, items, today: date) -> list[dict]:
+    """Three reasons to open the library, one recipe each.
+
+    Never blended into a single score: "never made it", "you have the
+    ingredients" and "it is August" are incommensurable, and any weighting
+    would be invented rather than tuned. Each item carries its own reason
+    instead, and a reason that yields nothing is simply absent.
+    """
+    picks = [
+        ("never-cooked", _never_cooked(recipe_index, 1), True),
+        ("on-hand", _fully_covered(recipe_index, items, today), False),
+        ("seasonal", _in_season(recipe_index, today), False),
+    ]
+    details = {"on-hand": "all on hand", "seasonal": "peak now"}
+
+    out, seen = [], set()
+    for reason, candidates, dated in picks:
+        for candidate in candidates:
+            name = candidate.get("display_name") or candidate.get("name")
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            out.append({
+                "reason": reason,
+                "recipe": name,
+                "detail": _saved_on(candidate.get("added")) if dated
+                          else details[reason],
+            })
+            break
+    return out

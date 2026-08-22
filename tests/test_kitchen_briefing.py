@@ -132,3 +132,69 @@ class TestNextAction:
     def test_verdict_outranks_plan_week_even_on_an_empty_plate(self):
         result = kb.next_action(TODAY, "2026-W34", None, False, [], VERDICT)
         assert result["kind"] == "verdict"
+
+
+class _Item:
+    """An inventory item, trimmed to what at_risk reads."""
+    def __init__(self, name, expires):
+        self.name = name
+        self.expires = expires
+
+
+class TestAtRisk:
+    def test_expired_and_soon_only_most_urgent_first(self, monkeypatch):
+        monkeypatch.setattr(kb, "_at_risk_items", lambda items, today: [
+            ("ground beef", _Item("ground beef", "2026-08-21")),
+            ("cilantro", _Item("cilantro", "2026-08-24")),
+        ])
+        result = kb.at_risk(["ignored"], TODAY)
+        assert result == [
+            {"item": "ground beef", "status": "expired", "expires": "2026-08-21"},
+            {"item": "cilantro", "status": "soon", "expires": "2026-08-24"},
+        ]
+
+    def test_empty_on_a_clean_fridge(self, monkeypatch):
+        monkeypatch.setattr(kb, "_at_risk_items", lambda items, today: [])
+        assert kb.at_risk([], TODAY) == []
+
+
+class TestLook:
+    """One item per reason, three maximum. The three signals are
+    incommensurable and are never blended into a single score."""
+
+    def test_one_of_each_reason_in_order(self, monkeypatch):
+        monkeypatch.setattr(kb, "_never_cooked", lambda idx, limit: [
+            {"display_name": "Lamb Ragu", "added": "2026-04-12"}])
+        monkeypatch.setattr(kb, "_fully_covered", lambda idx, items, today: [
+            {"display_name": "Shakshuka"}])
+        monkeypatch.setattr(kb, "_in_season", lambda idx, today: [
+            {"display_name": "Corn Chowder"}])
+        assert kb.look([], [], TODAY) == [
+            {"reason": "never-cooked", "recipe": "Lamb Ragu", "detail": "saved 12 Apr"},
+            {"reason": "on-hand", "recipe": "Shakshuka", "detail": "all on hand"},
+            {"reason": "seasonal", "recipe": "Corn Chowder", "detail": "peak now"},
+        ]
+
+    def test_a_barren_reason_is_simply_absent(self, monkeypatch):
+        monkeypatch.setattr(kb, "_never_cooked", lambda idx, limit: [])
+        monkeypatch.setattr(kb, "_fully_covered", lambda idx, items, today: [
+            {"display_name": "Shakshuka"}])
+        monkeypatch.setattr(kb, "_in_season", lambda idx, today: [])
+        assert [r["reason"] for r in kb.look([], [], TODAY)] == ["on-hand"]
+
+    def test_never_cooked_without_an_arrival_date_has_no_parenthetical(self, monkeypatch):
+        monkeypatch.setattr(kb, "_never_cooked", lambda idx, limit: [
+            {"display_name": "Mystery Stew", "added": None}])
+        monkeypatch.setattr(kb, "_fully_covered", lambda idx, items, today: [])
+        monkeypatch.setattr(kb, "_in_season", lambda idx, today: [])
+        assert kb.look([], [], TODAY) == [
+            {"reason": "never-cooked", "recipe": "Mystery Stew", "detail": None}]
+
+    def test_the_same_recipe_never_appears_twice(self, monkeypatch):
+        """Two reasons can pick the same recipe; the block must not repeat it."""
+        monkeypatch.setattr(kb, "_never_cooked", lambda idx, limit: [
+            {"display_name": "Shakshuka", "added": "2026-04-12"}])
+        monkeypatch.setattr(kb, "_fully_covered", lambda idx, items, today: [
+            {"display_name": "Shakshuka"}])
+        monkeypatch.setattr(kb, "_in_season", lambda idx, today: [])
+        assert [r["reason"] for r in kb.look([], [], TODAY)] == ["never-cooked"]
