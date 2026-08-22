@@ -43,12 +43,19 @@ class TestKitchenBriefingEndpoint:
         assert response.status_code == 400
 
     def test_never_calls_the_regenerating_extractor(self, client, monkeypatch):
-        """The 6am digest cannot block on an LLM classification pass."""
+        """The 6am digest cannot block on an LLM classification pass.
+
+        A raising fake is useless here: kitchen_briefing._safe catches bare
+        Exception, so an AssertionError from inside a seam becomes a quiet
+        `degraded` entry and a 200. Record instead, and assert nothing degraded.
+        """
         from lib import task_extractor
 
-        def explode(*a, **kw):
-            raise AssertionError("extract_tasks must never run from the briefing")
+        calls = []
+        monkeypatch.setattr(task_extractor, "extract_tasks",
+                            lambda *a, **kw: calls.append(1))
 
-        monkeypatch.setattr(task_extractor, "extract_tasks", explode)
         response = client.get("/api/briefing/kitchen")
         assert response.status_code == 200
+        assert calls == []
+        assert response.get_json()["degraded"] == []

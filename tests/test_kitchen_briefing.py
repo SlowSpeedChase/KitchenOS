@@ -66,8 +66,69 @@ class TestPlate:
         ])]
         assert len(kb.plate(TODAY, cooks)) == 1
 
+    def test_deduplicates_two_distinct_cooks_of_the_same_recipe(self):
+        """Cooking the same recipe twice and placing both into one slot is
+        still one line — intentional (the output carries no count), and
+        previously unpinned by any test."""
+        cooks = [
+            _cook("Chicken Tinga", "2026-08-22", [_slot("2026-08-22", "dinner")]),
+            _cook("Chicken Tinga", "2026-08-22", [_slot("2026-08-22", "dinner")]),
+        ]
+        assert kb.plate(TODAY, cooks) == [
+            {"meal": "dinner", "recipe": "Chicken Tinga", "leftover": False}]
+
     def test_empty_when_nothing_is_placed(self):
         assert kb.plate(TODAY, []) == []
+
+
+class TestLoadCooksAcrossWeeks:
+    """`_load_cooks` folds in cooks from other ISO weeks whose leftovers land
+    in the requested week — same pattern `week_view.render_week_markdown`
+    uses (`cooks_for_week` + `placements_for_week`) so a Sunday cook's Monday
+    leftover doesn't vanish when the ISO week rolls over."""
+
+    def test_a_leftover_from_a_prior_iso_week_reaches_the_plate(self, monkeypatch):
+        from lib import serving_ledger
+
+        # 2026-08-16 is a Sunday (ISO week 33); its leftover lands on
+        # 2026-08-22, a Saturday in ISO week 34 — TODAY's week.
+        foreign_cook = {
+            "id": 99, "recipe": "Chorizo Chili", "date": "2026-08-16",
+            "week": "2026-W33", "placements": [_slot("2026-08-22", "lunch")],
+        }
+        monkeypatch.setattr(serving_ledger, "cooks_for_week", lambda week: [])
+        monkeypatch.setattr(
+            serving_ledger, "placements_for_week",
+            lambda week: [{"cook_id": 99, "date": "2026-08-22"}])
+        monkeypatch.setattr(
+            serving_ledger, "get_cook",
+            lambda cid: foreign_cook if cid == 99 else None)
+
+        cooks = kb._load_cooks("2026-W34")
+        assert kb.plate(TODAY, cooks) == [
+            {"meal": "lunch", "recipe": "Chorizo Chili", "leftover": True}]
+
+    def test_does_not_duplicate_a_cook_already_in_this_week(self, monkeypatch):
+        """A cook already returned by `cooks_for_week` must not be re-fetched
+        or duplicated just because one of its own placements also matched
+        `placements_for_week`."""
+        from lib import serving_ledger
+
+        own_cook = {
+            "id": 1, "recipe": "Chicken Tinga", "date": "2026-08-22",
+            "week": "2026-W34", "placements": [_slot("2026-08-22", "dinner")],
+        }
+        calls = []
+        monkeypatch.setattr(serving_ledger, "cooks_for_week", lambda week: [own_cook])
+        monkeypatch.setattr(
+            serving_ledger, "placements_for_week",
+            lambda week: [{"cook_id": 1, "date": "2026-08-22"}])
+        monkeypatch.setattr(
+            serving_ledger, "get_cook", lambda cid: calls.append(cid) or None)
+
+        cooks = kb._load_cooks("2026-W34")
+        assert calls == []
+        assert [c["id"] for c in cooks] == [1]
 
 
 def _task(text, day, can_do_ahead=False, done=False):
@@ -96,13 +157,46 @@ class TestNextAction:
         assert result["kind"] == "verdict"
 
     def test_do_ahead_is_second(self):
-        cached = _cached(_task("chop onions", "Monday", can_do_ahead=True))
+        """TODAY is Saturday; Sunday is the only day still ahead of it this
+        week. A Monday do-ahead task (the week's own, already-past Monday)
+        must NOT win this — see test_a_past_day_do_ahead_task_is_not_offered."""
+        cached = _cached(_task("chop onions", "Sunday", can_do_ahead=True))
         result = kb.next_action(TODAY, "2026-W34", cached, True, PLATE, VERDICT)
         assert result == {"kind": "ahead", "text": "chop onions",
-                          "detail": "do-ahead for Monday"}
+                          "detail": "do-ahead for Sunday"}
 
     def test_other_day_without_the_flag_is_not_offered(self):
-        cached = _cached(_task("simmer", "Monday", can_do_ahead=False))
+        cached = _cached(_task("simmer", "Sunday", can_do_ahead=False))
+        result = kb.next_action(TODAY, "2026-W34", cached, True, PLATE, VERDICT)
+        assert result["kind"] == "verdict"
+
+    def test_a_past_day_do_ahead_task_is_not_offered(self):
+        """TODAY is Saturday. A Monday do-ahead task is behind today, not
+        ahead of it — the plan is one Monday-Sunday week, not a rolling
+        calendar, so there is no "next Monday" to pull it toward."""
+        cached = _cached(_task("chop onions", "Monday", can_do_ahead=True))
+        result = kb.next_action(TODAY, "2026-W34", cached, True, PLATE, VERDICT)
+        assert result["kind"] == "verdict"
+
+    def test_nearest_future_do_ahead_day_wins(self):
+        """Wednesday today, with do-ahead tasks on both Thursday and
+        Saturday: the nearer day (Thursday) must be offered, not whichever
+        sidecar entry happens to come first."""
+        wednesday = date(2026, 8, 19)
+        cached = _cached(
+            _task("bake the crust", "Saturday", can_do_ahead=True),
+            _task("marinate the chicken", "Thursday", can_do_ahead=True),
+        )
+        result = kb.next_action(wednesday, "2026-W34", cached, True, PLATE, VERDICT)
+        assert result == {"kind": "ahead", "text": "marinate the chicken",
+                          "detail": "do-ahead for Thursday"}
+
+    def test_rung_two_falls_through_when_the_only_ahead_candidate_is_done(self):
+        """`done`-filtering is tested on rung 1 (prep) but was never tested on
+        rung 2 (ahead) — the only guard that would have caught a filter that
+        stopped comparing against `done` on this rung."""
+        cached = _cached(
+            _task("chop onions", "Sunday", can_do_ahead=True, done=True))
         result = kb.next_action(TODAY, "2026-W34", cached, True, PLATE, VERDICT)
         assert result["kind"] == "verdict"
 
@@ -221,15 +315,27 @@ class TestBuild:
     def test_parses_the_recipe_library_exactly_once(self, monkeypatch):
         """cook_now and use_it_up each re-read every recipe file when called
         bare. Building four parts of one block that way is the full-vault scan
-        that made the old canvas homepage unusable on a phone."""
+        that made the old canvas homepage unusable on a phone.
+
+        Patches the real parser (``lib.recipe_index.get_recipe_index``), not
+        the ``_load_recipe_index`` seam: a bare ``cook_now.generate()`` (which
+        ``_fully_covered`` calls) bypasses that seam entirely and calls the
+        real parser directly when no ``recipe_index`` is handed to it, so
+        counting seam calls alone would not have caught a second parse.
+        ``kb._load_recipe_index`` is left unpatched so the real call path runs.
+        """
+        from lib import recipe_index as recipe_index_mod
+
         calls = []
-        monkeypatch.setattr(kb, "_load_recipe_index", lambda: calls.append(1) or [])
+        monkeypatch.setattr(recipe_index_mod, "get_recipe_index",
+                            lambda *a, **kw: calls.append(1) or [])
         monkeypatch.setattr(kb, "_load_inventory", lambda: [])
         monkeypatch.setattr(kb, "_load_cooks", lambda week: [])
         monkeypatch.setattr(kb, "_load_sidecar", lambda week: (None, False))
         monkeypatch.setattr(kb, "_load_verdict", lambda today: None)
-        kb.build(TODAY)
+        result = kb.build(TODAY)
         assert calls == [1]
+        assert result["degraded"] == []
 
     def test_a_failing_component_degrades_and_names_itself(self, monkeypatch):
         def boom(*a, **kw):
@@ -272,7 +378,9 @@ class TestBuild:
                   [_slot("2026-08-22", "dinner")])])
         monkeypatch.setattr(kb, "_load_sidecar", lambda week: (None, False))
         monkeypatch.setattr(kb, "_load_verdict", lambda today: None)
-        assert kb.build(TODAY)["plate"][0]["recipe"] == "Chicken Tinga"
+        result = kb.build(TODAY)
+        assert result["plate"][0]["recipe"] == "Chicken Tinga"
+        assert result["degraded"] == []
 
     def test_payload_carries_every_documented_key(self, monkeypatch):
         monkeypatch.setattr(kb, "_load_recipe_index", lambda: [])
@@ -284,3 +392,4 @@ class TestBuild:
         assert set(result) == {"date", "week", "plate", "next",
                                "at_risk", "look", "degraded"}
         assert result["date"] == "2026-08-22"
+        assert result["degraded"] == []
