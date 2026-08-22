@@ -89,3 +89,36 @@ def test_bar_is_not_buried_in_the_stylesheet(client, path):
     bar = body.index('id="ko-claude-bar"')
     assert body.rfind('<style', 0, bar) <= body.rfind('</style>', 0, bar), \
         f'{path}: bar was injected inside an open <style> block'
+
+
+def test_the_stale_banner_never_escapes_the_page():
+    """`escape()` returns Markup, and `str + Markup` escapes the LEFT operand.
+
+    The first cut concatenated raw `escape(...)` into the banner, so the banner
+    escaped itself, then the Claude bar, then via `_inject_after_body` the whole
+    document — the planner served 260KB of visible `&lt;!DOCTYPE html&gt;` and no
+    grid rendered. A page that cannot render is a worse outcome than the
+    staleness this banner reports, so the type is pinned here.
+    """
+    import api_server
+
+    api_server._stale_cache.update(checked_at=0.0, html="")
+    monkey = {"status": "failing", "detail": '<script>"x" & y</script>',
+              "consequence": "c", "fix": "f", "id": "server_freshness",
+              "label": "l"}
+    from lib import health_assertions
+    real = health_assertions.check_server_freshness
+    health_assertions.check_server_freshness = lambda *a, **k: monkey
+    try:
+        banner = api_server._stale_banner_html()
+    finally:
+        health_assertions.check_server_freshness = real
+        api_server._stale_cache.update(checked_at=0.0, html="")
+
+    assert type(banner) is str, f"banner is {type(banner)}, which escapes on concat"
+    assert banner.startswith("<div"), "banner escaped its own markup"
+    assert "<script>" not in banner, "the detail text was not escaped"
+    page = _inject_after_body("<html><head></head><body>GRID</body></html>",
+                              banner + _claude_bar_html())
+    assert "&lt;!DOCTYPE" not in page and "<body>" in page
+    assert "GRID" in page

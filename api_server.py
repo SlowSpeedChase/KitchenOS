@@ -38,6 +38,10 @@ from lib.meal_plan_parser import (
 from lib.meal_nutrition import meal_nutrition
 from lib.recipe_parser import parse_recipe_file, extract_my_notes, parse_recipe_body
 from lib import recipe_refresh, nutrition_quality
+# Imported at module scope on purpose: lib.boot.BOOT_TIME is captured on first
+# import, so importing it lazily inside a route would record the time of that
+# request and report every stale server as fresh. See lib/boot.py.
+from lib import boot  # noqa: F401  (imported for its import-time side effect)
 from templates.shopping_list_template import generate_shopping_list_markdown, generate_filename as shopping_list_filename
 from templates.recipe_template import format_recipe_markdown
 from templates.meal_plan_template import (
@@ -251,12 +255,61 @@ def _inject_after_body(html: str, snippet: str) -> str:
     return html[:close + 1] + snippet + html[close + 1:]
 
 
+
+#: Re-stat the source tree at most this often. A page load should not walk ~70
+#: files; staleness is measured in hours, so a few seconds of lag costs nothing.
+_STALE_CHECK_TTL_S = 15
+_stale_cache = {"checked_at": 0.0, "html": ""}
+
+
+def _stale_banner_html() -> str:
+    """A loud strip on every page when the server is running superseded code.
+
+    This lives in the page chrome rather than only on `/system-health` because
+    of how the failure actually presents: on 2026-08-22 a stale server wrote a
+    corrupt plate scale from the *planner*, and every surface looked normal. A
+    warning you have to navigate to is a warning you read after the damage. The
+    banner is injected by `_serve_page_with_claude_bar`, so registering a new
+    page (which that function is already mandatory for) opts it in for free.
+
+    Never raises: a health probe that 500s the page it is warning about is the
+    same class of bug it exists to catch.
+    """
+    now = time.time()
+    if now - _stale_cache["checked_at"] < _STALE_CHECK_TTL_S:
+        return _stale_cache["html"]
+    html = ""
+    try:
+        from lib import health_assertions
+        check = health_assertions.check_server_freshness()
+        if check["status"] == health_assertions.FAILING:
+            html = (
+                '<div role="alert" style="position:sticky;top:0;z-index:2147483001;'
+                'background:var(--alert);color:var(--text-on-accent);font:600 13px/1.4 '
+                "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+                'padding:10px 14px;">'
+                # str(): escape() returns Markup, and `str + Markup` dispatches to
+                # Markup.__radd__, which escapes the LEFT operand. Without this the
+                # banner escapes itself, then the Claude bar it is concatenated
+                # with, then — via _inject_after_body — the entire page, which is
+                # served as 260KB of visible HTML source. Verified live.
+                '&#9888;&#65039; Serving stale code &mdash; ' + str(escape(check["detail"])) +
+                '. Writes may be wrong. Restart: '
+                '<code style="background:rgba(255,255,255,.2);padding:1px 5px;'
+                'border-radius:4px;">launchctl kickstart -k gui/$(id -u)/com.kitchenos.api</code>'
+                '</div>')
+    except Exception:
+        pass
+    _stale_cache.update(checked_at=now, html=html)
+    return html
+
+
 def _serve_page_with_claude_bar(template_filename: str, extra_replacements=None) -> str:
     """Read a template, apply page-specific replacements, inject the Claude bar."""
     html = open(f'templates/{template_filename}').read()
     for old, new in (extra_replacements or []):
         html = html.replace(old, new)
-    return _inject_after_body(html, _claude_bar_html())
+    return _inject_after_body(html, _stale_banner_html() + _claude_bar_html())
 
 
 def success_page(message: str, filename: str) -> str:

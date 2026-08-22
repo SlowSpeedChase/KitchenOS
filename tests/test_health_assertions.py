@@ -115,6 +115,7 @@ class TestContract:
         lambda: ha.check_instagram_cookies([{"error": "instagram"}]),
         lambda: ha.check_prep_sidecar(Path("/nonexistent"), "2026-W31"),
         lambda: ha.check_nutrition_plausibility(Path("/nonexistent")),
+        lambda: ha.check_server_freshness(boot_time=0, code_root=Path(__file__).resolve().parents[1]),
     ]
 
     @pytest.mark.parametrize("make", ALL)
@@ -171,3 +172,67 @@ class TestShareSheetCapture:
     def test_missing_log_is_unknown(self, tmp_path):
         assert ha.check_share_sheet_capture(
             tmp_path / "nope.log")["status"] == ha.UNKNOWN
+
+
+class TestServerFreshness:
+    """The API holds `lib/*` in memory for the life of the LaunchAgent.
+
+    On 2026-08-22 a server three days older than its code placed a plate and
+    wrote `scale=1.0` where `plan_bundle` on disk returns `scale=0.5`. No 500,
+    no JS error, a card that looked right — only the ledger row disagreed. The
+    per-member scale stepper was a dead click at the same time. Staleness had
+    stopped announcing itself as a crash and started corrupting data, which is
+    exactly the family of failure this module exists for.
+    """
+
+    def _tree(self, tmp_path, mtime):
+        (tmp_path / "lib").mkdir()
+        (tmp_path / "templates").mkdir()
+        for rel in ("api_server.py", "lib/meal_bundle.py", "templates/meal_planner.html"):
+            f = tmp_path / rel
+            f.write_text("x")
+            os.utime(f, (mtime, mtime))
+        return tmp_path
+
+    def test_code_older_than_the_process_is_ok(self, tmp_path):
+        root = self._tree(tmp_path, mtime=1000)
+        c = ha.check_server_freshness(boot_time=2000, code_root=root)
+        assert c["status"] == ha.OK
+
+    def test_code_newer_than_the_process_is_failing(self, tmp_path):
+        root = self._tree(tmp_path, mtime=5000)
+        c = ha.check_server_freshness(boot_time=2000, code_root=root)
+        assert c["status"] == ha.FAILING
+        assert c["consequence"] and c["fix"]
+
+    def test_it_names_the_file_that_moved(self, tmp_path):
+        """"Restart the server" is not actionable; "meal_bundle.py moved" is."""
+        root = self._tree(tmp_path, mtime=1000)
+        newest = root / "lib" / "meal_bundle.py"
+        os.utime(newest, (9000, 9000))
+        c = ha.check_server_freshness(boot_time=2000, code_root=root)
+        assert c["status"] == ha.FAILING
+        assert "meal_bundle.py" in c["detail"]
+
+    def test_the_fix_is_the_command_that_works(self, tmp_path):
+        root = self._tree(tmp_path, mtime=5000)
+        c = ha.check_server_freshness(boot_time=2000, code_root=root)
+        assert "com.kitchenos.api" in c["fix"]
+
+    def test_a_tree_with_no_code_is_unknown_not_ok(self, tmp_path):
+        c = ha.check_server_freshness(boot_time=2000, code_root=tmp_path)
+        assert c["status"] == ha.UNKNOWN
+
+    def test_it_is_wired_into_run_all(self, tmp_path):
+        out = ha.run_all(recipes_dir=tmp_path, meal_plans_dir=tmp_path,
+                         week="2026-W31", run_logs=[], failure_logs=[])
+        assert any(c["id"] == "server_freshness" for c in out["checks"])
+
+    def test_the_grace_window_forgives_jitter_but_not_an_edit(self, tmp_path):
+        """It was 30s, which hid a save made seconds after a restart — the exact
+        window in which someone is actively editing and has not restarted."""
+        root = self._tree(tmp_path, mtime=1000)
+        jitter = ha.check_server_freshness(boot_time=1000 - 2, code_root=root)
+        assert jitter["status"] == ha.OK
+        real = ha.check_server_freshness(boot_time=1000 - 60, code_root=root)
+        assert real["status"] == ha.FAILING

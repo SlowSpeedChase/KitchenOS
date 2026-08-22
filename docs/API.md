@@ -115,6 +115,18 @@ failed probe is the same class of bug the page exists to catch. Note that
 `check_share_sheet_capture` reads `logs/batch_extract.log` rather than probing the Reminders
 store: TCC grants are per-executable, so probing from inside the API server would answer a
 question about the API server, not about the job that actually fails.
+
+`check_server_freshness` is the one assertion about the server itself: it compares source mtimes
+(`api_server.py`, `lib/*.py`, `templates/*.html`) against `lib.boot.BOOT_TIME`, the moment the
+process started. The LaunchAgent imports `lib/*` once and holds it, so every edit, branch switch
+and rebase widens the gap between what the server runs and what the repo says — and that gap is
+not merely a stale read: a three-day-old server placed a plate and wrote `scale=1.0` where
+`plan_bundle` returns `0.5`, with no error anywhere. **Unlike every other check it is also
+surfaced outside `/system-health`**, as a banner injected by `_serve_page_with_claude_bar` onto
+every HTML page, because the corruption lands from whatever page you are on while everything
+looks normal. `lib/boot.py` must stay imported at `api_server` module scope: capture that
+timestamp lazily and it records the first health *request*, which is always newer than the code,
+and every stale server reports as fresh.
 | `/recipe/<name>` | GET | Interactive recipe detail page with live ingredient scaling (HTML UI). Ingredients you don't have are coloured and marked `•`, ones you do `✓` with the stocked amount in the tooltip, plus a summary line under the table. Colour is never the only signal (red/green is the common colour-blindness axis, and this is read at a glance in a kitchen). Nothing is marked when inventory is empty — the legend says so instead of leaving the list looking merely unstyled. |
 | `/plan-week` | GET | The Sunday-planning command center: a glanceable per-day status (slots filled + protein vs target, from `print_week.build_week_packet`) and three big actions — fill the week (`/meal-planner?week=`), review nutrition (`/nutrition-review`), print the week (`/print/week?week=`). Defaults to **next** week (`plan_week.default_week`); `?week=` overrides; prev/next nav. Unplanned weeks render an empty-state (200, not 404). Bookmarkable. |
 | `/print/week` | GET | Printable one-page "week packet": the plan grid, each day's macros vs targets, the consolidated shopping list, and the do-ahead prep. Defaults to the current ISO week; `?week=YYYY-WNN` overrides; `?tasks=1` regenerates prep (an LLM call) instead of the read-only cache. Branches ledger-vs-markdown off `generate_shopping_list`'s `source`. Recipe names link to their `/recipe-card/<name>`. Bookmarkable (in `SECTIONS`). |
