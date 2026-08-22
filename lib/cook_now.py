@@ -256,7 +256,8 @@ def group_for(dish_type: Optional[str]) -> str:
 def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
              today: Optional[date] = None, limit: int = 30,
              banked: Optional[set] = None,
-             protein_target: Optional[float] = None) -> dict:
+             protein_target: Optional[float] = None,
+             per_group: bool = False) -> dict:
     """Rank recipes by what you should actually make right now.
 
     Seven factors, multiplied: **coverage** (can you make it) × **meal tier**
@@ -274,6 +275,16 @@ def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
     ``score`` descending and capped at ``limit``. Every non-coverage factor is
     reported alongside it so a surface can explain the order rather than
     presenting it as given.
+
+    ``per_group=True`` applies ``limit`` *within each chip group* instead of to
+    the whole list. This is what the ``/cook-now`` page needs: it filters
+    client-side from one payload, and a single global cap taken *after* the
+    meal-tier weighting silently emptied three of its six chips — on the real
+    pantry the best dessert ranked 264th of 409 (0.35 tier weight), so a
+    ``limit=60`` payload never carried one, and tapping Desserts revealed
+    nothing. The chip is a *filter*; the tier weight is an *ordering*. A cap
+    that lets the ordering act as a filter makes the chip a dead control. The
+    flat ``Cook Now.md`` note keeps the global cap — it has no chips.
 
     Staples count as always-on-hand: they raise coverage but never
     appear in ``missing``. ``at_risk`` is True when the recipe uses an item in
@@ -366,7 +377,19 @@ def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
         key=lambda r: (r["score"], r["protein"] or 0.0, r["have"]),
         reverse=True,
     )
-    return {"recipes": recipes[:limit]}
+    if not per_group:
+        return {"recipes": recipes[:limit]}
+    # Order is preserved — the list stays one score-sorted ranking — and each
+    # group contributes at most `limit` entries, so every chip has depth even
+    # when one group's scores all sit below another's.
+    taken: dict[str, int] = {}
+    kept = []
+    for r in recipes:
+        n = taken.get(r["group"], 0)
+        if n < limit:
+            taken[r["group"]] = n + 1
+            kept.append(r)
+    return {"recipes": kept}
 
 
 def render_markdown(result: dict, today: Optional[date] = None) -> str:
