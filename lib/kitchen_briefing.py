@@ -362,10 +362,15 @@ def build(today: Optional[date] = None) -> dict:
         # Same basename/display-name split as the plate: the ledger names the
         # note, the block names what a surface should show. 70 of 411 recipes
         # carry a `short_title`, so left unmapped the verdict rung could name
-        # the same dish differently from the plate line above it.
-        display = _display_map(recipe_index)
-        verdict = {**verdict,
-                   "recipe": display.get(verdict.get("recipe")) or verdict.get("recipe")}
+        # the same dish differently from the plate line above it. Guarded on
+        # its own label: a malformed `recipe_index` entry must degrade the
+        # remap, not the verdict rung itself (which _load_verdict already
+        # produced successfully).
+        verdict = _safe(
+            "verdict-name", verdict, degraded,
+            lambda: {**verdict,
+                     "recipe": _display_map(recipe_index).get(verdict.get("recipe"))
+                               or verdict.get("recipe")})
 
     plate_items = _safe("plate", [], degraded, lambda: plate(today, cooks))
     # The ledger stores the note basename; the block renders what a surface
@@ -383,6 +388,7 @@ def build(today: Optional[date] = None) -> dict:
                                           plate_items, verdict)),
         "at_risk": _safe("at-risk", [], degraded,
                          lambda: at_risk(inventory, today)),
-        "look": look(recipe_index, inventory, today, degraded),
+        "look": _safe("look", [], degraded,
+                      lambda: look(recipe_index, inventory, today, degraded)),
         "degraded": degraded,
     }

@@ -178,6 +178,18 @@ class TestNextAction:
         result = kb.next_action(TODAY, "2026-W34", cached, True, PLATE, VERDICT)
         assert result["kind"] == "verdict"
 
+    def test_sunday_offers_no_do_ahead(self):
+        """Rung 2 (do-ahead) can never fire on a Sunday: `WEEKDAYS` ends at
+        Sunday (ordinal 6, the last weekday), so `_days_ahead` can never find
+        a future day inside the same Monday-Sunday sidecar — the plan is one
+        week, not a rolling calendar. This is correct today but was emergent
+        rather than deliberate; this test is what would catch it changing.
+        """
+        sunday = date(2026, 8, 23)          # the day after TODAY (a Saturday)
+        cached = _cached(_task("prep the dough", "Monday", can_do_ahead=True))
+        result = kb.next_action(sunday, "2026-W34", cached, True, PLATE, VERDICT)
+        assert result["kind"] == "verdict"
+
     def test_nearest_future_do_ahead_day_wins(self):
         """Wednesday today, with do-ahead tasks on both Thursday and
         Saturday: the nearer day (Thursday) must be offered, not whichever
@@ -381,6 +393,26 @@ class TestBuild:
         result = kb.build(TODAY)
         assert result["plate"][0]["recipe"] == "Chicken Tinga"
         assert result["degraded"] == []
+
+    def test_a_malformed_look_seam_degrades_look_not_the_whole_block(self, monkeypatch):
+        """A seam returning garbage (not a dict) must not escape `build()`.
+
+        `look`'s per-reason guards keep one dead reason from taking the other
+        two down with it, but the exception here is raised in `look`'s own
+        render loop (``candidate.get(...)``), after the per-reason `_safe`
+        has already returned successfully with the bad value. Only the outer
+        `_safe` around the whole `look(...)` call in `build()` catches this.
+        """
+        monkeypatch.setattr(kb, "_load_recipe_index", lambda: [])
+        monkeypatch.setattr(kb, "_load_inventory", lambda: [])
+        monkeypatch.setattr(kb, "_load_cooks", lambda week: [])
+        monkeypatch.setattr(kb, "_load_sidecar", lambda week: (None, False))
+        monkeypatch.setattr(kb, "_load_verdict", lambda today: None)
+        monkeypatch.setattr(kb, "_never_cooked", lambda idx, limit: ["not a dict"])
+
+        result = kb.build(TODAY)
+        assert result["look"] == []
+        assert "look" in result["degraded"]
 
     def test_payload_carries_every_documented_key(self, monkeypatch):
         monkeypatch.setattr(kb, "_load_recipe_index", lambda: [])
