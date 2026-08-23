@@ -71,10 +71,10 @@
         /* --- Layout --- */
         .app {
             display: flex;
-            /* Not a plain 100dvh: the injected Claude chrome bar is sticky at the
-               top of <body>, so .app starts ~60px down and a full-viewport height
-               runs its bottom off the screen. In the docked-rail layout that only
-               clipped some empty sidebar; with a bottom shelf it cut the shelf.
+            /* Not a plain 100dvh: injected safety chrome can be sticky at the top
+               of <body>, so .app starts lower and a full-viewport height runs its
+               bottom off the screen. In the docked-rail layout that only clipped
+               some empty sidebar; with a bottom shelf it cut the shelf.
                syncAppHeight() measures the real offset and sets --chrome-h. */
             height: calc(100dvh - var(--chrome-h, 0px));
             width: 100vw;
