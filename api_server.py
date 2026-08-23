@@ -152,84 +152,6 @@ def error_page(message: str) -> str:
 ''')
 
 
-# ---- Claude launch bar (injected into every web page at serve time) ----
-
-_CLAUDE_BAR_TEMPLATE = """
-<div id="ko-claude-bar" style="position:sticky;top:0;left:0;right:0;z-index:2147483000;background:var(--raised);color:var(--ink);border-bottom:1px solid var(--line);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;box-shadow:var(--shadow);">
-  <div style="display:flex;align-items:center;gap:12px;padding:8px 14px;">
-    <a id="ko-home-link" href="/" title="KitchenOS home" aria-label="KitchenOS home" style="color:var(--ink);text-decoration:none;padding:0 12px;border:1px solid var(--line);border-radius:8px;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;box-sizing:border-box;">&#127968;</a>
-    <a id="ko-claude-launch" href="ssh://__SSH_TARGET__" style="background:var(--insight);color:var(--text-on-accent);text-decoration:none;padding:0 16px;border-radius:8px;font-weight:600;white-space:nowrap;display:inline-flex;align-items:center;min-height:44px;box-sizing:border-box;">&#129302; Launch Claude</a>
-    <button id="ko-claude-toggle" type="button" style="background:transparent;color:var(--muted);border:1px solid var(--line);border-radius:8px;padding:0 14px;cursor:pointer;font-size:14px;display:inline-flex;align-items:center;min-height:44px;box-sizing:border-box;">&#128221; Notes</button>
-    <span id="ko-claude-status" style="color:var(--muted);font-size:12px;margin-left:auto;"></span>
-  </div>
-  <div id="ko-claude-notes-wrap" style="display:none;padding:0 14px 12px;">
-    <textarea id="ko-claude-notes" placeholder="Notes to yourself &amp; Claude — saved to Claude Notes.md, seeds the next Launch." style="width:100%;box-sizing:border-box;min-height:120px;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;resize:vertical;"></textarea>
-    <div style="display:flex;gap:10px;align-items:center;margin-top:8px;">
-      <button id="ko-claude-send" type="button" style="background:var(--insight);color:var(--text-on-accent);border:none;border-radius:8px;padding:8px 16px;font-weight:700;cursor:pointer;min-height:44px;">&#9654;&#65039; Send to Claude</button>
-      <button id="ko-claude-save" type="button" style="background:var(--done);color:var(--text-on-accent);border:none;border-radius:8px;padding:8px 16px;font-weight:700;cursor:pointer;min-height:44px;">Save</button>
-      <span id="ko-claude-save-status" style="color:var(--muted);font-size:12px;"></span>
-    </div>
-  </div>
-</div>
-<script>
-(function(){
-  var toggle=document.getElementById('ko-claude-toggle');
-  var wrap=document.getElementById('ko-claude-notes-wrap');
-  var ta=document.getElementById('ko-claude-notes');
-  var saveBtn=document.getElementById('ko-claude-save');
-  var saveStatus=document.getElementById('ko-claude-save-status');
-  var loaded=false;
-  function loadNotes(){
-    fetch('/api/claude-notes').then(function(r){return r.json();}).then(function(d){
-      ta.value=(d&&d.notes)||''; loaded=true;
-    }).catch(function(){ saveStatus.textContent='(offline)'; });
-  }
-  toggle.addEventListener('click',function(){
-    var open=wrap.style.display==='none';
-    wrap.style.display=open?'block':'none';
-    if(open&&!loaded){loadNotes();}
-  });
-  saveBtn.addEventListener('click',function(){
-    saveStatus.textContent='Saving…';
-    fetch('/api/claude-notes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notes:ta.value})})
-      .then(function(r){return r.json();}).then(function(d){
-        if(d&&d.status==='saved'){ta.value=d.notes;saveStatus.textContent='Saved ✓';}
-        else{saveStatus.textContent='Error';}
-      }).catch(function(){saveStatus.textContent='Save failed';});
-  });
-  var sendBtn=document.getElementById('ko-claude-send');
-  sendBtn.addEventListener('click',function(){
-    var text=ta.value;
-    if(!text.trim()){saveStatus.textContent='Nothing to send';return;}
-    saveStatus.textContent='Sending…';
-    // Carry the page, so "fix this" still has a "this" by the time Claude reads it.
-    var payload={text:text,page:location.pathname+location.search,title:document.title};
-    fetch('/api/claude-send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
-      .then(function(r){return r.json();}).then(function(d){
-        if(d&&d.status==='sent'){
-          // It landed in the live session, so the box has done its job — clearing
-          // it prevents the same request being sent twice on a double tap.
-          ta.value='';saveStatus.textContent='Sent to Claude ✓';
-        } else if(d&&d.status==='queued'){
-          // Cleared rather than refilled: the stored copy carries a context
-          // header, and echoing that back would re-send it prefixed twice.
-          ta.value='';saveStatus.textContent='No session — queued for next Launch ✓';
-        } else {saveStatus.textContent=(d&&d.error)||'Error';}
-      }).catch(function(){saveStatus.textContent='Send failed';});
-  });
-})();
-</script>
-"""
-
-
-def _claude_bar_html() -> str:
-    """The launch-bar widget with the current SSH target spliced in."""
-    target = os.environ.get(
-        'KITCHENOS_SSH_TARGET', 'chaseeasterling@chases-mac-mini.taila69703.ts.net'
-    )
-    return _CLAUDE_BAR_TEMPLATE.replace('__SSH_TARGET__', target)
-
-
 def _inject_after_body(html: str, snippet: str) -> str:
     """Splice snippet in immediately after the opening <body ...> tag.
 
@@ -269,7 +191,7 @@ def _stale_banner_html() -> str:
     of how the failure actually presents: on 2026-08-22 a stale server wrote a
     corrupt plate scale from the *planner*, and every surface looked normal. A
     warning you have to navigate to is a warning you read after the damage. The
-    banner is injected by `_serve_page_with_claude_bar`, so registering a new
+    banner is injected by `_serve_page`, so registering a new
     page (which that function is already mandatory for) opts it in for free.
 
     Never raises: a health probe that 500s the page it is warning about is the
@@ -304,12 +226,15 @@ def _stale_banner_html() -> str:
     return html
 
 
-def _serve_page_with_claude_bar(template_filename: str, extra_replacements=None) -> str:
-    """Read a template, apply page-specific replacements, inject the Claude bar."""
+def _serve_page(
+    template_filename: str,
+    extra_replacements: list[tuple[str, str]] | None = None,
+) -> str:
+    """Read a template, apply replacements, and inject global safety chrome."""
     html = open(f'templates/{template_filename}').read()
     for old, new in (extra_replacements or []):
         html = html.replace(old, new)
-    return _inject_after_body(html, _stale_banner_html() + _claude_bar_html())
+    return _inject_after_body(html, _stale_banner_html())
 
 
 def success_page(message: str, filename: str) -> str:
@@ -825,7 +750,7 @@ def recipe_detail_page(name):
         # so the outer escape would re-escape the entities).
         return error_page(f"Recipe not found: {name}"), 404
 
-    html = _serve_page_with_claude_bar('recipe_detail.html', [('vault=KitchenOS', f'vault={VAULT_NAME}')])
+    html = _serve_page('recipe_detail.html', [('vault=KitchenOS', f'vault={VAULT_NAME}')])
     return html, 200, {'Content-Type': 'text/html'}
 
 
@@ -855,7 +780,7 @@ def plan_week_page():
     body = plan_week.render_plan_center_html(
         week, packet, targets, base,
         plan_week.shift_week(week, -1), plan_week.shift_week(week, 1))
-    html = _serve_page_with_claude_bar('plan_week.html', [('<!--CENTER-->', body)])
+    html = _serve_page('plan_week.html', [('<!--CENTER-->', body)])
     return html, 200, {'Content-Type': 'text/html'}
 
 
@@ -884,7 +809,7 @@ def print_week_page():
 
     base = os.environ.get("KITCHENOS_API_BASE", "").rstrip("/")
     body = print_week.render_packet_html(packet, base_url=base)
-    html = _serve_page_with_claude_bar('print_week.html', [('<!--PACKET-->', body)])
+    html = _serve_page('print_week.html', [('<!--PACKET-->', body)])
     return html, 200, {'Content-Type': 'text/html'}
 
 
@@ -931,7 +856,7 @@ def recipe_card_page(name):
                   f"AI-suggested ({src}) — sanity-check it against the recipe. "
                   "Your recipe's own steps are unchanged.</div>")
 
-    html = _serve_page_with_claude_bar('recipe_card.html', [
+    html = _serve_page('recipe_card.html', [
         ('__CARD_TITLE__', title),
         ('__CARD_META__', meta),
         ('__REVIEW_NOTE__', review),
@@ -2491,7 +2416,7 @@ def add_to_meal_plan():
 @app.route('/meal-planner', methods=['GET'])
 def meal_planner():
     """Serve the interactive meal planner board."""
-    html = _serve_page_with_claude_bar('meal_planner.html', [('vault=KitchenOS', f'vault={VAULT_NAME}')])
+    html = _serve_page('meal_planner.html', [('vault=KitchenOS', f'vault={VAULT_NAME}')])
     return html, 200, {'Content-Type': 'text/html'}
 
 
@@ -2520,7 +2445,7 @@ def _render_note_page(subdir: str, week: str, title: str, empty_html: str) -> st
     encoded = quote(f"{subdir}/{week}", safe='')
     obsidian = (f'<a href="obsidian://open?vault={paths.vault_root().name}'
                 f'&file={encoded}">Open in Obsidian ›</a>')
-    return _serve_page_with_claude_bar('note_view.html', [
+    return _serve_page('note_view.html', [
         ('<!--TITLE-->', title),
         ('<!--SUB-->', format_week_heading(week)),
         ('<!--BODY-->', body),
@@ -3298,70 +3223,6 @@ def api_inventory_bulk():
     })
 
 
-@app.route('/api/claude-notes', methods=['GET'])
-def api_claude_notes_get():
-    """Return the shared Claude Notes.md body. Ungated, same-origin widget calls this."""
-    from lib.claude_notes import read_notes
-    return jsonify({"notes": read_notes()})
-
-
-@app.route('/api/claude-notes', methods=['POST'])
-def api_claude_notes_post():
-    """Save the shared Claude Notes.md. Body: {notes: str}. Ungated.
-
-    Returns the normalized body actually stored so the widget can re-sync.
-    """
-    from lib.claude_notes import read_notes, write_notes
-
-    data = request.get_json(force=True, silent=True)
-    if not isinstance(data, dict) or 'notes' not in data:
-        return jsonify({"error": "'notes' is required"}), 400
-    if not isinstance(data['notes'], str):
-        return jsonify({"error": "'notes' must be a string"}), 400
-
-    write_notes(data['notes'])
-    return jsonify({"status": "saved", "notes": read_notes()})
-
-
-@app.route('/api/claude-send', methods=['POST'])
-def api_claude_send():
-    """Deliver text to Claude. Body: {text: str}. Ungated, like claude-notes.
-
-    Two outcomes, both success:
-      - a `ko-claude` session is live  -> injected into it, status "sent"
-      - no session                     -> saved as notes, status "queued", and
-                                          the next Launch Claude opens with it
-
-    Ungated for the same reason as /api/claude-notes: this is the same-origin
-    widget on a tailnet-only server, and both endpoints end at the same place —
-    Claude's prompt. Gating one and not the other would be theatre.
-    """
-    from lib.claude_notes import read_notes, write_notes
-    from lib import claude_send
-
-    data = request.get_json(force=True, silent=True)
-    if not isinstance(data, dict) or 'text' not in data:
-        return jsonify({"error": "'text' is required"}), 400
-    if not isinstance(data['text'], str):
-        return jsonify({"error": "'text' must be a string"}), 400
-    if not data['text'].strip():
-        return jsonify({"error": "'text' is empty"}), 400
-
-    # The widget rides on every page, so without this the note loses its subject:
-    # "this has a whole greek yogurt, fix it" arrives with no referent for "this".
-    message = claude_send.compose(
-        data['text'],
-        page=str(data.get('page') or ''),
-        title=str(data.get('title') or ''),
-    )
-
-    if claude_send.send_text(message):
-        return jsonify({"status": "sent"})
-
-    write_notes(message)
-    return jsonify({"status": "queued", "notes": read_notes()})
-
-
 @app.route('/api/receipts/trips', methods=['GET'])
 @require_token
 def api_receipt_trips():
@@ -3727,31 +3588,31 @@ def api_system_health():
 @app.route('/system-health', methods=['GET'])
 def system_health_dashboard():
     """Interactive system health dashboard."""
-    return _serve_page_with_claude_bar('system_health.html')
+    return _serve_page('system_health.html')
 
 
 @app.route('/nutrition-review', methods=['GET'])
 def nutrition_review_page():
     """Human review UI for weak/unresolved nutrition matches."""
-    return _serve_page_with_claude_bar('nutrition_review.html')
+    return _serve_page('nutrition_review.html')
 
 
 @app.route('/review')
 def review_page():
     """Mobile inventory scan/review page: remove or extend expiry per item."""
-    return _serve_page_with_claude_bar('review.html')
+    return _serve_page('review.html')
 
 
 @app.route('/cook-now')
 def cook_now_page():
     """What you could cook right now, filterable by meal type."""
-    return _serve_page_with_claude_bar('cook_now.html')
+    return _serve_page('cook_now.html')
 
 
 @app.route('/receipt-paste', methods=['GET'])
 def receipt_paste_page():
     """Paste a photographed-receipt JSON (from the Claude app), preview, ingest."""
-    return _serve_page_with_claude_bar('receipt_paste.html')
+    return _serve_page('receipt_paste.html')
 
 
 @app.route('/recent', methods=['GET'])
@@ -3769,7 +3630,7 @@ def recent_page():
     sub = (f"{len(recipes)} most recent · newest "
            f"{kitchen_today.arrival_word(newest, date.today()).lower()}"
            if newest else "nothing extracted yet")
-    html = _serve_page_with_claude_bar('recent.html', [
+    html = _serve_page('recent.html', [
         ('<!--SUB-->', sub),
         ('<!--RECENT-->', kitchen_today.render_recent_html(recipes)),
     ])
@@ -3798,7 +3659,7 @@ def prep_page():
     else:
         sub = "nothing planned for this week yet"
 
-    html = _serve_page_with_claude_bar('prep.html', [
+    html = _serve_page('prep.html', [
         ('<!--SUB-->', sub),
         ('<!--WEEK-->', prep["week"]),
         # Asked here because this is a page you already open in the kitchen. The
@@ -3857,7 +3718,7 @@ def home_page():
 
     today = date.today()
     kicker = f"KitchenOS · {today.strftime('%a %b %-d')}"
-    return _serve_page_with_claude_bar('home.html', [
+    return _serve_page('home.html', [
         ('<!--KICKER-->', kicker),
         # Above the cards: it is one line, it disappears when there is nothing
         # to ask, and it is the only thing on this page that asks the reader for
