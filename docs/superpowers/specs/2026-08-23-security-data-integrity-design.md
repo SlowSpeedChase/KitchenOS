@@ -1,6 +1,6 @@
 # KitchenOS Security and Data-Integrity Repair
 
-**Status:** Ready for review · **Branch:** `security-data-integrity` · **Date:** 2026-08-23
+**Status:** Ready for implementation · **Branch:** `security-data-integrity` · **Date:** 2026-08-23
 
 ## Problem
 
@@ -65,9 +65,10 @@ next privileged Claude session even if immediate tmux submission is gone.
 
 Add a small `lib/safe_paths.py` authority with two responsibilities:
 
-- `contained_markdown(root, value)` URL-decodes once, rejects absolute paths and NULs,
-  requires a `.md` file, resolves symlinks and `..`, and verifies the resolved candidate
-  remains beneath the resolved root.
+- `contained_markdown(root, value)` accepts Flask's already-once-decoded request value
+  (and deliberately does not call `unquote` a second time), rejects absolute paths and
+  NULs, requires a `.md` file, resolves symlinks and `..`, and verifies the resolved
+  candidate remains beneath the resolved root.
 - `parse_iso_week(value)` accepts only a real ISO week (`YYYY-WNN`) by validating it with
   `date.fromisocalendar`, not regex alone. Shopping-list filenames are constructed only
   from the returned canonical week.
