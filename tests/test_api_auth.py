@@ -125,7 +125,6 @@ KNOWN_UNGATED = {
     "api_inventory_set_category", "api_inventory_move", "api_inventory_freeze",
     "api_inventory_bulk",
     "api_receipt_paste", "api_receipt_prompt",
-    "api_claude_notes_get", "api_claude_notes_post", "api_claude_send",
     "api_system_health",
 }
 

@@ -212,9 +212,8 @@ def _stale_banner_html() -> str:
                 'padding:10px 14px;">'
                 # str(): escape() returns Markup, and `str + Markup` dispatches to
                 # Markup.__radd__, which escapes the LEFT operand. Without this the
-                # banner escapes itself, then the Claude bar it is concatenated
-                # with, then — via _inject_after_body — the entire page, which is
-                # served as 260KB of visible HTML source. Verified live.
+                # banner escapes itself, then — via _inject_after_body — the entire
+                # page, which is served as 260KB of visible HTML source. Verified live.
                 '&#9888;&#65039; Serving stale code &mdash; ' + str(escape(check["detail"])) +
                 '. Writes may be wrong. Restart: '
                 '<code style="background:rgba(255,255,255,.2);padding:1px 5px;'
