@@ -24,7 +24,9 @@ import threading
 from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional, TypeVar
+
+T = TypeVar("T")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS trips (
@@ -350,14 +352,18 @@ def record_trip(trip: dict, purchases: list[dict]) -> Optional[int]:
         conn.close()
 
 
+def _fetch_inventory_rows(conn: sqlite3.Connection) -> list[dict]:
+    rows = conn.execute(
+        f"SELECT {', '.join(_INVENTORY_COLS)} FROM inventory"
+        " ORDER BY category, name COLLATE NOCASE"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def fetch_inventory_rows() -> list[dict]:
     conn = connect()
     try:
-        rows = conn.execute(
-            f"SELECT {', '.join(_INVENTORY_COLS)} FROM inventory"
-            " ORDER BY category, name COLLATE NOCASE"
-        ).fetchall()
-        return [dict(r) for r in rows]
+        return _fetch_inventory_rows(conn)
     finally:
         conn.close()
 
@@ -499,27 +505,35 @@ def merge_inventory_rows(
         return {"added": added, "merged": merged, "total": total}
 
 
+def _replace_inventory_rows(conn: sqlite3.Connection, rows: list[dict]) -> None:
+    """Replace inventory rows on a caller-owned transaction."""
+    conn.execute("DELETE FROM inventory")
+    conn.executemany(
+        f"INSERT INTO inventory ({', '.join(_INVENTORY_COLS)})"
+        f" VALUES ({', '.join('?' * len(_INVENTORY_COLS))})",
+        [
+            tuple(_inventory_row(row)[column] for column in _INVENTORY_COLS)
+            for row in rows
+        ],
+    )
+
+
 def replace_inventory_rows(rows: list[dict]) -> None:
     """Overwrite the inventory table with ``rows`` atomically."""
-    conn = connect()
-    try:
-        with conn:
-            conn.execute("DELETE FROM inventory")
-            conn.executemany(
-                f"INSERT INTO inventory ({', '.join(_INVENTORY_COLS)})"
-                f" VALUES ({', '.join('?' * len(_INVENTORY_COLS))})",
-                [
-                    tuple(
-                        _NOT_NULL_FALLBACKS[c]
-                        if r.get(c) is None and c in _NOT_NULL_FALLBACKS
-                        else r.get(c)
-                        for c in _INVENTORY_COLS
-                    )
-                    for r in rows
-                ],
-            )
-    finally:
-        conn.close()
+    with write_transaction() as conn:
+        _replace_inventory_rows(conn, rows)
+
+
+def mutate_inventory_rows(
+    mutator: Callable[[list[dict]], tuple[list[dict], T, bool]],
+) -> tuple[T, bool]:
+    """Read and optionally replace all inventory rows in one write lock."""
+    with write_transaction() as conn:
+        rows = _fetch_inventory_rows(conn)
+        replacement, result, changed = mutator(rows)
+        if changed:
+            _replace_inventory_rows(conn, replacement)
+        return result, changed
 
 
 def stamp_inventory_use(refs: list[tuple[str, str]], when: str) -> int:

@@ -95,6 +95,72 @@ class TestRoundtrip:
         assert (tmp_vault / "Inventory.md").exists()
 
 
+class TestMutateInventory:
+    def test_refresh_runs_after_commit_and_legacy_result_is_returned(
+        self, tmp_vault, tmp_db, monkeypatch
+    ):
+        import lib.inventory as inventory
+
+        inventory_db.replace_inventory_rows([
+            {
+                "name": "Milk",
+                "quantity": 1,
+                "unit": "gal",
+                "category": "invalid",
+                "location": "garage",
+                "source": "invalid",
+                "location_source": "invalid",
+            }
+        ])
+        refreshed_quantities = []
+        monkeypatch.setattr(
+            inventory,
+            "refresh_inventory_views",
+            lambda: refreshed_quantities.append(
+                [item.quantity for item in inventory.read_inventory()]
+            ),
+        )
+
+        def mutate(items):
+            [milk] = items
+            assert milk.category == "other"
+            assert milk.location == "other"
+            assert milk.source == "manual"
+            assert milk.location_source == "default"
+            milk.quantity = 2
+            return {"legacy": "result"}, True
+
+        assert inventory.mutate_inventory(mutate) == {"legacy": "result"}
+        assert refreshed_quantities == [[2.0]]
+
+    def test_noop_skips_replace_and_view_refresh(
+        self, tmp_vault, tmp_db, monkeypatch
+    ):
+        import lib.inventory as inventory
+
+        inventory_db.replace_inventory_rows([
+            {"name": "Milk", "quantity": 1, "unit": "gal"}
+        ])
+        replacements = []
+        refreshes = []
+        real_replace = inventory_db._replace_inventory_rows
+        monkeypatch.setattr(
+            inventory_db,
+            "_replace_inventory_rows",
+            lambda conn, rows: replacements.append(rows) or real_replace(conn, rows),
+        )
+        monkeypatch.setattr(
+            inventory, "refresh_inventory_views", lambda: refreshes.append(True)
+        )
+
+        assert inventory.mutate_inventory(
+            lambda items: ("not found", False)
+        ) == "not found"
+        assert replacements == []
+        assert refreshes == []
+        assert read_inventory()[0].quantity == 1.0
+
+
 class TestAddItems:
     def test_add_into_empty_inventory(self, tmp_vault, tmp_db):
         result = add_items([

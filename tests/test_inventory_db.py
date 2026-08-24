@@ -89,6 +89,69 @@ def test_inventory_rows_roundtrip(tmp_db):
     assert out[0]["location"] == "fridge"
 
 
+def test_whole_inventory_mutation_blocks_add_until_replacement_commits(
+    tmp_vault, tmp_db, monkeypatch
+):
+    """A full-set replacement and additive merge cannot lose either update."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    import lib.inventory as inventory
+
+    idb.replace_inventory_rows([
+        {
+            "name": "Milk",
+            "quantity": 1.0,
+            "unit": "gal",
+            "location": "fridge",
+        }
+    ])
+    monkeypatch.setattr(inventory, "refresh_inventory_views", lambda: None)
+
+    mutation_entered = threading.Event()
+    release_mutation = threading.Event()
+    add_attempted = threading.Event()
+    add_finished = threading.Event()
+    real_merge = idb.merge_inventory_rows
+
+    def mutate(rows):
+        mutation_entered.set()
+        assert release_mutation.wait(5)
+        rows[0]["quantity"] = 2.0
+        return rows, None, True
+
+    def tracked_merge(rows, conn=None):
+        add_attempted.set()
+        return real_merge(rows, conn=conn)
+
+    def add_rice():
+        try:
+            return inventory.add_items([
+                inventory.InventoryItem(
+                    name="Rice", quantity=1.0, unit="lb", location="pantry"
+                )
+            ])
+        finally:
+            add_finished.set()
+
+    monkeypatch.setattr(idb, "merge_inventory_rows", tracked_merge)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        mutation_future = pool.submit(idb.mutate_inventory_rows, mutate)
+        assert mutation_entered.wait(5)
+        add_future = pool.submit(add_rice)
+        assert add_attempted.wait(5)
+        try:
+            assert not add_finished.wait(0.1)
+        finally:
+            release_mutation.set()
+        assert mutation_future.result(timeout=5) == (None, True)
+        add_future.result(timeout=5)
+
+    by_name = {row["name"]: row for row in idb.fetch_inventory_rows()}
+    assert by_name["Milk"]["quantity"] == 2.0
+    assert by_name["Rice"]["quantity"] == 1.0
+
+
 def test_merge_inventory_rows_preserves_compatibility_semantics(tmp_db):
     """The SQL merge must stay behaviorally identical to add_items' old merge."""
     idb.replace_inventory_rows([
