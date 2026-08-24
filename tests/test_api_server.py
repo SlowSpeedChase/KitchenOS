@@ -990,6 +990,56 @@ def test_inventory_add_with_trip_replay_is_a_no_op(
     assert refreshes == ["refresh"]
 
 
+def test_inventory_add_rejects_invalid_trip_replays_without_writes(
+    client, tmp_vault, tmp_db, monkeypatch
+):
+    from lib import inventory
+    from lib import inventory_db as idb
+
+    refreshes = []
+    monkeypatch.setattr(
+        inventory, "refresh_inventory_views", lambda: refreshes.append("refresh")
+    )
+    invalid_trips = [
+        {},
+        {"source_id": ""},
+        {"source_id": "   "},
+        {"source_id": None},
+        {"source_id": 123},
+        [],
+        "not-an-object",
+        None,
+    ]
+
+    for trip in invalid_trips:
+        payload = {
+            "items": [
+                {
+                    "name": "chicken breast",
+                    "quantity": 2,
+                    "unit": "lb",
+                    "category": "meat",
+                    "location": "fridge",
+                }
+            ],
+            "trip": trip,
+        }
+        responses = [
+            client.post("/api/inventory/add", json=payload),
+            client.post("/api/inventory/add", json=payload),
+        ]
+        assert [response.status_code for response in responses] == [400, 400]
+
+    conn = idb.connect()
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM trips").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM purchases").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM inventory").fetchone()[0] == 0
+    finally:
+        conn.close()
+    assert refreshes == []
+
+
 def test_inventory_add_fee_items_skip_inventory(client, tmp_vault, tmp_db):
     payload = {
         "items": [

@@ -2898,6 +2898,19 @@ def api_inventory_add():
     if not isinstance(raw_items, list) or not raw_items:
         return jsonify({"error": "'items' must be a non-empty array"}), 400
 
+    trip_payload = data.get('trip')
+    if 'trip' in data:
+        if not isinstance(trip_payload, dict):
+            return jsonify({
+                "error": "'trip' must be an object with a non-empty 'source_id'"
+            }), 400
+        source_id = trip_payload.get('source_id')
+        if not isinstance(source_id, str) or not source_id.strip():
+            return jsonify({
+                "error": "'trip' must be an object with a non-empty 'source_id'"
+            }), 400
+        trip_payload = {**trip_payload, 'source_id': source_id.strip()}
+
     # Default on: tag items with the meal-plan recipe they were bought for.
     # Set {"match_plan": false} to skip (e.g. a pure restock).
     match_plan = data.get('match_plan', True)
@@ -2949,7 +2962,6 @@ def api_inventory_add():
                 matches = index.match(it.name)
                 it.for_recipe = ", ".join(matches) if matches else None
 
-    trip_payload = data.get('trip')
     # An all-fee items list is valid when a trip rides along (the ledger still
     # wants the rows) — only 400 when there's nothing to do at all.
     if not parsed and not trip_payload:
