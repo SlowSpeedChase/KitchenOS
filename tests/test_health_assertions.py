@@ -42,6 +42,15 @@ class TestCaptureQueue:
     def test_no_logs_is_unknown_not_ok(self):
         assert ha.check_capture_queue([])["status"] == ha.UNKNOWN
 
+    def test_dead_lettered_runs_are_not_stuck(self):
+        """A run that dead-lettered its only item drained the queue."""
+        logs = [
+            {"total": 1, "succeeded": 0, "failed": 0, "dead_lettered": 1},
+            {"total": 1, "succeeded": 0, "failed": 0, "dead_lettered": 1},
+            {"total": 1, "succeeded": 0, "failed": 0, "dead_lettered": 1},
+        ]
+        assert ha.check_capture_queue(logs)["status"] == ha.OK
+
 
 class TestInstagramCookies:
     def test_configured_is_ok(self, monkeypatch):

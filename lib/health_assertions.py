@@ -109,13 +109,7 @@ def check_share_sheet_capture(log_path: Path | None = None) -> dict:
 
 
 def check_capture_queue(run_logs: list) -> dict:
-    """Is the extraction queue draining, or retrying the same items forever?
-
-    ``batch_extract`` leaves a failed or unparseable reminder unchecked so the
-    next run retries it, and keeps no attempt counter — so a permanently dead
-    item is indistinguishable from a transient one and is reprocessed every
-    hour indefinitely.
-    """
+    """Is the extraction queue draining, or retrying the same items forever?"""
     if not run_logs:
         return _check("capture_queue", "Extraction queue is draining",
                       UNKNOWN, "no run logs found",
@@ -123,7 +117,9 @@ def check_capture_queue(run_logs: list) -> dict:
 
     recent = run_logs[:JAMMED_RUN_THRESHOLD]
     stuck = [r for r in recent
-             if (r.get("succeeded") or 0) == 0 and (r.get("total") or 0) > 0]
+             if (r.get("succeeded") or 0) == 0
+             and (r.get("dead_lettered") or 0) == 0
+             and (r.get("total") or 0) > 0]
     if len(stuck) >= min(JAMMED_RUN_THRESHOLD, len(recent)) and stuck:
         worked = sum(r.get("total") or 0 for r in stuck)
         return _check(

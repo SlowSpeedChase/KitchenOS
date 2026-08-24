@@ -121,6 +121,7 @@ def read_run_logs(n: int = 10) -> list:
                 "skipped_duplicate": data.get("skipped_duplicate", 0),
                 "failed": data.get("failed", 0),
                 "invalid": data.get("invalid", 0),
+                "dead_lettered": data.get("dead_lettered", 0),
                 "invalid_urls": data.get("invalid_urls", []),
                 "duration_seconds": data.get("duration_seconds", 0),
             })

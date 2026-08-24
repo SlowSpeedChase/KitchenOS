@@ -595,6 +595,11 @@ Processes YouTube, Instagram, and web recipe URLs from the "Recipies to
 Process" iOS Reminders list. Runs `batch_extract.py` hourly, at `:10` past
 each hour (`RunAtLoad: true`).
 
+Failed URLs remain queued for up to five attempts. After the fifth failure,
+the agent marks the reminder complete and records the item in
+`logs/dead_letter.json`; attempt state lives in `logs/retry_tracker.json`.
+`--dry-run` writes neither file and never changes Reminders.
+
 ```bash
 cp ops/com.kitchenos.batch-extract.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.kitchenos.batch-extract.plist
