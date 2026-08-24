@@ -297,59 +297,78 @@ def trip_exists(source_id: str) -> bool:
         conn.close()
 
 
-def record_trip(trip: dict, purchases: list[dict]) -> Optional[int]:
-    """Insert a trip and its purchase lines atomically.
-
-    Returns the new trip id, or None if ``source_id`` already exists
-    (duplicate receipt — nothing is written).
-    """
-    conn = connect()
+def _insert_trip(conn: sqlite3.Connection, trip: dict) -> int | None:
+    """Insert one trip, returning ``None`` only for a duplicate source id."""
     try:
-        with conn:
-            try:
-                cur = conn.execute(
-                    "INSERT INTO trips"
-                    " (date, store, source, source_id, total_cents,"
-                    "  needs_review, raw_text)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        trip["date"],
-                        trip.get("store", "HEB"),
-                        trip["source"],
-                        trip.get("source_id"),
-                        trip.get("total_cents"),
-                        1 if trip.get("needs_review") else 0,
-                        trip.get("raw_text"),
-                    ),
-                )
-            except sqlite3.IntegrityError as e:
-                if "trips.source_id" in str(e):
-                    return None
-                raise
-            trip_id = cur.lastrowid
-            conn.executemany(
-                "INSERT INTO purchases"
-                " (trip_id, raw_name, canonical_name, quantity, unit,"
-                "  unit_price_cents, total_cents, category, for_recipe)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [
-                    (
-                        trip_id,
-                        p["raw_name"],
-                        p["canonical_name"],
-                        p.get("quantity"),
-                        p.get("unit"),
-                        p.get("unit_price_cents"),
-                        p.get("total_cents"),
-                        p.get("category", "other"),
-                        p.get("for_recipe"),
-                    )
-                    for p in purchases
-                ],
+        cur = conn.execute(
+            "INSERT INTO trips"
+            " (date, store, source, source_id, total_cents,"
+            "  needs_review, raw_text)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                trip["date"],
+                trip.get("store", "HEB"),
+                trip["source"],
+                trip.get("source_id"),
+                trip.get("total_cents"),
+                1 if trip.get("needs_review") else 0,
+                trip.get("raw_text"),
+            ),
+        )
+    except sqlite3.IntegrityError as exc:
+        if "trips.source_id" in str(exc):
+            return None
+        raise
+    return cur.lastrowid
+
+
+def _insert_purchases(
+    conn: sqlite3.Connection, trip_id: int, purchases: list[dict]
+) -> None:
+    """Insert every purchase row for a caller-owned trip transaction."""
+    conn.executemany(
+        "INSERT INTO purchases"
+        " (trip_id, raw_name, canonical_name, quantity, unit,"
+        "  unit_price_cents, total_cents, category, for_recipe)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (
+                trip_id,
+                purchase["raw_name"],
+                purchase["canonical_name"],
+                purchase.get("quantity"),
+                purchase.get("unit"),
+                purchase.get("unit_price_cents"),
+                purchase.get("total_cents"),
+                purchase.get("category", "other"),
+                purchase.get("for_recipe"),
             )
+            for purchase in purchases
+        ],
+    )
+
+
+def record_trip(trip: dict, purchases: list[dict]) -> Optional[int]:
+    """Insert a trip and purchases, or return ``None`` for a duplicate."""
+    with write_transaction() as conn:
+        trip_id = _insert_trip(conn, trip)
+        if trip_id is None:
+            return None
+        _insert_purchases(conn, trip_id, purchases)
         return trip_id
-    finally:
-        conn.close()
+
+
+def record_trip_with_inventory(
+    trip: dict, purchases: list[dict], inventory_rows: list[dict]
+) -> tuple[int | None, dict | None]:
+    """Commit a receipt's ledger and stock effects in one transaction."""
+    with write_transaction() as conn:
+        trip_id = _insert_trip(conn, trip)
+        if trip_id is None:
+            return None, None
+        _insert_purchases(conn, trip_id, purchases)
+        result = merge_inventory_rows(inventory_rows, conn=conn)
+        return trip_id, result
 
 
 def _fetch_inventory_rows(conn: sqlite3.Connection) -> list[dict]:

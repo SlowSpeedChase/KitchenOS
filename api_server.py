@@ -2884,8 +2884,10 @@ def api_inventory_add():
     """Add items to inventory. Body: {items: [{name, quantity, unit, ...}]}."""
     from lib.inventory import (
         InventoryItem, add_items,
-        normalize_category, normalize_location, normalize_source,
+        normalize_category, normalize_location, normalize_location_source,
+        normalize_source, read_inventory, refresh_inventory_views,
     )
+    from lib.expiry import compute_expires
     from lib.storage_locations import place_item
 
     data = request.get_json(force=True, silent=True)
@@ -2953,13 +2955,11 @@ def api_inventory_add():
     if not parsed and not trip_payload:
         return jsonify({"error": "No valid items provided"}), 400
 
-    result = add_items(parsed) if parsed else {"added": 0, "merged": 0, "total": 0}
-
     # Optional price ledger: a "trip" object turns this add into a recorded
     # shopping trip (photo receipts from the Claude flow). Uses the RAW
     # request dicts so unit_price/line_total survive InventoryItem parsing.
     if trip_payload:
-        from lib.inventory_db import record_trip
+        from lib.inventory_db import record_trip_with_inventory
         from lib.receipt_parser import to_cents
 
         # for_recipe assignments were computed on InventoryItem (by name);
@@ -2984,9 +2984,14 @@ def api_inventory_add():
             for it in raw_items
             if isinstance(it, dict)
         ]
-        # record_trip returns None on a duplicate source_id (same receipt
-        # shared twice) — that's fine, the inventory add still succeeded.
-        record_trip(
+        for item in parsed:
+            if item.expires is None:
+                item.expires = compute_expires(
+                    item.purchased, item.name, item.category
+                )
+            item.location_source = normalize_location_source(item.location_source)
+
+        trip_id, result = record_trip_with_inventory(
             {
                 "date": trip_payload.get('date', ''),
                 "store": trip_payload.get('store', 'HEB'),
@@ -2995,7 +3000,18 @@ def api_inventory_add():
                 "total_cents": to_cents(trip_payload.get('total')),
             },
             purchases,
+            [item.to_dict() for item in parsed],
         )
+        if trip_id is None:
+            result = {
+                "added": 0,
+                "merged": 0,
+                "total": len(read_inventory()),
+            }
+        else:
+            refresh_inventory_views()
+    else:
+        result = add_items(parsed)
 
     return jsonify({"status": "ok", **result})
 

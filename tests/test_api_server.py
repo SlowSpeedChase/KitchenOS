@@ -937,6 +937,59 @@ def test_inventory_add_with_trip_records_purchases(client, tmp_vault, tmp_db):
     assert row[1] == 1098
 
 
+def test_inventory_add_with_trip_replay_is_a_no_op(
+    client, tmp_vault, tmp_db, monkeypatch
+):
+    from lib import inventory
+    from lib import inventory_db as idb
+
+    refreshes = []
+    monkeypatch.setattr(
+        inventory, "refresh_inventory_views", lambda: refreshes.append("refresh")
+    )
+    payload = {
+        "items": [
+            {
+                "name": "chicken breast",
+                "quantity": 2,
+                "unit": "lb",
+                "category": "meat",
+                "location": "fridge",
+                "purchased": "2026-06-09",
+                "source": "receipt",
+                "unit_price": 5.49,
+                "line_total": 10.98,
+            },
+        ],
+        "trip": {
+            "date": "2026-06-09",
+            "store": "HEB",
+            "total": 10.98,
+            "source_id": "photo-replay",
+        },
+    }
+
+    first = client.post("/api/inventory/add", json=payload)
+    second = client.post("/api/inventory/add", json=payload)
+
+    assert first.status_code == 200
+    assert first.get_json()["added"] == 1
+    assert second.status_code == 200
+    assert second.get_json()["added"] == 0
+    assert second.get_json()["merged"] == 0
+    conn = idb.connect()
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM trips").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM purchases").fetchone()[0] == 1
+        quantity = conn.execute(
+            "SELECT quantity FROM inventory WHERE name = 'chicken breast'"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert quantity == 2.0
+    assert refreshes == ["refresh"]
+
+
 def test_inventory_add_fee_items_skip_inventory(client, tmp_vault, tmp_db):
     payload = {
         "items": [

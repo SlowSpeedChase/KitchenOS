@@ -16,8 +16,13 @@ import hashlib
 import json
 from datetime import date
 
-from lib.inventory import InventoryItem, add_items
-from lib.inventory_db import record_trip, trip_exists
+from lib.expiry import compute_expires
+from lib.inventory import (
+    InventoryItem,
+    normalize_location_source,
+    refresh_inventory_views,
+)
+from lib.inventory_db import record_trip, record_trip_with_inventory, trip_exists
 from lib.recipe_matcher import assign_recipes
 from lib.receipt_parser import (
     _extract_json_object,
@@ -87,11 +92,10 @@ def ingest_parsed(
         "needs_review": not ok,
         "raw_text": raw_text if not ok else None,
     }
-    if record_trip(trip, purchases) is None:
-        result["status"] = "skipped"
-        return result
-
     if not ok:
+        if record_trip(trip, purchases) is None:
+            result["status"] = "skipped"
+            return result
         result["status"] = "needs_review"
         return result
 
@@ -113,8 +117,21 @@ def ingest_parsed(
             source="receipt",
             for_recipe=p.get("for_recipe"),
         ))
-    if stock:
-        add_items(stock)
+    for item in stock:
+        if item.expires is None:
+            item.expires = compute_expires(
+                item.purchased, item.name, item.category
+            )
+        item.location_source = normalize_location_source(item.location_source)
+
+    trip_id, _ = record_trip_with_inventory(
+        trip, purchases, [item.to_dict() for item in stock]
+    )
+    if trip_id is None:
+        result["status"] = "skipped"
+        return result
+
+    refresh_inventory_views()
     result["status"] = "ingested"
     return result
 

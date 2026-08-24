@@ -35,6 +35,36 @@ def test_ingest_parsed_dedups_on_source_id(tmp_vault, tmp_db, alias_tmp):
     assert res["status"] == "skipped"
 
 
+def test_ingest_failure_rolls_back_trip_purchases_and_inventory(
+    tmp_vault, tmp_db, alias_tmp, monkeypatch
+):
+    real_merge = idb.merge_inventory_rows
+    monkeypatch.setattr(
+        idb,
+        "merge_inventory_rows",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        ri.ingest_parsed(
+            dict(PARSED_OK), source="photo_receipt", source_id="photo-x"
+        )
+
+    conn = idb.connect()
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM trips").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM purchases").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM inventory").fetchone()[0] == 0
+    finally:
+        conn.close()
+
+    monkeypatch.setattr(idb, "merge_inventory_rows", real_merge)
+    result = ri.ingest_parsed(
+        dict(PARSED_OK), source="photo_receipt", source_id="photo-x"
+    )
+    assert result["status"] == "ingested"
+
+
 def test_ingest_parsed_dry_run_writes_nothing(tmp_vault, tmp_db, alias_tmp):
     res = ri.ingest_parsed(dict(PARSED_OK), source="photo_receipt",
                            source_id="photo-x", dry_run=True)
