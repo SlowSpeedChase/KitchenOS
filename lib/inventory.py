@@ -9,15 +9,20 @@ Obsidian, but edits there are overwritten. Items with the same
 
 from __future__ import annotations
 
+import fcntl
 import os
 import sys
+import threading
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional, TypeVar
 
 from lib import paths
 from lib.expiry import compute_expires, expiry_status
+
+T = TypeVar("T")
 
 CATEGORIES = (
     "produce", "dairy", "meat", "seafood", "pantry",
@@ -26,7 +31,7 @@ CATEGORIES = (
 LOCATIONS = ("fridge", "freezer", "pantry", "counter", "other")
 SOURCES = ("receipt", "manual", "claude", "csa", "staple")
 
-# How a row's `location` was decided. Ordered weakest-last; see _SOURCE_RANK.
+# How a row's `location` was decided, ordered strongest first.
 LOCATION_SOURCES = ("manual", "item", "category", "default")
 
 # Suffix marking a location nothing actually resolved. Rendered by
@@ -73,6 +78,25 @@ class InventoryItem:
 
 def inventory_path() -> Path:
     return paths.vault_root() / "Inventory.md"
+
+
+_VIEW_REFRESH_THREAD_LOCK = threading.Lock()
+
+
+@contextmanager
+def _inventory_view_refresh_lock():
+    """Serialize derived-view refreshes across threads and processes."""
+    from lib import inventory_db
+
+    lock_path = inventory_db.db_path().with_suffix(".inventory-views.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with _VIEW_REFRESH_THREAD_LOCK:
+        with lock_path.open("a") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def normalize_category(cat: Optional[str]) -> str:
@@ -159,28 +183,47 @@ def parse_inventory_markdown(text: str) -> list[InventoryItem]:
     return items
 
 
+def _item_from_row(row: dict) -> InventoryItem:
+    """Convert one database row with the same normalization as public reads."""
+    return InventoryItem(
+        name=row["name"],
+        quantity=float(row["quantity"]),
+        unit=row["unit"] or "ct",
+        category=normalize_category(row["category"]),
+        location=normalize_location(row["location"]),
+        purchased=row["purchased"] or None,
+        source=normalize_source(row["source"]),
+        notes=row["notes"] or "",
+        for_recipe=row["for_recipe"] or None,
+        expires=row["expires"] or None,
+        last_used=row["last_used"] or None,
+        use_count=int(row["use_count"] or 0),
+        location_source=normalize_location_source(row["location_source"]),
+    )
+
+
 def read_inventory() -> list[InventoryItem]:
     """Current stock from the DB (source of truth)."""
     from lib import inventory_db
 
-    return [
-        InventoryItem(
-            name=r["name"],
-            quantity=float(r["quantity"]),
-            unit=r["unit"] or "ct",
-            category=normalize_category(r["category"]),
-            location=normalize_location(r["location"]),
-            purchased=r["purchased"] or None,
-            source=normalize_source(r["source"]),
-            notes=r["notes"] or "",
-            for_recipe=r["for_recipe"] or None,
-            expires=r["expires"] or None,
-            last_used=r["last_used"] or None,
-            use_count=int(r["use_count"] or 0),
-            location_source=normalize_location_source(r["location_source"]),
-        )
-        for r in inventory_db.fetch_inventory_rows()
-    ]
+    return [_item_from_row(row) for row in inventory_db.fetch_inventory_rows()]
+
+
+def mutate_inventory(
+    mutator: Callable[[list[InventoryItem]], tuple[T, bool]],
+) -> T:
+    """Mutate a full inventory snapshot atomically and return its legacy result."""
+    from lib import inventory_db
+
+    def apply(rows: list[dict]) -> tuple[list[dict], T, bool]:
+        items = [_item_from_row(row) for row in rows]
+        result, changed = mutator(items)
+        return [item.to_dict() for item in items], result, changed
+
+    result, changed = inventory_db.mutate_inventory_rows(apply)
+    if changed:
+        refresh_inventory_views()
+    return result
 
 
 def _earliest_expiry(a: Optional[str], b: Optional[str]) -> Optional[str]:
@@ -292,6 +335,28 @@ def write_inventory(items: list[InventoryItem]) -> None:
     from lib import inventory_db
 
     inventory_db.replace_inventory_rows([it.to_dict() for it in items])
+    refresh_inventory_views()
+
+
+def refresh_inventory_views() -> None:
+    """Regenerate derived views serially after a successful database commit.
+
+    The lock intentionally begins after persistence and encloses every view
+    read and write. Callers, including full-set mutations, call this function
+    directly rather than acquiring an outer lock that could recurse.
+    """
+    try:
+        with _inventory_view_refresh_lock():
+            _refresh_inventory_views_unlocked()
+    except Exception as e:
+        # Every ordinary failure in this post-commit boundary is a derived-view
+        # failure. Keep the durable database result successful so a client
+        # retry cannot duplicate stock. BaseException still propagates.
+        print(f"⚠️  Inventory view refresh failed: {e}", file=sys.stderr)
+
+
+def _refresh_inventory_views_unlocked() -> None:
+    """Perform one refresh while ``_inventory_view_refresh_lock`` is held."""
     # The DB (source of truth) has already committed at this point. A failed
     # view write must not propagate: raising would make the API return 500,
     # and a client retry would double-add quantities.
@@ -359,23 +424,22 @@ def seed_pantry_staples(staples: Optional[set] = None) -> dict:
     # name is the one seeded and the narrower duplicate collapses into it.
     candidates.sort(key=lambda c: len(c[1].tokens))
 
-    existing = read_inventory()
-    stocked = [_phrase(it.name) for it in existing]
-    added, skipped = [], []
+    def seed(items: list[InventoryItem]) -> tuple[dict, bool]:
+        stocked = [_phrase(it.name) for it in items]
+        added, skipped = [], []
 
-    for name, phrase in candidates:
-        if not phrase.tokens or _is_staple(phrase, stocked):
-            skipped.append(name)
-            continue
-        if any(_covers(phrase, chosen) for chosen in
-               (_phrase(a) for a in added)):
-            skipped.append(name)
-            continue
-        added.append(name)
-        stocked.append(phrase)
+        for name, phrase in candidates:
+            if not phrase.tokens or _is_staple(phrase, stocked):
+                skipped.append(name)
+                continue
+            if any(_covers(phrase, chosen) for chosen in
+                   (_phrase(a) for a in added)):
+                skipped.append(name)
+                continue
+            added.append(name)
+            stocked.append(phrase)
 
-    if added:
-        write_inventory(existing + [
+        items.extend(
             InventoryItem(name=name, quantity=1, unit="ct", category="pantry",
                           location="pantry", source="staple",
                           # Hand-authored in pantry_staples.json, so these are
@@ -383,8 +447,10 @@ def seed_pantry_staples(staples: Optional[set] = None) -> dict:
                           location_source="item",
                           notes="always on hand")
             for name in added
-        ])
-    return {"added": added, "skipped": skipped}
+        )
+        return {"added": added, "skipped": skipped}, bool(added)
+
+    return mutate_inventory(seed)
 
 
 def prune_expired(today: Optional[date] = None,
@@ -396,88 +462,44 @@ def prune_expired(today: Optional[date] = None,
     is removed.
     """
     today = today or date.today()
-    kept, removed = [], 0
-    for it in read_inventory():
-        delta = None
-        if it.expires:
-            try:
-                delta = (date.fromisoformat(it.expires) - today).days
-            except ValueError:
-                delta = None
-        if delta is not None and delta < -grace_days:
-            removed += 1
-        else:
-            kept.append(it)
-    if removed:
-        write_inventory(kept)
-    return removed
+    def prune(items: list[InventoryItem]) -> tuple[int, bool]:
+        kept, removed = [], 0
+        for it in items:
+            delta = None
+            if it.expires:
+                try:
+                    delta = (date.fromisoformat(it.expires) - today).days
+                except ValueError:
+                    delta = None
+            if delta is not None and delta < -grace_days:
+                removed += 1
+            else:
+                kept.append(it)
+        if removed:
+            items[:] = kept
+        return removed, bool(removed)
+
+    return mutate_inventory(prune)
 
 
-# Strongest wins when two rows merge. A hand-placed row must never be
-# downgraded to a guess by a restock that happened to resolve weakly.
-_SOURCE_RANK = {"manual": 3, "item": 2, "category": 1, "default": 0}
-
-
-def _stronger_source(a: Optional[str], b: Optional[str]) -> str:
-    """The more trustworthy of two provenances."""
-    a, b = normalize_location_source(a), normalize_location_source(b)
-    return a if _SOURCE_RANK[a] >= _SOURCE_RANK[b] else b
-
-
-# TODO(receipt-ingestion plan, task 9): read→merge→replace can lose updates
-# with concurrent writers (Flask threads + ingest LaunchAgent). Switch to
-# INSERT ... ON CONFLICT(name, unit, location) DO UPDATE SET
-# quantity = quantity + excluded.quantity inside one transaction.
 def add_items(new_items: list[InventoryItem]) -> dict:
     """Add items, merging by (name, unit, location). Quantities sum on merge."""
-    existing = read_inventory()
-    by_key: dict[tuple[str, str, str], InventoryItem] = {
-        it.merge_key(): it for it in existing
-    }
+    from lib import inventory_db
 
-    added = 0
-    merged = 0
-    for new in new_items:
+    for item in new_items:
         # Auto-fill expiry from the configured shelf-life windows when the
         # caller didn't supply one (category null window -> stays None).
-        if new.expires is None:
-            new.expires = compute_expires(new.purchased, new.name, new.category)
-
-        key = new.merge_key()
-        if key in by_key:
-            cur = by_key[key]
-            cur.quantity += new.quantity
-            if new.purchased:
-                cur.purchased = new.purchased
-            if new.notes and not cur.notes:
-                cur.notes = new.notes
-            if new.category != "other":
-                cur.category = new.category
-            cur.location_source = _stronger_source(
-                cur.location_source, new.location_source
+        if item.expires is None:
+            item.expires = compute_expires(
+                item.purchased, item.name, item.category
             )
-            cur.for_recipe = _merge_recipes(cur.for_recipe, new.for_recipe)
-            # Keep the earliest expiry so warnings fire for the oldest stock.
-            cur.expires = _earliest_expiry(cur.expires, new.expires)
-            merged += 1
-        else:
-            # `purchased` doubles as "date added" — it is what the review page
-            # sorts by. Stamp it only when the row is genuinely new. Doing it
-            # unconditionally would bump the date on every merge, so re-ingesting
-            # a receipt or restocking a long-held item would present it as
-            # freshly bought. An explicit `purchased` still wins on merge, which
-            # is what the receipt path relies on.
-            #
-            # Staples are unaffected either way: `seed_pantry_staples` writes
-            # through `write_inventory`, not here, so they keep a null date and
-            # sort last under "Added" — correct for perpetual stock.
-            if new.purchased is None:
-                new.purchased = date.today().isoformat()
-            by_key[key] = new
-            added += 1
+        item.location_source = normalize_location_source(item.location_source)
 
-    write_inventory(list(by_key.values()))
-    return {"added": added, "merged": merged, "total": len(by_key)}
+    result = inventory_db.merge_inventory_rows(
+        [item.to_dict() for item in new_items]
+    )
+    refresh_inventory_views()
+    return result
 
 
 def remove_item(name: str, location: Optional[str] = None) -> bool:
@@ -487,34 +509,32 @@ def remove_item(name: str, location: Optional[str] = None) -> bool:
     regardless of unit. ``bulk_apply("remove", ...)`` addresses by the real
     ``(name, unit, location)`` key instead.
     """
-    items = read_inventory()
-    matches = _match_by_name(items, name, location)
-    if not matches:
-        return False
-    _apply_remove(items, matches)
-    write_inventory(items)
-    return True
+    def remove(items: list[InventoryItem]) -> tuple[bool, bool]:
+        matches = _match_by_name(items, name, location)
+        if not matches:
+            return False, False
+        _apply_remove(items, matches)
+        return True, True
+
+    return mutate_inventory(remove)
 
 
 def update_quantity(
     name: str, quantity: float, location: Optional[str] = None
 ) -> bool:
-    items = read_inventory()
     target = name.lower().strip()
     target_loc = location.lower().strip() if location else None
 
-    found = False
-    for it in items:
-        if it.name.lower().strip() == target and (
-            target_loc is None or it.location == target_loc
-        ):
-            it.quantity = quantity
-            found = True
-            break
+    def update(items: list[InventoryItem]) -> tuple[bool, bool]:
+        for it in items:
+            if it.name.lower().strip() == target and (
+                target_loc is None or it.location == target_loc
+            ):
+                it.quantity = quantity
+                return True, True
+        return False, False
 
-    if found:
-        write_inventory(items)
-    return found
+    return mutate_inventory(update)
 
 
 def extend_expiry(
@@ -529,13 +549,14 @@ def extend_expiry(
     passed or is unset — see ``_apply_extend``. Works on no-expiry items.
     Returns the updated item, or None if nothing matched.
     """
-    items = read_inventory()
-    matches = _match_by_name(items, name, location)[:1]
-    if not matches:
-        return None
-    updated = _apply_extend(items, matches, days, today=today)
-    write_inventory(items)
-    return updated[0]
+    def extend(items: list[InventoryItem]) -> tuple[Optional[InventoryItem], bool]:
+        matches = _match_by_name(items, name, location)[:1]
+        if not matches:
+            return None, False
+        updated = _apply_extend(items, matches, days, today=today)
+        return updated[0], True
+
+    return mutate_inventory(extend)
 
 
 def _match(it: InventoryItem, target: str, target_loc: Optional[str]) -> bool:
@@ -793,52 +814,55 @@ def bulk_apply(action: str, refs: list[dict], **params) -> dict:
     elif action == "move":
         to_location = _require(params, "to_location")
 
-    items = read_inventory()
-    by_key: dict[tuple[str, str, str], InventoryItem] = {
-        it.merge_key(): it for it in items
-    }
+    def apply(items: list[InventoryItem]) -> tuple[tuple[dict, list[str]], bool]:
+        by_key: dict[tuple[str, str, str], InventoryItem] = {
+            it.merge_key(): it for it in items
+        }
 
-    matches: list[InventoryItem] = []
-    not_found: list[dict] = []
-    for ref, key in zip(refs, keys):
-        found = by_key.get(key)
-        if found is None:
-            not_found.append(ref)
-        else:
-            matches.append(found)
+        matches: list[InventoryItem] = []
+        not_found: list[dict] = []
+        for ref, key in zip(refs, keys):
+            found = by_key.get(key)
+            if found is None:
+                not_found.append(ref)
+            else:
+                matches.append(found)
 
-    updated: list[InventoryItem] = []
-    removed: list[InventoryItem] = []
+        updated: list[InventoryItem] = []
+        removed: list[InventoryItem] = []
+        moved_names: list[str] = []
 
-    if matches:
-        if action == "remove":
-            removed = _apply_remove(items, matches)
-        elif action == "extend":
-            updated = _apply_extend(items, matches, days, today=params.get("today"))
-        elif action == "set-expiry":
-            updated = _apply_set_expiry(items, matches, expires)
-        elif action == "set-category":
-            updated = _apply_set_category(items, matches, category)
-        elif action == "move":
-            # Captured before the move: a colliding row is dropped from `items`,
-            # so reading names off the result would miss the merged-away source.
-            moved_names = [m.name for m in matches]
-            updated = _apply_move(items, matches, to_location)
-        elif action == "freeze":
-            updated = _apply_freeze(items, matches)
+        if matches:
+            if action == "remove":
+                removed = _apply_remove(items, matches)
+            elif action == "extend":
+                updated = _apply_extend(
+                    items, matches, days, today=params.get("today")
+                )
+            elif action == "set-expiry":
+                updated = _apply_set_expiry(items, matches, expires)
+            elif action == "set-category":
+                updated = _apply_set_category(items, matches, category)
+            elif action == "move":
+                # Captured before the move: a colliding row is dropped from
+                # `items`, so the result can no longer name every source row.
+                moved_names = [match.name for match in matches]
+                updated = _apply_move(items, matches, to_location)
+            elif action == "freeze":
+                updated = _apply_freeze(items, matches)
 
-        write_inventory(items)
+        result = {
+            "applied": len(matches),
+            "items": updated,
+            "removed": removed,
+            "not_found": not_found,
+        }
+        return (result, moved_names), bool(matches)
 
-        if action == "move":
-            for moved_name in moved_names:
-                _teach_location(moved_name, to_location)
-
-    return {
-        "applied": len(matches),
-        "items": updated,
-        "removed": removed,
-        "not_found": not_found,
-    }
+    result, moved_names = mutate_inventory(apply)
+    for moved_name in moved_names:
+        _teach_location(moved_name, to_location)
+    return result
 
 
 def set_expiry(
@@ -848,13 +872,14 @@ def set_expiry(
 
     Returns the updated item, or None if no row matched.
     """
-    items = read_inventory()
-    matches = _match_by_name(items, name, location)[:1]
-    if not matches:
-        return None
-    updated = _apply_set_expiry(items, matches, expires)
-    write_inventory(items)
-    return updated[0]
+    def apply(items: list[InventoryItem]) -> tuple[Optional[InventoryItem], bool]:
+        matches = _match_by_name(items, name, location)[:1]
+        if not matches:
+            return None, False
+        updated = _apply_set_expiry(items, matches, expires)
+        return updated[0], True
+
+    return mutate_inventory(apply)
 
 
 def set_category(
@@ -864,13 +889,14 @@ def set_category(
 
     Returns the updated item, or None if no row matched.
     """
-    items = read_inventory()
-    matches = _match_by_name(items, name, location)[:1]
-    if not matches:
-        return None
-    updated = _apply_set_category(items, matches, category)
-    write_inventory(items)
-    return updated[0]
+    def apply(items: list[InventoryItem]) -> tuple[Optional[InventoryItem], bool]:
+        matches = _match_by_name(items, name, location)[:1]
+        if not matches:
+            return None, False
+        updated = _apply_set_category(items, matches, category)
+        return updated[0], True
+
+    return mutate_inventory(apply)
 
 
 def move_item(
@@ -883,26 +909,28 @@ def move_item(
     destination row and the source row is dropped. Returns the resulting item at
     the destination, or None if no row matched.
     """
-    items = read_inventory()
-    matches = _match_by_name(items, name, location)[:1]
-    if not matches:
-        return None
-    # Already there. Normally a no-op, so we return without a write rather than
-    # churning the DB and regenerating two vault notes for nothing — but if the
-    # row's placement was only ever a guess, the tap is the user confirming it,
-    # which is worth the write and worth teaching.
-    if matches[0].location == normalize_location(to_location):
-        if matches[0].location_source == "manual":
-            return matches[0]
-        matches[0].location_source = "manual"
-        write_inventory(items)
+    def apply(
+        items: list[InventoryItem],
+    ) -> tuple[tuple[Optional[InventoryItem], bool], bool]:
+        matches = _match_by_name(items, name, location)[:1]
+        if not matches:
+            return (None, False), False
+        # Already there. Normally a no-op, so return without replacing rows or
+        # refreshing views. A guessed placement becomes a confirmed mutation.
+        if matches[0].location == normalize_location(to_location):
+            if matches[0].location_source == "manual":
+                return (matches[0], False), False
+            matches[0].location_source = "manual"
+            return (matches[0], True), True
+        result = _apply_move(items, matches, to_location)
+        return (result[0], True), True
+
+    result, should_teach = mutate_inventory(apply)
+    if should_teach:
+        # After the commit and view refresh: a config failure must not precede
+        # or mask a failed database write.
         _teach_location(name, to_location)
-        return matches[0]
-    result = _apply_move(items, matches, to_location)
-    write_inventory(items)
-    # After the write: a config failure must not precede a failed DB write.
-    _teach_location(name, to_location)
-    return result[0]
+    return result
 
 
 def freeze_item(
@@ -915,10 +943,11 @@ def freeze_item(
     implementation chained move + set_category + set_expiry for three writes and
     six view regenerations, with no atomicity between them.
     """
-    items = read_inventory()
-    matches = _match_by_name(items, name, location)[:1]
-    if not matches:
-        return None
-    result = _apply_freeze(items, matches)
-    write_inventory(items)
-    return result[0]
+    def apply(items: list[InventoryItem]) -> tuple[Optional[InventoryItem], bool]:
+        matches = _match_by_name(items, name, location)[:1]
+        if not matches:
+            return None, False
+        result = _apply_freeze(items, matches)
+        return result[0], True
+
+    return mutate_inventory(apply)

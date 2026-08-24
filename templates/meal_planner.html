@@ -71,10 +71,10 @@
         /* --- Layout --- */
         .app {
             display: flex;
-            /* Not a plain 100dvh: the injected Claude chrome bar is sticky at the
-               top of <body>, so .app starts ~60px down and a full-viewport height
-               runs its bottom off the screen. In the docked-rail layout that only
-               clipped some empty sidebar; with a bottom shelf it cut the shelf.
+            /* Not a plain 100dvh: injected safety chrome can be sticky at the top
+               of <body>, so .app starts lower and a full-viewport height runs its
+               bottom off the screen. In the docked-rail layout that only clipped
+               some empty sidebar; with a bottom shelf it cut the shelf.
                syncAppHeight() measures the real offset and sets --chrome-h. */
             height: calc(100dvh - var(--chrome-h, 0px));
             width: 100vw;
@@ -188,9 +188,8 @@
             align-items: center;
             justify-content: center;
             padding: 24px 16px;
-            /* One above the Claude bar, which api_server injects at 2147483000.
-               A modal that another chrome element floats on top of isn't modal —
-               the bar covered the card's corner and swallowed backdrop clicks. */
+            /* Above globally injected page chrome. A modal that another chrome
+               element floats on top of isn't modal — it swallows backdrop clicks. */
             z-index: 2147483001;
         }
         .preview-backdrop[hidden] { display: none; }
@@ -4842,9 +4841,9 @@
             updateShelfHint();
         }
 
-        // Whatever chrome sits above .app (today: the injected Claude bar) is
-        // measured rather than assumed — it is not this template's markup, and a
-        // hardcoded height would silently start clipping the shelf if it changed.
+        // Whatever global chrome sits above .app is measured rather than assumed —
+        // it is not this template's markup, and a hardcoded height would silently
+        // start clipping the shelf if it changed.
         function syncAppHeight() {
             const app = document.querySelector('.app');
             if (!app) return;

@@ -974,83 +974,16 @@ Management → trust developer.
 
 ---
 
-## 9. Launch Claude from your phone (Termius + tmux)
+## 9. Retired Claude web bridge
 
-Every KitchenOS web page and the top of `Inventory.md` carry a **🤖 Launch Claude**
-button plus a **Notes** box. The button opens an `ssh://$KITCHENOS_SSH_TARGET` link
-(Termius on the phone), SSHes into the mini over Tailscale, and — via an SSH forced
-command — drops you into `claude` running inside a persistent tmux session
-(`ko-claude`), pre-seeded with whatever is in the shared `Claude Notes.md`.
+KitchenOS no longer renders a Launch Claude/Notes widget and does not register
+`/api/claude-send` or `/api/claude-notes`. Do not document or depend on an HTTP,
+tailnet, or page-UI route for those actions.
 
-**Pieces (all in the main checkout):**
-
-- `scripts/kitchenos-claude-launch.sh` — forced-command entrypoint;
-  `tmux new-session -A -s ko-claude` (attach-or-create → survives disconnect).
-- `scripts/kitchenos-claude-run.sh` — runs inside tmux; resolves `Claude Notes.md`
-  via `lib.paths.claude_notes_path()` and `exec claude "$(cat notes)"` (or bare
-  `claude` when notes are empty).
-- `scripts/kitchenos-claude-reset.sh` — `tmux kill-session -t ko-claude`; run it
-  after editing notes so the **next** launch re-seeds from the new notes (an
-  attach-only re-launch keeps the old session, so edited notes don't take effect
-  until you reset).
-- Notes are edited in the web textarea (saved via `POST /api/claude-notes`) or
-  directly in Obsidian as `Claude Notes.md` at the vault root — byte-identical.
-
-```bash
-# Reset the session so the next launch picks up freshly-edited notes:
-/Users/chaseeasterling/Dev/KitchenOS/scripts/kitchenos-claude-reset.sh
-```
-
-### One-time setup
-
-On the mini:
-
-```bash
-brew install tmux
-chmod +x scripts/kitchenos-claude-*.sh   # already +x in git, but confirm
-ssh-keygen -t ed25519 -f ~/.ssh/kitchenos_claude   # dedicated key, no passphrase or one you'll store in Termius
-```
-
-Add the public key to `~/.ssh/authorized_keys` on the mini with a forced command so
-this key can ONLY launch Claude (never a plain shell):
-
-```
-command="/Users/chaseeasterling/Dev/KitchenOS/scripts/kitchenos-claude-launch.sh",no-port-forwarding,no-X11-forwarding ssh-ed25519 AAAA...your-kitchenos_claude.pub
-```
-
-On the phone (Termius): import the `kitchenos_claude` private key; create a host
-**"KitchenOS Claude"** = `chaseeasterling@chases-mac-mini.taila69703.ts.net` presenting
-**only** that key (so the forced command always fires). Connect once to confirm you land
-in `claude` inside tmux. Set `KITCHENOS_SSH_TARGET` in `.env` if the `user@host` differs
-from the default, then restart the API LaunchAgent so pages emit the right link.
-
-Verify the forced command from the mini without the phone — `-i` + `IdentitiesOnly=yes`
-is exactly what Termius does. A forced command ignores any command you ask for, so
-without a PTY you get tmux's `open terminal failed: not a terminal`, which is itself
-proof the entry fired:
-
-```bash
-ssh -i ~/.ssh/kitchenos_claude -o IdentitiesOnly=yes \
-  chaseeasterling@chases-mac-mini.taila69703.ts.net 'echo NOT_FORCED'
-```
-
-**Caveats:** iOS routing of `ssh://` → Termius isn't guaranteed across versions — the
-saved Termius host is the reliable entry, the button is convenience. `claude` needs it
-on PATH under a non-login shell; `kitchenos-claude-run.sh` sources `~/.zprofile` and
-prepends Homebrew dirs. tmux/claude need a PTY (Termius interactive default).
-
-**The username must be a real account on the mini.** sshd prompts for a password for an
-account that doesn't exist and then rejects every attempt — indistinguishable from a
-wrong password. The button shipped as `chase@` (borrowed from the `debian` host block in
-`~/.ssh/config`) against a machine whose only account is `chaseeasterling`, so it read as
-"the button won't take my password" for months rather than as an error.
-
-**The forced command is bound to the key, not the host.** Clicking the button on the mini
-itself uses the default `~/.ssh/id_ed25519`, not `kitchenos_claude`, so it lands in an
-ordinary login shell — type `claude` yourself, or run the reset script and use the phone.
-Making a local click land in Claude too would need a client-side `~/.ssh/config` block
-pinning `IdentityFile ~/.ssh/kitchenos_claude` + `IdentitiesOnly yes` for that MagicDNS
-name; deliberately not done, since that hijacks every ssh to that name.
+`lib/claude_notes.py` and `lib/claude_send.py` remain dormant, unregistered
+implementation modules with their unit tests. They are not a server interface;
+keep them that way unless a separately reviewed feature defines an authenticated
+surface and its operating contract.
 
 ## 10. Completing work
 

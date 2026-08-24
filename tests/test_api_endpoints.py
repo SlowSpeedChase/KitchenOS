@@ -1,6 +1,7 @@
 """Tests for API endpoints."""
 
 import os
+from unittest.mock import patch
 
 import pytest
 from api_server import app
@@ -36,6 +37,70 @@ def test_send_to_reminders_requires_week(client):
     assert response.status_code == 400
     data = response.get_json()
     assert "week" in data.get("error", "").lower()
+
+
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        ("/generate-shopping-list", {"week": "../outside"}),
+        ("/send-to-reminders", {"week": "../outside"}),
+        ("/api/shopping-list/preview", {"week": "2026-W54"}),
+        ("/api/shopping-list/confirm", {"week": "../outside", "items_to_buy": []}),
+    ],
+)
+def test_shopping_list_path_escape_is_rejected_without_outside_mutation_or_reminders(
+    client, tmp_path, path, payload
+):
+    """Removing canonical week validation would permit request-controlled file paths."""
+    import api_server
+    import lib.shopping_list_generator
+
+    shopping_lists = tmp_path / "Shopping Lists"
+    shopping_lists.mkdir()
+    outside = tmp_path / "outside.md"
+    original = "outside sentinel\n"
+    outside.write_text(original, encoding="utf-8")
+
+    with patch.object(api_server, "SHOPPING_LISTS_PATH", shopping_lists), \
+         patch.object(lib.shopping_list_generator, "SHOPPING_LISTS_PATH", shopping_lists), \
+         patch("lib.reminders.add_to_reminders") as add_to_reminders:
+        response = client.post(path, json=payload)
+
+    assert response.status_code == 400
+    assert "week required (yyyy-wnn)" in response.get_json()["error"].lower()
+    assert outside.read_text(encoding="utf-8") == original
+    add_to_reminders.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        ("/generate-shopping-list", {"week": 1}),
+        ("/send-to-reminders", {"week": 1}),
+        ("/api/shopping-list/preview", {"week": 1}),
+        ("/api/shopping-list/confirm", {"week": 1, "items_to_buy": []}),
+    ],
+)
+def test_shopping_list_rejects_non_string_week_without_side_effects(client, tmp_path, path, payload):
+    """Removing the type check would turn malformed JSON into a route 500."""
+    import api_server
+    import lib.shopping_list_generator
+
+    shopping_lists = tmp_path / "Shopping Lists"
+    shopping_lists.mkdir()
+    outside = tmp_path / "outside.md"
+    original = "outside sentinel\n"
+    outside.write_text(original, encoding="utf-8")
+
+    with patch.object(api_server, "SHOPPING_LISTS_PATH", shopping_lists), \
+         patch.object(lib.shopping_list_generator, "SHOPPING_LISTS_PATH", shopping_lists), \
+         patch("lib.reminders.add_to_reminders") as add_to_reminders:
+        response = client.post(path, json=payload)
+
+    assert response.status_code == 400
+    assert "week required (yyyy-wnn)" in response.get_json()["error"].lower()
+    assert outside.read_text(encoding="utf-8") == original
+    add_to_reminders.assert_not_called()
 
 
 def test_suggest_meal_requires_fields(client):
@@ -120,72 +185,16 @@ def test_review_page_served(client):
     assert b'Inventory Review' in response.data
 
 
-def test_claude_notes_get_empty(client, tmp_vault):
-    """GET /api/claude-notes on a fresh vault returns empty notes."""
-    response = client.get('/api/claude-notes')
-    assert response.status_code == 200
-    data = response.get_json()
-    assert data == {"notes": ""}
-
-
-def test_claude_notes_save_and_get(client, tmp_vault):
-    """POST /api/claude-notes saves, returns normalized body, then GET retrieves it."""
+def test_claude_notes_routes_are_absent_and_leave_notes_untouched(client, tmp_vault):
+    """Disabled bridge routes cannot read or mutate the dormant note."""
     from lib.paths import claude_notes_path
 
-    # Save notes
-    response = client.post('/api/claude-notes', json={"notes": "buy milk"})
-    assert response.status_code == 200
-    data = response.get_json()
-    assert data["status"] == "saved"
-    assert data["notes"] == "buy milk\n"
+    sentinel = b"Keep this Claude Notes sentinel byte-for-byte.\n"
+    claude_notes_path().write_bytes(sentinel)
 
-    # Verify file exists with correct content
-    assert claude_notes_path().exists()
-    assert claude_notes_path().read_text(encoding="utf-8") == "buy milk\n"
-
-    # Verify GET retrieves it
-    response = client.get('/api/claude-notes')
-    assert response.status_code == 200
-    data = response.get_json()
-    assert data["notes"] == "buy milk\n"
-
-
-def test_claude_notes_post_missing_key(client, tmp_vault):
-    """POST /api/claude-notes without 'notes' key returns 400."""
-    response = client.post('/api/claude-notes', json={})
-    assert response.status_code == 400
-    data = response.get_json()
-    assert "notes" in data.get("error", "").lower()
-
-
-def test_claude_notes_post_non_string(client, tmp_vault):
-    """POST /api/claude-notes with non-string 'notes' value returns 400."""
-    response = client.post('/api/claude-notes', json={"notes": 123})
-    assert response.status_code == 400
-    data = response.get_json()
-    assert "string" in data.get("error", "").lower()
-
-
-def test_claude_notes_post_empty_clears(client, tmp_vault):
-    """Saving empty string clears the notes."""
-    from lib.paths import claude_notes_path
-
-    # Save some notes
-    client.post('/api/claude-notes', json={"notes": "hello"})
-    assert claude_notes_path().read_text(encoding="utf-8") == "hello\n"
-
-    # Clear with empty string
-    response = client.post('/api/claude-notes', json={"notes": ""})
-    assert response.status_code == 200
-    data = response.get_json()
-    assert data["status"] == "saved"
-    assert data["notes"] == ""
-
-    # Verify it's cleared
-    response = client.get('/api/claude-notes')
-    assert response.status_code == 200
-    data = response.get_json()
-    assert data["notes"] == ""
+    assert client.get('/api/claude-notes').status_code == 404
+    assert client.post('/api/claude-notes', json={"notes": "replace me"}).status_code == 404
+    assert claude_notes_path().read_bytes() == sentinel
 
 
 def _bulk_seed(client, name, unit, location, category="produce"):

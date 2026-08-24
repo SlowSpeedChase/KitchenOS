@@ -95,6 +95,72 @@ class TestRoundtrip:
         assert (tmp_vault / "Inventory.md").exists()
 
 
+class TestMutateInventory:
+    def test_refresh_runs_after_commit_and_legacy_result_is_returned(
+        self, tmp_vault, tmp_db, monkeypatch
+    ):
+        import lib.inventory as inventory
+
+        inventory_db.replace_inventory_rows([
+            {
+                "name": "Milk",
+                "quantity": 1,
+                "unit": "gal",
+                "category": "invalid",
+                "location": "garage",
+                "source": "invalid",
+                "location_source": "invalid",
+            }
+        ])
+        refreshed_quantities = []
+        monkeypatch.setattr(
+            inventory,
+            "refresh_inventory_views",
+            lambda: refreshed_quantities.append(
+                [item.quantity for item in inventory.read_inventory()]
+            ),
+        )
+
+        def mutate(items):
+            [milk] = items
+            assert milk.category == "other"
+            assert milk.location == "other"
+            assert milk.source == "manual"
+            assert milk.location_source == "default"
+            milk.quantity = 2
+            return {"legacy": "result"}, True
+
+        assert inventory.mutate_inventory(mutate) == {"legacy": "result"}
+        assert refreshed_quantities == [[2.0]]
+
+    def test_noop_skips_replace_and_view_refresh(
+        self, tmp_vault, tmp_db, monkeypatch
+    ):
+        import lib.inventory as inventory
+
+        inventory_db.replace_inventory_rows([
+            {"name": "Milk", "quantity": 1, "unit": "gal"}
+        ])
+        replacements = []
+        refreshes = []
+        real_replace = inventory_db._replace_inventory_rows
+        monkeypatch.setattr(
+            inventory_db,
+            "_replace_inventory_rows",
+            lambda conn, rows: replacements.append(rows) or real_replace(conn, rows),
+        )
+        monkeypatch.setattr(
+            inventory, "refresh_inventory_views", lambda: refreshes.append(True)
+        )
+
+        assert inventory.mutate_inventory(
+            lambda items: ("not found", False)
+        ) == "not found"
+        assert replacements == []
+        assert refreshes == []
+        assert read_inventory()[0].quantity == 1.0
+
+
 class TestAddItems:
     def test_add_into_empty_inventory(self, tmp_vault, tmp_db):
         result = add_items([
@@ -141,6 +207,38 @@ class TestAddItems:
             InventoryItem(name="Yogurt", quantity=1, unit="ct", purchased="2026-04-30"),
         ])
         assert read_inventory()[0].purchased == "2026-04-30"
+
+    def test_concurrent_adds_preserve_both_updates(
+        self, tmp_vault, tmp_db, monkeypatch
+    ):
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        import lib.inventory as inventory
+
+        real_read = inventory.read_inventory
+        # Initialize the schema/WAL mode before both workers race. The behavior
+        # under test is the stale read→replace window, not first-connect setup.
+        assert real_read() == []
+        barrier = threading.Barrier(2)
+
+        def synchronized_read():
+            rows = real_read()
+            barrier.wait(timeout=5)
+            return rows
+
+        monkeypatch.setattr(inventory, "read_inventory", synchronized_read)
+        # This regression isolates the database merge. Refresh ordering has its
+        # own controlled test below, and is now intentionally serialized, so a
+        # barrier inside both refresh reads would deadlock by construction.
+        monkeypatch.setattr(inventory, "refresh_inventory_views", lambda: None)
+        item = lambda: inventory.InventoryItem(
+            name="Milk", quantity=1, unit="gal", location="fridge"
+        )
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(lambda _: inventory.add_items([item()]), range(2)))
+
+        [milk] = real_read()
+        assert milk.quantity == 2
 
 
 class TestRemove:
@@ -282,6 +380,74 @@ class TestViewFollowsDatabase:
         ])
         assert (inventory_path().read_text(encoding="utf-8")
                 == render_inventory_md(read_inventory()))
+
+    def test_concurrent_refresh_cannot_leave_an_older_snapshot_on_disk(
+        self, tmp_vault, tmp_db, monkeypatch
+    ):
+        """Refresh completion order must not invert committed database order."""
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        import lib.inventory as inventory
+        from lib import cook_now
+
+        real_merge = inventory_db.merge_inventory_rows
+        real_render = inventory.render_inventory_md
+        older_snapshot_ready = threading.Event()
+        release_older_snapshot = threading.Event()
+        second_commit_done = threading.Event()
+        second_refresh_done = threading.Event()
+
+        def track_second_commit(rows, conn=None):
+            result = real_merge(rows, conn=conn)
+            if result["merged"] == 1:
+                second_commit_done.set()
+            return result
+
+        def hold_older_render(items):
+            if items and items[0].quantity == 1 and not older_snapshot_ready.is_set():
+                older_snapshot_ready.set()
+                assert release_older_snapshot.wait(timeout=5)
+            return real_render(items)
+
+        def add_second_item():
+            try:
+                return inventory.add_items([
+                    InventoryItem(
+                        name="Milk", quantity=1, unit="gal", location="fridge"
+                    )
+                ])
+            finally:
+                second_refresh_done.set()
+
+        monkeypatch.setattr(inventory_db, "merge_inventory_rows", track_second_commit)
+        monkeypatch.setattr(inventory, "render_inventory_md", hold_older_render)
+        monkeypatch.setattr(cook_now, "write_note", lambda: None)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(
+                inventory.add_items,
+                [InventoryItem(
+                    name="Milk", quantity=1, unit="gal", location="fridge"
+                )],
+            )
+            assert older_snapshot_ready.wait(timeout=5)
+            second = pool.submit(add_second_item)
+            try:
+                # The second database commit must remain independent of the
+                # view lock. Without refresh serialization its newer view also
+                # finishes here, allowing the held older render to overwrite it.
+                assert second_commit_done.wait(timeout=5)
+                second_refresh_done.wait(timeout=1)
+            finally:
+                release_older_snapshot.set()
+            first.result(timeout=5)
+            second.result(timeout=5)
+
+        [milk] = inventory.read_inventory()
+        assert milk.quantity == 2
+        assert "| Milk | 2 | gal |" in inventory.inventory_path().read_text(
+            encoding="utf-8"
+        )
 
 
 class TestParsing:

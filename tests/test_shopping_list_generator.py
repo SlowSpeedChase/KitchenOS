@@ -369,6 +369,23 @@ def test_parse_shopping_list_not_found():
     assert "Shopping list not found" in result['error']
 
 
+@pytest.mark.parametrize("week", ["../outside", "2026-W54"])
+def test_parse_shopping_list_rejects_invalid_week_before_reading(week, tmp_path):
+    """Removing the shared path authority would allow a non-Flask caller to escape."""
+    import lib.shopping_list_generator as generator
+
+    outside = tmp_path / "outside.md"
+    original = "outside sentinel\n"
+    outside.write_text(original, encoding="utf-8")
+
+    with patch.object(generator, "SHOPPING_LISTS_PATH", tmp_path):
+        result = generator.parse_shopping_list_file(week)
+
+    assert result["success"] is False
+    assert "week required" in result["error"]
+    assert outside.read_text(encoding="utf-8") == original
+
+
 def test_parse_shopping_list_case_insensitive_check():
     """Handles uppercase X in checked items."""
     content = """# Shopping List

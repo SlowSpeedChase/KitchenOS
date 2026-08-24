@@ -1,6 +1,6 @@
-"""Tests for the injected Claude launch bar."""
+"""Tests for global page chrome."""
 import pytest
-from api_server import app, _inject_after_body, _claude_bar_html
+from api_server import app, _inject_after_body
 
 
 @pytest.fixture
@@ -38,67 +38,40 @@ def test_inject_ignores_body_spelled_out_inside_the_head():
     assert '<body class="x">SNIP' in out
     assert out.index('SNIP') > out.index('</style>')
 
-def test_bar_html_has_ssh_and_endpoint():
-    bar = _claude_bar_html()
-    assert 'id="ko-claude-bar"' in bar
-    assert 'ssh://' in bar
-    assert '/api/claude-notes' in bar
+# --- route level: simple pages do not expose the disabled bridge ---
 
-def test_bar_html_uses_env_target(monkeypatch):
-    monkeypatch.setenv('KITCHENOS_SSH_TARGET', 'tester@example.ts.net')
-    assert 'ssh://tester@example.ts.net' in _claude_bar_html()
-
-def test_bar_html_has_home_link():
-    bar = _claude_bar_html()
-    assert 'id="ko-home-link"' in bar
-    assert 'href="/"' in bar
-
-
-# --- route level: every simple page carries the bar ---
-
-# Every HTML page served through _serve_page_with_claude_bar.
 PAGES = ['/', '/review', '/system-health', '/nutrition-review',
          '/meal-planner', '/receipt-paste']
 
 
 @pytest.mark.parametrize('path', PAGES)
-def test_page_has_claude_bar(client, path):
-    r = client.get(path)
-    assert r.status_code == 200
-    body = r.get_data(as_text=True)
-    assert 'id="ko-claude-bar"' in body
-    assert 'ssh://' in body
-    assert '/api/claude-notes' in body
+def test_page_has_no_claude_bridge(client, path):
+    response = client.get(path)
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert 'id="ko-claude-bar"' not in body
+    assert '/api/claude-send' not in body
+    assert '/api/claude-notes' not in body
 
 
-@pytest.mark.parametrize('path', PAGES)
-def test_every_page_links_home(client, path):
-    body = client.get(path).get_data(as_text=True)
-    assert 'id="ko-home-link"' in body
-
-
-@pytest.mark.parametrize('path', PAGES)
-def test_bar_is_not_buried_in_the_stylesheet(client, path):
-    """Presence of the markup is not the same as a rendered bar.
-
-    The string assertions above passed for months while /meal-planner showed no
-    bar at all, because the snippet had been spliced inside <style>. Assert the
-    injection point is real markup: no <style> is still open where it landed.
-    """
-    body = client.get(path).get_data(as_text=True)
-    bar = body.index('id="ko-claude-bar"')
-    assert body.rfind('<style', 0, bar) <= body.rfind('</style>', 0, bar), \
-        f'{path}: bar was injected inside an open <style> block'
+@pytest.mark.parametrize("method,path", [
+    ("get", "/api/claude-notes"),
+    ("post", "/api/claude-notes"),
+    ("post", "/api/claude-send"),
+])
+def test_claude_bridge_routes_are_absent(client, method, path):
+    response = getattr(client, method)(path, json={"notes": "x", "text": "x"})
+    assert response.status_code == 404
 
 
 def test_the_stale_banner_never_escapes_the_page():
     """`escape()` returns Markup, and `str + Markup` escapes the LEFT operand.
 
     The first cut concatenated raw `escape(...)` into the banner, so the banner
-    escaped itself, then the Claude bar, then via `_inject_after_body` the whole
-    document — the planner served 260KB of visible `&lt;!DOCTYPE html&gt;` and no
-    grid rendered. A page that cannot render is a worse outcome than the
-    staleness this banner reports, so the type is pinned here.
+    escaped itself and then, via `_inject_after_body`, the whole document — the
+    planner served 260KB of visible `&lt;!DOCTYPE html&gt;` and no grid rendered. A
+    page that cannot render is a worse outcome than the staleness this banner
+    reports, so the type is pinned here.
     """
     import api_server
 
@@ -119,6 +92,6 @@ def test_the_stale_banner_never_escapes_the_page():
     assert banner.startswith("<div"), "banner escaped its own markup"
     assert "<script>" not in banner, "the detail text was not escaped"
     page = _inject_after_body("<html><head></head><body>GRID</body></html>",
-                              banner + _claude_bar_html())
+                              banner)
     assert "&lt;!DOCTYPE" not in page and "<body>" in page
     assert "GRID" in page
