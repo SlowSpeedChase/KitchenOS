@@ -161,11 +161,15 @@ next regeneration.
   case-insensitive `(name, unit, location)` key. Whole-inventory operations obtain
   that write lock before reading their complete snapshot, then replace it within
   the same transaction.
+- `POST /api/inventory/add` accepts an optional `trip` only as an object with a
+  nonempty string `source_id`; malformed trip input is rejected before any write.
 - Receipt ingestion treats a duplicate `trips.source_id` as a successful no-op.
   A valid receipt commits its trip, purchases, and non-fee inventory merge together;
   a needs-review receipt intentionally persists its trip and purchases without
   stock. Generated Inventory/Cook Now views refresh only after a successful stock
   commit and are serialized so a slower writer cannot publish an older view afterward.
+  The public post-commit refresh boundary catches and logs every ordinary exception
+  so a durable write cannot become retryable because its derived view failed.
 
 ## Receipt → inventory
 
@@ -184,8 +188,9 @@ Items enter inventory via five paths, condensed from `CLAUDE.md`'s
    tier/week produce with `source="csa"`, `purchased` rolled to the
    Wednesday pickup.
 3. **Photo receipt (Claude)** — a shared receipt photo is parsed by Claude,
-   normalized, and posted through `add_to_inventory` — optionally with a
-   `trip` block so photo receipts feed the same price ledger.
+   normalized, and posted through `add_to_inventory` — optionally with a `trip`
+   object carrying a nonempty `source_id`, so photo receipts feed the same price
+   ledger without accepting an unstable dedup key.
 4. **Manual** — `add_to_inventory` via MCP, or `POST /api/inventory/add`
    directly.
 5. **Markdown paste** — a pasted markdown table is preview-then-committed via

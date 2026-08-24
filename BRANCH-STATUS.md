@@ -74,9 +74,13 @@ make receipt/inventory persistence atomic and safe under concurrent writers.
   `test_api_endpoints.py`, `test_safe_paths.py`, `test_api_server.py`,
   `test_shopping_list_generator.py`, `test_inventory_db.py`,
   `test_inventory.py`, `test_pantry.py`, and `test_receipt_ingest.py`.
-- Default suite (2026-08-23): `4105 passed, 1 skipped, 133 deselected, 9
-  warnings in 28.45s`. Baseline was `4086 passed, 1 skipped, 133 deselected,
-  9 warnings`: pass count is +19; skip, deselection, and warning counts match.
+- Final-review focused inventory/database/API/receipt suite (2026-08-23): `281
+  passed in 3.66s` — `tests/test_inventory_db.py`, `test_inventory.py`,
+  `test_api_server.py`, `test_api_endpoints.py`, and `test_receipt_ingest.py`.
+- Default suite (2026-08-23, after final receipt/view fixes): `4108 passed, 1
+  skipped, 133 deselected, 9 warnings in 34.00s`. Baseline was `4086 passed, 1
+  skipped, 133 deselected, 9 warnings`: pass count is +22; skip, deselection,
+  and warning counts match.
 - E2E suite (2026-08-23): `128 passed, 1 skipped, 4106 deselected, 3 xfailed,
   1 xpassed in 111.04s (0:01:51)`; no hard failures. Verbatim dispositions:
   - `SKIPPED [1] tests/e2e/test_planner_library.py:52: no prose servings values in the current library`
@@ -84,6 +88,9 @@ make receipt/inventory persistence atomic and safe under concurrent writers.
   - `XFAIL tests/e2e/test_live_state.py::test_current_week_plan_has_at_least_one_meal - generate_meal_plan.py writes an empty template and nothing fills the slots, so each week arrives blank and only gets meals if they are added by hand. Non-strict because it legitimately oscillates: XPASS means the week has been planned (good), xfail means it is still the bare scaffold. Either way the signal is visible rather than silent.`
   - `XFAIL tests/e2e/test_live_state.py::test_current_week_has_a_shopping_list - Known: no shopping list has been generated since 2026-W27, so /current/shopping-list redirects into Obsidian to a note that does not exist.`
   - `XPASS tests/e2e/test_weekly_loop.py::test_cold_planner_load_is_quick_enough_to_keep_a_habit[chromium] - Timing-sensitive, so non-strict. /api/tasks/<week> rebuilds its sidecar through Ollama on a cold week; measured at 9.7s when the model had to load and well under 1s once mistral:7b is resident. The cost is therefore Ollama's first-inference warm-up rather than a per-load penalty — but it lands on whoever opens the planner first after a reboot, and a 10s wait on a phone is a habit-killer.`
+- E2E was not rerun after the final-review documentation/source-comment correction:
+  the changed receipt boundaries are covered by the focused and default suites
+  above, and the exact prior E2E evidence is preserved verbatim.
 - `git diff --check main...HEAD` is clean. The security branch modifies
   `BRANCH-STATUS.md`, `api_server.py`, `docs/API.md`, and `docs/ARCHITECTURE.md`
   in common with `ios27-new-siri`.

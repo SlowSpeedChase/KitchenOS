@@ -83,7 +83,7 @@ literal paths. Path | Method | Purpose.
 | `/api/use-it-up` | GET | Recipes ranked by how much expiring/at-risk inventory they use, to avoid waste. `?limit=` (default 10). Returns `{at_risk, suggestions}`; staples excluded, only the actionable expiry window considered. Backs the `use_it_up` MCP tool and the meal-planner "Use It Up" panel. |
 | `/api/cook-now` | GET | Recipes ranked by ingredient coverage against current inventory. `?limit=` (default 30) caps **each chip group**, not the whole list — the page filters this one payload client-side, and a global cap taken after the meal-tier weighting left the Desserts/Snacks/Drinks chips with nothing behind them. Returns `{"recipes": [{recipe, image, dish_type, group, have, total, coverage, missing, at_risk, meal_tier, protein, minutes, servings, banked, freezes_well, all_staples, score}]}`. `group` is the meal-type chip the recipe belongs to — one of `Mains`, `Breakfast`, `Sides`, `Snacks`, `Desserts`, `Drinks`. Filtering happens client-side on the `/cook-now` page; this endpoint never filters. `all_staples` marks a recipe whose every ingredient is a pantry staple; its score is demoted hard (never hidden) so perpetually-"ready" doughs and spice blends stop squatting at the top. |
 | `/api/cook` 🔒 | POST | Mark a recipe cooked. Body `{recipe, servings?}` → `{recipe, consumed: [{item, unit, before, after, depleted}], use_recorded: [{item, unit}], not_tracked: [...], skipped_staples: [...]}`. Every ingredient lands in exactly one bucket. A row at quantity exactly `1.0` is a container: it is use-stamped (`last_used`, `use_count`) rather than decremented, so a recipe calling for three bay leaves cannot delete the jar. Optional/additive — inventory still self-cleans via expiry without it. Backs the `cook_recipe` MCP tool. |
-| `/api/inventory/add` | POST | Add items to inventory. Body `{items: [...], trip?}`. Accepts optional per-item `unit_price`/`line_total` and an optional `trip` block (`{date, store, total, source_id, source}`) to also record into the price ledger. See "Receipt → Inventory Workflow" in `CLAUDE.md`. **`location` is how the caller declares provenance, so omit it unless the user actually chose the shelf.** A truthy `location` is taken as a placement the user confirmed and stamps `location_source: manual`; an absent (or falsy) one routes through `place_item` and records the real tier — `item`, `category`, or `default`, the last of which renders as unsure. A client that always sends a form default therefore records a confirmed placement that never happened and can never surface the `?` marker: the iOS app did exactly that until its Picker gained an **Auto** option (`NewInventoryItem.location` is `String?`, encoded by omission). Note the check is truthiness, not key presence, so `null` and `""` also route — but omit the key rather than leaning on that. |
+| `/api/inventory/add` | POST | Add items to inventory. Body `{items: [...], trip?}`. Accepts optional per-item `unit_price`/`line_total` and an optional `trip` block (`{date, store, total, source_id, source}`) to also record into the price ledger; when supplied, `trip` must be an object with a nonempty string `source_id`. See "Receipt → Inventory Workflow" in `CLAUDE.md`. **`location` is how the caller declares provenance, so omit it unless the user actually chose the shelf.** A truthy `location` is taken as a placement the user confirmed and stamps `location_source: manual`; an absent (or falsy) one routes through `place_item` and records the real tier — `item`, `category`, or `default`, the last of which renders as unsure. A client that always sends a form default therefore records a confirmed placement that never happened and can never surface the `?` marker: the iOS app did exactly that until its Picker gained an **Auto** option (`NewInventoryItem.location` is `String?`, encoded by omission). Note the check is truthiness, not key presence, so `null` and `""` also route — but omit the key rather than leaning on that. |
 | `/api/inventory/paste` | POST | Bulk-add from a pasted markdown table. Body `{markdown, commit?}` — preview (default, no write) unless `commit: true`. |
 | `/api/receipt/paste` | POST | Ingest a photographed HEB receipt as pasted schema JSON (from the Claude iOS app). Body `{json, commit?}` — preview (default, no write) unless `commit: true`. Runs the full receipt pipeline via `lib/receipt_ingest.py` (trip + priced purchases + non-fee inventory, meal-plan recipe assignment); dedups on a content hash of the receipt. Response carries `mode` (`preview`/`committed`) and the engine `status` (`ingested`/`needs_review`/`skipped`). 400 on unparseable JSON. Un-gated (private tailnet, browser page sends no token) — matches `/api/inventory/paste`. |
 | `/api/receipt/prompt` | GET | Plain-text prompt to paste (with a receipt photo) into the Claude iOS app; derived from `RECEIPT_SCHEMA` so it can't drift. Backs the "Copy prompt" button on `/receipt-paste`. |
@@ -168,12 +168,16 @@ and every stale server reports as fresh.
   `(name, unit, location)` keys inside one `BEGIN IMMEDIATE` transaction. Whole-set
   reconciliations take that write lock before reading their snapshot, then replace
   the set in the same transaction.
+- On `POST /api/inventory/add`, a supplied `trip` must be an object with a
+  nonempty string `source_id`; malformed trip payloads return 400 before any
+  inventory, trip, or purchase write.
 - Receipt ingestion treats a duplicate `source_id` as a successful no-op. A
   valid receipt commits its trip, purchases, and non-fee inventory merge together;
   a needs-review receipt intentionally persists only its trip and purchases.
   Inventory and Cook Now views refresh only after a valid stock commit, under a
-  serialized full read-and-render lock; a view-write failure never makes a durable
-  receipt retryable.
+  serialized full read-and-render lock. Every ordinary exception at that public
+  post-commit boundary is caught and logged, so it never makes a durable receipt
+  retryable.
 
 ## 2. MCP tools
 
@@ -205,7 +209,7 @@ running" message otherwise.
 
 | Tool | Signature | Purpose |
 |------|-----------|---------|
-| `add_to_inventory` | `(items: list[dict], trip: dict = None)` | Batch add — items may carry optional `unit_price`/`line_total`; optional `trip` `{date, store, total, source_id, source}` records into the price ledger. Calls `POST /api/inventory/add`. |
+| `add_to_inventory` | `(items: list[dict], trip: dict = None)` | Batch add — items may carry optional `unit_price`/`line_total`; optional `trip` `{date, store, total, source_id, source}` records into the price ledger, but a supplied trip needs a nonempty string `source_id`. Calls `POST /api/inventory/add`. |
 | `list_inventory` | `(category: str = None, location: str = None)` | List items, with optional filters. Calls `GET /api/inventory`. |
 | `remove_from_inventory` | `(name: str, location: str = None)` | Remove an item (used up). Calls `POST /api/inventory/remove`. |
 | `update_inventory_item` | `(name: str, quantity: float, location: str = None)` | Adjust quantity (e.g. 0.5 for half-used). Calls `POST /api/inventory/update`. |

@@ -160,11 +160,10 @@ def _inject_after_body(html: str, snippet: str) -> str:
     metacharacters. Falls back to prepending if there is no <body> tag.
 
     The search starts after ``</head>`` because a template may *write about*
-    the tag before opening it: meal_planner.html explains the chrome bar in a
+    the tag before opening it: meal_planner.html explains the safety chrome in a
     CSS comment naming the literal ``<body>``, and matching that comment
-    spliced the bar into the stylesheet, where the browser dropped it. The page
-    then contained the markup and rendered no bar — so the planner, the one
-    page you reach mid-task, was the only one with no way back home.
+    spliced the injected safety chrome into the stylesheet, where the browser
+    dropped it. The planner then rendered without its stale-code warning.
     """
     lower = html.lower()
     head_end = lower.find('</head>')
