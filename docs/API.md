@@ -34,7 +34,8 @@ rely on it:
 
 ## 1. HTTP endpoints
 
-77 routes. Path | Method | Purpose.
+**Measured from current source:** 91 `@app.route` decorators register 82 unique
+literal paths. Path | Method | Purpose.
 
 | Path | Method | Purpose |
 |------|--------|---------|
@@ -94,8 +95,6 @@ rely on it:
 | `/api/inventory/move` | POST | Move an item to a new location. Body `{name, to_location, location?}` — `location` is the current-row match filter, `to_location` the destination (normalized against `LOCATIONS`). If a row already exists at the destination with the same `(name, unit)`, quantities are summed and the source row dropped. Ungated. Returns `{status: "moved", item}`; `400` if `name`/`to_location` missing; `404` if no matching row. |
 | `/api/inventory/freeze` | POST | Mark an item as frozen — moves it to the `freezer` location, sets `category=frozen`, and clears its expiry (freezing stops the clock). Body `{name, location?}`. Merges into an existing freezer row like `/move`. Ungated. Returns `{status: "frozen", item}`; `400` if `name` missing; `404` if no matching row. |
 | `/api/inventory/bulk` | POST | Apply one action to many items in a single read-modify-write, instead of N round trips. Body `{action, refs, days?, expires?, category?, to_location?}` — `action` is one of `remove`, `extend`, `set-expiry`, `set-category`, `move`, `freeze`; `refs` a non-empty list of `{name, unit, location}`; action params are `days` (extend), `expires` (set-expiry, nullable), `category`, `to_location`. `extend` is cumulative and computed **per row** — each selected row advances from its own expiry (or from today if lapsed/unset), so a staggered selection stays staggered rather than collapsing onto one shared date. **Addresses rows by the true `(name, unit, location)` uniqueness key**, unlike the single-item routes above, which match on `(name, location)` and can therefore hit the wrong row when one name repeats across units. Ungated. Returns `{status: "applied", applied, items, removed, not_found}` — `applied` is how many refs matched a row, `items` the resulting rows (empty for `remove`, each shaped like the single-item routes' `item` including `expiry_status`), `removed` the full pre-delete rows (empty except for `remove`; replayable into `/api/inventory/add` as an undo), `not_found` the refs that matched nothing. A non-empty `not_found` does **not** fail the call — a client working from a stale list must not lose the edits that did land. `400` on unknown/missing `action`, empty `refs`, a ref missing any of `name`/`unit`/`location`, or a missing action parameter. `move` and `freeze` may merge rows: a colliding `(name, unit)` at the destination sums quantities, and two *selected* rows moving to the same destination merge into each other — so `items` can be shorter than `applied`. |
-| `/api/claude-notes` | GET | Read the shared `Claude Notes.md` (vault root) that seeds a `claude` launch. Returns `{notes: "<body>"}` (empty string if the file doesn't exist yet). Ungated — backs the notes textarea in the launch bar on every web page. |
-| `/api/claude-notes` | POST | Save the shared `Claude Notes.md`. Body `{notes: str}` → writes it atomically (trailing-newline normalized; empty/whitespace → empty file) and returns `{status: "saved", notes: "<normalized body>"}`. `400` if `notes` is missing or not a string. Ungated. **Security:** like the other ungated routes, anyone on the tailnet can set this text — and it becomes the opening prompt of a `claude` session that runs with your permissions on the mini. Same threat model as the ungated inventory/receipt routes (private Tailscale network). |
 | `/api/receipts/trips` 🔒 | GET | Recent shopping trips, newest first. |
 | `/api/receipts/trips/<int:trip_id>` 🔒 | GET | One trip plus its purchase line items. |
 | `/api/price/trends` 🔒 | GET | Structured price-tracker data (spending, by-category totals, item trends) — JSON projection of `Price Tracker.md`. |
@@ -122,7 +121,7 @@ process started. The LaunchAgent imports `lib/*` once and holds it, so every edi
 and rebase widens the gap between what the server runs and what the repo says — and that gap is
 not merely a stale read: a three-day-old server placed a plate and wrote `scale=1.0` where
 `plan_bundle` returns `0.5`, with no error anywhere. **Unlike every other check it is also
-surfaced outside `/system-health`**, as a banner injected by `_serve_page_with_claude_bar` onto
+surfaced outside `/system-health`**, as a banner injected by `_serve_page` onto
 every HTML page, because the corruption lands from whatever page you are on while everything
 looks normal. `lib/boot.py` must stay imported at `api_server` module scope: capture that
 timestamp lazily and it records the first health *request*, which is always newer than the code,
@@ -135,7 +134,7 @@ and every stale server reports as fresh.
 | `/review` | GET | Inventory scan/review UI — interactive list of items sorted soonest-expiring first, with in-place actions: Remove (with Undo), +3d, +7d quick-extend buttons, and Refresh. Per-row checkboxes plus a header Select All raise a sticky bulk bar mirroring the same actions across the whole selection via `/api/inventory/bulk`; the selection is keyed by `(name, unit, location)` so it survives a re-render. After an expiry change the list re-sorts in place and the changed rows flash, so an item you just rescued visibly leaves the expired block. A header **Expiry / Added** control switches the ordering — "Added" sorts newest-first on `purchased`, which doubles as the date-added stamp (`add_items` stamps today on new rows only, never on a merge); rows predating the stamp sort last and read `added unknown`. The choice persists in `localStorage`. Every row's subline leads with its **storage location** and glyph, marked `?` with a tooltip when `location_source` is `default` (nothing actually resolved it), and carries a `used <when>` stamp when the row has a `last_used` — the only place consume-on-cook's use-stamping is visible, since for a container row that is the entire effect of marking a recipe cooked. A third **Location** sort blocks rows under per-location headers carrying a count and an unsure tally, unresolved rows first within each block. Correcting a row's location teaches `config/storage_locations.json`, so the same wrong guess stops recurring. Linked from the top of `Inventory.md`. |
 | `/cook-now` | GET | What you could cook right now, ranked by coverage against inventory, with meal-type chips filtering client-side off one `/api/cook-now?limit=60` payload. **Each row is an `<a>` to `/recipe/<name>`** — the whole row, not just the name, so it's a real tap target on a phone; a coverage percentage alone doesn't tell you whether you want to eat the thing. Names are `encodeURIComponent`'d, which matters for real ones like `Ham Cheddar + Chive Protein Biscuits`. Rows keep `data-group` because the filter e2e tests select on it. |
 | `/receipt-paste` | GET | Phone-friendly HTML page: copy the Claude-app prompt, paste the receipt JSON it returns, preview (routed items + reconciliation), then confirm to ingest. Backed by `/api/receipt/paste`. |
-| `/` | GET | The web home page — **Kitchen Today**: four live cards from `lib/kitchen_today.py` (cookable-now count, recipes added this week, what's expiring, the week's plan), each a workflow entry point, over the full `SECTIONS` registry folded into a collapsed "All pages". The cards lead because the page's job is recall: a list of page names can't remind you a feature exists, but "9 recipes need nothing you don't have" does. Loads the inventory and recipe index **once** and injects them into `cook_now`/`use_it_up`, which would otherwise each re-parse the whole library. Every card degrades to a plain link if its query fails — no single card can 500 the page. Every page's Claude bar links back here. |
+| `/` | GET | The web home page — **Kitchen Today**: four live cards from `lib/kitchen_today.py` (cookable-now count, recipes added this week, what's expiring, the week's plan), each a workflow entry point, over the full `SECTIONS` registry folded into a collapsed "All pages". The cards lead because the page's job is recall: a list of page names can't remind you a feature exists, but "9 recipes need nothing you don't have" does. Loads the inventory and recipe index **once** and injects them into `cook_now`/`use_it_up`, which would otherwise each re-parse the whole library. Every card degrades to a plain link if its query fails — no single card can 500 the page. |
 | `/recent` | GET | Recipes newest-first by when they arrived, grouped under Today / Yesterday / weekday / date, linking to `/recipe/<name>`. Ordered by **file birth time, not mtime** — the nutrition resolver rewrites recipe files long after they land, so an mtime ordering would reshuffle on every backfill. Surfaces `recipe_index`'s `added` field. |
 | `/api/recipes/<name>/servings` 🔒 | POST | Set a recipe's servings count and recompute its nutrition. Body `{servings}` (whole number, 1–200). **This is what turns whole-batch macros into per-serving ones:** the engine derives per-serving as `total / servings`, and with `servings` missing it divides by 1 and publishes the batch total. Writes frontmatter, clears any `servings_inferred` / `servings_needs_review` flag (a typed count is a measurement, not an estimate — same rule `backfill_servings.py` uses for a stated yield), then recomputes **after** the write, since the engine reads `servings` back off the file. Backs the file up first. Fired by the "How many servings does it make?" form on `/recipe/<name>`. |
 | `/api/nutrition-review/recipes` 🔒 | GET | Ranked queue of recipes needing nutrition review, worst first (lowest coverage, then lowest confidence). Frontmatter-only — fast. |
@@ -154,6 +153,24 @@ and every stale server reports as fresh.
 | `/api/placements/<int:pid>` 🔒 | PATCH | Update a placement. |
 | `/api/placements/<int:pid>` 🔒 | DELETE | Delete a placement. |
 | `/api/placements/<int:pid>/move` 🔒 | POST | Move a placement to a new destination/date/meal. |
+
+### Request and persistence contracts
+
+- Flask has already decoded request values. `/refresh` and `/reprocess` validate
+  each `file` once with `contained_markdown`, which resolves the Markdown path
+  beneath the configured recipes root; the server does not decode it again.
+- All shopping-list endpoints accept only real canonical ISO weeks (`YYYY-WNN`).
+  `parse_iso_week` rejects noncanonical and impossible weeks, and
+  `shopping_list_path` builds the resulting filename beneath the configured root.
+- Ordinary inventory additions merge matching case-insensitive
+  `(name, unit, location)` keys inside one `BEGIN IMMEDIATE` transaction. Whole-set
+  reconciliations take that write lock before reading their snapshot, then replace
+  the set in the same transaction.
+- Receipt ingestion treats a duplicate `source_id` as a successful no-op.
+  Otherwise its trip, purchases, and non-fee inventory merge commit together.
+  Inventory and Cook Now views refresh only after commit, under a serialized
+  full read-and-render lock; a view-write failure never makes a durable receipt
+  retryable.
 
 ## 2. MCP tools
 
