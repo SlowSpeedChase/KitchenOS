@@ -3009,6 +3009,8 @@ def api_inventory_add():
                 "total": len(read_inventory()),
             }
         else:
+            if not parsed:
+                result = {"added": 0, "merged": 0, "total": 0}
             refresh_inventory_views()
     else:
         result = add_items(parsed)

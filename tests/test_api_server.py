@@ -1019,6 +1019,64 @@ def test_inventory_add_fee_items_skip_inventory(client, tmp_vault, tmp_db):
     assert ("sales tax", "fee") in [(r[0], r[1]) for r in rows]
 
 
+def test_inventory_add_all_fee_trip_preserves_zero_stock_response(
+    client, tmp_vault, tmp_db, monkeypatch
+):
+    from lib import inventory
+    from lib import inventory_db as idb
+
+    idb.merge_inventory_rows([
+        {
+            "name": "rice",
+            "quantity": 2,
+            "unit": "lb",
+            "category": "pantry",
+            "location": "pantry",
+        }
+    ])
+    refreshes = []
+    monkeypatch.setattr(
+        inventory, "refresh_inventory_views", lambda: refreshes.append("refresh")
+    )
+
+    response = client.post("/api/inventory/add", json={
+        "items": [
+            {
+                "name": "sales tax",
+                "quantity": 1,
+                "unit": "ct",
+                "category": "fee",
+                "line_total": 0.91,
+            }
+        ],
+        "trip": {
+            "date": "2026-06-09",
+            "store": "HEB",
+            "total": 0.91,
+            "source_id": "photo-fee-only",
+        },
+    })
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "status": "ok",
+        "added": 0,
+        "merged": 0,
+        "total": 0,
+    }
+    conn = idb.connect()
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM trips").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM purchases").fetchone()[0] == 1
+        rows = conn.execute(
+            "SELECT name, quantity FROM inventory ORDER BY name"
+        ).fetchall()
+    finally:
+        conn.close()
+    assert [(row["name"], row["quantity"]) for row in rows] == [("rice", 2.0)]
+    assert refreshes == ["refresh"]
+
+
 def test_inventory_add_without_trip_unchanged(client, tmp_vault, tmp_db):
     resp = client.post("/api/inventory/add", json={
         "items": [{"name": "rice", "quantity": 2, "unit": "lb"}]})
