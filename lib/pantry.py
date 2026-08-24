@@ -90,7 +90,7 @@ def save_pantry(items: list[dict]) -> None:
     - (name, unit) missing here but in DB → row deleted (used up).
     - new (name, unit) → inserted with defaults (pantry/manual).
     """
-    from lib.inventory import InventoryItem, read_inventory, write_inventory
+    from lib.inventory import InventoryItem, mutate_inventory
 
     new_by_key: dict[tuple[str, str], dict] = {}
     for entry in items:
@@ -100,29 +100,35 @@ def save_pantry(items: list[dict]) -> None:
         key = (name.lower(), (entry.get("unit") or "").lower().strip())
         new_by_key[key] = entry
 
-    kept: list[InventoryItem] = []
-    seen: set[tuple[str, str]] = set()
-    for it in read_inventory():
-        key = (it.name.lower().strip(), it.unit.lower().strip())
-        if key not in new_by_key:
-            continue  # used up → drop row
-        if key in seen:
-            continue  # duplicate location row collapsed
-        seen.add(key)
-        amt = parse_amount_to_float(new_by_key[key].get("amount"))
-        it.quantity = amt if amt is not None else it.quantity
-        kept.append(it)
+    def reconcile(current: list[InventoryItem]) -> tuple[None, bool]:
+        before = [item.to_dict() for item in current]
+        kept: list[InventoryItem] = []
+        seen: set[tuple[str, str]] = set()
+        for item in current:
+            key = (item.name.lower().strip(), item.unit.lower().strip())
+            if key not in new_by_key:
+                continue  # used up → drop row
+            if key in seen:
+                continue  # duplicate location row collapsed
+            seen.add(key)
+            amount = parse_amount_to_float(new_by_key[key].get("amount"))
+            item.quantity = amount if amount is not None else item.quantity
+            kept.append(item)
 
-    for key, entry in new_by_key.items():
-        if key not in seen:
-            amt = parse_amount_to_float(entry.get("amount"))
-            kept.append(InventoryItem(
-                name=entry["item"].strip(),
-                quantity=amt if amt is not None else 1.0,
-                unit=(entry.get("unit") or "ct").strip() or "ct",
-            ))
+        for key, entry in new_by_key.items():
+            if key not in seen:
+                amount = parse_amount_to_float(entry.get("amount"))
+                kept.append(InventoryItem(
+                    name=entry["item"].strip(),
+                    quantity=amount if amount is not None else 1.0,
+                    unit=(entry.get("unit") or "ct").strip() or "ct",
+                ))
 
-    write_inventory(kept)
+        current[:] = kept
+        changed = [item.to_dict() for item in current] != before
+        return None, changed
+
+    mutate_inventory(reconcile)
 
 
 def find_match(item_name: str, pantry: list[dict]) -> Optional[dict]:

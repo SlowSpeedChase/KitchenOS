@@ -138,7 +138,7 @@ class TestCompose:
         assert out.endswith("fix this")
 
 
-class TestSendRoute:
+class TestDisabledSendRoute:
     @pytest.fixture
     def client(self):
         from api_server import app
@@ -146,28 +146,18 @@ class TestSendRoute:
         with app.test_client() as c:
             yield c
 
-    def test_sends_to_a_live_session(self, client, monkeypatch):
-        monkeypatch.setattr(claude_send, "send_text", lambda t: True)
-        r = client.post("/api/claude-send", json={"text": "use up the spinach"})
-        assert r.status_code == 200
-        assert r.get_json()["status"] == "sent"
+    def test_absent_send_route_does_not_call_send_text(self, client, monkeypatch):
+        called = False
 
-    def test_falls_back_to_queueing_when_no_session(self, client, monkeypatch, tmp_path):
-        """No session must not be an error — the words are kept and seed the
-        next Launch, so a dictated thought is never silently dropped."""
-        import lib.claude_notes as notes
-        monkeypatch.setattr(claude_send, "send_text", lambda t: False)
-        saved = {}
-        monkeypatch.setattr(notes, "write_notes", lambda t: saved.update(t=t))
-        monkeypatch.setattr(notes, "read_notes", lambda: saved.get("t", ""))
-        r = client.post("/api/claude-send", json={"text": "buy oat milk"})
-        assert r.status_code == 200
-        assert r.get_json()["status"] == "queued"
-        assert saved["t"] == "buy oat milk"
+        def send_text(_text):
+            nonlocal called
+            called = True
 
-    @pytest.mark.parametrize("payload", [{}, {"text": 12}, {"text": "   "}])
-    def test_bad_payloads_are_rejected(self, client, payload):
-        assert client.post("/api/claude-send", json=payload).status_code == 400
+        monkeypatch.setattr(claude_send, "send_text", send_text)
+        response = client.post("/api/claude-send", json={"text": "use up the spinach"})
+
+        assert response.status_code == 404
+        assert called is False
 
 
 class TestTmuxBin:

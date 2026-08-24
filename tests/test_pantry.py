@@ -355,6 +355,35 @@ def test_save_pantry_inserts_new_items(tmp_vault, tmp_db):
     assert items[0].source == "manual"
 
 
+def test_save_pantry_unchanged_skips_replace_and_refresh(
+    tmp_vault, tmp_db, monkeypatch
+):
+    import lib.inventory as inventory
+    from lib import inventory_db
+
+    inventory_db.replace_inventory_rows([
+        {"name": "Flour", "quantity": 5.0, "unit": "lb"}
+    ])
+    replacements = []
+    refreshes = []
+    real_replace = inventory_db._replace_inventory_rows
+    monkeypatch.setattr(
+        inventory_db,
+        "_replace_inventory_rows",
+        lambda conn, rows: replacements.append(rows) or real_replace(conn, rows),
+    )
+    monkeypatch.setattr(
+        inventory, "refresh_inventory_views", lambda: refreshes.append(True)
+    )
+
+    pantry_module.save_pantry([
+        {"item": "Flour", "amount": "5", "unit": "lb"}
+    ])
+
+    assert replacements == []
+    assert refreshes == []
+
+
 def test_ct_pantry_is_spent_by_a_whole_recipe_line():
     """The reported bug: 3 ct lime, recipe wants 1 whole lime."""
     pantry = [{"item": "lime", "amount": "3", "unit": "ct"}]
