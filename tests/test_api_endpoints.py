@@ -1,6 +1,7 @@
 """Tests for API endpoints."""
 
 import os
+from unittest.mock import patch
 
 import pytest
 from api_server import app
@@ -36,6 +37,39 @@ def test_send_to_reminders_requires_week(client):
     assert response.status_code == 400
     data = response.get_json()
     assert "week" in data.get("error", "").lower()
+
+
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        ("/generate-shopping-list", {"week": "../outside"}),
+        ("/send-to-reminders", {"week": "../outside"}),
+        ("/api/shopping-list/preview", {"week": "2026-W54"}),
+        ("/api/shopping-list/confirm", {"week": "../outside", "items_to_buy": []}),
+    ],
+)
+def test_shopping_list_path_escape_is_rejected_without_outside_mutation_or_reminders(
+    client, tmp_path, path, payload
+):
+    """Removing canonical week validation would permit request-controlled file paths."""
+    import api_server
+    import lib.shopping_list_generator
+
+    shopping_lists = tmp_path / "Shopping Lists"
+    shopping_lists.mkdir()
+    outside = tmp_path / "outside.md"
+    original = "outside sentinel\n"
+    outside.write_text(original, encoding="utf-8")
+
+    with patch.object(api_server, "SHOPPING_LISTS_PATH", shopping_lists), \
+         patch.object(lib.shopping_list_generator, "SHOPPING_LISTS_PATH", shopping_lists), \
+         patch("lib.reminders.add_to_reminders") as add_to_reminders:
+        response = client.post(path, json=payload)
+
+    assert response.status_code == 400
+    assert "week required (yyyy-wnn)" in response.get_json()["error"].lower()
+    assert outside.read_text(encoding="utf-8") == original
+    add_to_reminders.assert_not_called()
 
 
 def test_suggest_meal_requires_fields(client):

@@ -50,6 +50,29 @@ def test_reprocess_endpoint_no_source_url(client):
             assert b'no source url' in response.data.lower()
 
 
+@pytest.mark.parametrize(
+    ("path", "expected_error"),
+    [
+        ("/refresh?file=../outside.md", b"escapes its configured directory"),
+        ("/reprocess?file=..%2Foutside.md", b"escapes its configured directory"),
+    ],
+)
+def test_recipe_path_escape_is_rejected_without_mutating_outside_file(client, tmp_path, path, expected_error):
+    """Removing path containment would let these routes access the sibling sentinel."""
+    recipes = tmp_path / "Recipes"
+    recipes.mkdir()
+    outside = tmp_path / "outside.md"
+    original = "outside sentinel\n"
+    outside.write_text(original, encoding="utf-8")
+
+    with patch("api_server.OBSIDIAN_RECIPES_PATH", recipes):
+        response = client.get(path)
+
+    assert response.status_code == 400
+    assert expected_error in response.data
+    assert outside.read_text(encoding="utf-8") == original
+
+
 class TestGenerateShoppingListMerge:
     """Tests for shopping list regeneration with manual item preservation."""
 
@@ -61,9 +84,9 @@ class TestGenerateShoppingListMerge:
         # Create test shopping list with a manual item
         test_shopping_list = tmp_path / "Shopping Lists"
         test_shopping_list.mkdir()
-        existing_file = test_shopping_list / "2026-W99.md"
+        existing_file = test_shopping_list / "2026-W35.md"
         existing_file.write_text(
-            "# Shopping List - Week 99\n\n"
+            "# Shopping List - Week 35\n\n"
             "## Items\n\n"
             "- [ ] 2 cups flour\n"
             "- [ ] 1 tsp salt\n"
@@ -88,7 +111,7 @@ class TestGenerateShoppingListMerge:
                 # Call the endpoint
                 with api_server.app.test_client() as client:
                     response = client.post('/generate-shopping-list',
-                                           json={'week': '2026-W99'})
+                                           json={'week': '2026-W35'})
 
                 # Verify manual item is preserved
                 result_content = existing_file.read_text()
@@ -103,9 +126,9 @@ class TestGenerateShoppingListMerge:
         # Create test shopping list with manual items
         test_shopping_list = tmp_path / "Shopping Lists"
         test_shopping_list.mkdir()
-        existing_file = test_shopping_list / "2026-W98.md"
+        existing_file = test_shopping_list / "2026-W36.md"
         existing_file.write_text(
-            "# Shopping List - Week 98\n\n"
+            "# Shopping List - Week 36\n\n"
             "## Items\n\n"
             "- [ ] 2 cups flour\n"
             "- [ ] manual item 1\n"
@@ -127,7 +150,7 @@ class TestGenerateShoppingListMerge:
             with patch.object(api_server, 'generate_shopping_list', mock_generate):
                 with api_server.app.test_client() as client:
                     response = client.post('/generate-shopping-list',
-                                           json={'week': '2026-W98'})
+                                           json={'week': '2026-W36'})
 
                 data = response.get_json()
                 assert data['success'] is True
@@ -158,7 +181,7 @@ class TestGenerateShoppingListMerge:
             with patch.object(api_server, 'generate_shopping_list', mock_generate):
                 with api_server.app.test_client() as client:
                     response = client.post('/generate-shopping-list',
-                                           json={'week': '2026-W97'})
+                                           json={'week': '2026-W37'})
 
                 data = response.get_json()
                 assert data['success'] is True

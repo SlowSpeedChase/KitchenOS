@@ -15,6 +15,7 @@ from lib.recipe_parser import (
 from lib.ingredient_aggregator import aggregate_ingredients, format_ingredient, parse_amount_to_float, format_amount
 from lib import meal_loader, paths
 from lib.meal_plan_parser import sub_multiplier
+from lib.safe_paths import shopping_list_path
 
 # Configuration
 OBSIDIAN_VAULT = paths.vault_root()
@@ -379,7 +380,10 @@ def parse_shopping_list_file(week: str) -> dict:
             - skipped: count of checked items
             - error: error message (if success=False)
     """
-    filepath = SHOPPING_LISTS_PATH / f"{week}.md"
+    try:
+        filepath = shopping_list_path(SHOPPING_LISTS_PATH, week)
+    except ValueError as exc:
+        return {"success": False, "error": str(exc)}
 
     if not filepath.exists():
         return {"success": False, "error": f"Shopping list not found: {week}. Generate it first."}

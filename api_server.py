@@ -42,7 +42,7 @@ from lib import recipe_refresh, nutrition_quality
 # import, so importing it lazily inside a route would record the time of that
 # request and report every stale server as fresh. See lib/boot.py.
 from lib import boot  # noqa: F401  (imported for its import-time side effect)
-from templates.shopping_list_template import generate_shopping_list_markdown, generate_filename as shopping_list_filename
+from templates.shopping_list_template import generate_shopping_list_markdown
 from templates.recipe_template import format_recipe_markdown
 from templates.meal_plan_template import (
     format_week_heading,
@@ -55,6 +55,7 @@ from lib.ingredient_cleaner import clean_ingredient_list
 from lib.seasonality import match_ingredients_to_seasonal, get_peak_months
 from lib.nutrition_engine import calculate_recipe_nutrition
 from lib import cook_sweep, meal_loader, pantry as pantry_module, paths, task_extractor
+from lib.safe_paths import contained_markdown, parse_iso_week, shopping_list_path
 from lib.serving_ledger import MEALS as SLOT_VOCAB
 from recipe_sources import parse_recipe_from_text
 
@@ -934,6 +935,12 @@ def generate_shopping_list_endpoint():
     if not week:
         return jsonify({'success': False, 'error': 'No week provided'}), 400
 
+    try:
+        week = parse_iso_week(week)
+        filepath = shopping_list_path(SHOPPING_LISTS_PATH, week)
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
     use_pantry = data.get('use_pantry', True)
     pantry = pantry_module.load_pantry() if use_pantry else None
     result = generate_shopping_list(week, pantry=pantry)
@@ -943,8 +950,7 @@ def generate_shopping_list_endpoint():
 
     # Check for existing manual items before overwriting
     manual_items = []
-    filename = shopping_list_filename(week)
-    filepath = SHOPPING_LISTS_PATH / filename
+    filename = filepath.name
     if filepath.exists():
         existing_result = parse_shopping_list_file(week)
         if existing_result['success']:
@@ -993,6 +999,11 @@ def send_to_reminders_endpoint():
 
     if not week:
         return jsonify({'success': False, 'error': 'No week provided'}), 400
+
+    try:
+        week = parse_iso_week(week)
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
 
     # Parse shopping list
     result = parse_shopping_list_file(week)
@@ -1082,16 +1093,16 @@ def refresh_nutrition():
 @app.route('/refresh', methods=['GET'])
 def refresh_template():
     """Regenerate recipe file with current template, preserving data and notes."""
-    from urllib.parse import unquote
-
     filename = request.args.get('file')
 
     if not filename:
         return error_page("Error: file parameter required"), 400
 
-    # URL-decode the filename
-    filename = unquote(filename)
-    filepath = OBSIDIAN_RECIPES_PATH / filename
+    try:
+        filepath = contained_markdown(OBSIDIAN_RECIPES_PATH, filename)
+    except ValueError as exc:
+        return error_page(f"Error: {exc}"), 400
+    filename = filepath.name
 
     if not filepath.exists():
         return error_page(f"Error: Recipe not found: {filename}"), 404
@@ -1153,16 +1164,16 @@ def refresh_template():
 @app.route('/reprocess', methods=['GET'])
 def reprocess_recipe():
     """Full re-extraction: fetch from YouTube, run through Ollama, regenerate."""
-    from urllib.parse import unquote
-
     filename = request.args.get('file')
 
     if not filename:
         return error_page("Error: file parameter required"), 400
 
-    # URL-decode the filename
-    filename = unquote(filename)
-    filepath = OBSIDIAN_RECIPES_PATH / filename
+    try:
+        filepath = contained_markdown(OBSIDIAN_RECIPES_PATH, filename)
+    except ValueError as exc:
+        return error_page(f"Error: {exc}"), 400
+    filename = filepath.name
 
     if not filepath.exists():
         return error_page(f"Error: Recipe not found: {filename}"), 404
@@ -2692,8 +2703,10 @@ def api_pantry_put():
 def api_shopping_list_preview():
     data = request.get_json(force=True, silent=True) or {}
     week = data.get("week")
-    if not week or not re.match(r'^\d{4}-W\d{2}$', week):
-        return jsonify({"error": "week required (YYYY-WNN)"}), 400
+    try:
+        week = parse_iso_week(week)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     pantry = pantry_module.load_pantry()
     result = generate_shopping_list(week, pantry=pantry if data.get("use_pantry", True) else None)
     return jsonify(result)
@@ -2705,13 +2718,18 @@ def api_shopping_list_confirm():
     week = data.get("week")
     items = data.get("items_to_buy")
     decisions = data.get("decisions") or []
-    if not week or not isinstance(items, list):
+    if not isinstance(items, list):
         return jsonify({"error": "week and items_to_buy required"}), 400
+
+    try:
+        week = parse_iso_week(week)
+        out_path = shopping_list_path(SHOPPING_LISTS_PATH, week)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
     SHOPPING_LISTS_PATH.mkdir(parents=True, exist_ok=True)
     markdown = generate_shopping_list_markdown(week, items)
-    filename = shopping_list_filename(week)
-    out_path = SHOPPING_LISTS_PATH / filename
+    filename = out_path.name
     out_path.write_text(markdown, encoding="utf-8")
 
     if decisions:
