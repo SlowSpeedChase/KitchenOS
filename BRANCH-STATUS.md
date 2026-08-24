@@ -33,7 +33,7 @@ make receipt/inventory persistence atomic and safe under concurrent writers.
 ### Dev
 - [x] Tests written first (superpowers:test-driven-development)
 - [x] Core implementation complete
-- [x] All tests passing
+- [x] No hard test failures; expected dispositions recorded
 - [ ] No new linting/type errors
 - [ ] Code follows project patterns
 - [ ] LaunchAgent restarted if lib/, templates/, or prompts/ changed

@@ -159,18 +159,21 @@ and every stale server reports as fresh.
 - Flask has already decoded request values. `/refresh` and `/reprocess` validate
   each `file` once with `contained_markdown`, which resolves the Markdown path
   beneath the configured recipes root; the server does not decode it again.
-- All shopping-list endpoints accept only real canonical ISO weeks (`YYYY-WNN`).
-  `parse_iso_week` rejects noncanonical and impossible weeks, and
+- The four shopping-list mutation/preview handlers — `/generate-shopping-list`,
+  `/send-to-reminders`, `/api/shopping-list/preview`, and
+  `/api/shopping-list/confirm` — accept only real canonical ISO weeks
+  (`YYYY-WNN`). `parse_iso_week` rejects noncanonical and impossible weeks, and
   `shopping_list_path` builds the resulting filename beneath the configured root.
 - Ordinary inventory additions merge matching case-insensitive
   `(name, unit, location)` keys inside one `BEGIN IMMEDIATE` transaction. Whole-set
   reconciliations take that write lock before reading their snapshot, then replace
   the set in the same transaction.
-- Receipt ingestion treats a duplicate `source_id` as a successful no-op.
-  Otherwise its trip, purchases, and non-fee inventory merge commit together.
-  Inventory and Cook Now views refresh only after commit, under a serialized
-  full read-and-render lock; a view-write failure never makes a durable receipt
-  retryable.
+- Receipt ingestion treats a duplicate `source_id` as a successful no-op. A
+  valid receipt commits its trip, purchases, and non-fee inventory merge together;
+  a needs-review receipt intentionally persists only its trip and purchases.
+  Inventory and Cook Now views refresh only after a valid stock commit, under a
+  serialized full read-and-render lock; a view-write failure never makes a durable
+  receipt retryable.
 
 ## 2. MCP tools
 

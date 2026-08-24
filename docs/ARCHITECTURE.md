@@ -151,17 +151,21 @@ next regeneration.
 - Flask has already URL-decoded request values. Recipe paths pass once through
   `lib.safe_paths.contained_markdown`, which resolves them beneath the configured
   root; neither routes nor path helpers decode them again.
-- Shopping-list week identifiers pass `parse_iso_week`: they must be canonical
-  `YYYY-WNN` values for an actual ISO calendar week, and filenames are built only
-  by `shopping_list_path` beneath the configured shopping-list root.
+- The four shopping-list mutation/preview handlers (`/generate-shopping-list`,
+  `/send-to-reminders`, `/api/shopping-list/preview`, and
+  `/api/shopping-list/confirm`) pass week identifiers through `parse_iso_week`:
+  they must be canonical `YYYY-WNN` values for an actual ISO calendar week, and
+  their filenames are built only by `shopping_list_path` beneath the configured
+  shopping-list root.
 - Additive inventory writes use `BEGIN IMMEDIATE` and transactional merges on the
   case-insensitive `(name, unit, location)` key. Whole-inventory operations obtain
   that write lock before reading their complete snapshot, then replace it within
   the same transaction.
-- Receipt ingestion treats a duplicate `trips.source_id` as a successful no-op;
-  otherwise the trip, purchases, and non-fee inventory merge commit together.
-  Generated Inventory/Cook Now views refresh only after a successful commit and
-  are serialized so a slower writer cannot publish an older view afterward.
+- Receipt ingestion treats a duplicate `trips.source_id` as a successful no-op.
+  A valid receipt commits its trip, purchases, and non-fee inventory merge together;
+  a needs-review receipt intentionally persists its trip and purchases without
+  stock. Generated Inventory/Cook Now views refresh only after a successful stock
+  commit and are serialized so a slower writer cannot publish an older view afterward.
 
 ## Receipt → inventory
 
@@ -171,8 +175,9 @@ Items enter inventory via five paths, condensed from `CLAUDE.md`'s
 1. **Email (automatic)** — hourly `receipt-ingest` LaunchAgent fetches HEB
    receipt emails over IMAP, parses with the Claude API
    (`lib/receipt_parser.py`, Opus when `ANTHROPIC_API_KEY` is set else
-   Ollama fallback), validates line totals, then commits the receipt ledger and
-   inventory together. Dedup by Gmail Message-ID is a successful no-op.
+   Ollama fallback), validates line totals, then commits a valid receipt's ledger
+   and inventory together. A needs-review receipt intentionally stores its ledger
+   without stock. Dedup by Gmail Message-ID is a successful no-op.
 2. **CSA newsletter (automatic)** — `ingest_csa.py` (run at the tail of the
    hourly receipt ingest) parses the weekly Central Texas Farmers Co-op
    "Week N(A/B)" newsletter deterministically and adds the subscriber's
