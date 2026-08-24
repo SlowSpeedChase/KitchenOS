@@ -509,6 +509,8 @@ def test_recipe_card_renders_grid(client, tmp_vault, monkeypatch):
     assert "recipe-grid" in body            # the matrix table rendered
     assert "Serves" in body and "protein" in body  # macro/servings header
     assert "AI-suggested" in body           # honest review banner
+    assert "/static/print-action.js" in body
+    assert 'data-print-action' in body
 
 
 def test_recipe_card_missing_returns_404(client, tmp_path, monkeypatch):
@@ -538,6 +540,8 @@ def test_print_week_page_renders(client, tmp_vault):
     assert "week-grid" in body
     assert "Shopping list" in body and "Get ahead" in body
     assert "Print this week" in body  # the on-screen print button
+    assert "/static/print-action.js" in body
+    assert 'data-print-action' in body
 
 
 def test_print_week_invalid_week_400(client):

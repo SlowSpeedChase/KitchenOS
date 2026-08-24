@@ -8,6 +8,7 @@
     <meta name="theme-color" content="#0f1116" media="(prefers-color-scheme: dark)">
     <link rel="stylesheet" href="/static/tokens.css">
     <link rel="stylesheet" href="/static/kitchenos.css">
+    <script src="/static/print-action.js" defer></script>
     <style>
         :root { --rule: var(--done); }
         * { box-sizing: border-box; }
@@ -54,7 +55,7 @@
 </head>
 <body>
     <div class="wrap">
-        <div class="toolbar"><button onclick="window.print()">🖨️ Print this week</button></div>
+        <div class="toolbar"><button type="button" data-print-action>🖨️ Print this week</button></div>
         <!--PACKET-->
     </div>
 </body>

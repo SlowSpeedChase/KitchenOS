@@ -8,6 +8,7 @@
     <meta name="theme-color" content="#0f1116" media="(prefers-color-scheme: dark)">
     <link rel="stylesheet" href="/static/tokens.css">
     <link rel="stylesheet" href="/static/kitchenos.css">
+    <script src="/static/print-action.js" defer></script>
     <style>
         :root { --grid-line: var(--done); }
         * { box-sizing: border-box; }
@@ -69,7 +70,7 @@
     </style>
 </head>
 <body>
-    <div class="toolbar"><button onclick="window.print()">🖨️ Print this card</button></div>
+    <div class="toolbar"><button type="button" data-print-action>🖨️ Print this card</button></div>
     <div class="card">
         <div class="card-header">
             <h1>__CARD_TITLE__</h1>
