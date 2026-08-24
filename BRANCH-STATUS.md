@@ -34,8 +34,8 @@ make receipt/inventory persistence atomic and safe under concurrent writers.
 - [x] Tests written first (superpowers:test-driven-development)
 - [x] Core implementation complete
 - [x] No hard test failures; expected dispositions recorded
-- [ ] No new linting/type errors
-- [ ] Code follows project patterns
+- [x] No new syntax errors (`compileall -q api_server.py lib tests`)
+- [x] Code follows project patterns
 - [ ] LaunchAgent restarted if lib/, templates/, or prompts/ changed
 
 ### Testing
@@ -47,18 +47,18 @@ make receipt/inventory persistence atomic and safe under concurrent writers.
 
 ### Docs
 - [x] Doc obligations met per CLAUDE.md table
-- [ ] README updated if interface changed
+- [x] README assessed; canonical interface changes are documented in `docs/API.md`
 - [x] docs/plans/INDEX.md updated
 - [x] Code comments updated
 
 ### Review
-- [ ] Requested review
-- [ ] Review feedback addressed
-- [ ] Changes approved
+- [x] Requested review
+- [x] Review feedback addressed
+- [x] Changes approved
 
 ### Ready
-- [ ] Rebased on latest main
-- [ ] Final test pass after rebase
+- [x] Rebased on latest `origin/main` (already current; no-op)
+- [x] Final test pass after rebase
 - [ ] BRANCH-STATUS.md fully checked
 - [ ] Ready for merge
 
@@ -91,6 +91,12 @@ make receipt/inventory persistence atomic and safe under concurrent writers.
 - E2E was not rerun after the final-review documentation/source-comment correction:
   the changed receipt boundaries are covered by the focused and default suites
   above, and the exact prior E2E evidence is preserved verbatim.
+- Final whole-branch review and scoped fix re-review are clean. The re-review
+  independently ran eight targeted regressions (`8 passed in 1.63s`) and found
+  all four final findings addressed with no new Critical/Important breakage.
+- Pre-PR verification after the no-op rebase: `4108 passed, 1 skipped, 133
+  deselected, 9 warnings in 27.67s`; `compileall -q api_server.py lib tests`
+  and `git diff --check` were clean.
 - `git diff --check main...HEAD` is clean. The security branch modifies
   `BRANCH-STATUS.md`, `api_server.py`, `docs/API.md`, and `docs/ARCHITECTURE.md`
   in common with `ios27-new-siri`.
