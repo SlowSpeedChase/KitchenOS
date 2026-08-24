@@ -142,6 +142,34 @@ class TestAddItems:
         ])
         assert read_inventory()[0].purchased == "2026-04-30"
 
+    def test_concurrent_adds_preserve_both_updates(
+        self, tmp_vault, tmp_db, monkeypatch
+    ):
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        import lib.inventory as inventory
+
+        real_read = inventory.read_inventory
+        # Initialize the schema/WAL mode before both workers race. The behavior
+        # under test is the stale read→replace window, not first-connect setup.
+        assert real_read() == []
+        barrier = threading.Barrier(2)
+
+        def synchronized_read():
+            rows = real_read()
+            barrier.wait(timeout=5)
+            return rows
+
+        monkeypatch.setattr(inventory, "read_inventory", synchronized_read)
+        item = lambda: inventory.InventoryItem(
+            name="Milk", quantity=1, unit="gal", location="fridge"
+        )
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(lambda _: inventory.add_items([item()]), range(2)))
+
+        [milk] = real_read()
+        assert milk.quantity == 2
+
 
 class TestRemove:
     def test_remove_existing_item(self, tmp_vault, tmp_db):

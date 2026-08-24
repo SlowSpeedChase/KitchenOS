@@ -21,6 +21,8 @@ import json
 import os
 import sqlite3
 import threading
+from contextlib import contextmanager
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
@@ -167,6 +169,30 @@ def connect(path: Optional[Path] = None) -> sqlite3.Connection:
     conn.executescript(_SCHEMA)
     _migrate(conn)
     return conn
+
+
+@contextmanager
+def write_transaction(conn: sqlite3.Connection | None = None):
+    """Own one immediate write transaction, or borrow the caller's.
+
+    A borrowed connection is already inside its caller's transaction. It must
+    remain open and uncommitted so a larger operation can succeed or roll back
+    as one unit.
+    """
+    if conn is not None:
+        yield conn
+        return
+
+    owned = connect()
+    try:
+        owned.execute("BEGIN IMMEDIATE")
+        yield owned
+        owned.commit()
+    except Exception:
+        owned.rollback()
+        raise
+    finally:
+        owned.close()
 
 
 _read_tls = threading.local()
@@ -386,6 +412,91 @@ _NOT_NULL_FALLBACKS = {
     "notes": "",
     "use_count": 0,
 }
+
+
+def _inventory_row(row: dict) -> dict:
+    """Return a complete row using the same defaults as full replacement."""
+    return {
+        column: (
+            _NOT_NULL_FALLBACKS[column]
+            if row.get(column) is None and column in _NOT_NULL_FALLBACKS
+            else row.get(column)
+        )
+        for column in _INVENTORY_COLS
+    }
+
+
+def _merge_recipe_names(existing: str | None, incoming: str | None) -> str | None:
+    """Union comma-separated recipe names in first-seen order."""
+    names: list[str] = []
+    for source in (existing, incoming):
+        for part in (source or "").split(","):
+            name = part.strip()
+            if name and name not in names:
+                names.append(name)
+    return ", ".join(names) or None
+
+
+def merge_inventory_rows(
+    rows: list[dict], conn: sqlite3.Connection | None = None
+) -> dict:
+    """Add inventory rows atomically, merging on the case-insensitive key."""
+    added = 0
+    merged = 0
+    placeholders = ", ".join("?" * len(_INVENTORY_COLS))
+    upsert = (
+        f"INSERT INTO inventory ({', '.join(_INVENTORY_COLS)})"
+        f" VALUES ({placeholders})"
+        " ON CONFLICT(name, unit, location) DO UPDATE SET"
+        " quantity = inventory.quantity + excluded.quantity,"
+        " purchased = COALESCE(NULLIF(excluded.purchased, ''), inventory.purchased),"
+        " category = CASE WHEN excluded.category <> 'other'"
+        " THEN excluded.category ELSE inventory.category END,"
+        " notes = CASE WHEN inventory.notes = '' AND excluded.notes <> ''"
+        " THEN excluded.notes ELSE inventory.notes END,"
+        " for_recipe = excluded.for_recipe,"
+        " expires = CASE"
+        " WHEN inventory.expires IS NULL THEN excluded.expires"
+        " WHEN excluded.expires IS NULL THEN inventory.expires"
+        " ELSE MIN(inventory.expires, excluded.expires) END,"
+        " location_source = CASE"
+        " WHEN CASE excluded.location_source"
+        " WHEN 'manual' THEN 3 WHEN 'item' THEN 2"
+        " WHEN 'category' THEN 1 ELSE 0 END"
+        " > CASE inventory.location_source"
+        " WHEN 'manual' THEN 3 WHEN 'item' THEN 2"
+        " WHEN 'category' THEN 1 ELSE 0 END"
+        " THEN excluded.location_source ELSE inventory.location_source END"
+    )
+
+    with write_transaction(conn) as transaction:
+        for input_row in rows:
+            row = _inventory_row(input_row)
+            existing = transaction.execute(
+                "SELECT for_recipe FROM inventory"
+                " WHERE name = ? AND unit = ? AND location = ?",
+                (row["name"], row["unit"], row["location"]),
+            ).fetchone()
+
+            if existing is None:
+                if not row["purchased"]:
+                    row["purchased"] = date.today().isoformat()
+                added += 1
+            else:
+                if not row["purchased"]:
+                    row["purchased"] = None
+                merged += 1
+
+            row["for_recipe"] = _merge_recipe_names(
+                existing["for_recipe"] if existing is not None else None,
+                row["for_recipe"],
+            )
+            transaction.execute(
+                upsert, tuple(row[column] for column in _INVENTORY_COLS)
+            )
+
+        total = transaction.execute("SELECT COUNT(*) FROM inventory").fetchone()[0]
+        return {"added": added, "merged": merged, "total": total}
 
 
 def replace_inventory_rows(rows: list[dict]) -> None:

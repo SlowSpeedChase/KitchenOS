@@ -26,7 +26,7 @@ CATEGORIES = (
 LOCATIONS = ("fridge", "freezer", "pantry", "counter", "other")
 SOURCES = ("receipt", "manual", "claude", "csa", "staple")
 
-# How a row's `location` was decided. Ordered weakest-last; see _SOURCE_RANK.
+# How a row's `location` was decided, ordered strongest first.
 LOCATION_SOURCES = ("manual", "item", "category", "default")
 
 # Suffix marking a location nothing actually resolved. Rendered by
@@ -292,6 +292,11 @@ def write_inventory(items: list[InventoryItem]) -> None:
     from lib import inventory_db
 
     inventory_db.replace_inventory_rows([it.to_dict() for it in items])
+    refresh_inventory_views()
+
+
+def refresh_inventory_views() -> None:
+    """Regenerate derived inventory views after a successful database commit."""
     # The DB (source of truth) has already committed at this point. A failed
     # view write must not propagate: raising would make the API return 500,
     # and a client retry would double-add quantities.
@@ -413,71 +418,24 @@ def prune_expired(today: Optional[date] = None,
     return removed
 
 
-# Strongest wins when two rows merge. A hand-placed row must never be
-# downgraded to a guess by a restock that happened to resolve weakly.
-_SOURCE_RANK = {"manual": 3, "item": 2, "category": 1, "default": 0}
-
-
-def _stronger_source(a: Optional[str], b: Optional[str]) -> str:
-    """The more trustworthy of two provenances."""
-    a, b = normalize_location_source(a), normalize_location_source(b)
-    return a if _SOURCE_RANK[a] >= _SOURCE_RANK[b] else b
-
-
-# TODO(receipt-ingestion plan, task 9): read→merge→replace can lose updates
-# with concurrent writers (Flask threads + ingest LaunchAgent). Switch to
-# INSERT ... ON CONFLICT(name, unit, location) DO UPDATE SET
-# quantity = quantity + excluded.quantity inside one transaction.
 def add_items(new_items: list[InventoryItem]) -> dict:
     """Add items, merging by (name, unit, location). Quantities sum on merge."""
-    existing = read_inventory()
-    by_key: dict[tuple[str, str, str], InventoryItem] = {
-        it.merge_key(): it for it in existing
-    }
+    from lib import inventory_db
 
-    added = 0
-    merged = 0
-    for new in new_items:
+    for item in new_items:
         # Auto-fill expiry from the configured shelf-life windows when the
         # caller didn't supply one (category null window -> stays None).
-        if new.expires is None:
-            new.expires = compute_expires(new.purchased, new.name, new.category)
-
-        key = new.merge_key()
-        if key in by_key:
-            cur = by_key[key]
-            cur.quantity += new.quantity
-            if new.purchased:
-                cur.purchased = new.purchased
-            if new.notes and not cur.notes:
-                cur.notes = new.notes
-            if new.category != "other":
-                cur.category = new.category
-            cur.location_source = _stronger_source(
-                cur.location_source, new.location_source
+        if item.expires is None:
+            item.expires = compute_expires(
+                item.purchased, item.name, item.category
             )
-            cur.for_recipe = _merge_recipes(cur.for_recipe, new.for_recipe)
-            # Keep the earliest expiry so warnings fire for the oldest stock.
-            cur.expires = _earliest_expiry(cur.expires, new.expires)
-            merged += 1
-        else:
-            # `purchased` doubles as "date added" — it is what the review page
-            # sorts by. Stamp it only when the row is genuinely new. Doing it
-            # unconditionally would bump the date on every merge, so re-ingesting
-            # a receipt or restocking a long-held item would present it as
-            # freshly bought. An explicit `purchased` still wins on merge, which
-            # is what the receipt path relies on.
-            #
-            # Staples are unaffected either way: `seed_pantry_staples` writes
-            # through `write_inventory`, not here, so they keep a null date and
-            # sort last under "Added" — correct for perpetual stock.
-            if new.purchased is None:
-                new.purchased = date.today().isoformat()
-            by_key[key] = new
-            added += 1
+        item.location_source = normalize_location_source(item.location_source)
 
-    write_inventory(list(by_key.values()))
-    return {"added": added, "merged": merged, "total": len(by_key)}
+    result = inventory_db.merge_inventory_rows(
+        [item.to_dict() for item in new_items]
+    )
+    refresh_inventory_views()
+    return result
 
 
 def remove_item(name: str, location: Optional[str] = None) -> bool:
