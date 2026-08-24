@@ -253,10 +253,20 @@ structured. Most likely it should show only what has no card of its own — "My
 Notes" and the extraction footer — rather than a second copy of the recipe. That
 is a design decision, not a bug fix, so it needs a call before any code.
 
-### P3 — Meal planner rendering on this Mac
+### P2 — Dense meal-planner board overflow and scrolling
 
-Reported as "weird" with a screenshot that the triaging session could not read.
-Needs the image (or a viewport width + what looks wrong) before it can be acted on.
+On a populated iPad planner board, long recipe names and multi-recipe plates can
+run outside their day/meal cells or below the fixed viewport. The current
+"whole-week at a glance" constraint is useful for an empty week, but it must
+not make planned food unreachable.
+
+Make the board itself vertically scrollable when its slots grow, keep the
+planner chrome and recipe shelf stable, and constrain card/bundle text to its
+own column so it cannot overlap the next day. Preserve the seven-day overview
+and the existing ledger-only card mutations; this is a presentation change,
+not a change to cook or serving semantics. Cover a dense plate in
+`tests/e2e/test_planner_touch.py`: its cards must remain contained and the
+board must expose any excess height through scrolling.
 
 ### P3 — Three-finger drag for planner UI elements on macOS
 
