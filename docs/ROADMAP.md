@@ -14,6 +14,12 @@ tier that shipped since and corrects two stale statuses.
 
 ## Done / Shipped
 
+**2026-08-23 — iOS print/share fallback.** Printable week packets and recipe
+cards now use the system share sheet on iPhone and iPad, where people can choose
+**Print**, Save to Files, or AirDrop. Desktop browsers retain their normal print
+dialog. The shared action is deliberately attached to both printable surfaces so
+one cannot silently regress back to a no-op on iOS.
+
 **2026-07-08 — Web dashboard tailnet launcher** (PR #32). `lib/web_dashboard.py`
 + `scripts/generate_web_dashboard.py` regenerate `Dashboards/KitchenOS Web.md` — a
 tap-anywhere generated note whose links point at `KITCHENOS_API_BASE` (Tailscale
