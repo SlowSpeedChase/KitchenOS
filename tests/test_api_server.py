@@ -1127,6 +1127,39 @@ def test_inventory_add_all_fee_trip_preserves_zero_stock_response(
     assert refreshes == ["refresh"]
 
 
+def test_inventory_add_survives_non_oserror_view_refresh_failure(
+    client, tmp_vault, tmp_db, monkeypatch, capsys
+):
+    from lib import inventory
+    from lib import inventory_db as idb
+
+    def fail_post_commit_reread():
+        raise ValueError("derived reread failed")
+
+    monkeypatch.setattr(inventory, "read_inventory", fail_post_commit_reread)
+
+    response = client.post("/api/inventory/add", json={
+        "items": [{"name": "rice", "quantity": 2, "unit": "lb"}],
+    })
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "status": "ok",
+        "added": 1,
+        "merged": 0,
+        "total": 1,
+    }
+    conn = idb.connect()
+    try:
+        rows = conn.execute(
+            "SELECT name, quantity FROM inventory ORDER BY name"
+        ).fetchall()
+    finally:
+        conn.close()
+    assert [(row["name"], row["quantity"]) for row in rows] == [("rice", 2.0)]
+    assert "derived reread failed" in capsys.readouterr().err
+
+
 def test_inventory_add_without_trip_unchanged(client, tmp_vault, tmp_db):
     resp = client.post("/api/inventory/add", json={
         "items": [{"name": "rice", "quantity": 2, "unit": "lb"}]})

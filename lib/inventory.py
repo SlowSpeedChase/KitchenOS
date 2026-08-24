@@ -348,10 +348,11 @@ def refresh_inventory_views() -> None:
     try:
         with _inventory_view_refresh_lock():
             _refresh_inventory_views_unlocked()
-    except OSError as e:
-        # Lock-file failure is itself a derived-view failure. Keep the durable
-        # database result successful so a client retry cannot duplicate stock.
-        print(f"⚠️  Inventory view refresh lock failed: {e}", file=sys.stderr)
+    except Exception as e:
+        # Every ordinary failure in this post-commit boundary is a derived-view
+        # failure. Keep the durable database result successful so a client
+        # retry cannot duplicate stock. BaseException still propagates.
+        print(f"⚠️  Inventory view refresh failed: {e}", file=sys.stderr)
 
 
 def _refresh_inventory_views_unlocked() -> None:
