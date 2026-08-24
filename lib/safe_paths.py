@@ -22,7 +22,9 @@ def contained_markdown(root: Path, value: str) -> Path:
 
 
 def parse_iso_week(value: str) -> str:
-    match = _ISO_WEEK.fullmatch(value or "")
+    if not isinstance(value, str):
+        raise ValueError("week required (YYYY-WNN)")
+    match = _ISO_WEEK.fullmatch(value)
     if match is None:
         raise ValueError("week required (YYYY-WNN)")
     year, week = map(int, match.groups())

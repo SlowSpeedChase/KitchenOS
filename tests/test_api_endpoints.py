@@ -72,6 +72,37 @@ def test_shopping_list_path_escape_is_rejected_without_outside_mutation_or_remin
     add_to_reminders.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        ("/generate-shopping-list", {"week": 1}),
+        ("/send-to-reminders", {"week": 1}),
+        ("/api/shopping-list/preview", {"week": 1}),
+        ("/api/shopping-list/confirm", {"week": 1, "items_to_buy": []}),
+    ],
+)
+def test_shopping_list_rejects_non_string_week_without_side_effects(client, tmp_path, path, payload):
+    """Removing the type check would turn malformed JSON into a route 500."""
+    import api_server
+    import lib.shopping_list_generator
+
+    shopping_lists = tmp_path / "Shopping Lists"
+    shopping_lists.mkdir()
+    outside = tmp_path / "outside.md"
+    original = "outside sentinel\n"
+    outside.write_text(original, encoding="utf-8")
+
+    with patch.object(api_server, "SHOPPING_LISTS_PATH", shopping_lists), \
+         patch.object(lib.shopping_list_generator, "SHOPPING_LISTS_PATH", shopping_lists), \
+         patch("lib.reminders.add_to_reminders") as add_to_reminders:
+        response = client.post(path, json=payload)
+
+    assert response.status_code == 400
+    assert "week required (yyyy-wnn)" in response.get_json()["error"].lower()
+    assert outside.read_text(encoding="utf-8") == original
+    add_to_reminders.assert_not_called()
+
+
 def test_suggest_meal_requires_fields(client):
     """Suggest endpoint requires week, day, meal fields."""
     response = client.post('/api/suggest-meal', json={})

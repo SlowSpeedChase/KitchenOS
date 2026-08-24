@@ -30,6 +30,12 @@ def test_parse_iso_week_rejects_noncanonical_or_impossible_weeks(value):
         parse_iso_week(value)
 
 
+@pytest.mark.parametrize("value", [1, None, {}])
+def test_parse_iso_week_rejects_non_string_values(value):
+    with pytest.raises(ValueError):
+        parse_iso_week(value)
+
+
 def test_parse_iso_week_returns_canonical_week():
     assert parse_iso_week("2026-W35") == "2026-W35"
 
