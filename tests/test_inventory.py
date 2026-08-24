@@ -161,6 +161,10 @@ class TestAddItems:
             return rows
 
         monkeypatch.setattr(inventory, "read_inventory", synchronized_read)
+        # This regression isolates the database merge. Refresh ordering has its
+        # own controlled test below, and is now intentionally serialized, so a
+        # barrier inside both refresh reads would deadlock by construction.
+        monkeypatch.setattr(inventory, "refresh_inventory_views", lambda: None)
         item = lambda: inventory.InventoryItem(
             name="Milk", quantity=1, unit="gal", location="fridge"
         )
@@ -310,6 +314,74 @@ class TestViewFollowsDatabase:
         ])
         assert (inventory_path().read_text(encoding="utf-8")
                 == render_inventory_md(read_inventory()))
+
+    def test_concurrent_refresh_cannot_leave_an_older_snapshot_on_disk(
+        self, tmp_vault, tmp_db, monkeypatch
+    ):
+        """Refresh completion order must not invert committed database order."""
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        import lib.inventory as inventory
+        from lib import cook_now
+
+        real_merge = inventory_db.merge_inventory_rows
+        real_render = inventory.render_inventory_md
+        older_snapshot_ready = threading.Event()
+        release_older_snapshot = threading.Event()
+        second_commit_done = threading.Event()
+        second_refresh_done = threading.Event()
+
+        def track_second_commit(rows, conn=None):
+            result = real_merge(rows, conn=conn)
+            if result["merged"] == 1:
+                second_commit_done.set()
+            return result
+
+        def hold_older_render(items):
+            if items and items[0].quantity == 1 and not older_snapshot_ready.is_set():
+                older_snapshot_ready.set()
+                assert release_older_snapshot.wait(timeout=5)
+            return real_render(items)
+
+        def add_second_item():
+            try:
+                return inventory.add_items([
+                    InventoryItem(
+                        name="Milk", quantity=1, unit="gal", location="fridge"
+                    )
+                ])
+            finally:
+                second_refresh_done.set()
+
+        monkeypatch.setattr(inventory_db, "merge_inventory_rows", track_second_commit)
+        monkeypatch.setattr(inventory, "render_inventory_md", hold_older_render)
+        monkeypatch.setattr(cook_now, "write_note", lambda: None)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(
+                inventory.add_items,
+                [InventoryItem(
+                    name="Milk", quantity=1, unit="gal", location="fridge"
+                )],
+            )
+            assert older_snapshot_ready.wait(timeout=5)
+            second = pool.submit(add_second_item)
+            try:
+                # The second database commit must remain independent of the
+                # view lock. Without refresh serialization its newer view also
+                # finishes here, allowing the held older render to overwrite it.
+                assert second_commit_done.wait(timeout=5)
+                second_refresh_done.wait(timeout=1)
+            finally:
+                release_older_snapshot.set()
+            first.result(timeout=5)
+            second.result(timeout=5)
+
+        [milk] = inventory.read_inventory()
+        assert milk.quantity == 2
+        assert "| Milk | 2 | gal |" in inventory.inventory_path().read_text(
+            encoding="utf-8"
+        )
 
 
 class TestParsing:

@@ -9,8 +9,11 @@ Obsidian, but edits there are overwritten. Items with the same
 
 from __future__ import annotations
 
+import fcntl
 import os
 import sys
+import threading
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta
 from pathlib import Path
@@ -73,6 +76,25 @@ class InventoryItem:
 
 def inventory_path() -> Path:
     return paths.vault_root() / "Inventory.md"
+
+
+_VIEW_REFRESH_THREAD_LOCK = threading.Lock()
+
+
+@contextmanager
+def _inventory_view_refresh_lock():
+    """Serialize derived-view refreshes across threads and processes."""
+    from lib import inventory_db
+
+    lock_path = inventory_db.db_path().with_suffix(".inventory-views.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with _VIEW_REFRESH_THREAD_LOCK:
+        with lock_path.open("a") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def normalize_category(cat: Optional[str]) -> str:
@@ -296,7 +318,23 @@ def write_inventory(items: list[InventoryItem]) -> None:
 
 
 def refresh_inventory_views() -> None:
-    """Regenerate derived inventory views after a successful database commit."""
+    """Regenerate derived views serially after a successful database commit.
+
+    The lock intentionally begins after persistence and encloses every view
+    read and write. Callers, including full-set mutations, call this function
+    directly rather than acquiring an outer lock that could recurse.
+    """
+    try:
+        with _inventory_view_refresh_lock():
+            _refresh_inventory_views_unlocked()
+    except OSError as e:
+        # Lock-file failure is itself a derived-view failure. Keep the durable
+        # database result successful so a client retry cannot duplicate stock.
+        print(f"⚠️  Inventory view refresh lock failed: {e}", file=sys.stderr)
+
+
+def _refresh_inventory_views_unlocked() -> None:
+    """Perform one refresh while ``_inventory_view_refresh_lock`` is held."""
     # The DB (source of truth) has already committed at this point. A failed
     # view write must not propagate: raising would make the API return 500,
     # and a client retry would double-add quantities.
