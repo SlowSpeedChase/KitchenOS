@@ -73,9 +73,12 @@ def prompt_pantry_decisions(lines: list[dict]) -> tuple[list[dict], list[dict]]:
         from_pantry = line.get("from_pantry")
         to_buy = line.get("to_buy")
         item = line["item"]
+        inventory_item = (line.get("matched_inventory") or {}).get("item") or item
 
         if not from_pantry:
-            if to_buy is not None:
+            # A broad or unmeasurable inventory candidate belongs in the
+            # verification surface, never the Reminders-bound purchase list.
+            if to_buy is not None and not line.get("matched_inventory"):
                 final_buy.append({**to_buy, "item": item})
             continue
 
@@ -100,14 +103,17 @@ def prompt_pantry_decisions(lines: list[dict]) -> tuple[list[dict], list[dict]]:
                 used_unit = tokens[1] if len(tokens) > 1 else from_pantry["unit"]
             else:
                 used_amount, used_unit = from_pantry["amount"], from_pantry["unit"]
-            decisions.append({"item": item, "amount": used_amount, "unit": used_unit})
+            decisions.append({"item": inventory_item, "amount": used_amount,
+                              "unit": used_unit})
             # Anything still required is added to the buy list, conservatively in
             # the recipe's unit. We let the user re-aggregate if needed.
             final_buy.append({**needed, "item": item, "_note": "partial pantry"})
             continue
 
         # 'all' — pantry covers, decrement by from_pantry suggestion
-        decisions.append({"item": item, "amount": from_pantry["amount"], "unit": from_pantry["unit"]})
+        decisions.append({"item": inventory_item,
+                          "amount": from_pantry["amount"],
+                          "unit": from_pantry["unit"]})
         if to_buy is not None:
             final_buy.append({**to_buy, "item": item})
 
@@ -169,6 +175,11 @@ def main():
         print("\nShopping List:")
         for item in formatted:
             print(f"  - {item}")
+        matches = result.get("inventory_matches") or []
+        if matches:
+            print("\nInventory matches — verify:")
+            for item in matches:
+                print(f"  - {item}")
         if decisions:
             print("\nWould decrement pantry:")
             for d in decisions:

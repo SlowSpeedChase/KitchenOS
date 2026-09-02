@@ -23,7 +23,6 @@ from dotenv import load_dotenv
 from lib.shopping_list_generator import (
     format_qty as shopping_list_format_qty,
     generate_shopping_list,
-    inventory_notes,
     parse_shopping_list_file,
     extract_manual_items,
     extract_legacy_manual_items,
@@ -939,13 +938,14 @@ def extract_recipe():
 
 @app.route('/generate-shopping-list', methods=['POST'])
 def generate_shopping_list_endpoint():
-    """Generate shopping list markdown from meal plan, crediting what's in stock.
+    """Generate shopping list markdown split by current inventory matches.
 
     **Annotates, never decrements.** This is the one-shot trigger — the button on
     `/current/shopping-list`, the only one reachable from the phone you shop with
     — so there's no confirmation step to approve inventory writes against. It
-    reads the pantry to keep what you already own off the buy list and records
-    what it credited under "Already have"; the preview/confirm pair
+    reads the pantry to keep every inventory match out of the Reminders-bound
+    checklist and records those matches under "Inventory matches — verify";
+    the preview/confirm pair
     (`/api/shopping-list/preview` → `/confirm`) remains the only path that
     actually decrements stock.
 
@@ -972,6 +972,8 @@ def generate_shopping_list_endpoint():
     if not result['success']:
         return jsonify(result), 400
 
+    generated_purchase_items = result.get('purchase_items', result['items'])
+
     # Check for existing manual items before overwriting
     manual_items = []
     filename = filepath.name
@@ -981,7 +983,7 @@ def generate_shopping_list_endpoint():
             previous_generated = existing_result.get('generated_items')
             if previous_generated is None:
                 legacy_candidates = extract_manual_items(
-                    existing_result['items'], result['items'])
+                    existing_result['items'], generated_purchase_items)
                 manual_items = extract_legacy_manual_items(
                     legacy_candidates, result.get('lines') or [])
             else:
@@ -994,16 +996,16 @@ def generate_shopping_list_endpoint():
                     manual_items = manual_candidates
 
     # Combine generated items with manual items
-    all_items = result['items'] + manual_items
+    all_items = generated_purchase_items + manual_items
 
-    # Inventory notes are informational only — they carry no checkbox, so they
-    # never reach Reminders or come back as manual items. Review candidates stay
-    # on the buy list until a person verifies the actual product and quantity.
-    notes = inventory_notes(result.get('lines') or []) if use_pantry else {
-        'credited': [], 'review': []}
+    # Inventory matches are informational only — they carry no checkbox, so they
+    # never reach Reminders or come back as manual items. Generation is read-only;
+    # the user verifies each matched product and amount before shopping.
+    lines = result.get('lines') or []
+    inventory_matches = result.get('inventory_matches', []) if use_pantry else []
     markdown = generate_shopping_list_markdown(
-        week, all_items, on_hand=notes['credited'], check_pantry=notes['review'],
-        generated_items=result['items'])
+        week, all_items, inventory_matches=inventory_matches,
+        generated_items=generated_purchase_items)
 
     # Ensure Shopping Lists folder exists
     SHOPPING_LISTS_PATH.mkdir(parents=True, exist_ok=True)
@@ -1015,10 +1017,13 @@ def generate_shopping_list_endpoint():
         'success': True,
         'file': f"Shopping Lists/{filename}",
         'item_count': len(all_items),
-        'generated_count': len(result['items']),
+        'generated_count': len(generated_purchase_items),
         'manual_count': len(manual_items),
-        'inventory_credited_count': len(notes['credited']),
-        'inventory_review_count': len(notes['review']),
+        'inventory_match_count': len(inventory_matches),
+        'inventory_credited_count': sum(
+            1 for line in lines if line.get('status') == 'credited'),
+        'inventory_review_count': sum(
+            1 for line in lines if line.get('status') == 'review'),
         'recipes': result['recipes'],
         'warnings': result.get('warnings', [])
     })
@@ -2757,9 +2762,12 @@ def api_shopping_list_confirm():
     data = request.get_json(force=True, silent=True) or {}
     week = data.get("week")
     items = data.get("items_to_buy")
+    inventory_matches = data.get("inventory_matches") or []
     decisions = data.get("decisions") or []
     if not isinstance(items, list):
         return jsonify({"error": "week and items_to_buy required"}), 400
+    if not isinstance(inventory_matches, list):
+        return jsonify({"error": "inventory_matches must be a list"}), 400
 
     try:
         week = parse_iso_week(week)
@@ -2768,7 +2776,8 @@ def api_shopping_list_confirm():
         return jsonify({"error": str(exc)}), 400
 
     SHOPPING_LISTS_PATH.mkdir(parents=True, exist_ok=True)
-    markdown = generate_shopping_list_markdown(week, items)
+    markdown = generate_shopping_list_markdown(
+        week, items, inventory_matches=inventory_matches)
     filename = out_path.name
     out_path.write_text(markdown, encoding="utf-8")
 

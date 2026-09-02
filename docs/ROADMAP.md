@@ -129,14 +129,14 @@ in the kitchen. The MCP `generate_shopping_list` tool inherited it, since
 listed it as a second independent caller — it isn't; fixing the endpoint fixed
 both surfaces).
 
-Resolved as **annotate, never decrement**: the endpoint now reads the pantry to
-keep owned items off the buy list, and records what it credited under an
-"Already have" section. Those notes are plain bullets, deliberately *not*
-checkboxes — `parse_shopping_list_file` collects every `- [ ]` line in the file
-regardless of section, so a checkbox there would be sent to Reminders as
-something to buy and would return as a phantom "manual item" on the next
-regeneration. `POST /api/shopping-list/preview` → `/confirm` remains the only path
-that actually spends stock. `use_pantry: false` restores raw-demand behaviour.
+Resolved as **compare, never decrement**: the endpoint now reads the pantry and
+splits demand into **Need to purchase** checkboxes and plain-bullet **Inventory
+matches — verify** notes. Every match note is excluded from Reminders and names
+the requested item, matched inventory row, and reason. `parse_shopping_list_file`
+collects every `- [ ]` line regardless of section, so keeping matches as plain
+bullets also prevents phantom manual items on regeneration. `POST
+/api/shopping-list/preview` → `/confirm` remains the only path that actually
+spends stock. `use_pantry: false` restores raw-demand behaviour.
 
 ### ~~P1 — Grouped ingredient sections are silently dropped~~ FIXED
 

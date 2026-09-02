@@ -24,12 +24,13 @@ orange, or yellow bell pepper” into “red.” Finally, unit conflicts appear 
 Shopping reconciliation becomes precision-first while broad matching remains
 available for discovery and Cook Now.
 
-Every demand line receives one disposition:
+Every demand line receives one internal disposition:
 
 - `credited`: the inventory identity is exact after shopping normalization and
   the quantities are convertible.
 - `review`: a related inventory row exists, but identity, package quantity, or
-  units are uncertain. The full demand remains on the buy list.
+  units are uncertain. The full demand remains represented in the inventory-match
+  section for human verification.
 - `buy`: no inventory candidate exists. The full or remaining demand is bought.
 - `excluded`: a household supply such as water or ice; it is not shoppable.
 
@@ -40,12 +41,12 @@ package-presence signal and becomes `review`.
 
 ## Output
 
-The weekly note has three honest surfaces:
+The weekly note has two user-facing surfaces:
 
-- `Items`: checkboxes sent to Reminders.
-- `Already have`: only quantities actually credited.
-- `Check pantry`: plain bullets naming the related inventory row and why it was
-  not credited. The item remains in `Items`.
+- `Need to purchase`: unmatched-demand checkboxes sent to Reminders.
+- `Inventory matches — verify`: plain bullets for every exact or broad match,
+  naming the needed item, matched row and quantity, and reason. These lines are
+  excluded from Reminders.
 
 Water and ice are omitted entirely. Generation remains read-only with respect to
 inventory.
@@ -89,8 +90,9 @@ recovered before scaling as `1 scoop protein powder`, so a 5× cook renders as
 - A `ct` package cannot credit a non-`ct` demand.
 - Exact, convertible quantities still receive full or partial credit.
 - Expired inventory never receives credit.
-- Warning/review lines stay in `Items` and appear only under `Check pantry`.
-- `Already have` contains only real credits.
+- Every inventory match appears under `Inventory matches — verify`, including
+  warning/review matches and confirmed exact credits.
+- Only unmatched demand appears under `Need to purchase` and reaches Reminders.
 - Bell-pepper alternatives remain a complete ingredient name.
 - Embedded scoop measurements scale as scoops.
 - Water and ice do not appear in the shopping note.
@@ -99,8 +101,8 @@ recovered before scaling as `1 scoop protein powder`, so a 5× cook renders as
 
 ## ADHD and scope checks
 
-- The failure direction is visible: uncertainty becomes one `Check pantry`
-  section instead of silent omission.
+- The failure direction is visible: every candidate becomes one explicit
+  inventory-match line instead of silent omission.
 - No per-item chore is added to generation; the existing checklist remains the
   primary shopping surface.
 - The change is under one focused week and does not require a data migration.

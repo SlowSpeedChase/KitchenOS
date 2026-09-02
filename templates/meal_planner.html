@@ -5443,7 +5443,7 @@
                 row.innerHTML = `
                     <div style="font-weight: 600;">${escapeHtml(line.item)}</div>
                     <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 6px;">
-                        Need ${escapeHtml(line.needed.amount + ' ' + line.needed.unit)}, pantry has ~${escapeHtml(from.amount + ' ' + from.unit)}
+                        Need ${escapeHtml(line.needed_display)}, pantry can cover ~${escapeHtml(from.amount + ' ' + from.unit)}
                     </div>
                     <div>
                         <label><input type="radio" name="line-${idx}" value="all" checked> Use pantry</label>
@@ -5461,36 +5461,45 @@
             const body = document.getElementById('pantry-modal-body');
             const overlapping = body._overlapping || [];
             const decisions = [];
-            const skipItems = new Set();
+            const itemsToBuy = [...(pendingShoppingPreview.purchase_items || [])];
+            const inventoryMatches = new Set(pendingShoppingPreview.inventory_matches || []);
 
             overlapping.forEach((line, idx) => {
                 const choice = body.querySelector(`input[name="line-${idx}"]:checked`)?.value;
                 if (choice === 'all') {
                     decisions.push({
-                        item: line.item,
+                        item: line.matched_inventory.item,
                         amount: line.from_pantry.amount,
                         unit: line.from_pantry.unit,
                     });
-                    if (line.to_buy === null) skipItems.add(line.item);
+                    if (line.to_buy_display) itemsToBuy.push(line.to_buy_display);
+                } else {
+                    // "Buy fresh" means the full recipe demand, not the
+                    // pantry-subtracted remainder suggested by the preview.
+                    if (line.needed_display) itemsToBuy.push(line.needed_display);
+                    if (line.inventory_match_note) {
+                        inventoryMatches.delete(line.inventory_match_note);
+                    }
                 }
             });
 
-            const itemsToBuy = (pendingShoppingPreview.items || [])
-                .filter(s => ![...skipItems].some(i => s.toLowerCase().includes(i.toLowerCase())));
-
-            await confirmShoppingList(decisions, itemsToBuy);
+            await confirmShoppingList(decisions, itemsToBuy, [...inventoryMatches]);
             document.getElementById('pantry-modal').classList.remove('visible');
         }
 
-        async function confirmShoppingList(decisions, itemsToBuy) {
+        async function confirmShoppingList(decisions, itemsToBuy, inventoryMatches) {
             try {
-                const items = itemsToBuy || (pendingShoppingPreview ? pendingShoppingPreview.items : []);
+                const items = itemsToBuy ?? (pendingShoppingPreview
+                    ? pendingShoppingPreview.purchase_items : []);
+                const matches = inventoryMatches ?? (pendingShoppingPreview
+                    ? pendingShoppingPreview.inventory_matches : []);
                 const resp = await fetch('/api/shopping-list/confirm', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         week: currentWeek,
                         items_to_buy: items,
+                        inventory_matches: matches,
                         decisions: decisions || [],
                     }),
                 });
