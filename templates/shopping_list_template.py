@@ -3,11 +3,16 @@
 Creates markdown shopping list files with checkboxes and send button.
 """
 
+import base64
+import json
+
 from templates.meal_plan_template import format_week_range
 
 
 def generate_shopping_list_markdown(week: str, items: list[str],
-                                    on_hand: list[str] | None = None) -> str:
+                                    on_hand: list[str] | None = None,
+                                    check_pantry: list[str] | None = None,
+                                    generated_items: list[str] | None = None) -> str:
     """Generate shopping list markdown.
 
     Args:
@@ -19,6 +24,12 @@ def generate_shopping_list_markdown(week: str, items: list[str],
             `- [ ]` line in the file regardless of section, so a checkbox here
             would be sent to Reminders as something to buy and would come back as
             a phantom "manual item" on the next regeneration.
+        check_pantry: Optional uncertain inventory-match notes. These stay as
+            plain bullets while the corresponding ingredient remains an item
+            checkbox.
+        generated_items: Items produced from recipes, excluding preserved manual
+            additions. Stored as encoded metadata so a later regeneration can
+            distinguish provenance even when inventory removes a generated item.
 
     Returns:
         Formatted markdown string
@@ -34,10 +45,15 @@ def generate_shopping_list_markdown(week: str, items: list[str],
         title,
         "",
         f"Generated from [[{week}|Meal Plan]]",
-        "",
-        "## Items",
-        "",
     ]
+
+    if generated_items is not None:
+        payload = base64.urlsafe_b64encode(
+            json.dumps(generated_items, ensure_ascii=False).encode("utf-8")
+        ).decode("ascii")
+        lines.extend(["", f"<!-- kitchenos-generated-items-v2:{payload} -->"])
+
+    lines.extend(["", "## Items", ""])
 
     # Add checklist items
     for item in items:
@@ -53,6 +69,17 @@ def generate_shopping_list_markdown(week: str, items: list[str],
             "",
         ])
         lines.extend(f"- {note}" for note in on_hand)
+
+    if check_pantry:
+        lines.extend([
+            "",
+            "## Check pantry",
+            "",
+            "<!-- Possible inventory matches were not credited. The matching"
+            " ingredients remain checked items above until you verify them. -->",
+            "",
+        ])
+        lines.extend(f"- {note}" for note in check_pantry)
 
     # Add buttons
     lines.extend([

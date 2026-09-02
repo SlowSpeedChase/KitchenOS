@@ -916,6 +916,105 @@ def test_generate_shopping_list_annotates_what_it_credited(
     assert "brown sugar — in stock, 1 cup needed" in written
 
 
+def test_generate_shopping_list_keeps_uncertain_inventory_matches_on_buy_list(
+        client, tmp_vault, tmp_path, monkeypatch):
+    from lib import pantry as pantry_module
+
+    lists = _plan_and_recipe(tmp_path, monkeypatch, [
+        {"amount": "3", "unit": "cloves", "item": "garlic"},
+    ])
+    monkeypatch.setattr(pantry_module, "load_pantry", lambda: [
+        {"item": "garlic powder", "amount": "1", "unit": "ct"},
+    ])
+
+    response = client.post('/generate-shopping-list', json={"week": "2026-W31"})
+    assert response.status_code == 200
+    written = (lists / "2026-W31.md").read_text()
+
+    assert "- [ ] 3 cloves garlic" in written
+    assert "## Check pantry" in written
+    assert "garlic powder" in written
+    assert "not credited; still on the list" in written
+
+
+def test_regeneration_does_not_resurrect_old_generated_credits_or_exclusions(
+        client, tmp_vault, tmp_path, monkeypatch):
+    """A legacy generated checkbox is not a manual item just because it vanishes."""
+    from lib import pantry as pantry_module
+
+    lists = _plan_and_recipe(tmp_path, monkeypatch, [
+        {"amount": "1", "unit": "cup", "item": "brown sugar"},
+        {"amount": "2", "unit": "cup", "item": "water"},
+    ])
+    (lists / "2026-W31.md").write_text(
+        "# Shopping List\n\n## Items\n\n"
+        "- [ ] 1 cup brown sugar\n"
+        "- [ ] 2 cups water\n"
+        "- [ ] aluminum foil\n"
+    )
+    monkeypatch.setattr(pantry_module, "load_pantry", lambda: [
+        {"item": "brown sugar", "amount": "5", "unit": "cup"},
+    ])
+
+    response = client.post('/generate-shopping-list', json={"week": "2026-W31"})
+    assert response.status_code == 200
+    written = (lists / "2026-W31.md").read_text()
+
+    buy_lines = [line for line in written.splitlines() if line.startswith("- [ ] ")]
+    assert buy_lines == ["- [ ] aluminum foil"]
+    assert "brown sugar — in stock, 1 cup needed" in written
+
+
+def test_regeneration_semantically_cleans_stale_items_misclassified_by_metadata(
+        client, tmp_vault, tmp_path, monkeypatch):
+    from lib import pantry as pantry_module
+    from templates.shopping_list_template import generate_shopping_list_markdown
+
+    lists = _plan_and_recipe(tmp_path, monkeypatch, [
+        {"amount": "3", "unit": "each", "item": "eggs"},
+        {"amount": "1", "unit": "whole", "item": "protein powder"},
+    ])
+    legacy_note = generate_shopping_list_markdown(
+        "2026-W31",
+        ["2 cts eggs", "5 one scoop protein powder", "aluminum foil"],
+        generated_items=[],  # reproduces a bad first-migration snapshot
+    ).replace("kitchenos-generated-items-v2:", "kitchenos-generated-items:")
+    (lists / "2026-W31.md").write_text(legacy_note)
+    monkeypatch.setattr(pantry_module, "load_pantry", lambda: [])
+
+    response = client.post('/generate-shopping-list', json={"week": "2026-W31"})
+    assert response.status_code == 200
+    written = (lists / "2026-W31.md").read_text()
+    buy_lines = [line for line in written.splitlines() if line.startswith("- [ ] ")]
+
+    assert "- [ ] aluminum foil" in buy_lines
+    assert "- [ ] 2 cts eggs" not in buy_lines
+    assert "- [ ] 5 one scoop protein powder" not in buy_lines
+
+
+def test_versioned_provenance_preserves_manual_extra_of_a_generated_ingredient(
+        client, tmp_vault, tmp_path, monkeypatch):
+    from lib import pantry as pantry_module
+    from templates.shopping_list_template import generate_shopping_list_markdown
+
+    lists = _plan_and_recipe(tmp_path, monkeypatch, [
+        {"amount": "4", "unit": "cup", "item": "flour"},
+    ])
+    (lists / "2026-W31.md").write_text(generate_shopping_list_markdown(
+        "2026-W31",
+        ["4 cups flour", "1 cup flour"],
+        generated_items=["4 cups flour"],
+    ))
+    monkeypatch.setattr(pantry_module, "load_pantry", lambda: [])
+
+    response = client.post('/generate-shopping-list', json={"week": "2026-W31"})
+    assert response.status_code == 200
+    assert response.get_json()["manual_count"] == 1
+    written = (lists / "2026-W31.md").read_text()
+    assert "- [ ] 4 cups flour" in written
+    assert "- [ ] 1 cup flour" in written
+
+
 def test_credited_items_are_not_checkboxes(client, tmp_vault, tmp_path, monkeypatch):
     """The 'Already have' notes must never be `- [ ]` lines.
 

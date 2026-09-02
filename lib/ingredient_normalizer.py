@@ -28,6 +28,12 @@ _LEADING = re.compile(
 _NOISE_TOKENS = re.compile(
     r"\*+|\(inferred\)|\(optional\)|\(not shown\)|optional:?", re.IGNORECASE
 )
+_PREP_CLAUSE = re.compile(
+    r",\s*(?=(?:(?:very|finely|thinly|roughly|coarsely)\s+)?"
+    r"(?:chopped|diced|sliced|minced|grated|shredded|drained|rinsed|divided|"
+    r"melted|softened|peeled|seeded|trimmed|crushed)\b)",
+    re.IGNORECASE,
+)
 
 
 @lru_cache(maxsize=1)
@@ -52,12 +58,19 @@ def normalize_name(raw: str) -> str:
     s = re.sub(r"\([^)]*\)", "", s)
     # Drop explicit noise tokens (*, (inferred), optional:, ...).
     s = _NOISE_TOKENS.sub("", s)
-    # Keep only the part before the first comma (prep clause: ", thinly sliced").
-    s = s.split(",")[0]
+    # Drop a trailing prep clause without destroying comma-separated choices.
+    # Example: "red, orange, or yellow bell pepper, diced" retains all three
+    # colors, while "red onion, thinly sliced" still becomes "red onion".
+    prep_split = _PREP_CLAUSE.split(s, maxsplit=1)
+    if len(prep_split) > 1:
+        s = prep_split[0]
+    elif not re.search(r",\s*or\s+", s, flags=re.IGNORECASE):
+        s = s.split(",")[0]
     # Drop "to taste" / "as needed" trailing phrases.
     s = re.sub(r"\b(to taste|as needed)\b", "", s, flags=re.IGNORECASE)
     # Strip a leading count/size qualifier ("1 of a large ...").
     s = _LEADING.sub("", s)
+    s = re.sub(r"\s*,\s*", ", ", s)
     s = re.sub(r"\s+", " ", s).strip().lower().strip(" .-")
     # Alias map wins over the stripped form.
     return load_aliases().get(s, s)

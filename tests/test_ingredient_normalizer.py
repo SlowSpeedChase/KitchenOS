@@ -7,6 +7,18 @@ def test_strips_parentheticals_and_prep():
     assert normalize_name("basil leaves, slivered (8g)") == "basil leaves"
 
 
+def test_preserves_comma_separated_bell_pepper_alternatives():
+    assert normalize_name(
+        "medium red, orange, or yellow bell pepper, diced"
+    ) == "red, orange, or yellow bell pepper"
+    assert normalize_name(
+        "medium red, orange, or yellow bell pepper"
+    ) == "red, orange, or yellow bell pepper"
+    assert normalize_name(
+        "medium red , orange , or yellow bell pepper"
+    ) == "red, orange, or yellow bell pepper"
+
+
 def test_strips_noise_tokens():
     assert normalize_name("boiled potatoes *(inferred)*") == "boiled potatoes"
     assert normalize_name("paprika (optional)") == "paprika"

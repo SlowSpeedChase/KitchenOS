@@ -23,9 +23,10 @@ from dotenv import load_dotenv
 from lib.shopping_list_generator import (
     format_qty as shopping_list_format_qty,
     generate_shopping_list,
-    on_hand_notes,
+    inventory_notes,
     parse_shopping_list_file,
     extract_manual_items,
+    extract_legacy_manual_items,
     SHOPPING_LISTS_PATH,
 )
 from lib.backup import create_backup
@@ -953,18 +954,32 @@ def generate_shopping_list_endpoint():
     if filepath.exists():
         existing_result = parse_shopping_list_file(week)
         if existing_result['success']:
-            manual_items = extract_manual_items(
-                existing_result['items'],
-                result['items']
-            )
+            previous_generated = existing_result.get('generated_items')
+            if previous_generated is None:
+                legacy_candidates = extract_manual_items(
+                    existing_result['items'], result['items'])
+                manual_items = extract_legacy_manual_items(
+                    legacy_candidates, result.get('lines') or [])
+            else:
+                manual_candidates = extract_manual_items(
+                    existing_result['items'], previous_generated)
+                if (existing_result.get('generated_items_version') or 1) < 2:
+                    manual_items = extract_legacy_manual_items(
+                        manual_candidates, result.get('lines') or [])
+                else:
+                    manual_items = manual_candidates
 
     # Combine generated items with manual items
     all_items = result['items'] + manual_items
 
-    # Create markdown content. on_hand notes are informational only — they carry
-    # no checkbox, so they never reach Reminders or come back as manual items.
-    on_hand = on_hand_notes(result.get('lines') or []) if use_pantry else []
-    markdown = generate_shopping_list_markdown(week, all_items, on_hand=on_hand)
+    # Inventory notes are informational only — they carry no checkbox, so they
+    # never reach Reminders or come back as manual items. Review candidates stay
+    # on the buy list until a person verifies the actual product and quantity.
+    notes = inventory_notes(result.get('lines') or []) if use_pantry else {
+        'credited': [], 'review': []}
+    markdown = generate_shopping_list_markdown(
+        week, all_items, on_hand=notes['credited'], check_pantry=notes['review'],
+        generated_items=result['items'])
 
     # Ensure Shopping Lists folder exists
     SHOPPING_LISTS_PATH.mkdir(parents=True, exist_ok=True)
@@ -978,6 +993,8 @@ def generate_shopping_list_endpoint():
         'item_count': len(all_items),
         'generated_count': len(result['items']),
         'manual_count': len(manual_items),
+        'inventory_credited_count': len(notes['credited']),
+        'inventory_review_count': len(notes['review']),
         'recipes': result['recipes'],
         'warnings': result.get('warnings', [])
     })

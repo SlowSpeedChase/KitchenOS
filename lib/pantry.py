@@ -17,6 +17,7 @@ pantry inventory tracks actual quantities in the user's kitchen.
 from __future__ import annotations
 
 import re
+from datetime import date
 from typing import Optional
 
 from lib.ingredient_aggregator import (
@@ -28,11 +29,22 @@ from lib.ingredient_aggregator import (
     parse_amount_to_float,
     unit_compatibility,
 )
+from lib.ingredient_normalizer import normalize_name
 from lib.use_it_up import _covers, _ingredient_phrase, _phrase
 
 
 def _normalize(name: str) -> str:
     return (name or "").lower().strip()
+
+
+def _is_expired(expires: Optional[str]) -> bool:
+    """Whether a valid ISO expiry is before today; malformed values stay visible."""
+    if not expires:
+        return False
+    try:
+        return date.fromisoformat(expires) < date.today()
+    except ValueError:
+        return False
 
 
 _PARENTHETICAL_RE = re.compile(r"\([^)]*\)")
@@ -67,6 +79,8 @@ def load_pantry() -> list[dict]:
 
     totals: dict[tuple[str, str], dict] = {}
     for it in read_inventory():
+        if _is_expired(it.expires):
+            continue
         key = (it.name.lower().strip(), it.unit.lower().strip())
         if key in totals:
             prev = parse_amount_to_float(totals[key]["amount"]) or 0.0
@@ -104,8 +118,25 @@ def save_pantry(items: list[dict]) -> None:
         before = [item.to_dict() for item in current]
         kept: list[InventoryItem] = []
         seen: set[tuple[str, str]] = set()
+        usable_keys = {
+            (item.name.lower().strip(), item.unit.lower().strip())
+            for item in current if not _is_expired(item.expires)
+        }
         for item in current:
             key = (item.name.lower().strip(), item.unit.lower().strip())
+            # Expired rows are intentionally absent from load_pantry's usable
+            # view. Preserve them as history instead of interpreting that
+            # omission as an instruction to delete them. If an explicit pantry
+            # save restocks the same key and no usable row exists, revive this
+            # row so the DB's (name, unit, location) uniqueness remains valid.
+            if _is_expired(item.expires):
+                if key in new_by_key and key not in usable_keys and key not in seen:
+                    amount = parse_amount_to_float(new_by_key[key].get("amount"))
+                    item.quantity = amount if amount is not None else item.quantity
+                    item.expires = None
+                    seen.add(key)
+                kept.append(item)
+                continue
             if key not in new_by_key:
                 continue  # used up → drop row
             if key in seen:
@@ -169,33 +200,98 @@ def split_against_pantry(item: str, amount, unit: str, pantry: list[dict]) -> di
     Returns a dict with keys:
         from_pantry: {"amount": str, "unit": str} | None
         to_buy:     {"amount": str, "unit": str} | None
-        warning:    str | None — set when units are in different families
+        warning:    str | None — set when the candidate cannot be credited
+        status:     "buy" | "credited" | "review"
+        matched_inventory: the candidate inventory row, if any
 
     The pantry inventory is NOT mutated. Use `apply_decisions()` for that.
     """
     needed = {"amount": amount, "unit": unit}
-    pantry_entry = find_match(item, pantry)
+    item_identity = normalize_name(item)
+    pantry_entry = next(
+        (entry for entry in pantry
+         if normalize_name(entry.get("item") or "") == item_identity),
+        None,
+    )
     if pantry_entry is None:
-        return {"from_pantry": None, "to_buy": needed, "warning": None}
+        pantry_entry = find_match(item, pantry)
+    if pantry_entry is None:
+        return {
+            "from_pantry": None,
+            "to_buy": needed,
+            "warning": None,
+            "status": "buy",
+            "matched_inventory": None,
+        }
+
+    matched = pantry_entry.get("item") or "inventory item"
+    p_unit = pantry_entry.get("unit") or ""
+    p_amount = pantry_entry.get("amount")
+    p_label = " ".join(str(part) for part in (p_amount, p_unit) if part not in (None, ""))
+    match_label = f"{matched} ({p_label})" if p_label else matched
+
+    # Discovery matching deliberately accepts broader food relationships. A
+    # shopping credit has the opposite risk profile: a merely-related product
+    # may be useful for suggestions, but must not remove the ingredient needed
+    # to execute the plan.
+    if normalize_name(item) != normalize_name(matched):
+        return {
+            "from_pantry": None,
+            "to_buy": needed,
+            "warning": f"inventory has {match_label}, a related item; not credited",
+            "status": "review",
+            "matched_inventory": pantry_entry,
+        }
+
+    # Receipt and conversational ingest use `ct` as “one package exists.” It
+    # cannot prove the number of eggs, cloves, leaves, grams, or tablespoons
+    # left inside that package.
+    p_unit_norm = p_unit.lower().strip()
+    unit_norm = (unit or "").lower().strip()
+    if p_unit_norm == "ct" and unit_norm != "ct":
+        return {
+            "from_pantry": None,
+            "to_buy": needed,
+            "warning": (
+                f"inventory has {match_label}, but the package quantity is unknown; "
+                "not credited"
+            ),
+            "status": "review",
+            "matched_inventory": pantry_entry,
+        }
+
+    compatibility = unit_compatibility(p_unit_norm, unit_norm)
+    if compatibility is None:
+        return {
+            "from_pantry": None,
+            "to_buy": needed,
+            "warning": (
+                f"inventory has {match_label}, but its units cannot be compared "
+                f"with {amount} {unit} (different units); not credited"
+            ),
+            "status": "review",
+            "matched_inventory": pantry_entry,
+        }
 
     p_amt = parse_amount_to_float(pantry_entry.get("amount"))
     n_amt = parse_amount_to_float(amount)
-    p_unit = pantry_entry.get("unit") or ""
     # get_unit_family/convert_to_base_unit only lowercase, they don't strip —
     # unit_compatibility does both. Normalize once here so family lookups and
     # base-unit math agree with what unit_compatibility already decided.
-    p_unit_norm = p_unit.lower().strip()
-    unit_norm = (unit or "").lower().strip()
     p_family = get_unit_family(p_unit_norm)
     n_family = get_unit_family(unit_norm)
 
-    # Pantry has the item but no parseable quantity → assume fully stocked.
-    if p_amt is None:
-        return {"from_pantry": needed, "to_buy": None, "warning": None}
-
-    # Recipe has no parseable amount → treat pantry as covering the line.
-    if n_amt is None:
-        return {"from_pantry": needed, "to_buy": None, "warning": None}
+    if p_amt is None or n_amt is None:
+        return {
+            "from_pantry": None,
+            "to_buy": needed,
+            "warning": (
+                f"inventory has {match_label}, but a usable quantity is unknown; "
+                "not credited"
+            ),
+            "status": "review",
+            "matched_inventory": pantry_entry,
+        }
 
     # Cross-family mismatch → flag and don't subtract automatically.
     if p_family != n_family and p_family != "other" and n_family != "other":
@@ -203,13 +299,21 @@ def split_against_pantry(item: str, amount, unit: str, pantry: list[dict]) -> di
             "from_pantry": None,
             "to_buy": needed,
             "warning": f"pantry has {format_amount(p_amt)} {p_unit}, recipe asks {amount} {unit} (different units)",
+            "status": "review",
+            "matched_inventory": pantry_entry,
         }
 
     if p_family in ("volume", "weight"):
         n_base = convert_to_base_unit(n_amt, unit_norm, n_family)
         p_base = convert_to_base_unit(p_amt, p_unit_norm, p_family)
         if p_base >= n_base:
-            return {"from_pantry": needed, "to_buy": None, "warning": None}
+            return {
+                "from_pantry": needed,
+                "to_buy": None,
+                "warning": None,
+                "status": "credited",
+                "matched_inventory": pantry_entry,
+            }
         # partial cover: pantry has p_base, need n_base; buy the rest in recipe's unit
         remaining_base = n_base - p_base
         remaining_in_recipe_unit = convert_from_base_unit(remaining_base, unit_norm, n_family)
@@ -218,6 +322,8 @@ def split_against_pantry(item: str, amount, unit: str, pantry: list[dict]) -> di
             "from_pantry": {"amount": format_amount(pantry_in_recipe_unit), "unit": unit},
             "to_buy": {"amount": format_amount(remaining_in_recipe_unit), "unit": unit},
             "warning": None,
+            "status": "credited",
+            "matched_inventory": pantry_entry,
         }
 
     # count / other: 1:1 when the units are the same or either side is generic.
@@ -233,11 +339,19 @@ def split_against_pantry(item: str, amount, unit: str, pantry: list[dict]) -> di
         # Display in the recipe's unit if specified, else the pantry's.
         out_unit = unit if n_unit_lower not in GENERIC_COUNT else (p_unit or unit)
         if p_amt >= n_amt:
-            return {"from_pantry": needed, "to_buy": None, "warning": None}
+            return {
+                "from_pantry": needed,
+                "to_buy": None,
+                "warning": None,
+                "status": "credited",
+                "matched_inventory": pantry_entry,
+            }
         return {
             "from_pantry": {"amount": format_amount(p_amt), "unit": out_unit},
             "to_buy": {"amount": format_amount(n_amt - p_amt), "unit": out_unit},
             "warning": None,
+            "status": "credited",
+            "matched_inventory": pantry_entry,
         }
 
     # Different "count" units (e.g. recipe wants "slices", pantry has "loaves") → warn.
@@ -245,6 +359,8 @@ def split_against_pantry(item: str, amount, unit: str, pantry: list[dict]) -> di
         "from_pantry": None,
         "to_buy": needed,
         "warning": f"pantry has {format_amount(p_amt)} {p_unit}, recipe asks {amount} {unit}",
+        "status": "review",
+        "matched_inventory": pantry_entry,
     }
 
 
