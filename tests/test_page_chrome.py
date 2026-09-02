@@ -1,6 +1,12 @@
 """Tests for global page chrome."""
+from pathlib import Path
+
 import pytest
-from api_server import app, _inject_after_body
+from api_server import app, _html_page, _inject_after_body, _serve_page
+
+
+REPO = Path(__file__).resolve().parents[1]
+TEMPLATES = sorted(path.name for path in (REPO / "templates").glob("*.html"))
 
 
 @pytest.fixture
@@ -37,6 +43,22 @@ def test_inject_ignores_body_spelled_out_inside_the_head():
     out = _inject_after_body(html, 'SNIP')
     assert '<body class="x">SNIP' in out
     assert out.index('SNIP') > out.index('</style>')
+
+
+@pytest.mark.parametrize("template", TEMPLATES)
+def test_every_template_page_has_one_home_link_except_home_itself(template):
+    """A new template cannot ship without a route back to KitchenOS Home."""
+    html = _serve_page(template)
+    expected = 0 if template == "home.html" else 1
+    assert html.count('href="/"') == expected
+
+
+def test_inline_pages_have_accessible_home_navigation():
+    """Success, error, and form pages built in Python inherit Home navigation."""
+    html = _html_page("Result", "<main>Done</main>")
+    assert '<nav class="ko-home-nav" aria-label="Primary">' in html
+    assert '<a class="ko-home-link" href="/">' in html
+    assert "KitchenOS Home" in html
 
 # --- route level: simple pages do not expose the disabled bridge ---
 

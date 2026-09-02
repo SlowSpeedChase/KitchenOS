@@ -95,6 +95,27 @@ _recipe_ingredient_cache = {"data": None, "timestamp": 0}
 RECIPE_CACHE_TTL = 300  # 5 minutes
 
 
+def _home_link_html() -> str:
+    """Return the shared, accessible route back to the web app home page."""
+    return '''
+<style>
+  .ko-home-nav { display: flex; align-items: center; min-height: 44px;
+                 box-sizing: border-box; padding: 0 1rem;
+                 background: var(--surface); border-bottom: 1px solid var(--line); }
+  .ko-home-link { display: inline-flex; align-items: center; min-height: 44px;
+                  color: var(--app-kitchenos); font-weight: 650;
+                  text-decoration: none; }
+  .ko-home-link:hover { text-decoration: underline; text-underline-offset: .2em; }
+  .ko-home-link:focus-visible { outline: 2px solid; outline-offset: 2px;
+                                border-radius: .25rem; }
+  @media print { .ko-home-nav { display: none !important; } }
+</style>
+<nav class="ko-home-nav" aria-label="Primary">
+  <a class="ko-home-link" href="/"><span aria-hidden="true">&#8592;&nbsp;</span>KitchenOS Home</a>
+</nav>
+'''
+
+
 def _html_page(title: str, body: str, extra_css: str = "") -> str:
     """The one <head> for every page api_server builds in Python.
 
@@ -136,6 +157,7 @@ def _html_page(title: str, body: str, extra_css: str = "") -> str:
 {style}
 </head>
 <body>
+{_home_link_html()}
 {body}
 </body>
 </html>'''
@@ -233,6 +255,8 @@ def _serve_page(
     html = open(f'templates/{template_filename}').read()
     for old, new in (extra_replacements or []):
         html = html.replace(old, new)
+    if template_filename != 'home.html' and 'href="/"' not in html:
+        html = _inject_after_body(html, _home_link_html())
     return _inject_after_body(html, _stale_banner_html())
 
 
