@@ -288,6 +288,85 @@ def on_hand_notes(lines: list[dict]) -> list[str]:
     return inventory_notes(lines)["credited"]
 
 
+def _line_display(line: dict, quantity_key: str) -> Optional[str]:
+    quantity = line.get(quantity_key)
+    if not quantity:
+        return None
+    return format_ingredient({
+        "amount": quantity.get("amount", ""),
+        "unit": quantity.get("unit", ""),
+        "item": line.get("item", ""),
+    })
+
+
+def _inventory_match_note(line: dict) -> Optional[str]:
+    matched = line.get("matched_inventory")
+    if not matched:
+        return None
+
+    needed_text = _line_display(line, "needed") or line.get("item", "")
+    matched_qty = format_qty(matched.get("amount"), matched.get("unit"))
+    warning = (line.get("warning") or "").lower()
+    to_buy = line.get("to_buy")
+    if line.get("status") == "credited" and to_buy:
+        suffix = f"exact match; {_fmt_qty(to_buy)} still needed"
+    elif line.get("status") == "credited":
+        suffix = "exact match; enough recorded"
+    elif "related item" in warning:
+        suffix = "related item; verify amount and form"
+    elif "package quantity is unknown" in warning:
+        suffix = "package quantity unknown; verify amount"
+    elif "different units" in warning:
+        suffix = "different units; verify amount"
+    elif "usable quantity is unknown" in warning:
+        suffix = "quantity unknown; verify amount"
+    else:
+        suffix = "verify amount and form"
+    return (
+        f"{needed_text} → {matched.get('item', 'inventory item')} "
+        f"({matched_qty}) — {suffix}"
+    )
+
+
+def _shopping_line_payload(line: dict) -> dict:
+    """Add stable display strings used by non-Python preview consumers."""
+    return {
+        **line,
+        "needed_display": _line_display(line, "needed"),
+        "to_buy_display": _line_display(line, "to_buy"),
+        "inventory_match_note": _inventory_match_note(line),
+    }
+
+
+def shopping_sections(lines: list[dict]) -> dict[str, list[str]]:
+    """Split generated demand into purchases and inventory matches to verify.
+
+    Any inventory candidate belongs in the verification section, regardless of
+    whether its quantity was creditable. Only lines with no candidate become
+    purchase checkboxes (and therefore Reminders items).
+    """
+    purchase: list[str] = []
+    inventory_matches: list[str] = []
+    for line in lines:
+        if line.get("status") == "excluded":
+            continue
+
+        matched = line.get("matched_inventory")
+        if matched:
+            inventory_matches.append(_inventory_match_note(line))
+            continue
+
+        to_buy = line.get("to_buy")
+        if to_buy:
+            purchase.append(format_ingredient({
+                "amount": to_buy.get("amount", ""),
+                "unit": to_buy.get("unit", ""),
+                "item": line.get("item", ""),
+            }))
+
+    return {"purchase": purchase, "inventory_matches": inventory_matches}
+
+
 def generate_shopping_list_from_path(meal_plan_path: Path, pantry: Optional[list[dict]] = None) -> dict:
     """Same contract as `generate_shopping_list` but operates on a path.
 
@@ -320,19 +399,16 @@ def generate_shopping_list_from_path(meal_plan_path: Path, pantry: Optional[list
         }
 
     aggregated = aggregate_ingredients(all_ingredients)
-    lines = compute_lines(aggregated, pantry=pantry)
-
-    formatted = []
-    for line in lines:
-        tb = line.get("to_buy")
-        if tb is None:
-            continue
-        buy_ing = {"amount": tb.get("amount", ""), "unit": tb.get("unit", ""), "item": line["item"]}
-        formatted.append(format_ingredient(buy_ing))
+    lines = [_shopping_line_payload(line)
+             for line in compute_lines(aggregated, pantry=pantry)]
+    sections = shopping_sections(lines)
+    purchase_items = sorted(sections["purchase"])
 
     return {
         "success": True,
-        "items": sorted(formatted),
+        "items": purchase_items,
+        "purchase_items": purchase_items,
+        "inventory_matches": sections["inventory_matches"],
         "lines": lines,
         "recipes": loaded_recipes,
         "warnings": warnings
@@ -353,19 +429,17 @@ def _build_from_recipe_multipliers(pairs: list[tuple[str, float]],
             all_ingredients.extend(multiply_ingredients(ingredients, mult))
             loaded_recipes.append(name)
     if not all_ingredients:
-        return {"success": True, "items": [], "lines": [],
+        return {"success": True, "items": [], "purchase_items": [],
+                "inventory_matches": [], "lines": [],
                 "recipes": loaded_recipes, "warnings": warnings}
     aggregated = aggregate_ingredients(all_ingredients)
-    lines = compute_lines(aggregated, pantry=pantry)
-    formatted = []
-    for line in lines:
-        tb = line.get("to_buy")
-        if tb is None:
-            continue
-        formatted.append(format_ingredient(
-            {"amount": tb.get("amount", ""), "unit": tb.get("unit", ""),
-             "item": line["item"]}))
-    return {"success": True, "items": sorted(formatted), "lines": lines,
+    lines = [_shopping_line_payload(line)
+             for line in compute_lines(aggregated, pantry=pantry)]
+    sections = shopping_sections(lines)
+    purchase_items = sorted(sections["purchase"])
+    return {"success": True, "items": purchase_items,
+            "purchase_items": purchase_items,
+            "inventory_matches": sections["inventory_matches"], "lines": lines,
             "recipes": loaded_recipes, "warnings": warnings}
 
 
@@ -484,6 +558,13 @@ def extract_legacy_manual_items(existing_items: list[str], lines: list[dict]) ->
     one-time migration. New notes use the encoded generated-item snapshot.
     """
     identities = {normalize_name(line.get("item") or "") for line in lines}
+    generated_texts = {
+        rendered
+        for line in lines
+        for rendered in (_line_display(line, "needed"),
+                         _line_display(line, "to_buy"))
+        if rendered
+    }
     alternative_heads = {
         identity.split(",", 1)[0].strip()
         for identity in identities if "," in identity and " or " in identity
@@ -491,11 +572,19 @@ def extract_legacy_manual_items(existing_items: list[str], lines: list[dict]) ->
 
     manual: list[str] = []
     for existing in existing_items:
+        if existing in generated_texts:
+            continue
         parsed = parse_ingredient_best(existing)
         item = parsed.get("item") or existing
+        legacy_shape = bool(re.search(
+            r"(?:^|\s)(?:cts?|one\s+scoops?)(?:\s|$)",
+            existing,
+            flags=re.IGNORECASE,
+        ))
         item = re.sub(r"^(?:cts?|one\s+scoops?)\s+", "", item, flags=re.IGNORECASE)
         identity = normalize_name(item)
-        if identity in identities or identity in alternative_heads:
+        if ((legacy_shape and identity in identities)
+                or identity in alternative_heads):
             continue
         manual.append(existing)
     return manual

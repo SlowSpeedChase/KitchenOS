@@ -64,7 +64,11 @@ def normalize_name(raw: str) -> str:
     prep_split = _PREP_CLAUSE.split(s, maxsplit=1)
     if len(prep_split) > 1:
         s = prep_split[0]
-    elif not re.search(r",\s*or\s+", s, flags=re.IGNORECASE):
+    elif not re.search(
+        r",\s*(?:[^,]+,\s*)*(?:or\s+|[^,]+\s+or\s+)[^,]+",
+        s,
+        flags=re.IGNORECASE,
+    ):
         s = s.split(",")[0]
     # Drop "to taste" / "as needed" trailing phrases.
     s = re.sub(r"\b(to taste|as needed)\b", "", s, flags=re.IGNORECASE)

@@ -15,7 +15,8 @@
 - A false automatic credit is never accepted to improve recall.
 - Generation does not mutate inventory.
 - Existing broad discovery matching remains unchanged.
-- Uncertain demand remains in the checkbox list sent to Reminders.
+- Every inventory-matched demand line is visible in the verification section and
+  excluded from the checkbox list sent to Reminders.
 - SQLite remains the inventory source of truth.
 
 ---
@@ -180,7 +181,8 @@ saved note with the preview.
 
 Print every `status == "credited"` line with its matched inventory row and units.
 Verify none of the known false pairs receive credit, review lines remain in
-`Items`, bell pepper is intact, scoop quantities are repaired, and water/ice are absent.
+the inventory-match section, bell pepper is intact, scoop quantities are
+repaired, and water/ice are absent.
 
 - [x] **Step 5: Run diff and lint hygiene checks**
 
@@ -193,3 +195,44 @@ Run the repository's configured Python lint command if present; otherwise run
 
 Use `superpowers:requesting-code-review`, inspect every finding, and apply the
 `superpowers:receiving-code-review` workflow before changing code in response.
+
+### Task 5: Split purchase demand from every inventory match
+
+**Files:**
+- Modify: `lib/shopping_list_generator.py`
+- Modify: `templates/shopping_list_template.py`
+- Modify: `api_server.py`
+- Test: `tests/test_shopping_list_generator.py`
+- Test: `tests/test_shopping_list_template.py`
+- Test: `tests/test_api_endpoints.py`
+
+- [x] **Step 1: Add failing two-way split tests**
+
+Assert unmatched demand appears under `Need to purchase`; every exact or broad
+inventory match appears under `Inventory matches — verify` with needed amount,
+matched row, and reason; and match lines are plain bullets excluded from the
+Reminders parser.
+
+- [x] **Step 2: Implement the user-approved split**
+
+Add `shopping_sections`, pass generated purchase items and inventory matches
+through the endpoint, preserve manual purchase-item provenance, and render the
+two sections without mutating inventory.
+
+- [x] **Step 3: Update behavioral documentation**
+
+Replace the original three-surface output description with the approved two-way
+split while retaining the internal precision-first dispositions.
+
+- [x] **Step 4: Regenerate and audit W36**
+
+Verify the saved note and Reminders parser contain only purchase checkboxes, all
+inventory matches are visible as plain bullets, and pistachios are in the match
+section rather than the purchase section.
+
+- [x] **Step 5: Unify every shopping-list consumer**
+
+Make `items` canonically purchase-only for the CLI, print packet, one-shot API,
+and planner preview. Carry match notes through preview→confirm, use the full need
+for “Buy fresh,” retain only the remainder after confirmed partial pantry use,
+and preserve ambiguous manual quantity variants during legacy-note migration.

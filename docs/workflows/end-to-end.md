@@ -127,16 +127,17 @@ Always starts from a meal plan; ends in a `Shopping Lists/<week>.md` checklist p
 ### The flow (UI)
 1. From the meal planner, click **Shopping List** for the active week.
 2. UI calls `POST /api/shopping-list/preview` → `lib/shopping_list_generator.py` collects all recipe ingredients across the week, aggregates likes, and splits each line against the inventory in `data/kitchenos.db`.
-3. If any line has overlap with pantry, a **confirmation modal** appears: per line, "Use pantry" or "Buy fresh." Cross-unit-family conflicts surface as a `warning` instead of guessing (e.g. "need 2 cups, pantry has 8 oz").
-4. Submit → `POST /api/shopping-list/confirm` → writes `Shopping Lists/<week>.md` and decrements the DB inventory for the items the user chose to pull from pantry.
+3. If an exactly measurable line has overlap with pantry, a **confirmation modal** appears: per line, "Use pantry" or "Buy fresh." Broad/package/unit-uncertain candidates stay in the inventory-match section instead of being sent to Reminders.
+4. Submit → `POST /api/shopping-list/confirm` → writes purchase checkboxes plus the remaining inventory-match bullets and decrements the DB inventory for explicitly confirmed pantry use. "Buy fresh" restores the full needed amount, not only the preview's remainder.
 5. Optional: click **Send to Reminders** → `POST /send-to-reminders` → AppleScript pushes unchecked items into the macOS "Shopping" Reminders list, which syncs to phone.
 
 The phone-reachable one-shot `POST /generate-shopping-list` is read-only against
-inventory. It removes an ingredient only for an exact normalized identity with
-convertible quantities. A related product (for example garlic powder for garlic)
-or a `ct` package with unknown contents is shown under **Check pantry** and stays
-unchecked in **Items**. Confirmed credits are shown separately under **Already
-have**. Water and ice are household supplies and are omitted from purchase demand.
+inventory. Unmatched demand becomes checkboxes under **Need to purchase**. Every
+inventory candidate—including exact credits, related products such as garlic
+powder for garlic, and `ct` packages with unknown contents—is shown as a plain
+bullet under **Inventory matches — verify** with the needed amount, matched row,
+and reason. Those match notes do not reach Reminders. Water and ice are household
+supplies and are omitted from purchase demand.
 
 ### The flow (CLI)
 ```bash
