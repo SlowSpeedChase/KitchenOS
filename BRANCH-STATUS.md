@@ -1,4 +1,4 @@
-# Branch Status: phase-4/truthful-shopping-list
+# Branch Status: phase-4/shopping-list-inventory-split
 
 **Created:** 2026-09-01
 **Design Doc:** docs/superpowers/specs/2026-09-01-truthful-shopping-inventory-design.md
@@ -72,6 +72,8 @@ receives what likely needs to be bought.
 - Read-only proof: the ordered inventory-table SHA-256 was identical before and
   after generation (`c7be821e…e3289feaf6`). Reminders was not invoked.
 - Unrelated modifications remain only in the main checkout and are untouched.
+- PR #78 merged the precision-first comparison while this follow-up was under
+  review; this branch now contains only the approved two-way output follow-up.
 
 ---
 

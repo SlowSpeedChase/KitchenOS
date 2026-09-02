@@ -1,7 +1,7 @@
 # Truthful Shopping Inventory Comparison Design
 
 **Status:** Approved / In Progress
-**Branch:** `phase-4/truthful-shopping-list`
+**Branch:** `phase-4/shopping-list-inventory-split` (follow-up after PR #78)
 **Date:** 2026-09-01
 
 ## Problem
