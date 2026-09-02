@@ -1,7 +1,8 @@
 # Truthful Shopping Inventory Comparison Design
 
-**Status:** Approved / In Progress
-**Branch:** `phase-4/shopping-list-inventory-split` (follow-up after PR #78)
+**Status:** Completed 2026-09-02
+**Branches:** `phase-4/truthful-shopping-list`, `phase-4/shopping-list-inventory-split`
+**Pull requests:** [#78](https://github.com/SlowSpeedChase/KitchenOS/pull/78), [#79](https://github.com/SlowSpeedChase/KitchenOS/pull/79)
 **Date:** 2026-09-01
 
 ## Problem
