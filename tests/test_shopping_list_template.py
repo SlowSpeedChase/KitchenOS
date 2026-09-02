@@ -63,6 +63,33 @@ def test_empty_items_list():
     assert "```button" in result
 
 
+def test_review_candidates_render_separately_without_checkboxes():
+    result = generate_shopping_list_markdown(
+        week="2026-W04",
+        items=["3 cloves garlic"],
+        check_pantry=[
+            "garlic — inventory has garlic powder (1 ct), a related item; "
+            "not credited; still on the list"
+        ],
+    )
+
+    assert "- [ ] 3 cloves garlic" in result
+    assert "## Check pantry" in result
+    assert "- garlic — inventory has garlic powder" in result
+    assert "- [ ] garlic — inventory has garlic powder" not in result
+
+
+def test_template_records_generated_item_provenance_without_extra_checkboxes():
+    result = generate_shopping_list_markdown(
+        week="2026-W04",
+        items=["1 cup flour", "foil"],
+        generated_items=["1 cup flour"],
+    )
+
+    assert "kitchenos-generated-items-v2:" in result
+    assert result.count("- [ ] ") == 2
+
+
 def test_items_section_header():
     """Template includes Items section header."""
     result = generate_shopping_list_markdown(

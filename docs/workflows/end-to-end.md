@@ -122,6 +122,7 @@ Always starts from a meal plan; ends in a `Shopping Lists/<week>.md` checklist p
 ### Pantry and Inventory — one unified store
 - **`data/kitchenos.db`** — the single source of truth for what's in the kitchen. Receipts (email ingest or Claude photo parse, Stage 6) **increment** it; confirming a shopping list **decrements** it.
 - **`Inventory.md`** — generated read-only view of the DB, rewritten on every inventory change. Hand edits are overwritten.
+- Expired rows remain in the DB for history but are not treated as usable shopping-list stock.
 
 ### The flow (UI)
 1. From the meal planner, click **Shopping List** for the active week.
@@ -129,6 +130,13 @@ Always starts from a meal plan; ends in a `Shopping Lists/<week>.md` checklist p
 3. If any line has overlap with pantry, a **confirmation modal** appears: per line, "Use pantry" or "Buy fresh." Cross-unit-family conflicts surface as a `warning` instead of guessing (e.g. "need 2 cups, pantry has 8 oz").
 4. Submit → `POST /api/shopping-list/confirm` → writes `Shopping Lists/<week>.md` and decrements the DB inventory for the items the user chose to pull from pantry.
 5. Optional: click **Send to Reminders** → `POST /send-to-reminders` → AppleScript pushes unchecked items into the macOS "Shopping" Reminders list, which syncs to phone.
+
+The phone-reachable one-shot `POST /generate-shopping-list` is read-only against
+inventory. It removes an ingredient only for an exact normalized identity with
+convertible quantities. A related product (for example garlic powder for garlic)
+or a `ct` package with unknown contents is shown under **Check pantry** and stays
+unchecked in **Items**. Confirmed credits are shown separately under **Already
+have**. Water and ice are household supplies and are omitted from purchase demand.
 
 ### The flow (CLI)
 ```bash

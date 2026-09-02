@@ -182,11 +182,86 @@ def test_split_no_match_returns_full_to_buy():
     assert result["to_buy"] == {"amount": "1", "unit": "tsp"}
 
 
+@pytest.mark.parametrize(
+    ("demand", "pantry_name", "amount", "unit"),
+    [
+        ("bone-in chicken breast", "Canned chicken breast", "1", "whole"),
+        ("garlic", "Garlic powder", "4", "clove"),
+        ("onion", "caramelized onions", "2", "whole"),
+        ("potatoes", "diced fried potatoes", "1", "whole"),
+        ("banana", "frozen bananas", "5", "whole"),
+    ],
+)
+def test_related_food_form_is_review_only(demand, pantry_name, amount, unit):
+    """A discovery-quality match cannot silently remove shopping demand."""
+    pantry = [{"item": pantry_name, "amount": "1", "unit": "ct"}]
+
+    result = split_against_pantry(demand, amount, unit, pantry)
+
+    assert result == {
+        "from_pantry": None,
+        "to_buy": {"amount": amount, "unit": unit},
+        "warning": f"inventory has {pantry_name} (1 ct), a related item; not credited",
+        "status": "review",
+        "matched_inventory": pantry[0],
+    }
+
+
+def test_package_count_is_review_only_against_ingredient_count():
+    """One receipt package is not evidence that one usable egg remains."""
+    pantry = [{"item": "eggs", "amount": "1", "unit": "ct"}]
+
+    result = split_against_pantry("eggs", "3", "each", pantry)
+
+    assert result == {
+        "from_pantry": None,
+        "to_buy": {"amount": "3", "unit": "each"},
+        "warning": "inventory has eggs (1 ct), but the package quantity is unknown; not credited",
+        "status": "review",
+        "matched_inventory": pantry[0],
+    }
+
+
+def test_no_candidate_is_an_explicit_buy_disposition():
+    result = split_against_pantry("saffron", "1", "tsp", [])
+
+    assert result["status"] == "buy"
+    assert result["matched_inventory"] is None
+
+
+@pytest.mark.parametrize(
+    ("pantry", "amount", "unit"),
+    [
+        ({"item": "flour", "amount": "1", "unit": "lb"}, "1", "bag"),
+        ({"item": "salt", "amount": "", "unit": ""}, "1", "tsp"),
+        ({"item": "salt", "amount": "1", "unit": "tsp"}, "", "tsp"),
+    ],
+)
+def test_unknown_units_or_quantities_are_review_only(pantry, amount, unit):
+    result = split_against_pantry(pantry["item"], amount, unit, [pantry])
+
+    assert result["status"] == "review"
+    assert result["from_pantry"] is None
+    assert result["to_buy"] == {"amount": amount, "unit": unit}
+
+
+def test_normalized_alias_identity_can_receive_exact_credit():
+    pantry = [{"item": "mayo", "amount": "2", "unit": "cup"}]
+
+    result = split_against_pantry("mayonnaise", "1", "cup", pantry)
+
+    assert result["status"] == "credited"
+    assert result["matched_inventory"] == pantry[0]
+    assert result["to_buy"] is None
+
+
 def test_split_pantry_fully_covers_same_unit():
     pantry = [{"item": "flour", "amount": "5", "unit": "cup"}]
     result = pantry_module.split_against_pantry("flour", "1", "cup", pantry)
     assert result["from_pantry"] == {"amount": "1", "unit": "cup"}
     assert result["to_buy"] is None
+    assert result["status"] == "credited"
+    assert result["matched_inventory"] == pantry[0]
 
 
 def test_split_pantry_partial_cover_same_family():
@@ -215,16 +290,20 @@ def test_split_cross_family_warns_and_does_not_subtract():
     assert "different units" in (result["warning"] or "")
 
 
-def test_split_pantry_no_amount_assumed_full():
+def test_split_pantry_no_amount_requires_review():
     pantry = [{"item": "salt", "amount": "", "unit": ""}]
     result = pantry_module.split_against_pantry("salt", "1", "tsp", pantry)
-    assert result["to_buy"] is None
+    assert result["to_buy"] == {"amount": "1", "unit": "tsp"}
+    assert result["from_pantry"] is None
+    assert result["status"] == "review"
 
 
-def test_split_recipe_no_amount_assumed_full():
+def test_split_recipe_no_amount_requires_review():
     pantry = [{"item": "salt", "amount": "1", "unit": "lb"}]
     result = pantry_module.split_against_pantry("salt", "", "to taste", pantry)
-    assert result["to_buy"] is None
+    assert result["to_buy"] == {"amount": "", "unit": "to taste"}
+    assert result["from_pantry"] is None
+    assert result["status"] == "review"
 
 
 def test_apply_decisions_subtracts_within_family():
@@ -296,13 +375,13 @@ def test_split_count_whole_wildcard_partial_cover():
     assert result["warning"] is None
 
 
-def test_split_count_ct_alias_classifies_as_count():
-    # "ct" is now in COUNT_UNITS, so pantry "5 ct" + recipe "5 whole" combine.
+def test_split_count_ct_package_requires_review():
+    # Inventory "ct" records package presence, not an ingredient quantity.
     pantry = [{"item": "lemons", "amount": "5", "unit": "ct"}]
     result = pantry_module.split_against_pantry("lemons", "5", "whole", pantry)
-    assert result["from_pantry"] == {"amount": "5", "unit": "whole"}
-    assert result["to_buy"] is None
-    assert result["warning"] is None
+    assert result["from_pantry"] is None
+    assert result["to_buy"] == {"amount": "5", "unit": "whole"}
+    assert result["status"] == "review"
 
 
 def test_split_count_distinct_units_still_warns():
@@ -328,6 +407,42 @@ def test_load_pantry_reads_inventory_db(tmp_vault, tmp_db):
     assert by_item["Flour"]["amount"] == "5"
     assert by_item["Flour"]["unit"] == "lb"
     assert by_item["Butter"]["amount"] == "1.5"  # summed across locations
+
+
+def test_load_pantry_excludes_expired_rows_without_deleting_them(tmp_vault, tmp_db):
+    from lib.inventory import InventoryItem, add_items, read_inventory
+    from lib.pantry import load_pantry, save_pantry
+
+    add_items([
+        InventoryItem(name="Fresh milk", quantity=1, unit="ct", expires="2999-01-01"),
+        InventoryItem(name="Expired milk", quantity=1, unit="ct", expires="2000-01-01"),
+    ])
+
+    assert [entry["item"] for entry in load_pantry()] == ["Fresh milk"]
+    assert sorted(item.name for item in read_inventory()) == ["Expired milk", "Fresh milk"]
+
+    # The confirm flow saves the filtered pantry after applying decisions.
+    # An expired row omitted from that view is historical, not "used up."
+    save_pantry(load_pantry())
+    assert sorted(item.name for item in read_inventory()) == ["Expired milk", "Fresh milk"]
+
+
+def test_save_pantry_revives_an_expired_row_when_the_same_item_is_restocked(
+        tmp_vault, tmp_db):
+    from lib.inventory import InventoryItem, add_items, read_inventory
+    from lib.pantry import load_pantry, save_pantry
+
+    add_items([
+        InventoryItem(name="Milk", quantity=1, unit="ct", expires="2000-01-01"),
+    ])
+
+    save_pantry([{"item": "Milk", "amount": "2", "unit": "ct"}])
+
+    rows = read_inventory()
+    assert len(rows) == 1
+    assert rows[0].quantity == 2
+    assert rows[0].expires is None
+    assert load_pantry() == [{"item": "Milk", "amount": "2", "unit": "ct"}]
 
 
 def test_save_pantry_decrements_and_removes(tmp_vault, tmp_db):
@@ -465,43 +580,25 @@ COMPATIBLE_PAIRS = [
     (p, n) for p, n in _ALL_PARITY_PAIRS if _should_be_compatible(p, n)
 ]
 
+# A package-count inventory row is convertible for the cook ledger only after
+# a person confirms its contents. It must not automatically reduce shopping
+# demand expressed in ingredient counts.
+AUTO_CREDIT_PAIRS = [
+    (p, n) for p, n in COMPATIBLE_PAIRS if not (p == "ct" and n != "ct")
+]
+
 INCOMPATIBLE_PAIRS = [
     (p, n) for p, n in _ALL_PARITY_PAIRS if not _should_be_compatible(p, n)
 ]
 
-# Units the aggregator actually classifies into a family, as opposed to the
-# unrecognized/garbage units in PARITY_UNITS ("", "a sprinkle", "loaf", "jar",
-# "bag", "box"). Note: "" is deliberately excluded from this set even though
-# _family() above treats it as generic count for compatibility purposes —
-# get_unit_family("") short-circuits to "other" (falsy-unit check), which is
-# the real behavior that drives the credit shape excluded below.
-RECOGNIZED_UNITS = COUNT_UNITS | set(VOLUME_UNITS) | set(WEIGHT_UNITS)
-
-# split_against_pantry has exactly one shape where an incompatible pair still
-# gets credited: pantry unit is volume-or-weight and the recipe unit is
-# unrecognized. In that case get_unit_family(recipe_unit) is "other", the
-# cross-family warning is skipped (it only fires when *both* families are
-# non-"other"), and the volume/weight branch runs anyway — convert_to_base_unit
-# no-ops on the unrecognized unit, so the pantry's (large, converted) amount
-# almost always covers the recipe's (small, unconverted) one. That's a
-# deliberate convenience ("you have flour, don't buy more"), not a bug —
-# apply_decisions still correctly refuses to *spend* across it (see
-# test_incompatible_units_are_never_spent). It's the only shape that would
-# fail this test, so it's the only shape excluded.
-RECOGNIZED_INCOMPATIBLE_PAIRS = [
-    (p, n) for p, n in INCOMPATIBLE_PAIRS
-    if not (_family(p) in ("volume", "weight") and n not in RECOGNIZED_UNITS)
-]
-
-
-@pytest.mark.parametrize("p_unit,n_unit", COMPATIBLE_PAIRS)
+@pytest.mark.parametrize("p_unit,n_unit", AUTO_CREDIT_PAIRS)
 def test_compatible_units_are_both_credited_and_spendable(p_unit, n_unit):
     """Whatever unit_compatibility says is convertible must be both
     creditable on the shopping list and spendable on the cook path.
 
-    This is the invariant the reported lime bug violated: the shopping list
-    credited "3 ct" against a "1 whole" recipe line while the cook path
-    refused to spend it, because the two paths hand-wrote different rules.
+    Package-count inventory rows are intentionally excluded: they remain
+    spendable after an explicit cook decision but are only review candidates
+    on a generated shopping list.
     """
     # Count pairs ("one_to_one") subtract exact integers, so "1" from a
     # pantry of "10" is always visible. Volume/weight pairs ("convert") go
@@ -544,18 +641,12 @@ def test_incompatible_units_are_never_spent(p_unit, n_unit):
     assert updated == pantry
 
 
-@pytest.mark.parametrize("p_unit,n_unit", RECOGNIZED_INCOMPATIBLE_PAIRS)
-def test_recognised_but_incompatible_units_are_not_credited(p_unit, n_unit):
+@pytest.mark.parametrize("p_unit,n_unit", INCOMPATIBLE_PAIRS)
+def test_incompatible_units_are_not_credited(p_unit, n_unit):
     """An incompatible pair must not be credited from the pantry either.
 
-    The only shape excluded from this pair list is pantry-unit-is-
-    volume-or-weight against an unrecognized recipe unit ("" / "a sprinkle" /
-    "loaf" / "jar" / "bag" / "box"): split_against_pantry crediting that combo
-    ("you have flour, don't buy more") is an intentional convenience, not a
-    bug, even though apply_decisions correctly refuses to spend it — that
-    asymmetry is exercised by test_incompatible_units_are_never_spent, not
-    this test. See RECOGNIZED_INCOMPATIBLE_PAIRS above for why only that one
-    shape needs excluding.
+    Shopping may nominate a candidate across unknown units, but it may never
+    turn uncertainty into an automatic credit.
     """
     pantry = [{"item": "thing", "amount": "10", "unit": p_unit}]
     result = split_against_pantry("thing", "1", n_unit, pantry)
@@ -568,20 +659,20 @@ def test_parity_units_cover_every_count_unit_group():
     assert unit_compatibility("ct", "whole") == "one_to_one"
 
 
-def test_split_shows_the_pantry_unit_when_the_recipe_unit_is_generic():
-    """`generic` was a local set used both to decide compatibility and to pick
-    the display unit. It is now GENERIC_COUNT — this pins the display half so
-    the swap can't silently change what the shopping list renders."""
+def test_split_does_not_display_a_package_as_a_generic_ingredient_count():
     pantry = [{"item": "lime", "amount": "1", "unit": "ct"}]
     split = split_against_pantry("lime", "3", "whole", pantry)
-    assert split["from_pantry"] == {"amount": "1", "unit": "ct"}
-    assert split["to_buy"] == {"amount": "2", "unit": "ct"}
+    assert split["from_pantry"] is None
+    assert split["to_buy"] == {"amount": "3", "unit": "whole"}
+    assert split["status"] == "review"
 
 
-def test_split_shows_the_recipe_unit_when_it_is_specific():
+def test_split_does_not_display_a_package_as_a_specific_ingredient_count():
     pantry = [{"item": "garlic", "amount": "1", "unit": "ct"}]
     split = split_against_pantry("garlic", "3", "cloves", pantry)
-    assert split["from_pantry"]["unit"] == "cloves"
+    assert split["from_pantry"] is None
+    assert split["to_buy"] == {"amount": "3", "unit": "cloves"}
+    assert split["status"] == "review"
 
 
 class TestStockForIngredients:

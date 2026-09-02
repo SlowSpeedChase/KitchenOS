@@ -3,6 +3,8 @@
 Core logic extracted from shopping_list.py for API use.
 """
 
+import base64
+import json
 import re
 from pathlib import Path
 from typing import Optional
@@ -13,6 +15,8 @@ from lib.recipe_parser import (
     parse_recipe_file,
 )
 from lib.ingredient_aggregator import aggregate_ingredients, format_ingredient, parse_amount_to_float, format_amount
+from lib.ingredient_normalizer import normalize_name
+from lib.ingredient_parser import parse_ingredient_best
 from lib import meal_loader, paths
 from lib.meal_plan_parser import sub_multiplier
 from lib.safe_paths import shopping_list_path
@@ -22,6 +26,9 @@ OBSIDIAN_VAULT = paths.vault_root()
 MEAL_PLANS_PATH = paths.meal_plans_dir()
 RECIPES_PATH = paths.recipes_dir()
 SHOPPING_LISTS_PATH = paths.shopping_lists_dir()
+
+_NON_PURCHASE_ITEMS = {"water", "ice"}
+_EMBEDDED_SCOOP = re.compile(r"^one\s+scoops?\s+", re.IGNORECASE)
 
 
 def parse_week_string(week_str: str) -> Path:
@@ -97,6 +104,19 @@ def extract_ingredient_table(body: str) -> str:
     return extract_ingredients_section(body)
 
 
+def repair_shopping_ingredient(ingredient: dict) -> dict:
+    """Repair known parser artifacts before scaling and aggregation."""
+    repaired = ingredient.copy()
+    item = str(repaired.get("item") or "").strip()
+    unit = str(repaired.get("unit") or "").strip().lower()
+    if unit in ("", "whole") and _EMBEDDED_SCOOP.match(item):
+        repaired["item"] = _EMBEDDED_SCOOP.sub("", item).strip()
+        repaired["unit"] = "scoop"
+        if repaired.get("amount") in (None, ""):
+            repaired["amount"] = "1"
+    return repaired
+
+
 def multiply_ingredients(ingredients: list[dict], multiplier: float) -> list[dict]:
     """Scale ingredient amounts by a multiplier.
 
@@ -107,11 +127,12 @@ def multiply_ingredients(ingredients: list[dict], multiplier: float) -> list[dic
     Returns:
         New list of ingredient dicts with scaled amounts
     """
+    repaired = [repair_shopping_ingredient(ing) for ing in ingredients]
     if multiplier == 1:
-        return ingredients
+        return ingredients if repaired == ingredients else repaired
 
     scaled = []
-    for ing in ingredients:
+    for ing in repaired:
         new_ing = ing.copy()
         amount = parse_amount_to_float(ing.get('amount'))
         if amount is not None:
@@ -154,6 +175,8 @@ def compute_lines(aggregated: list[dict], pantry: Optional[list[dict]] = None) -
             "to_buy": {amount, unit} | None,        # what still needs purchasing
             "display": str,                         # full formatted ingredient
             "warning": str | None,                  # cross-family mismatch, etc.
+            "status": "buy" | "credited" | "review" | "excluded",
+            "matched_inventory": dict | None,
         }
 
     When `pantry` is None, every line has `from_pantry=None` and
@@ -174,12 +197,19 @@ def compute_lines(aggregated: list[dict], pantry: Optional[list[dict]] = None) -
         from_pantry: Optional[dict] = None
         to_buy: Optional[dict] = needed
         warning: Optional[str] = None
+        status = "buy"
+        matched_inventory: Optional[dict] = None
 
-        if splitter is not None:
+        if item.strip().lower() in _NON_PURCHASE_ITEMS:
+            to_buy = None
+            status = "excluded"
+        elif splitter is not None:
             split = splitter(item, amount, unit, pantry)
             from_pantry = split.get("from_pantry")
             to_buy = split.get("to_buy")
             warning = split.get("warning")
+            status = split.get("status", "review" if warning else "buy")
+            matched_inventory = split.get("matched_inventory")
 
         lines.append({
             "item": item,
@@ -188,6 +218,8 @@ def compute_lines(aggregated: list[dict], pantry: Optional[list[dict]] = None) -
             "to_buy": to_buy,
             "display": format_ingredient(ing),
             "warning": warning,
+            "status": status,
+            "matched_inventory": matched_inventory,
         })
     return lines
 
@@ -211,8 +243,8 @@ def _fmt_qty(qty: Optional[dict]) -> str:
     return format_qty(qty.get("amount"), qty.get("unit"))
 
 
-def on_hand_notes(lines: list[dict]) -> list[str]:
-    """Human notes for the lines the pantry covered, whole or in part.
+def inventory_notes(lines: list[dict]) -> dict[str, list[str]]:
+    """Separate confirmed credits from inventory matches needing review.
 
     The pantry-aware list drops a fully-covered line from ``items`` entirely, so
     without this the ingredient just silently isn't there and you can't tell
@@ -221,16 +253,19 @@ def on_hand_notes(lines: list[dict]) -> list[str]:
     decrements inventory (only ``pantry.apply_decisions`` does that, from the
     confirm step).
 
-    Lines carrying a ``warning`` are included too: a cross-family unit mismatch
-    means ``split_against_pantry`` deliberately did *not* subtract, so the item
-    stays on the buy list and the note explains why.
+    Review notes explain uncertain candidates, but those ingredients stay on the
+    buy list. This distinction prevents a related product or unknown package
+    count from being presented as stock that definitely satisfies the recipe.
     """
-    notes: list[str] = []
+    credited: list[str] = []
+    review: list[str] = []
     for line in lines:
         item = line.get("item", "")
         warning = line.get("warning")
-        if warning:
-            notes.append(f"{item} — {warning}; still on the list")
+        status = line.get("status")
+        if status == "review" or warning:
+            if warning:
+                review.append(f"{item} — {warning}; still on the list")
             continue
         from_pantry = line.get("from_pantry")
         if not from_pantry:
@@ -238,14 +273,19 @@ def on_hand_notes(lines: list[dict]) -> list[str]:
         have = _fmt_qty(from_pantry)
         to_buy = line.get("to_buy")
         if to_buy:
-            notes.append(f"{item} — using {have} from the pantry, "
-                         f"buying {_fmt_qty(to_buy)}")
+            credited.append(f"{item} — using {have} from the pantry, "
+                            f"buying {_fmt_qty(to_buy)}")
         else:
             # `have` is the credited amount, which for a fully covered line equals
             # what the recipes asked for — not how much is in the kitchen. Say
             # "needed" so the note can't be read as a stock level.
-            notes.append(f"{item} — in stock, {have} needed")
-    return notes
+            credited.append(f"{item} — in stock, {have} needed")
+    return {"credited": credited, "review": review}
+
+
+def on_hand_notes(lines: list[dict]) -> list[str]:
+    """Backward-compatible access to confirmed inventory-credit notes only."""
+    return inventory_notes(lines)["credited"]
 
 
 def generate_shopping_list_from_path(meal_plan_path: Path, pantry: Optional[list[dict]] = None) -> dict:
@@ -282,16 +322,13 @@ def generate_shopping_list_from_path(meal_plan_path: Path, pantry: Optional[list
     aggregated = aggregate_ingredients(all_ingredients)
     lines = compute_lines(aggregated, pantry=pantry)
 
-    if pantry is None:
-        formatted = [line["display"] for line in lines]
-    else:
-        formatted = []
-        for line in lines:
-            tb = line.get("to_buy")
-            if tb is None:
-                continue
-            buy_ing = {"amount": tb.get("amount", ""), "unit": tb.get("unit", ""), "item": line["item"]}
-            formatted.append(format_ingredient(buy_ing))
+    formatted = []
+    for line in lines:
+        tb = line.get("to_buy")
+        if tb is None:
+            continue
+        buy_ing = {"amount": tb.get("amount", ""), "unit": tb.get("unit", ""), "item": line["item"]}
+        formatted.append(format_ingredient(buy_ing))
 
     return {
         "success": True,
@@ -320,17 +357,14 @@ def _build_from_recipe_multipliers(pairs: list[tuple[str, float]],
                 "recipes": loaded_recipes, "warnings": warnings}
     aggregated = aggregate_ingredients(all_ingredients)
     lines = compute_lines(aggregated, pantry=pantry)
-    if pantry is None:
-        formatted = [line["display"] for line in lines]
-    else:
-        formatted = []
-        for line in lines:
-            tb = line.get("to_buy")
-            if tb is None:
-                continue
-            formatted.append(format_ingredient(
-                {"amount": tb.get("amount", ""), "unit": tb.get("unit", ""),
-                 "item": line["item"]}))
+    formatted = []
+    for line in lines:
+        tb = line.get("to_buy")
+        if tb is None:
+            continue
+        formatted.append(format_ingredient(
+            {"amount": tb.get("amount", ""), "unit": tb.get("unit", ""),
+             "item": line["item"]}))
     return {"success": True, "items": sorted(formatted), "lines": lines,
             "recipes": loaded_recipes, "warnings": warnings}
 
@@ -392,6 +426,21 @@ def parse_shopping_list_file(week: str) -> dict:
 
     unchecked = []
     checked_count = 0
+    generated_items = None
+    generated_items_version = None
+
+    metadata = re.search(
+        r'<!-- kitchenos-generated-items(-v2)?:([A-Za-z0-9_=-]+) -->', content)
+    if metadata:
+        try:
+            decoded = json.loads(base64.urlsafe_b64decode(
+                metadata.group(2).encode("ascii")).decode("utf-8"))
+            if isinstance(decoded, list) and all(isinstance(item, str) for item in decoded):
+                generated_items = decoded
+                generated_items_version = 2 if metadata.group(1) else 1
+        except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+            generated_items = None
+            generated_items_version = None
 
     for line in content.split('\n'):
         # Match unchecked: - [ ] item
@@ -406,7 +455,9 @@ def parse_shopping_list_file(week: str) -> dict:
     return {
         "success": True,
         "items": unchecked,
-        "skipped": checked_count
+        "skipped": checked_count,
+        "generated_items": generated_items,
+        "generated_items_version": generated_items_version,
     }
 
 
@@ -422,3 +473,29 @@ def extract_manual_items(existing_items: list[str], generated_items: list[str]) 
     """
     generated_set = set(generated_items)
     return [item for item in existing_items if item not in generated_set]
+
+
+def extract_legacy_manual_items(existing_items: list[str], lines: list[dict]) -> list[str]:
+    """Preserve true manual items while migrating a pre-provenance note.
+
+    Older generation could change both quantity and display name after pantry
+    subtraction (``2 cts eggs``) or parser bugs (``1 red`` and ``one scoop``).
+    Compare parsed food identity, not the full rendered string, during this
+    one-time migration. New notes use the encoded generated-item snapshot.
+    """
+    identities = {normalize_name(line.get("item") or "") for line in lines}
+    alternative_heads = {
+        identity.split(",", 1)[0].strip()
+        for identity in identities if "," in identity and " or " in identity
+    }
+
+    manual: list[str] = []
+    for existing in existing_items:
+        parsed = parse_ingredient_best(existing)
+        item = parsed.get("item") or existing
+        item = re.sub(r"^(?:cts?|one\s+scoops?)\s+", "", item, flags=re.IGNORECASE)
+        identity = normalize_name(item)
+        if identity in identities or identity in alternative_heads:
+            continue
+        manual.append(existing)
+    return manual
