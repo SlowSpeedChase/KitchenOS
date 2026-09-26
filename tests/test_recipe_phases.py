@@ -370,7 +370,7 @@ def test_timing_denial_variants_never_grant_native_advance_permission(denial):
     assert row["can_do_ahead"] is False and row["needs_review"] is True
 
 
-@pytest.mark.parametrize("phrase", ["1 and 1/2 hours", "1 hour and a half", "1 hour plus a quarter", "one and 1/2 hours", "2 hours and three quarters", "1 hour and another half"])
+@pytest.mark.parametrize("phrase", ["1 hour plus a quarter", "one and 1/2 hours", "2 hours and three quarters", "1 hour and another half"])
 def test_unsupported_mixed_duration_phrases_cannot_publish_partial_timing(phrase):
     row = phases.classify_legacy_steps("A", [step(f"Cook for {phrase}.", phase="cook")])["instructions"][0]
     assert row["duration_minutes"] is None
@@ -401,3 +401,25 @@ def test_incomplete_session_timezone_prevents_resolved_immediate_merge(zone):
 def test_other_fractional_fragments_do_not_escape_whole_phrase_validation(phrase):
     row = phases.classify_legacy_steps("A", [step(f"Cook for {phrase}.", phase="cook")])["instructions"][0]
     assert row["duration_minutes"] is None and row["needs_review"]
+
+
+@pytest.mark.parametrize("text", [
+    "Cook for 1 & 1/2 hours.", "Cook for 1 hour + (1/2).", "Cook for 1 / 2 / 3 hours.",
+])
+def test_entire_malformed_duration_expression_is_unknown(text):
+    row = phases.classify_legacy_steps("A", [step(text, phase="cook")])["instructions"][0]
+    assert row["duration_minutes"] is None
+    assert row["duration_source"] is None and row["needs_review"] is True
+
+
+@pytest.mark.parametrize("text, minutes", [
+    ("Cook for 20 minutes.", 20), ("Cook for 1 hour.", 60),
+    ("Cook for 1.5 hours.", 90), ("Cook for 2.5 minutes.", 2.5),
+    ("Cook for 1 1/2 hours.", 90), ("Cook for 1 and 1/2 hours.", 90),
+    ("Cook for 1 hour and a half.", 90), ("Cook for 20 minutes, then serve.", 20),
+    ("Cook for 20 minutes; serve warm.", 20), ("Simmer 20 minutes!", 20),
+    ("Cook for .5 hours.", 30), ("Cook for 20 minutes and serve.", 20),
+])
+def test_allowlisted_duration_phrases_are_consumed_completely(text, minutes):
+    row = phases.classify_legacy_steps("A", [step(text, phase="cook")])["instructions"][0]
+    assert row["duration_minutes"] == minutes and row["duration_source"] == "recipe"

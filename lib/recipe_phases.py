@@ -108,28 +108,60 @@ def _phase(text):
 
 
 def _duration(text):
-    matches = list(re.finditer(r"(?<![\w/.])(\d+\s+\d+\s*/\s*\d+|\d+\s*/\s*\d+|\d+(?:\.\d+)?)"
-                              r"\s*(minutes?|mins?|hours?|hrs?)\b", text, re.I))
-    # Multiple timings and ranges are ambiguous, not additive durations.
-    if len(matches) != 1 or re.search(r"\d\s*(?:-|–|to)\s*\d", text):
+    """Parse one complete allowlisted time expression, never a numeric substring.
+
+    First collect the maximal expression around the sole time-unit token. The
+    expression includes arithmetic, brackets, number words and fraction glyphs,
+    even when unsupported, so the grammar cannot salvage one of their operands.
+    Only ordinary punctuation at the expression edges may be discarded.
+    """
+    unit_pattern = r"(?:minutes?|mins?|hours?|hrs?)"
+    tokens = re.findall(r"(?:\d+(?:\.\d+)?|\.\d+)|[a-zA-Z]+|[^\s]", text.casefold())
+    unit_indexes = [i for i, token in enumerate(tokens) if re.fullmatch(unit_pattern, token)]
+    if len(unit_indexes) != 1:
         return None
-    match = matches[0]
-    # Unsupported surrounding arithmetic belongs to the duration phrase too.
-    # Do not certify just the numeric tail/head of '1 and 1/2 hours' or
-    # '1 hour and a half'. Those forms remain unknown until fully supported.
-    before, after = text[:match.start()], text[match.end():]
-    number_words = r"(?:a|an|another|one|two|three|four|five|six|seven|eight|nine|ten|half|halves|quarter|third)"
-    if re.search(r"(?:\b(?:and|plus|minus|to|or)|[+−\-\d¼½¾]|\b" + number_words + r")\s*$", before, re.I):
+    expression_words = set("""a an another one two three four five six seven eight
+        nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen
+        nineteen twenty thirty forty fifty sixty seventy eighty ninety hundred
+        thousand million half halves quarter quarters third thirds fourth fourths
+        fifth fifths sixth sixths seventh sevenths eighth eighths ninth ninths
+        tenth tenths twelfth twelfths sixteenth sixteenths and or plus minus to
+        between about approximately roughly almost least most more less over under""".split())
+    punctuation = set(".,;:!?")
+    operators = set("&+*/()[]{}=^%−–—-¼½¾⅐⅑⅒⅓⅔⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞")
+
+    def expression_token(token):
+        return (token in expression_words or token in punctuation or token in operators or
+                re.fullmatch(unit_pattern, token) is not None or
+                re.fullmatch(r"(?:\d+(?:\.\d+)?|\.\d+)", token) is not None)
+
+    left = right = unit_indexes[0]
+    while left and expression_token(tokens[left - 1]):
+        left -= 1
+    while right + 1 < len(tokens) and expression_token(tokens[right + 1]):
+        right += 1
+    expression = tokens[left:right + 1]
+    while expression and expression[0] in punctuation:
+        expression.pop(0)
+    while expression and expression[-1] in punctuation:
+        expression.pop()
+    # An instruction conjunction followed by an action is outside the duration.
+    # An arithmetic continuation remains inside and must pass the whole grammar.
+    if (expression and expression[-1] == "and" and right + 1 < len(tokens)
+            and tokens[right + 1].isalpha()):
+        expression.pop()
+    phrase = " ".join(expression)
+    quantity = r"(?:\d+\s+(?:and\s+)?\d+\s*/\s*\d+|\d+\s*/\s*\d+|\d+(?:\.\d+)?|\.\d+)"
+    match = re.fullmatch(r"(" + quantity + r")\s+(" + unit_pattern + r")(\s+and\s+a\s+half)?", phrase)
+    if match is None:
         return None
-    continuation = after.lstrip(" (,\t\n")
-    continuation = re.sub(r"^(?:(?:and|plus|minus|or)\b|[+−-])\s*", "", continuation, flags=re.I)
-    if re.match(r"(?:[\d¼½¾\u2150-\u215e]|" + number_words + r"\b)", continuation, re.I):
-        return None
-    value, unit = match.groups()
+    value, unit, half = match.groups()
     try:
-        value = re.sub(r"\s*/\s*", "/", value)
-        minutes = float(sum(Fraction(part) for part in value.split())) * (
-            60 if unit.lower().startswith(("hour", "hr")) else 1)
+        value = re.sub(r"\s*/\s*", "/", value).replace("and", "")
+        amount = sum(Fraction(part) for part in value.split())
+        if half:
+            amount += Fraction(1, 2)
+        minutes = float(amount) * (60 if unit.startswith(("hour", "hr")) else 1)
     except (ValueError, ZeroDivisionError, OverflowError):
         return None
     return minutes if 0 < minutes <= 1440 else None
