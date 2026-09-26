@@ -2,6 +2,7 @@
 
 Generated rows have globally unique ``item_id`` values. Only direct fields in
 ``EDITABLE_FIELDS`` can be patched; source identities and nested paths cannot.
+An edit value of JSON null deletes that override, including orphaned overrides.
 Reads return the generated document with edits applied plus repository metadata,
 ``edits``, ``store_snapshot``, and recoverable orphan changes in ``needs_review``.
 This module never writes inventory, cook schedules, or recipes.
@@ -223,7 +224,7 @@ def replace_generated(week: str, generated: dict, request_id: str | None = None)
     return get_packet(week)
 
 
-def _validate_changes(changes: list[dict], items: dict[str, dict]) -> None:
+def _validate_changes(changes: list[dict], items: dict[str, dict], overrides: set[tuple[str, str]]) -> None:
     if not isinstance(changes, list):
         raise ValueError("changes must be a list")
     _json(changes)
@@ -231,10 +232,14 @@ def _validate_changes(changes: list[dict], items: dict[str, dict]) -> None:
         if not isinstance(change, dict) or set(change) != {"item_id", "field", "value"}:
             raise ValueError("each change must contain exactly item_id, field, value")
         item_id, field, value = change["item_id"], change["field"], change["value"]
-        if not isinstance(item_id, str) or item_id not in items:
-            raise ValueError("change item_id is not in the generated document")
         if not isinstance(field, str) or field not in EDITABLE_FIELDS:
             raise ValueError("field is not editable")
+        if not isinstance(item_id, str) or (
+            item_id not in items and (value is not None or (item_id, field) not in overrides)
+        ):
+            raise ValueError("change item_id is not in the generated document or a saved override")
+        if value is None:
+            continue
         if field == "done" and type(value) is not bool:
             raise ValueError("done must be a boolean")
         if field in {"text", "notes", "unit", "date", "start", "time"} and not isinstance(value, str):
@@ -249,22 +254,26 @@ def _validate_changes(changes: list[dict], items: dict[str, dict]) -> None:
             raise ValueError("duration_minutes must be an integer from 1 to 1440")
         if field in {"amount", "quantity"} and (type(value) not in (int, float, str) or (type(value) in (int, float) and value < 0)):
             raise ValueError(f"{field} must be a nonnegative number or quantity string")
-        if field == "phase" and (value is not None and (not isinstance(value, str) or value not in _PHASES)):
-            raise ValueError("phase must be a canonical phase or null")
+        if field == "phase" and (not isinstance(value, str) or value not in _PHASES):
+            raise ValueError("phase must be a canonical phase")
 
 
 def patch_packet(week: str, expected_revision: int, changes: list[dict], status: str | None = None) -> dict:
-    """Commit sparse direct-field changes against precisely one saved revision."""
+    """Commit field overrides or null deletions against one saved revision."""
     _validate_week(week)
     _validate_revision(expected_revision)
     if status is not None:
         _validate_status(status)
     with inventory_db.write_transaction() as conn:
         packet = _read(conn, week, expected_revision)
-        _validate_changes(changes, _items(packet["generated"]))
         edits = {(edit["item_id"], edit["field"]): edit for edit in packet["edits"]}
+        _validate_changes(changes, _items(packet["generated"]), set(edits))
         for change in changes:
-            edits[(change["item_id"], change["field"])] = deepcopy(change)
+            key = (change["item_id"], change["field"])
+            if change["value"] is None:
+                edits.pop(key, None)
+            else:
+                edits[key] = deepcopy(change)
         packet["edits"] = list(edits.values())
         packet["status"] = status or "draft"
         packet["reviewed_at"] = _now() if packet["status"] == "reviewed" else None

@@ -2,6 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import importlib
+import json
 import threading
 
 import pytest
@@ -67,6 +68,82 @@ def test_replace_preserves_orphan_edits_until_source_returns(store):
     restored = store.replace_generated("2026-W40", draft())
     assert restored["schedule"][0]["text"] == "Mine"
     assert restored["needs_review"] == []
+
+
+def test_null_deletes_active_overrides_and_reload_uses_generated_values(store):
+    first = store.replace_generated("2026-W40", draft())
+    edited = store.patch_packet("2026-W40", first["revision"], [change(), change(field="done", value=True)])
+    saved = store.patch_packet("2026-W40", edited["revision"], [change(value=None), change(field="done", value=None)])
+    assert saved["revision"] == edited["revision"] + 1
+    assert saved["schedule"][0]["text"] == "Generated"
+    assert saved["schedule"][0]["done"] is False
+    assert saved["edits"] == []
+    assert store.get_packet("2026-W40") == saved
+    with inventory_db.connect() as conn:
+        assert json.loads(conn.execute("SELECT edits_json FROM cooking_packets").fetchone()[0]) == []
+    regenerated = draft()
+    regenerated["schedule"][0]["text"] = "New source wording"
+    assert store.replace_generated("2026-W40", regenerated)["schedule"][0]["text"] == "New source wording"
+
+
+def test_null_deletes_specific_orphan_and_source_return_cannot_restore_it(store):
+    first = store.replace_generated("2026-W40", draft())
+    store.patch_packet("2026-W40", first["revision"], [change(), change(field="done", value=True)])
+    orphaned = store.replace_generated("2026-W40", draft(("cook:59",)))
+    saved = store.patch_packet("2026-W40", orphaned["revision"], [change(value=None)])
+    assert saved["revision"] == orphaned["revision"] + 1
+    assert saved["edits"] == [change(field="done", value=True)]
+    assert [edit["field"] for edit in saved["needs_review"]] == ["done"]
+    assert store.get_packet("2026-W40") == saved
+    restored = store.replace_generated("2026-W40", draft())
+    assert restored["schedule"][0]["text"] == "Generated"
+    assert restored["schedule"][0]["done"] is True
+    assert restored["needs_review"] == []
+
+
+def test_null_deletes_last_orphan_permanently(store):
+    first = store.replace_generated("2026-W40", draft())
+    store.patch_packet("2026-W40", first["revision"], [change()])
+    orphaned = store.replace_generated("2026-W40", draft(()))
+    saved = store.patch_packet("2026-W40", orphaned["revision"], [change(value=None)])
+    assert saved["needs_review"] == []
+    assert saved["edits"] == []
+    assert store.get_packet("2026-W40") == saved
+    assert store.replace_generated("2026-W40", draft())["schedule"][0]["text"] == "Generated"
+
+
+@pytest.mark.parametrize("orphan", [False, True])
+def test_stale_null_deletion_preserves_current_override(store, orphan):
+    first = store.replace_generated("2026-W40", draft())
+    edited = store.patch_packet("2026-W40", first["revision"], [change()])
+    latest = store.replace_generated("2026-W40", draft(())) if orphan else edited
+    with pytest.raises(store.RevisionConflict):
+        store.patch_packet("2026-W40", latest["revision"] - 1, [change(value=None)])
+    assert store.get_packet("2026-W40") == latest
+    assert store.replace_generated("2026-W40", draft())["schedule"][0]["text"] == "Mine"
+
+
+def test_invalid_batch_rolls_back_null_deletion(store):
+    first = store.replace_generated("2026-W40", draft())
+    edited = store.patch_packet("2026-W40", first["revision"], [change()])
+    orphaned = store.replace_generated("2026-W40", draft(()))
+    with pytest.raises(ValueError):
+        store.patch_packet("2026-W40", orphaned["revision"], [change(value=None), change(item_id="recipe:Soup", field="recipe", value="Other")])
+    assert store.get_packet("2026-W40") == orphaned
+    assert store.replace_generated("2026-W40", draft())["schedule"][0]["text"] == "Mine"
+
+
+def test_null_without_existing_override_still_consumes_patch_revision(store):
+    packet = store.replace_generated("2026-W40", draft())
+    saved = store.patch_packet("2026-W40", packet["revision"], [change(value=None)])
+    assert saved["revision"] == packet["revision"] + 1
+    assert saved["edits"] == []
+    assert saved["schedule"][0]["text"] == "Generated"
+    with pytest.raises(ValueError):
+        store.patch_packet("2026-W40", saved["revision"], [change(item_id="missing", value=None)])
+    with pytest.raises(ValueError):
+        store.patch_packet("2026-W40", saved["revision"], [change(field="recipe", value=None)])
+    assert store.get_packet("2026-W40") == saved
 
 
 def test_stale_revision_cannot_overwrite_newer_edit(store):
