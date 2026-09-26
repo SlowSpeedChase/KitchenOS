@@ -16,6 +16,7 @@ import json
 import math
 import os
 import re
+import unicodedata
 from typing import Callable
 from zoneinfo import ZoneInfo
 
@@ -116,7 +117,8 @@ def _duration(text):
     Only ordinary punctuation at the expression edges may be discarded.
     """
     unit_pattern = r"(?:minutes?|mins?|hours?|hrs?)"
-    tokens = re.findall(r"(?:\d+(?:\.\d+)?|\.\d+)|[a-zA-Z]+|[^\s]", text.casefold())
+    lexemes = list(re.finditer(r"(?:\d+(?:\.\d+)?|\.\d+)|[a-zA-Z]+|[^\s]", text.casefold()))
+    tokens = [match[0] for match in lexemes]
     unit_indexes = [i for i, token in enumerate(tokens) if re.fullmatch(unit_pattern, token)]
     if len(unit_indexes) != 1:
         return None
@@ -126,29 +128,48 @@ def _duration(text):
         thousand million half halves quarter quarters third thirds fourth fourths
         fifth fifths sixth sixths seventh sevenths eighth eighths ninth ninths
         tenth tenths twelfth twelfths sixteenth sixteenths and or plus minus to
-        between about approximately roughly almost least most more less over under""".split())
+        between about approximately roughly almost least most more less over under x""".split())
     punctuation = set(".,;:!?")
-    operators = set("&+*/()[]{}=^%−–—-¼½¾⅐⅑⅒⅓⅔⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞")
 
-    def expression_token(token):
-        return (token in expression_words or token in punctuation or token in operators or
-                re.fullmatch(unit_pattern, token) is not None or
-                re.fullmatch(r"(?:\d+(?:\.\d+)?|\.\d+)", token) is not None)
+    def expression_token(index):
+        token = tokens[index]
+        # Capture unknown symbols too. A symbol outside the supported grammar
+        # invalidates the larger expression; it must never become a boundary
+        # from which parsing restarts at a denominator or later operand.
+        attached_number = any(0 <= neighbor < len(tokens) and tokens[neighbor][0].isdigit() and
+                              (lexemes[neighbor].end() == lexemes[index].start() or
+                               lexemes[index].end() == lexemes[neighbor].start())
+                              for neighbor in (index - 1, index + 1))
+        return (not token.isalpha() or token in expression_words or attached_number or
+                re.fullmatch(unit_pattern, token) is not None)
 
     left = right = unit_indexes[0]
-    while left and expression_token(tokens[left - 1]):
+    while left and expression_token(left - 1):
         left -= 1
-    while right + 1 < len(tokens) and expression_token(tokens[right + 1]):
+    while right + 1 < len(tokens) and expression_token(right + 1):
         right += 1
+    # An explicit duration introducer anchors the whole local phrase, including
+    # unknown words inside a malformed expression rather than just its tail.
+    for index in range(unit_indexes[0] - 1, -1, -1):
+        if tokens[index] in punctuation:
+            break
+        if tokens[index] == "for":
+            left = min(left, index + 1)
+            break
     expression = tokens[left:right + 1]
-    while expression and expression[0] in punctuation:
-        expression.pop(0)
-    while expression and expression[-1] in punctuation:
-        expression.pop()
+    allowed_punctuation = punctuation | {"/"}
+    if ("x" in expression or sum(token == "/" for token in expression) > 1 or
+        any(unicodedata.category(character)[0] in "PSMC" and character not in allowed_punctuation
+            for token in expression for character in token)):
+        return None
     # An instruction conjunction followed by an action is outside the duration.
     # An arithmetic continuation remains inside and must pass the whole grammar.
     if (expression and expression[-1] == "and" and right + 1 < len(tokens)
             and tokens[right + 1].isalpha()):
+        expression.pop()
+    while expression and expression[0] in punctuation:
+        expression.pop(0)
+    while expression and expression[-1] in punctuation:
         expression.pop()
     phrase = " ".join(expression)
     quantity = r"(?:\d+\s+(?:and\s+)?\d+\s*/\s*\d+|\d+\s*/\s*\d+|\d+(?:\.\d+)?|\.\d+)"

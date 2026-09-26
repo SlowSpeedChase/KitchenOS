@@ -423,3 +423,18 @@ def test_entire_malformed_duration_expression_is_unknown(text):
 def test_allowlisted_duration_phrases_are_consumed_completely(text, minutes):
     row = phases.classify_legacy_steps("A", [step(text, phase="cook")])["instructions"][0]
     assert row["duration_minutes"] == minutes and row["duration_source"] == "recipe"
+
+
+@pytest.mark.parametrize("phrase", [
+    "1⁄2 hours", "1∕2 hours", "1 ÷ 2 hours", "1 hour × 2",
+    "1 x 2 hours", "1 ／ 2 hours", "1 ⊗ 2 hours", "1 hour ∗ 2",
+])
+def test_unsupported_operator_cannot_truncate_duration_candidate(phrase):
+    row = phases.classify_legacy_steps("A", [step(f"Cook for {phrase}.", phase="cook")])["instructions"][0]
+    assert row["duration_minutes"] is None
+    assert row["duration_source"] is None and row["needs_review"] is True
+
+
+def test_duration_comma_before_instruction_conjunction_is_ordinary_punctuation():
+    row = phases.classify_legacy_steps("A", [step("Cook for 20 minutes, and serve.", phase="cook")])["instructions"][0]
+    assert row["duration_minutes"] == 20 and row["duration_source"] == "recipe"
