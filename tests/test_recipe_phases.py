@@ -361,3 +361,43 @@ def test_conflict_propagates_to_an_already_visited_sibling_dependency():
     packet_rows = [row for row in rows if row.get("task_id")]
     assert all(row["needs_review"] and row["review_reason"] for row in packet_rows)
     assert next(row for row in packet_rows if row["task_id"] == "a-sibling")["date"] is None
+
+
+@pytest.mark.parametrize("denial", ["shouldn't", "should not", "can't", "cannot", "mustn't", "must not", "don't", "do not", "never", "shouldn’t", "mustn’t"])
+def test_timing_denial_variants_never_grant_native_advance_permission(denial):
+    text = f"Chop onions; you {denial} prepare them ahead of time."
+    row = phases.classify_legacy_steps("A", [step(text, phase="prep_or_flavor_base")])["instructions"][0]
+    assert row["can_do_ahead"] is False and row["needs_review"] is True
+
+
+@pytest.mark.parametrize("phrase", ["1 and 1/2 hours", "1 hour and a half", "1 hour plus a quarter", "one and 1/2 hours", "2 hours and three quarters", "1 hour and another half"])
+def test_unsupported_mixed_duration_phrases_cannot_publish_partial_timing(phrase):
+    row = phases.classify_legacy_steps("A", [step(f"Cook for {phrase}.", phase="cook")])["instructions"][0]
+    assert row["duration_minutes"] is None
+    assert row["duration_source"] is None and row["needs_review"] is True
+
+
+@pytest.mark.parametrize("requested", ["2026-09-29", "2026-10-01"])
+def test_conflicting_explicit_bag_date_is_retained_only_as_requested_date(requested):
+    storage = [task("freeze", action="freeze", date="2026-09-29"),
+               task("bag", action="bag", date=requested, depends_on=["freeze"])]
+    rows = phases.build_production_schedule([cook()], [], storage)
+    bag = next(row for row in rows if row.get("task_id") == "bag")
+    assert bag["date"] is None and bag["requested_date"] == requested
+    assert bag["needs_review"] and "conflict" in bag["review_reason"].lower()
+
+
+@pytest.mark.parametrize("zone", [None, "", "   ", "not/a-zone", "../UTC"])
+def test_incomplete_session_timezone_prevents_resolved_immediate_merge(zone):
+    recipes = [bean("A"), bean("B")]
+    for recipe in recipes:
+        recipe["dependent_cooks"][0]["timezone"] = zone
+    rows = phases.build_shared_prep(recipes)
+    assert len(rows) == 2
+    assert all(row["needs_review"] and row["session_unresolved"] for row in rows)
+
+
+@pytest.mark.parametrize("phrase", ["1+1/2 hours", "1 hour 1/2", "1 hour (and a half)", "1 hour and two tenths", "two 1/2 hours", "1 hour ½"])
+def test_other_fractional_fragments_do_not_escape_whole_phrase_validation(phrase):
+    row = phases.classify_legacy_steps("A", [step(f"Cook for {phrase}.", phase="cook")])["instructions"][0]
+    assert row["duration_minutes"] is None and row["needs_review"]

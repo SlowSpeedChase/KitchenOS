@@ -17,6 +17,7 @@ import math
 import os
 import re
 from typing import Callable
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -107,12 +108,24 @@ def _phase(text):
 
 
 def _duration(text):
-    matches = re.findall(r"(?<![\w/.])(\d+\s+\d+\s*/\s*\d+|\d+\s*/\s*\d+|\d+(?:\.\d+)?)"
-                         r"\s*(minutes?|mins?|hours?|hrs?)\b", text, re.I)
+    matches = list(re.finditer(r"(?<![\w/.])(\d+\s+\d+\s*/\s*\d+|\d+\s*/\s*\d+|\d+(?:\.\d+)?)"
+                              r"\s*(minutes?|mins?|hours?|hrs?)\b", text, re.I))
     # Multiple timings and ranges are ambiguous, not additive durations.
     if len(matches) != 1 or re.search(r"\d\s*(?:-|–|to)\s*\d", text):
         return None
-    value, unit = matches[0]
+    match = matches[0]
+    # Unsupported surrounding arithmetic belongs to the duration phrase too.
+    # Do not certify just the numeric tail/head of '1 and 1/2 hours' or
+    # '1 hour and a half'. Those forms remain unknown until fully supported.
+    before, after = text[:match.start()], text[match.end():]
+    number_words = r"(?:a|an|another|one|two|three|four|five|six|seven|eight|nine|ten|half|halves|quarter|third)"
+    if re.search(r"(?:\b(?:and|plus|minus|to|or)|[+−\-\d¼½¾]|\b" + number_words + r")\s*$", before, re.I):
+        return None
+    continuation = after.lstrip(" (,\t\n")
+    continuation = re.sub(r"^(?:(?:and|plus|minus|or)\b|[+−-])\s*", "", continuation, flags=re.I)
+    if re.match(r"(?:[\d¼½¾\u2150-\u215e]|" + number_words + r"\b)", continuation, re.I):
+        return None
+    value, unit = match.groups()
     try:
         value = re.sub(r"\s*/\s*", "/", value)
         minutes = float(sum(Fraction(part) for part in value.split())) * (
@@ -128,7 +141,7 @@ def _timing(text, instruction):
     sensitive = bool(instruction.get("time_sensitive")) or bool(re.search(
         r"\b(?:just before|immediately|right before|at serving)\b", text, re.I))
     advance = bool(re.search(r"\b(?:day before|in advance|ahead(?: of time)?|overnight)\b", text, re.I))
-    negated = advance and bool(re.search(r"\b(?:not|never|don't|cannot|can't)\b", text, re.I))
+    negated = advance and bool(re.search(r"\b(?:not|never|cannot|\w+n't)\b", text, re.I))
     return advance and not (sensitive or negated), sensitive, negated or (advance and sensitive)
 
 
@@ -279,10 +292,17 @@ def _session_key(cooks):
     sessions = set()
     try:
         for cook in cooks:
+            zone = cook["timezone"]
+            if not isinstance(zone, str) or not zone.strip():
+                return None
+            timezone = ZoneInfo(zone)
             start = datetime.fromisoformat(cook["start"])
             if start.utcoffset() is None or start.date().isoformat() != cook["date"]:
                 return None
-            sessions.add((cook["date"], start.isoformat(), cook["timezone"]))
+            local = start.astimezone(timezone)
+            if local.date().isoformat() != cook["date"] or local.utcoffset() != start.utcoffset():
+                return None
+            sessions.add((cook["date"], start.isoformat(), zone))
     except (KeyError, TypeError, ValueError):
         return None
     return next(iter(sessions)) if len(sessions) == 1 else None
@@ -459,8 +479,10 @@ def build_production_schedule(cooks: list[dict], shared_prep: list[dict], storag
                        re.match(r"freeze\b", str(tasks[d].get("text", "")), re.I))]
             if freezes and all(dates.get(d) for d in freezes):
                 required_date = max(dates[d] for d in freezes) + timedelta(days=1)
-                if row.get("date") and dates[key] < required_date:
+                if row.get("date") and dates[key] != required_date:
                     reasons[key].add("Storage date conflicts with the freezing dependency")
+                    row["requested_date"] = row["date"]
+                    dates[key] = None
                 else:
                     dates[key] = max(dates[key], required_date)
             else:
