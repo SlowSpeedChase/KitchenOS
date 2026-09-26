@@ -129,6 +129,27 @@ CREATE TABLE IF NOT EXISTS cook_schedule (
     timezone TEXT NOT NULL,
     duration_minutes INTEGER NOT NULL CHECK (duration_minutes BETWEEN 15 AND 360)
 );
+CREATE TABLE IF NOT EXISTS cooking_packets (
+    week TEXT PRIMARY KEY,
+    generated_json TEXT NOT NULL,
+    edits_json TEXT NOT NULL DEFAULT '[]',
+    store_snapshot_json TEXT NOT NULL DEFAULT '{"version":1}',
+    request_ids_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'reviewed')),
+    generated_at TEXT NOT NULL,
+    store_refreshed_at TEXT,
+    reviewed_at TEXT,
+    updated_at TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision > 0)
+);
+CREATE TABLE IF NOT EXISTS retailer_preferences (
+    retailer TEXT PRIMARY KEY,
+    location_id TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    address TEXT NOT NULL,
+    preference_rank INTEGER NOT NULL,
+    policy_json TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_cooks_week ON cooks(week);
 CREATE INDEX IF NOT EXISTS idx_placements_cook ON placements(cook_id);
 """
@@ -257,6 +278,20 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # Pinned by tests/test_inventory_db.py::
     # test_a_pre_bundle_database_gains_the_columns_and_the_index.
     conn.execute("CREATE INDEX IF NOT EXISTS idx_cooks_bundle ON cooks(bundle_id)")
+    # INSERT OR IGNORE preserves any previously configured preference. These
+    # new tables reference no migrated column and can be created in _SCHEMA.
+    conn.executemany(
+        "INSERT OR IGNORE INTO retailer_preferences"
+        " (retailer, location_id, display_name, address, preference_rank, policy_json)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            ("heb", "425", "H-E-B Hancock Center", "1000 East 41st Street, Austin, Texas 78751", 1,
+             json.dumps({"prefer_owned_brand": True, "reason": "cashback"})),
+            ("costco", "681", "Costco North Austin", "10401 Research Boulevard, Austin, Texas 78759", 2,
+             json.dumps({"require_bulk_suitability": True,
+                         "allow_storage_friendly_remainder": True})),
+        ],
+    )
     conn.commit()
 
 
