@@ -1,8 +1,8 @@
 """Pure version-one packet composition from ledger, recipes and raw inventory.
 
-No saves, source mutations, inference or network calls occur here. Native
-phases and legacy source instructions are retained for the refresh worker's
-separate classification stage. Quantities on a recipe card sum every weekly
+No saves or source mutations occur here. Inference requires an explicit
+classification_refresh context in the background refresh worker; the normal
+path uses conservative source-derived phase records. Quantities on a recipe card sum every weekly
 cook of that recipe; cook and schedule identities remain independent.
 """
 from __future__ import annotations
@@ -24,6 +24,7 @@ from lib.ingredient_normalizer import normalize_name
 from lib.inventory import normalize_location_source
 from lib.pantry import split_against_pantry
 from lib.recipe_parser import parse_recipe_body, parse_recipe_file
+from lib.recipe_phases import classify_legacy_steps, build_shared_prep, build_production_schedule
 from lib.safe_paths import contained_markdown, parse_iso_week
 
 
@@ -217,18 +218,40 @@ def build_week_draft(week: str, recipes_dir: Path, *, inventory_rows: list[dict]
         for ordinal, equipment in enumerate(card["equipment"], 1):
             packet["equipment"].append({"item_id": _id("equipment", recipe_id, ordinal),
                                         "recipe": recipe, "text": equipment, "source": "recipe"})
-        for phase, instructions in content.get("instruction_phases", {}).items():
+        classified = classify_legacy_steps(recipe, content["instructions"])
+        for phase, instructions in classified["instruction_phases"].items():
             card["instruction_phases"][phase] = []
             for instruction in instructions:
-                ordinal = instruction["step"]
-                row = {**instruction, "item_id": _id("phase", recipe_id, ordinal), "recipe": recipe,
-                       "source_ordinal": ordinal, "source": "native_phase", "done": False}
+                ordinal = instruction["source_ordinal"]
+                row = {**instruction, "item_id": _id("phase", recipe_id, ordinal),
+                       "source_cook_ids": card["source_cook_ids"], "done": False}
                 card["instruction_phases"][phase].append(row)
                 if phase in ("freeze_and_store", "reheat"):
                     packet["freeze_reheat"].append({**row, "item_id": _id("storage", recipe_id, ordinal)})
         if content["instructions"] and not content.get("instruction_phases"):
             card["needs_classification"] = True
             packet["warnings"].append(_warning(recipe, "legacy_phases", f"Instruction phases need review: {recipe}"))
+
+    prep_recipes = [{"recipe": card["recipe"], "scale": card["scale"], "classified_instructions": sorted([
+        row for rows in card["instruction_phases"].values() for row in rows], key=lambda row: row["source_ordinal"])}
+        for card in packet["recipe_cards"]]
+    packet["shared_prep"] = build_shared_prep(prep_recipes)
+    # Reheating needs an eating date, which is not implied by a production cook.
+    storage_tasks = [row for row in packet["freeze_reheat"] if row["phase"] == "freeze_and_store"]
+    # Source ordering links an explicit unmold/bag instruction to the preceding
+    # freeze instruction; it does not create a freezing step when none exists.
+    last_freeze = {}
+    for row in storage_tasks:
+        text = str(row.get("text", ""))
+        if re.match(r"freeze\b", text, re.I):
+            row["action"] = "freeze"
+            last_freeze[row["recipe"]] = row["item_id"]
+        elif re.match(r"(?:unmold|bag)\b", text, re.I) and row["recipe"] in last_freeze:
+            row["depends_on"] = sorted(set(row["depends_on"] + [last_freeze[row["recipe"]]]))
+    packet["production_schedule"] = build_production_schedule(
+        packet["production_schedule"], packet["shared_prep"], storage_tasks)
+    scheduled_dates = [row["date"] for row in packet["production_schedule"] if row.get("date")]
+    packet["date_range"]["start"] = min([monday.isoformat(), *scheduled_dates])
 
     lines = shopping.compute_lines(aggregate_ingredients(all_ingredients), pantry=_pantry_view(rows))
     for line in lines:

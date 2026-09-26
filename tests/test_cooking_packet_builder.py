@@ -125,7 +125,7 @@ def test_native_phases_schedule_equipment_and_sunday_range(tmp_db, tmp_vault):
     assert list(card["instruction_phases"]) == ["prep_or_flavor_base", "cook", "freeze_and_store", "reheat"]
     assert {row["text"] for row in packet["equipment"]} == {"Instant Pot", "ladle"}
     assert {row["phase"] for row in packet["freeze_reheat"]} == {"freeze_and_store", "reheat"}
-    scheduled = packet["production_schedule"][0]
+    scheduled = next(row for row in packet["production_schedule"] if row["source"] == "cook_schedule")
     assert scheduled["cook_id"] == cook["id"] and scheduled["source"] == "cook_schedule"
     assert scheduled["start"] == "2026-09-29T18:00:00-05:00"
     assert packet["date_range"] == {"start": "2026-09-28", "end": "2026-10-04"}
@@ -143,7 +143,7 @@ def test_missing_and_legacy_recipes_warn_without_losing_cooks(tmp_db, tmp_vault)
     soup = next(c for c in packet["recipe_cards"] if c["recipe"] == "Soup")
     assert soup["needs_classification"] is True and len(soup["instructions"]) == 4
     assert any(w["recipe"] == "Missing" for w in packet["warnings"])
-    assert packet["shared_prep"] == []
+    assert all(row["needs_review"] for row in packet["shared_prep"])
 
 
 def test_recipe_display_changes_do_not_reidentify_card_or_steps(tmp_db, tmp_vault):
@@ -247,7 +247,7 @@ def test_full_build_preserves_uncertain_provenance_and_database_bytes(tmp_db, tm
     packet = build_week_draft(WEEK, recipes, now=NOW)
     assert packet["pull_list"][0]["location_uncertain"] is True
     assert packet["pull_list"][0]["location_source"] == "default"
-    assert packet["production_schedule"][0]["cook_id"] == cook["id"]
+    assert next(row for row in packet["production_schedule"] if row["source"] == "cook_schedule")["cook_id"] == cook["id"]
     assert tmp_db.read_bytes() == before_bytes
     with sqlite3.connect(tmp_db) as conn:
         assert list(conn.iterdump()) == before_rows
@@ -309,3 +309,32 @@ def test_empty_build_does_not_create_an_absent_database(tmp_db, tmp_vault):
     packet = build_week_draft(WEEK, recipe_dir(tmp_vault), now=NOW)
     assert packet["cooks"] == [] and packet["production_schedule"] == []
     assert not tmp_db.exists()
+
+
+def test_legacy_packet_derives_reviewable_phases_without_mutating_flat_steps(tmp_db, tmp_vault):
+    recipes = recipe_dir(tmp_vault)
+    text = RECIPE.split("## Instructions")[0] + "## Instructions\n\n1. Chop onions.\n2. Simmer for 20 minutes.\n3. Do the usual thing.\n"
+    (recipes / "Soup.md").write_text(text)
+    serving_ledger.create_cook("Soup", WEEK, servings_produced=4)
+    packet = build_week_draft(WEEK, recipes, inventory_rows=[], now=NOW)
+    card = packet["recipe_cards"][0]
+    assert list(card["instruction_phases"]) == ["prep_or_flavor_base", "cook", "instructions"]
+    assert all("phase" not in row for row in card["instructions"])
+    assert card["instruction_phases"]["instructions"][0]["needs_review"] is True
+    assert len(packet["shared_prep"]) == 1
+    assert packet["production_schedule"][0]["date"] is None
+    assert (recipes / "Soup.md").read_text() == text
+    _validate_generated(WEEK, packet)
+
+
+def test_native_unmolding_is_scheduled_after_source_freezing(tmp_db, tmp_vault):
+    recipes = recipe_dir(tmp_vault)
+    (recipes / "Soup.md").write_text(RECIPE.replace("1. Cool then freeze in portions.", "1. Freeze in portions.\n2. Unmold and bag."))
+    cook = serving_ledger.create_cook("Soup", WEEK, servings_produced=4)
+    serving_ledger.schedule_cook(cook["id"], date="2026-09-29", meal="dinner",
+                                 start="2026-09-29T18:00:00-05:00", timezone="America/Chicago",
+                                 duration_minutes=60, servings_to_eat=1)
+    packet = build_week_draft(WEEK, recipes, inventory_rows=[], now=NOW)
+    row = next(row for row in packet["production_schedule"] if row.get("text") == "Unmold and bag.")
+    assert row["date"] == "2026-09-30"
+    _validate_generated(WEEK, packet)
