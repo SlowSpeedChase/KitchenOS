@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Start execution from a commit that contains the currently uncommitted `cook_schedule` and planning-calendar work; this feature consumes `serving_ledger.schedules_for_week()` and `POST /api/cooks/<id>/schedule` rather than replacing them.
+- The isolated branch does not contain the main checkout's uncommitted calendar work. Task 0 adds only the cook-schedule storage and API contract this feature consumes; it does not import calendar snapshots or calendar UI.
 - Use `.venv/bin/python` for Python commands and Python 3.11 syntax.
 - `data/kitchenos.db` remains the single source of truth for packets, inventory, purchases, cooks, placements, and schedules.
 - Never decrement inventory, record purchases, assign servings, or rewrite legacy recipes while generating a packet.
@@ -44,6 +44,63 @@
 - Existing parser, template, prompt, planner, API, registry, and documentation files change only at their integration points.
 
 ---
+
+### Task 0: Cook-schedule prerequisite
+
+**Files:**
+- Create: `lib/cook_schedule.py`
+- Modify: `lib/inventory_db.py`
+- Modify: `lib/serving_ledger.py`
+- Modify: `api_server.py`
+- Create: `tests/test_cook_schedule.py`
+
+**Interfaces:**
+- Produces: `cook_schedule.validate(date: str, start: str, timezone: str, duration_minutes: int) -> str`, `serving_ledger.schedules_for_week(week: str) -> list[dict]`, `serving_ledger.schedule_cook(cook_id: int, *, date: str, meal: str, start: str, timezone: str, duration_minutes: int, servings_to_eat: float) -> dict`, and `POST /api/cooks/<id>/schedule`.
+- The API body contains exactly `date`, `meal`, `start`, `timezone`, `duration_minutes`, and `servings_to_eat`.
+
+- [ ] **Step 1: Write failing schedule tests**
+
+```python
+def test_retry_only_places_first_serving_once(tmp_db):
+    cook = create_unscheduled_cook(servings=8)
+    schedule_cook(cook["id"], **valid_args(servings_to_eat=1))
+    schedule_cook(cook["id"], **valid_args(servings_to_eat=1))
+    saved = get_cook(cook["id"])
+    assert sum(p["count"] for p in saved["placements"]) == 1
+    assert saved["unassigned"] == 7
+
+def test_generic_move_removes_stale_timed_schedule(tmp_db):
+    cook = create_unscheduled_cook(servings=8)
+    schedule_cook(cook["id"], **valid_args())
+    move_cook(cook["id"], "2026-09-23", "dinner")
+    assert schedules_for_week("2026-W39") == []
+
+def test_invalid_offset_date_or_duration_rolls_back(tmp_db):
+    cook = create_unscheduled_cook(servings=8)
+    with pytest.raises(ValueError):
+        schedule_cook(cook["id"], **valid_args(start="2026-09-23T19:00:00-05:00"))
+    assert get_cook(cook["id"])["date"] is None
+```
+
+- [ ] **Step 2: Run the tests and verify missing schedule APIs**
+
+Run: `.venv/bin/python -m pytest tests/test_cook_schedule.py -v`
+
+- [ ] **Step 3: Implement the minimal schedule dependency**
+
+Add `cook_schedule(cook_id PRIMARY KEY REFERENCES cooks(id) ON DELETE CASCADE, start, timezone, duration_minutes CHECK 15..360)`. Validate IANA timezone, offset-aware timestamp, matching local date, 15-minute start/duration increments, finish by midnight, finite positive servings, same cook week, uncooked single recipe, and capacity. The transaction moves the cook, creates only the first placement for a previously unscheduled cook, and upserts timing. Generic date/meal changes remove stale timing.
+
+- [ ] **Step 4: Run schedule and ledger regressions**
+
+Run: `.venv/bin/python -m pytest tests/test_cook_schedule.py tests/test_serving_ledger.py tests/test_api_ledger.py -v`
+Expected: PASS with retries and concurrent requests producing one initial placement.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add lib/cook_schedule.py lib/inventory_db.py lib/serving_ledger.py api_server.py tests/test_cook_schedule.py
+git commit -m "feat: persist cooking schedules"
+```
 
 ### Task 1: Packet persistence and edit merging
 
