@@ -428,7 +428,7 @@ def fetch_inventory_rows() -> list[dict]:
         conn.close()
 
 
-def fetch_inventory_rows_with_ids() -> list[dict]:
+def fetch_inventory_rows_with_ids(*, conn: sqlite3.Connection | None = None) -> list[dict]:
     """Read each real inventory container with its stable SQLite row ID.
 
     Unlike the aggregated pantry view, this retains distinct locations and
@@ -436,18 +436,21 @@ def fetch_inventory_rows_with_ids() -> list[dict]:
     Ordinary startup owns schema initialization. An absent database is empty;
     an existing database without the inventory schema raises OperationalError.
     """
-    path = db_path()
-    if not path.exists():
-        return []
-    conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
+    owns_connection = conn is None
+    if owns_connection:
+        path = db_path()
+        if not path.exists():
+            return []
+        conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
     try:
         rows = conn.execute(
             f"SELECT id, {', '.join(_INVENTORY_COLS)} FROM inventory ORDER BY id"
         ).fetchall()
         return [dict(row) for row in rows]
     finally:
-        conn.close()
+        if owns_connection:
+            conn.close()
 
 
 def fetch_trips(limit: int = 100) -> list[dict]:

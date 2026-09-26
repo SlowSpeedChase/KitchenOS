@@ -236,8 +236,11 @@ def find_recent_duplicate(recipe: str, week: str, date, meal,
     return get_cook(row["id"]) if row else None
 
 
-def get_cook(cook_id: int) -> Optional[dict]:
-    conn = inventory_db.connect()
+def get_cook(cook_id: int, *, conn=None) -> Optional[dict]:
+    """Read cook and placements, optionally borrowing a caller's connection."""
+    owns_connection = conn is None
+    if owns_connection:
+        conn = inventory_db.connect()
     try:
         row = conn.execute("SELECT * FROM cooks WHERE id = ?", (cook_id,)).fetchone()
         if row is None:
@@ -257,7 +260,8 @@ def get_cook(cook_id: int) -> Optional[dict]:
             float(cook["servings_produced"]) - sum(p["count"] for p in placements), 3)
         return cook
     finally:
-        conn.close()
+        if owns_connection:
+            conn.close()
 
 
 def update_cook(cook_id: int, **fields) -> dict:
@@ -463,9 +467,11 @@ def schedule_cook(cook_id: int, *, date: str, meal: str, start: str,
     return get_cook(cook_id)
 
 
-def schedules_for_week(week: str) -> list[dict]:
-    """Persisted sessions with their current cook metadata, in start order."""
-    conn = inventory_db.connect()
+def schedules_for_week(week: str, *, conn=None) -> list[dict]:
+    """Persisted sessions in start order; a borrowed connection stays open."""
+    owns_connection = conn is None
+    if owns_connection:
+        conn = inventory_db.connect()
     try:
         return [_row_to_dict(row) for row in conn.execute(
             "SELECT s.cook_id, s.start, s.timezone, s.duration_minutes,"
@@ -473,7 +479,8 @@ def schedules_for_week(week: str) -> list[dict]:
             " FROM cook_schedule s JOIN cooks c ON c.id = s.cook_id"
             " WHERE c.week = ? ORDER BY s.start, s.cook_id", (week,)).fetchall()]
     finally:
-        conn.close()
+        if owns_connection:
+            conn.close()
 
 
 def _move_cook_in_txn(conn, cook_id: int, date: str, meal: str) -> None:
@@ -662,14 +669,18 @@ def move_bundle(bundle_id: str, date: str, meal: str) -> dict:
     return get_bundle(bundle_id)
 
 
-def cooks_for_week(week: str) -> list[dict]:
-    conn = inventory_db.connect()
+def cooks_for_week(week: str, *, conn=None) -> list[dict]:
+    """Read full cook/placement records through one owned or borrowed connection."""
+    owns_connection = conn is None
+    if owns_connection:
+        conn = inventory_db.connect()
     try:
         ids = [r["id"] for r in conn.execute(
             "SELECT id FROM cooks WHERE week = ? ORDER BY id", (week,)).fetchall()]
+        return [get_cook(i, conn=conn) for i in ids]
     finally:
-        conn.close()
-    return [get_cook(i) for i in ids]
+        if owns_connection:
+            conn.close()
 
 
 def freezer_contents() -> list[dict]:

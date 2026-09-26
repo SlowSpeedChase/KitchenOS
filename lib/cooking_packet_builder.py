@@ -13,6 +13,7 @@ import hashlib
 import math
 from pathlib import Path
 import re
+import sqlite3
 
 from lib import inventory_db, serving_ledger, shopping_list_generator as shopping
 from lib.ingredient_aggregator import (
@@ -76,10 +77,11 @@ def _convert(amount: float, source_unit: str, target_unit: str) -> float:
 
 
 def allocate_pull_sources(lines: list[dict], inventory_rows: list[dict]) -> list[dict]:
-    """Allocate credited demands to real containers, expiry then row ID.
+    """Allocate full ingredient requirements to containers, expiry then row ID.
 
-    ``lines`` uses the shopping generator's needed/from_pantry records. Each
-    raw row's available quantity is tracked once across the entire call.
+    ``lines`` uses the shopping generator's needed records. Its first pantry
+    match is not a cap: every eligible compatible raw row may contribute.
+    Each raw row's quantity is tracked once across the entire call.
     Output amounts use the demand's unit; inventory_amount uses the row unit.
     Matching and credit eligibility are delegated to the existing pantry rule.
     """
@@ -87,14 +89,12 @@ def allocate_pull_sources(lines: list[dict], inventory_rows: list[dict]) -> list
     remaining = {row["id"]: _quantity(row.get("quantity", row.get("amount"))) for row in rows}
     pulls = []
     for ordinal, line in enumerate(lines):
-        credited = line.get("from_pantry")
-        if not credited:
+        if line.get("status") == "excluded":
             continue
         item = line.get("item") or ""
-        needed = line.get("needed") or credited
-        unit = credited.get("unit") or ""
-        needed_in_credit_units = _convert(_quantity(needed.get("amount")), needed.get("unit") or "", unit)
-        demand = min(_quantity(credited.get("amount")), needed_in_credit_units)
+        needed = line.get("needed") or {}
+        unit = needed.get("unit") or ""
+        demand = _quantity(needed.get("amount"))
         line_id = line.get("item_id") or _id("demand", normalize_name(item), get_unit_family(unit), ordinal)
         for row in rows:
             available = remaining[row["id"]]
@@ -146,6 +146,23 @@ def _ingredient_group(ingredient: dict) -> tuple[str, str, str]:
     return identity, family, unit if family == "other" else ""
 
 
+def _read_week_sources(week: str, inventory_rows: list[dict] | None) -> tuple[list, list, list]:
+    """Read one snapshot without initialization, migration or provenance repair."""
+    path = inventory_db.db_path()
+    if not path.exists():
+        return [], [], inventory_rows if inventory_rows is not None else []
+    conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("BEGIN")
+        cooks = serving_ledger.cooks_for_week(week, conn=conn)
+        schedules = serving_ledger.schedules_for_week(week, conn=conn)
+        rows = inventory_db.fetch_inventory_rows_with_ids(conn=conn) if inventory_rows is None else inventory_rows
+        return cooks, schedules, rows
+    finally:
+        conn.close()
+
+
 def build_week_draft(week: str, recipes_dir: Path, *, inventory_rows: list[dict] | None = None,
                      now: datetime | None = None) -> dict:
     """Build a deterministic draft, including every cook regardless of placement."""
@@ -153,9 +170,8 @@ def build_week_draft(week: str, recipes_dir: Path, *, inventory_rows: list[dict]
     today = (now or datetime.now(timezone.utc)).date()
     monday = date.fromisocalendar(int(week[:4]), int(week[6:]), 1)
     sunday = date.fromisocalendar(int(week[:4]), int(week[6:]), 7)
-    cooks = serving_ledger.cooks_for_week(week)
-    schedules = serving_ledger.schedules_for_week(week)
-    rows = _usable_rows(inventory_db.fetch_inventory_rows_with_ids() if inventory_rows is None else inventory_rows, today)
+    cooks, schedules, inventory_rows = _read_week_sources(week, inventory_rows)
+    rows = _usable_rows(inventory_rows, today)
     packet = {"version": 1, "week": week, "status": "draft",
               "date_range": {"start": monday.isoformat(), "end": sunday.isoformat()},
               "cooks": [], "production_schedule": [], "recipe_cards": [], "pull_list": [],
@@ -231,10 +247,14 @@ def build_week_draft(week: str, recipes_dir: Path, *, inventory_rows: list[dict]
         line["source_inventory_row_ids"] = inventory_ids
         for pull in pulls:
             pull["line_id"] = line["item_id"]
-        if line.get("from_pantry"):
+        if line.get("status") != "excluded":
             needed_amount = _quantity(line["needed"]["amount"])
-            line["from_pantry"] = {"amount": credited, "unit": line["needed"]["unit"]} if credited else None
-            line["to_buy"] = {"amount": max(0.0, needed_amount - credited), "unit": line["needed"]["unit"]} if needed_amount > credited + 1e-12 else None
+            unit = line["needed"]["unit"]
+            line["from_pantry"] = {"amount": credited, "unit": unit} if credited else None
+            to_buy = max(0.0, needed_amount - credited)
+            line["to_buy"] = {"amount": to_buy if credited else line["needed"]["amount"],
+                              "unit": unit} if to_buy > 1e-12 else None
+            line["status"] = "credited" if credited else "review" if line.get("warning") else "buy"
         line["done"] = False
         if line.get("warning"):
             packet["warnings"].append({"item_id": _id("warning", line["item_id"], "inventory_match"),

@@ -228,3 +228,84 @@ def test_expired_rows_are_not_credited_and_source_row_changes_reidentify_purchas
     first_id = next(line for line in first["shopping_list"] if line["item"] == "corn")["item_id"]
     second_id = next(line for line in second["shopping_list"] if line["item"] == "corn")["item_id"]
     assert first_id != second_id
+
+
+@pytest.mark.parametrize("provenance", [None, "unrecognized"])
+def test_full_build_preserves_uncertain_provenance_and_database_bytes(tmp_db, tmp_vault, provenance):
+    recipes = recipe_dir(tmp_vault)
+    cook = serving_ledger.create_cook("Soup", WEEK, servings_produced=4)
+    serving_ledger.schedule_cook(cook["id"], date="2026-09-29", meal="dinner",
+                                 start="2026-09-29T18:00:00-05:00", timezone="America/Chicago",
+                                 duration_minutes=60, servings_to_eat=1)
+    inventory_db.merge_inventory_rows([stock(1, amount=2, location="garage")])
+    with sqlite3.connect(tmp_db) as conn:
+        conn.execute("UPDATE inventory SET location_source = ?", (provenance,))
+    with sqlite3.connect(tmp_db) as conn:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        before_rows = list(conn.iterdump())
+    before_bytes = tmp_db.read_bytes()
+    packet = build_week_draft(WEEK, recipes, now=NOW)
+    assert packet["pull_list"][0]["location_uncertain"] is True
+    assert packet["pull_list"][0]["location_source"] == "default"
+    assert packet["production_schedule"][0]["cook_id"] == cook["id"]
+    assert tmp_db.read_bytes() == before_bytes
+    with sqlite3.connect(tmp_db) as conn:
+        assert list(conn.iterdump()) == before_rows
+        assert conn.execute("SELECT location_source FROM inventory").fetchone()[0] == provenance
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_build_credits_full_need_across_inventory_units(tmp_db, tmp_vault, reverse):
+    recipes = recipe_dir(tmp_vault)
+    (recipes / "Soup.md").write_text(RECIPE.replace("| 1 | cup | beans |", "| 1 | lb | beans |"))
+    serving_ledger.create_cook("Soup", WEEK, servings_produced=4)
+    rows = [stock(1, "beans", 8, "oz", expires="2026-09-30"),
+            stock(2, "beans", 1, "lb", location="garage", expires="2026-10-01")]
+    packet = build_week_draft(WEEK, recipes, inventory_rows=list(reversed(rows)) if reverse else rows, now=NOW)
+    line = next(line for line in packet["shopping_list"] if line["item"] == "beans")
+    assert line["from_pantry"] == {"amount": 1, "unit": "lb"}
+    assert line["to_buy"] is None
+    assert [pull["inventory_amount"] for pull in packet["pull_list"]] == [8, 0.5]
+    assert [pull["inventory_row_id"] for pull in packet["pull_list"]] == [1, 2]
+
+
+def test_insufficient_mixed_units_leave_only_exact_gap_to_buy(tmp_db, tmp_vault):
+    recipes = recipe_dir(tmp_vault)
+    (recipes / "Soup.md").write_text(RECIPE.replace("| 1 | cup | beans |", "| 1 | lb | beans |"))
+    serving_ledger.create_cook("Soup", WEEK, servings_produced=4)
+    packet = build_week_draft(WEEK, recipes, inventory_rows=[
+        stock(1, "beans", 4, "oz"), stock(2, "beans", 0.5, "lb", location="garage")], now=NOW)
+    line = next(line for line in packet["shopping_list"] if line["item"] == "beans")
+    assert line["from_pantry"] == {"amount": 0.75, "unit": "lb"}
+    assert line["to_buy"] == {"amount": 0.25, "unit": "lb"}
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_allocator_multiple_demands_use_all_units_without_double_credit(reverse):
+    lines = [need("beans", 1, "lb", from_pantry={"amount": 0.5, "unit": "lb"}, item_id="first"),
+             need("beans", 12, "oz", from_pantry=None, item_id="second")]
+    if reverse:
+        lines.reverse()
+    pulls = allocate_pull_sources(lines, [stock(1, "beans", 8, "oz"), stock(2, "beans", 1, "lb")])
+    assert sum(p["inventory_amount"] for p in pulls if p["inventory_unit"] == "oz") == 8
+    assert sum(p["inventory_amount"] for p in pulls if p["inventory_unit"] == "lb") == 1
+    allocated_oz = sum(p["amount"] * (16 if p["unit"] == "lb" else 1) for p in pulls)
+    assert allocated_oz == 24
+    assert {p["line_id"] for p in pulls} == {"first", "second"}
+
+
+def test_compatible_stock_is_used_after_an_uncertain_first_match(tmp_db, tmp_vault):
+    recipes = recipe_dir(tmp_vault)
+    serving_ledger.create_cook("Soup", WEEK, servings_produced=4)
+    packet = build_week_draft(WEEK, recipes, inventory_rows=[
+        stock(1, amount=1, unit="ct"), stock(2, amount=2, location="garage")], now=NOW)
+    line = next(line for line in packet["shopping_list"] if line["item"] == "corn")
+    assert line["from_pantry"] == {"amount": 2, "unit": "can"}
+    assert line["to_buy"] is None
+    assert [pull["inventory_row_id"] for pull in packet["pull_list"]] == [2]
+
+
+def test_empty_build_does_not_create_an_absent_database(tmp_db, tmp_vault):
+    packet = build_week_draft(WEEK, recipe_dir(tmp_vault), now=NOW)
+    assert packet["cooks"] == [] and packet["production_schedule"] == []
+    assert not tmp_db.exists()
