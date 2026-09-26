@@ -258,6 +258,64 @@ def extract_ingredients_section(body: str) -> str:
     return match.group(1).strip() if match else ""
 
 
+INSTRUCTION_PHASE_HEADINGS = {
+    "prep_or_flavor_base": "Prep or Flavor Base",
+    "cook": "Cook",
+    "finish_and_taste": "Finish and Taste",
+    "freeze_and_store": "Freeze and Store",
+    "reheat": "Reheat",
+}
+
+
+def normalize_instruction_phase(value) -> str | None:
+    """Accept approved phase keys or their headings; leave unknown phases unset."""
+    if not isinstance(value, str):
+        return None
+    key = value.strip().lower().replace("&", " and ").replace("/", " or ")
+    key = re.sub(r"[\s_-]+", "_", key).strip("_")
+    return key if key in INSTRUCTION_PHASE_HEADINGS else None
+
+
+def _parse_phased_instructions(inst_text: str) -> list[dict] | None:
+    """Parse phased steps in document order; None selects the legacy parser."""
+    sections = re.split(r'^###[ \t]+(.+?)[ \t]*$', inst_text, flags=re.MULTILINE)
+    if not any(normalize_instruction_phase(heading) for heading in sections[1::2]):
+        return None
+
+    instructions = []
+    phase = None
+    for index, section in enumerate(sections):
+        if index % 2:
+            # A neutral or unknown heading resets the phase, so uncertain
+            # instructions cannot silently inherit the preceding classification.
+            phase = normalize_instruction_phase(section)
+            continue
+        steps = re.findall(r'^\d+\.\s+(.+?)(?=\n\d+\.\s|\Z)', section,
+                           re.MULTILINE | re.DOTALL)
+        for text in steps:
+            instruction = {"step": len(instructions) + 1, "text": text.strip(), "time": None}
+            if phase:
+                instruction["phase"] = phase
+            instructions.append(instruction)
+    return instructions
+
+
+def _group_instruction_phases(instructions: list[dict]) -> dict[str, list[dict]]:
+    phases = {}
+    for instruction in instructions:
+        phase = instruction.get("phase")
+        if phase:
+            phases.setdefault(phase, []).append(instruction)
+    return phases
+
+
+def parse_instruction_phases(body: str) -> dict[str, list[dict]]:
+    """Group native phase instructions while retaining their global step numbers."""
+    match = re.search(r'## Instructions\n\n(.*?)(?=\n## |\Z)', body, re.DOTALL)
+    instructions = _parse_phased_instructions(match.group(1).strip()) if match else None
+    return _group_instruction_phases(instructions or [])
+
+
 def parse_recipe_body(body: str) -> dict:
     """Parse recipe body into structured data for re-rendering.
 
@@ -267,7 +325,8 @@ def parse_recipe_body(body: str) -> dict:
         body: The markdown body (after frontmatter)
 
     Returns:
-        dict with 'ingredients', 'instructions', 'description', 'video_tips'
+        dict with 'ingredients', 'instructions', 'description', 'video_tips';
+        native phase headings additionally produce 'instruction_phases'.
     """
     result = {
         'ingredients': [],
@@ -291,14 +350,19 @@ def parse_recipe_body(body: str) -> dict:
     inst_match = re.search(r'## Instructions\n\n(.*?)(?=\n## |\Z)', body, re.DOTALL)
     if inst_match:
         inst_text = inst_match.group(1).strip()
-        # Parse numbered steps
-        steps = re.findall(r'^(\d+)\.\s+(.+?)(?=\n\d+\.\s|\Z)', inst_text, re.MULTILINE | re.DOTALL)
-        for step_num, step_text in steps:
-            result['instructions'].append({
-                'step': int(step_num),
-                'text': step_text.strip(),
-                'time': None
-            })
+        phased = _parse_phased_instructions(inst_text)
+        if phased is not None:
+            result['instructions'] = phased
+            result['instruction_phases'] = _group_instruction_phases(phased)
+        else:
+            # Keep legacy numbering, text and dict shape exactly as before.
+            steps = re.findall(r'^(\d+)\.\s+(.+?)(?=\n\d+\.\s|\Z)', inst_text, re.MULTILINE | re.DOTALL)
+            for step_num, step_text in steps:
+                result['instructions'].append({
+                    'step': int(step_num),
+                    'text': step_text.strip(),
+                    'time': None
+                })
 
     # Extract video tips
     tips_match = re.search(r'## Tips from the Video\n\n(.*?)(?=\n## |\Z)', body, re.DOTALL)

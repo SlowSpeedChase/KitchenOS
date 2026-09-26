@@ -8,6 +8,56 @@ from templates.recipe_template import (
 )
 
 
+def _instruction_body(instructions):
+    rendered = format_recipe_markdown(
+        {"recipe_name": "Test Recipe", "ingredients": [], "instructions": instructions},
+        "http://test.com", "Test", "Channel",
+    )
+    return rendered.split("## Instructions\n\n", 1)[1].split("\n## ", 1)[0].strip()
+
+
+def test_template_writes_phase_heading_once_per_transition():
+    body = _instruction_body([
+        {"step": 1, "text": "Chop.", "phase": "prep_or_flavor_base"},
+        {"step": 2, "text": "Simmer.", "phase": "cook"},
+        {"step": 3, "text": "Add lemon.", "phase": "finish_and_taste"},
+        {"step": 4, "text": "Taste salt.", "phase": "Finish & Taste"},
+        {"step": 5, "text": "Freeze.", "phase": "freeze_and_store"},
+        {"step": 6, "text": "Warm.", "phase": "reheat"},
+        {"step": 7, "text": "Sear.", "phase": "cook"},
+    ])
+    assert body.count("### Finish and Taste") == 1
+    assert body.count("### Cook") == 2
+    assert "### Prep or Flavor Base" in body
+    assert "### Freeze and Store" in body
+    assert "### Reheat" in body
+    assert body.index("1. Chop.") < body.index("6. Warm.") < body.index("7. Sear.")
+
+
+@pytest.mark.parametrize("phase", ["__absent__", None, "unrecognized"])
+def test_template_legacy_instructions_render_unchanged(phase):
+    phase_field = {} if phase == "__absent__" else {"phase": phase}
+    body = _instruction_body([
+        {"step": 2, "text": "Mix.\n\nRest.", "time": "5 min", **phase_field},
+        {"step": 5, "text": "Bake.", "time": None, **phase_field},
+    ])
+    assert body == "2. Mix. (5 min)\n\n   Rest.\n\n\n5. Bake."
+
+
+def test_template_nullable_phase_does_not_reclassify_a_later_step():
+    from lib.recipe_parser import parse_recipe_body
+
+    body = _instruction_body([
+        {"step": 1, "text": "Simmer.", "phase": "cook"},
+        {"step": 2, "text": "Check source.", "phase": None},
+        {"step": 3, "text": "Read notes.", "phase": None},
+        {"step": 4, "text": "Warm.", "phase": "reheat"},
+    ])
+    parsed = parse_recipe_body("## Instructions\n\n" + body)
+    assert body.count("### Instructions") == 1
+    assert [step.get("phase") for step in parsed["instructions"]] == ["cook", None, None, "reheat"]
+
+
 def test_generate_tools_callout():
     """Tools callout should include both buttons with correct filename"""
     callout = generate_tools_callout("Pasta Aglio E Olio.md")
