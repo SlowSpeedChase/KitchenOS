@@ -1814,6 +1814,25 @@ def api_cook_move(cook_id):
     return jsonify(cook)
 
 
+@app.route('/api/cooks/<int:cook_id>/schedule', methods=['POST'])
+@require_token
+@_ledger_error
+def api_cook_schedule(cook_id):
+    """Persist a timed cooking session and its first serving placement."""
+    from lib import serving_ledger
+    data = request.get_json(force=True, silent=True)
+    required = {"date", "meal", "start", "timezone", "duration_minutes", "servings_to_eat"}
+    if not isinstance(data, dict) or set(data) != required:
+        raise ValueError("schedule requires exactly date, meal, start, timezone,"
+                         " duration_minutes, and servings_to_eat")
+    if serving_ledger.get_cook(cook_id) is None:
+        return jsonify({"error": "cook not found"}), 404
+    cook = serving_ledger.schedule_cook(cook_id, **data)
+    _regen_weeks(cook["week"])
+    _sync_cook_history(cook["recipe"])
+    return jsonify(cook)
+
+
 @app.route('/api/cooks/<int:cook_id>', methods=['DELETE'])
 @require_token
 @_ledger_error

@@ -123,6 +123,12 @@ CREATE TABLE IF NOT EXISTS placements (
     meal TEXT,
     count REAL NOT NULL DEFAULT 1.0
 );
+CREATE TABLE IF NOT EXISTS cook_schedule (
+    cook_id INTEGER PRIMARY KEY REFERENCES cooks(id) ON DELETE CASCADE,
+    start TEXT NOT NULL,
+    timezone TEXT NOT NULL,
+    duration_minutes INTEGER NOT NULL CHECK (duration_minutes BETWEEN 15 AND 360)
+);
 CREATE INDEX IF NOT EXISTS idx_cooks_week ON cooks(week);
 CREATE INDEX IF NOT EXISTS idx_placements_cook ON placements(cook_id);
 """

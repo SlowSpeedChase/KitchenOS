@@ -28,6 +28,7 @@ commit or roll back explicitly in a try/except/finally.
 from __future__ import annotations
 
 import contextlib
+import math
 import re
 import sqlite3
 import uuid
@@ -274,6 +275,15 @@ def update_cook(cook_id: int, **fields) -> dict:
     conn = inventory_db.connect()
     try:
         with _write_txn(conn):
+            if "date" in fields or "meal" in fields:
+                row = conn.execute("SELECT date, meal FROM cooks WHERE id = ?",
+                                   (cook_id,)).fetchone()
+                if row is not None and any(
+                    key in fields and fields[key] != row[key]
+                    for key in ("date", "meal")
+                ):
+                    conn.execute("DELETE FROM cook_schedule WHERE cook_id = ?",
+                                 (cook_id,))
             if "servings_produced" in fields:
                 new_cap = float(fields["servings_produced"])
                 placed = _placed_sum(conn, cook_id)
@@ -406,6 +416,66 @@ def move_cook(cook_id: int, date: str, meal: str) -> dict:
     return get_cook(cook_id)
 
 
+def schedule_cook(cook_id: int, *, date: str, meal: str, start: str,
+                  timezone: str, duration_minutes: int,
+                  servings_to_eat: float) -> dict:
+    """Move a single uncooked recipe and upsert its timed session atomically.
+
+    A previously unanchored cook gets its first slot placement exactly once.
+    Retrying or rescheduling an anchored cook preserves its placed counts.
+    The BEGIN IMMEDIATE lock covers the anchor read as well as every write.
+    """
+    from lib import cook_schedule
+
+    start = cook_schedule.validate(date, start, timezone, duration_minutes)
+    _validate_placement("slot", date, meal)
+    try:
+        count = float(servings_to_eat)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("servings_to_eat must be finite and positive") from None
+    if isinstance(servings_to_eat, bool) or not math.isfinite(count) or count <= 0:
+        raise ValueError("servings_to_eat must be finite and positive")
+    conn = inventory_db.connect()
+    try:
+        with _write_txn(conn):
+            row = conn.execute("SELECT * FROM cooks WHERE id = ?",
+                               (cook_id,)).fetchone()
+            if row is None:
+                raise ValueError(f"cook {cook_id} not found")
+            if row["cooked_at"] is not None:
+                raise ValueError("cannot schedule an already cooked recipe")
+            if row["bundle_id"] is not None:
+                raise ValueError("cannot schedule a bundle member")
+            first_placement = not row["date"] or not row["meal"]
+            if first_placement:
+                _check_capacity(conn, cook_id, count)
+            _move_cook_in_txn(conn, cook_id, date, meal)
+            if first_placement:
+                _merge_or_insert(conn, cook_id, "slot", date, meal, count)
+            conn.execute(
+                "INSERT INTO cook_schedule (cook_id, start, timezone, duration_minutes)"
+                " VALUES (?, ?, ?, ?) ON CONFLICT(cook_id) DO UPDATE SET"
+                " start = excluded.start, timezone = excluded.timezone,"
+                " duration_minutes = excluded.duration_minutes",
+                (cook_id, start, timezone, duration_minutes))
+    finally:
+        conn.close()
+    return get_cook(cook_id)
+
+
+def schedules_for_week(week: str) -> list[dict]:
+    """Persisted sessions with their current cook metadata, in start order."""
+    conn = inventory_db.connect()
+    try:
+        return [_row_to_dict(row) for row in conn.execute(
+            "SELECT s.cook_id, s.start, s.timezone, s.duration_minutes,"
+            " c.recipe, c.week, c.date, c.meal, c.scale, c.servings_produced, c.cooked_at"
+            " FROM cook_schedule s JOIN cooks c ON c.id = s.cook_id"
+            " WHERE c.week = ? ORDER BY s.start, s.cook_id", (week,)).fetchall()]
+    finally:
+        conn.close()
+
+
 def _move_cook_in_txn(conn, cook_id: int, date: str, meal: str) -> None:
     """Re-anchor one cook. Caller owns validation and the transaction.
 
@@ -428,6 +498,7 @@ def _move_cook_in_txn(conn, cook_id: int, date: str, meal: str) -> None:
     old_date, old_meal = row["date"], row["meal"]
     if (old_date, old_meal) == (date, meal):
         return
+    conn.execute("DELETE FROM cook_schedule WHERE cook_id = ?", (cook_id,))
     conn.execute("UPDATE cooks SET date = ?, meal = ? WHERE id = ?",
                  (date, meal, cook_id))
     # `IS` rather than `=` so a NULL old anchor matches nothing instead of
