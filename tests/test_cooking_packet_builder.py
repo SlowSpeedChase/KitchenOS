@@ -1,0 +1,230 @@
+"""Packet composition uses real W40-shaped cooks without changing source data."""
+from copy import deepcopy
+from datetime import datetime, timezone
+import sqlite3
+
+import pytest
+
+from lib import inventory_db, serving_ledger
+from lib.cooking_packet_builder import allocate_pull_sources, build_week_draft
+from lib.cooking_packet_store import _validate_generated
+
+WEEK = "2026-W40"
+NOW = datetime(2026, 9, 26, 12, tzinfo=timezone.utc)
+RECIPE = """---
+title: Soup
+servings: 4
+equipment: [Instant Pot, ladle]
+source_url: https://example.test/soup
+---
+
+## Ingredients
+
+| Amount | Unit | Ingredient |
+|--------|------|------------|
+| 2 | can | corn |
+| 1 | cup | beans |
+
+## Instructions
+
+### Prep or Flavor Base
+
+1. Soak beans overnight.
+
+### Cook
+
+1. Simmer the soup.
+
+### Freeze and Store
+
+1. Cool then freeze in portions.
+
+### Reheat
+
+1. Warm gently.
+"""
+
+
+def recipe_dir(tmp_vault):
+    recipes = tmp_vault / "Recipes"
+    recipes.mkdir(parents=True, exist_ok=True)
+    (recipes / "Soup.md").write_text(RECIPE, encoding="utf-8")
+    return recipes
+
+
+def stock(row_id, name="corn", amount=1, unit="can", location="pantry", **extra):
+    return {"id": row_id, "name": name, "quantity": amount, "unit": unit,
+            "location": location, "location_source": "manual", "expires": None, **extra}
+
+
+def need(item="corn", amount=2, unit="can", **extra):
+    return {"item": item, "needed": {"amount": amount, "unit": unit},
+            "from_pantry": {"amount": amount, "unit": unit}, **extra}
+
+
+def test_unassigned_cooks_are_packet_recipes(tmp_db, tmp_vault):
+    recipes = recipe_dir(tmp_vault)
+    cooks = [serving_ledger.create_cook("Soup", WEEK, servings_produced=4) for _ in range(4)]
+    packet = build_week_draft(WEEK, recipes, inventory_rows=[], now=NOW)
+    assert [r["recipe"] for r in packet["recipe_cards"]] == ["Soup"]
+    assert {c["cook_id"] for c in packet["cooks"]} == {c["id"] for c in cooks}
+    assert all(c["unassigned"] == 4 for c in packet["cooks"])
+    assert packet["recipe_cards"][0]["scale"] == 4
+    assert packet["recipe_cards"][0]["ingredients"][0]["amount"] == "8"
+
+
+def test_duplicate_inventory_locations_credit_once_and_name_both():
+    rows = [stock(1), stock(2, location="garage")]
+    pulls = allocate_pull_sources([need()], rows)
+    assert sum(float(x["amount"]) for x in pulls) == 2
+    assert {x["location"] for x in pulls} == {"pantry", "garage"}
+    assert {x["inventory_row_id"] for x in pulls} == {1, 2}
+
+
+def test_allocation_caps_shared_stock_across_lines_and_preserves_inputs():
+    rows = [stock(1, amount=2)]
+    lines = [need(amount=1), need(amount=2, item_id="second-demand")]
+    before = deepcopy((rows, lines))
+    pulls = allocate_pull_sources(lines, rows)
+    assert sum(float(x["amount"]) for x in pulls) == 2
+    assert (rows, lines) == before
+    assert len({p["item_id"] for p in pulls}) == len(pulls)
+
+
+def test_allocation_uses_expiry_then_row_id_and_retains_uncertainty():
+    rows = [stock(4, location="garage", expires="2026-10-03"),
+            stock(2, location="fridge", expires="2026-10-01", location_source=None),
+            stock(1, location="freezer", expires="2026-10-01", location_source="default")]
+    pulls = allocate_pull_sources([need(amount=2)], rows)
+    assert [p["inventory_row_id"] for p in pulls] == [1, 2]
+    assert all(p["location_source"] == "default" and p["location_uncertain"] for p in pulls)
+
+
+def test_allocation_converts_units_and_does_not_recredit_consumed_row():
+    pulls = allocate_pull_sources(
+        [need("beans", 1, "lb"), need("beans", 8, "oz", item_id="more-beans")],
+        [stock(1, "beans", 20, "oz")])
+    assert [float(p["amount"]) for p in pulls] == [1, 4]
+    assert [float(p["inventory_amount"]) for p in pulls] == [16, 4]
+
+
+@pytest.mark.parametrize("row", [stock(1, "corn", 4, "ct"), stock(1, "corn flour", 2, "can")])
+def test_uncertain_inventory_match_is_not_a_pull(row):
+    assert allocate_pull_sources([need()], [row]) == []
+
+
+def test_native_phases_schedule_equipment_and_sunday_range(tmp_db, tmp_vault):
+    recipes = recipe_dir(tmp_vault)
+    cook = serving_ledger.create_cook("Soup", WEEK, servings_produced=4)
+    serving_ledger.schedule_cook(cook["id"], date="2026-09-29", meal="dinner",
+                                 start="2026-09-29T18:00:00-05:00", timezone="America/Chicago",
+                                 duration_minutes=60, servings_to_eat=1)
+    packet = build_week_draft(WEEK, recipes, inventory_rows=[], now=NOW)
+    card = packet["recipe_cards"][0]
+    assert [x["step"] for x in card["instructions"]] == [1, 2, 3, 4]
+    assert list(card["instruction_phases"]) == ["prep_or_flavor_base", "cook", "freeze_and_store", "reheat"]
+    assert {row["text"] for row in packet["equipment"]} == {"Instant Pot", "ladle"}
+    assert {row["phase"] for row in packet["freeze_reheat"]} == {"freeze_and_store", "reheat"}
+    scheduled = packet["production_schedule"][0]
+    assert scheduled["cook_id"] == cook["id"] and scheduled["source"] == "cook_schedule"
+    assert scheduled["start"] == "2026-09-29T18:00:00-05:00"
+    assert packet["date_range"] == {"start": "2026-09-28", "end": "2026-10-04"}
+    _validate_generated(WEEK, packet)
+
+
+def test_missing_and_legacy_recipes_warn_without_losing_cooks(tmp_db, tmp_vault):
+    recipes = recipe_dir(tmp_vault)
+    (recipes / "Soup.md").write_text(RECIPE.replace("### Prep or Flavor Base\n\n", "").replace(
+        "### Cook\n\n", "").replace("### Freeze and Store\n\n", "").replace("### Reheat\n\n", ""))
+    serving_ledger.create_cook("Soup", WEEK, servings_produced=4)
+    serving_ledger.create_cook("Missing", WEEK, servings_produced=4)
+    packet = build_week_draft(WEEK, recipes, inventory_rows=[], now=NOW)
+    assert {c["recipe"] for c in packet["recipe_cards"]} == {"Soup", "Missing"}
+    soup = next(c for c in packet["recipe_cards"] if c["recipe"] == "Soup")
+    assert soup["needs_classification"] is True and len(soup["instructions"]) == 4
+    assert any(w["recipe"] == "Missing" for w in packet["warnings"])
+    assert packet["shared_prep"] == []
+
+
+def test_recipe_display_changes_do_not_reidentify_card_or_steps(tmp_db, tmp_vault):
+    recipes = recipe_dir(tmp_vault)
+    serving_ledger.create_cook("Soup", WEEK, servings_produced=4)
+    before = build_week_draft(WEEK, recipes, inventory_rows=[], now=NOW)
+    (recipes / "Soup.md").write_text(RECIPE.replace("title: Soup", "title: A Better Soup").replace(
+        "Simmer the soup.", "Simmer gently."))
+    after = build_week_draft(WEEK, recipes, inventory_rows=[], now=NOW)
+    assert before["recipe_cards"][0]["item_id"] == after["recipe_cards"][0]["item_id"]
+    assert before["recipe_cards"][0]["instruction_phases"]["cook"][0]["item_id"] == after["recipe_cards"][0]["instruction_phases"]["cook"][0]["item_id"]
+    _validate_generated(WEEK, after)
+
+
+def test_building_draft_changes_no_database_or_vault_sources(tmp_db, tmp_vault):
+    recipes = recipe_dir(tmp_vault)
+    serving_ledger.create_cook("Soup", WEEK, servings_produced=4)
+    inventory_db.merge_inventory_rows([stock(1), stock(2, location="garage")])
+    rows = inventory_db.fetch_inventory_rows_with_ids()
+    conn = inventory_db.connect()
+    before_db = list(conn.iterdump())
+    conn.close()
+    before_files = {p: p.read_bytes() for p in tmp_vault.rglob("*") if p.is_file()}
+    packet = build_week_draft(WEEK, recipes, now=NOW)
+    assert sum(float(p["amount"]) for p in packet["pull_list"]) == 2
+    assert any(row["item"] == "beans" for row in packet["shopping_list"])
+    assert inventory_db.fetch_inventory_rows_with_ids() == rows
+    conn = inventory_db.connect()
+    assert list(conn.iterdump()) == before_db
+    conn.close()
+    assert {p: p.read_bytes() for p in tmp_vault.rglob("*") if p.is_file()} == before_files
+
+
+def test_raw_inventory_reader_preserves_ids_and_distinct_locations(tmp_db):
+    inventory_db.merge_inventory_rows([stock(1), stock(2, location="garage")])
+    rows = inventory_db.fetch_inventory_rows_with_ids()
+    assert len(rows) == 2 and len({r["id"] for r in rows}) == 2
+    assert {r["location"] for r in rows} == {"pantry", "garage"}
+    assert inventory_db.fetch_inventory_rows_with_ids() == rows
+
+
+def test_invalid_week_is_rejected_before_reading_sources(tmp_db, tmp_vault):
+    with pytest.raises(ValueError):
+        build_week_draft("2026-W54", tmp_vault / "Recipes", inventory_rows=[])
+
+
+def test_raw_inventory_reader_does_not_backfill_null_provenance(tmp_db):
+    inventory_db.merge_inventory_rows([stock(1), stock(2, location="garage")])
+    with sqlite3.connect(tmp_db) as conn:
+        conn.execute("UPDATE inventory SET location_source = NULL WHERE location = 'garage'")
+    rows = inventory_db.fetch_inventory_rows_with_ids()
+    assert next(r for r in rows if r["location"] == "garage")["location_source"] is None
+    with sqlite3.connect(tmp_db) as conn:
+        assert conn.execute("SELECT location_source FROM inventory WHERE location = 'garage'").fetchone()[0] is None
+
+
+def test_packet_ids_separate_distinct_units_for_same_ingredient(tmp_db, tmp_vault):
+    recipes = recipe_dir(tmp_vault)
+    (recipes / "Soup.md").write_text(RECIPE.replace("| 1 | cup | beans |", """| 1 | jar | beans |
+| 2 | bag | beans |"""))
+    serving_ledger.create_cook("Soup", WEEK, servings_produced=4)
+    packet = build_week_draft(WEEK, recipes, inventory_rows=[], now=NOW)
+    assert len([line for line in packet["shopping_list"] if line["item"] == "beans"]) == 2
+    _validate_generated(WEEK, packet)
+
+
+def test_fractional_allocation_does_not_round_past_stock():
+    pulls = allocate_pull_sources([need(amount=1)], [stock(1, amount=0.666666)])
+    assert pulls[0]["amount"] == pytest.approx(0.666666)
+    assert pulls[0]["inventory_amount"] <= 0.666666
+
+
+def test_expired_rows_are_not_credited_and_source_row_changes_reidentify_purchase(tmp_db, tmp_vault):
+    recipes = recipe_dir(tmp_vault)
+    serving_ledger.create_cook("Soup", WEEK, servings_produced=4)
+    expired = stock(1, amount=2, expires="2026-09-25")
+    packet = build_week_draft(WEEK, recipes, inventory_rows=[expired], now=NOW)
+    assert packet["pull_list"] == []
+    assert next(line for line in packet["shopping_list"] if line["item"] == "corn")["to_buy"]["amount"] == "2"
+    first = build_week_draft(WEEK, recipes, inventory_rows=[stock(1)], now=NOW)
+    second = build_week_draft(WEEK, recipes, inventory_rows=[stock(2)], now=NOW)
+    first_id = next(line for line in first["shopping_list"] if line["item"] == "corn")["item_id"]
+    second_id = next(line for line in second["shopping_list"] if line["item"] == "corn")["item_id"]
+    assert first_id != second_id
