@@ -232,9 +232,24 @@ def build_week_draft(week: str, recipes_dir: Path, *, inventory_rows: list[dict]
             card["needs_classification"] = True
             packet["warnings"].append(_warning(recipe, "legacy_phases", f"Instruction phases need review: {recipe}"))
 
-    prep_recipes = [{"recipe": card["recipe"], "scale": card["scale"], "classified_instructions": sorted([
-        row for rows in card["instruction_phases"].values() for row in rows], key=lambda row: row["source_ordinal"])}
-        for card in packet["recipe_cards"]]
+    prep_recipes = []
+    schedules_by_cook = {row["cook_id"]: row for row in schedules}
+    for card in packet["recipe_cards"]:
+        instructions = sorted([row for rows in card["instruction_phases"].values() for row in rows],
+                              key=lambda row: row["source_ordinal"])
+        # Prep serves a particular cook. Weekly card totals cannot safely become
+        # one immediate-use batch spanning different cooking sessions.
+        for cook in by_recipe[card["recipe"]]:
+            source_ids = {row["source_id"]: _id("prep_source", row["source_id"], cook["id"])
+                          for row in instructions}
+            schedule = schedules_by_cook.get(cook["id"], {})
+            prep_recipes.append({"recipe": card["recipe"], "scale": cook["scale"],
+                "dependent_cooks": [{"cook_id": cook["id"], **{
+                    key: schedule.get(key) for key in ("date", "start", "timezone")}}],
+                "classified_instructions": [{**row,
+                    "recipe_source_id": row["source_id"], "source_id": source_ids[row["source_id"]],
+                    "depends_on": [source_ids.get(parent, parent) for parent in row["depends_on"]]}
+                    for row in instructions]})
     packet["shared_prep"] = build_shared_prep(prep_recipes)
     # Reheating needs an eating date, which is not implied by a production cook.
     storage_tasks = [row for row in packet["freeze_reheat"] if row["phase"] == "freeze_and_store"]

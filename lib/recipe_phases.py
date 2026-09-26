@@ -9,7 +9,8 @@ from collections import defaultdict
 from contextlib import contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from fractions import Fraction
 import hashlib
 import json
 import math
@@ -106,13 +107,29 @@ def _phase(text):
 
 
 def _duration(text):
-    matches = re.findall(r"\b(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?)\b", text, re.I)
+    matches = re.findall(r"(?<![\w/.])(\d+\s+\d+\s*/\s*\d+|\d+\s*/\s*\d+|\d+(?:\.\d+)?)"
+                         r"\s*(minutes?|mins?|hours?|hrs?)\b", text, re.I)
     # Multiple timings and ranges are ambiguous, not additive durations.
     if len(matches) != 1 or re.search(r"\d\s*(?:-|–|to)\s*\d", text):
         return None
     value, unit = matches[0]
-    minutes = float(value) * (60 if unit.lower().startswith(("hour", "hr")) else 1)
+    try:
+        value = re.sub(r"\s*/\s*", "/", value)
+        minutes = float(sum(Fraction(part) for part in value.split())) * (
+            60 if unit.lower().startswith(("hour", "hr")) else 1)
+    except (ValueError, ZeroDivisionError, OverflowError):
+        return None
     return minutes if 0 < minutes <= 1440 else None
+
+
+def _timing(text, instruction):
+    """Source phases cannot grant advance-preparation permission."""
+    text = text.replace("’", "'")
+    sensitive = bool(instruction.get("time_sensitive")) or bool(re.search(
+        r"\b(?:just before|immediately|right before|at serving)\b", text, re.I))
+    advance = bool(re.search(r"\b(?:day before|in advance|ahead(?: of time)?|overnight)\b", text, re.I))
+    negated = advance and bool(re.search(r"\b(?:not|never|don't|cannot|can't)\b", text, re.I))
+    return advance and not (sensitive or negated), sensitive, negated or (advance and sensitive)
 
 
 def classify_legacy_steps(recipe: str, instructions: list[dict]) -> dict:
@@ -128,15 +145,16 @@ def classify_legacy_steps(recipe: str, instructions: list[dict]) -> dict:
         native = instruction.get("phase") in INSTRUCTION_PHASE_HEADINGS
         phase = instruction["phase"] if native else _phase(text)
         source_id = instruction.get("source_id") or _id("instruction", recipe, ordinal)
-        sensitive = bool(instruction.get("time_sensitive")) or bool(re.search(
-            r"\b(?:just before|immediately|right before|at serving)\b", text, re.I))
-        ahead = bool(re.search(r"\b(?:day before|in advance|ahead of time|overnight)\b", text, re.I)) and not sensitive
+        ahead, sensitive, timing_review = _timing(text, instruction)
+        duration = _duration(text)
+        duration_review = duration is None and bool(re.search(r"\b(?:minutes?|mins?|hours?|hrs?)\b", text, re.I))
         rows.append({**deepcopy(instruction), "source_id": source_id, "source_ordinal": ordinal,
             "recipe": recipe, "phase": phase, "can_do_ahead": ahead,
-            "time_sensitive": sensitive, "duration_minutes": _duration(text),
-            "duration_source": "recipe" if _duration(text) is not None else None,
+            "time_sensitive": sensitive, "duration_minutes": duration,
+            "duration_source": "recipe" if duration is not None else None,
             "depends_on": [], "confidence": 1.0 if native else 0.5 if phase != "instructions" else 0.0,
-            "needs_review": not native, "source": "native_phase" if native else "heuristic"})
+            "needs_review": not native or timing_review or duration_review,
+            "source": "native_phase" if native else "heuristic"})
     known = {row["source_id"] for row in rows}
     for original, row in zip(instructions, rows):
         deps = original.get("depends_on", [])
@@ -176,6 +194,7 @@ def _candidate(recipe, instruction, ordinal):
     source_id = instruction.get("source_id") or _id("instruction", recipe, ordinal)
     return {**deepcopy(prep), "text": instruction.get("text", ""), "recipe": recipe,
             "source_id": source_id, "source_ordinal": ordinal,
+            "recipe_source_id": instruction.get("recipe_source_id", source_id),
             "phase": instruction.get("phase", "instructions"),
             "can_do_ahead": instruction.get("can_do_ahead", False),
             "time_sensitive": instruction.get("time_sensitive", False),
@@ -239,7 +258,34 @@ def _merge_key(row):
                   row["storage"].casefold().strip(), row.get("pressure_minutes"),
                   row.get("pressure_release"), row.get("liquid_ratio"),
                   row["can_do_ahead"], row["time_sensitive"], row["duration_minutes"]]
+    if _requires_session(row):
+        session = _session_key(row.get("dependent_cooks", []))
+        if session is None:
+            return None
+        attributes.append(session)
     return json.dumps(attributes, sort_keys=True, allow_nan=False)
+
+
+def _requires_session(row):
+    storage = str(row.get("storage") or "").strip().casefold()
+    return (row.get("time_sensitive") or not row.get("can_do_ahead") or
+            storage in ("", "none", "no storage", "use immediately"))
+
+
+def _session_key(cooks):
+    """Only authoritative, fully timed, identical local sessions are compatible."""
+    if not cooks:
+        return None
+    sessions = set()
+    try:
+        for cook in cooks:
+            start = datetime.fromisoformat(cook["start"])
+            if start.utcoffset() is None or start.date().isoformat() != cook["date"]:
+                return None
+            sessions.add((cook["date"], start.isoformat(), cook["timezone"]))
+    except (KeyError, TypeError, ValueError):
+        return None
+    return next(iter(sessions)) if len(sessions) == 1 else None
 
 
 def build_shared_prep(recipes: list[dict], proposer: Callable | None = None) -> list[dict]:
@@ -256,6 +302,10 @@ def build_shared_prep(recipes: list[dict], proposer: Callable | None = None) -> 
         for ordinal, instruction in enumerate(rows, 1):
             candidate = _candidate(recipe["recipe"], instruction, ordinal)
             if candidate:
+                candidate["dependent_cooks"] = deepcopy(recipe.get("dependent_cooks", []))
+                candidate["dependent_cook_ids"] = [row["cook_id"] for row in candidate["dependent_cooks"]]
+                candidate["session_unresolved"] = bool(_requires_session(candidate) and
+                    _session_key(candidate["dependent_cooks"]) is None)
                 scale = recipe.get("scale", 1)
                 amount = parse_amount_to_float(candidate.get("amount"))
                 if isinstance(scale, (int, float)) and not isinstance(scale, bool) and math.isfinite(scale) and scale > 0:
@@ -314,8 +364,12 @@ def build_shared_prep(recipes: list[dict], proposer: Callable | None = None) -> 
                 amount += value
             row["amount"] = amount
         row.update(item_id=item_id, source_ids=source_ids, recipes=sorted({r["recipe"] for r in bucket}),
+                   dependent_cook_ids=sorted({cook_id for r in bucket for cook_id in r["dependent_cook_ids"]}),
+                   dependent_cooks=[cook for r in bucket for cook in r["dependent_cooks"]],
                    contributions=[{"source_id": r["source_id"], "recipe": r["recipe"],
-                                   "amount": r.get("amount"), "unit": r.get("unit")} for r in bucket],
+                                   "recipe_source_id": r["recipe_source_id"],
+                                   "amount": r.get("amount"), "unit": r.get("unit"),
+                                   "dependent_cook_ids": r["dependent_cook_ids"]} for r in bucket],
                    depends_on=sorted({d for r in bucket for d in r["depends_on"]}),
                    needs_review=key is None or any(r["needs_review"] for r in bucket), source="shared_prep", done=False)
         result.append(row)
@@ -324,76 +378,129 @@ def build_shared_prep(recipes: list[dict], proposer: Callable | None = None) -> 
     return result
 
 
-def build_production_schedule(cooks: list[dict], shared_prep: list[dict], storage_tasks: list[dict]) -> list[dict]:
-    """Topologically schedule packet tasks without moving authoritative cooks.
-
-    Input cooks are authoritative schedule rows. Prep is anchored to the earliest
-    matching recipe cook. Cycles/missing links stay visible with an unknown date.
-    """
-    tasks = {row["item_id"]: deepcopy(row) for row in shared_prep + storage_tasks}
-    cook_dates = {row["item_id"]: date.fromisoformat(row["date"]) if row.get("date") else None for row in cooks}
-    storage = {row["item_id"] for row in storage_tasks}
-    aliases = {source: key for key, row in tasks.items() for source in row.get("source_ids", [])}
-    deps = {key: {aliases.get(d, d) for d in row.get("depends_on", [])} for key, row in tasks.items()}
+def _topological(nodes, dependencies, tie_key):
+    """Kahn order: presentation preferences apply only to independent nodes."""
     children = defaultdict(set)
-    for key, parents in deps.items():
+    indegree = {}
+    for key in nodes:
+        parents = dependencies[key].intersection(nodes)
+        indegree[key] = len(parents)
         for parent in parents:
             children[parent].add(key)
-    indegree = {key: len(parents - cook_dates.keys()) for key, parents in deps.items()}
-    ready = sorted(key for key in tasks if not indegree[key])
+    ready = [key for key in nodes if not indegree[key]]
     order = []
     while ready:
-        key = ready.pop(0)
+        key = min(ready, key=tie_key)
+        ready.remove(key)
         order.append(key)
-        for child in sorted(children[key]):
+        for child in children[key]:
             indegree[child] -= 1
             if indegree[child] == 0:
                 ready.append(child)
-                ready.sort()
-    unresolved = set(tasks) - set(order)
-    dates = dict(cook_dates)
-    for key, row in tasks.items():
-        names = row.get("recipes") or [row.get("recipe")]
-        anchors = [date.fromisoformat(c["date"]) for c in cooks if c.get("recipe") in names and c.get("date")]
-        dates[key] = min(anchors) if anchors and key not in unresolved else None
-    # Work backwards so each do-ahead dependency precedes its first dependent.
-    for key in reversed(order):
-        row = tasks[key]
-        if key in storage or dates[key] is None:
+    return order, set(nodes) - set(order), children
+
+
+def build_production_schedule(cooks: list[dict], shared_prep: list[dict], storage_tasks: list[dict]) -> list[dict]:
+    """Preserve cook timing and order every row through one dependency graph.
+
+    Only explicitly permitted prep moves backward. Conflicting fixed dates are
+    retained; the dependent packet task becomes undated and both rows are flagged.
+    """
+    tasks = {row["item_id"]: deepcopy(row) for row in shared_prep + storage_tasks}
+    cook_rows = {row["item_id"]: deepcopy(row) for row in cooks}
+    nodes = {**cook_rows, **tasks}
+    storage = {row["item_id"] for row in storage_tasks}
+    aliases = {source: key for key, row in tasks.items() for source in row.get("source_ids", [])}
+    deps = {key: {aliases.get(d, d) for d in row.get("depends_on", [])} for key, row in nodes.items()}
+    order, cyclic, children = _topological(nodes, deps, lambda key: key)
+    reasons = defaultdict(set)
+    dates = {key: date.fromisoformat(row["date"]) if row.get("date") else None
+             for key, row in cook_rows.items()}
+    for key, row in nodes.items():
+        if deps[key] - nodes.keys():
+            reasons[key].add("Missing dependency")
+        if key in cyclic:
+            reasons[key].add("Dependency cycle or dependency blocked by a cycle")
+        if key not in tasks:
             continue
-        dependent_dates = [dates[c] for c in children[key] if dates.get(c) is not None]
-        if dependent_dates and not row.get("time_sensitive"):
-            dates[key] = min([dates[key], *dependent_dates])
-        if row.get("can_do_ahead") and not row.get("time_sensitive"):
-            dates[key] -= timedelta(days=1)
+        names = row.get("recipes") or [row.get("recipe")]
+        cook_ids = row.get("dependent_cook_ids")
+        anchors = [dates[c["item_id"]] for c in cooks if dates[c["item_id"]] and
+                   (c.get("cook_id") in cook_ids if cook_ids is not None else c.get("recipe") in names)]
+        dates[key] = date.fromisoformat(row["date"]) if row.get("date") else min(anchors) if anchors else None
+        if row.get("session_unresolved"):
+            reasons[key].add("Dependent cooking session is unknown or incompatible")
+        if reasons[key] or dates[key] is None:
+            dates[key] = None
+            reasons[key].add("Unresolved cook date or dependency")
+
+    # Walk back once per permitted preparation link. A fixed/on-day parent is
+    # never shifted merely because its child was placed on an earlier date.
+    for key in reversed(order):
+        if key not in tasks or key in storage or dates[key] is None:
+            continue
+        row = tasks[key]
+        if row.get("can_do_ahead") and not row.get("time_sensitive") and not row.get("date"):
+            child_dates = [dates[child] for child in children[key] if dates.get(child) is not None]
+            dates[key] = min([dates[key], *child_dates]) - timedelta(days=1)
+
+    # Storage follows its explicit parents. An unmold/bag row needs an actual
+    # source freezing step; no freezing instruction or duration is synthesized.
     for key in order:
         if key not in storage or dates[key] is None:
             continue
         row = tasks[key]
         parent_dates = [dates[d] for d in deps[key] if dates.get(d)]
         action = row.get("action") or str(row.get("text", "")).strip().split(" ")[0].lower().rstrip(".,")
-        if parent_dates:
+        if parent_dates and not row.get("date"):
             dates[key] = max([dates[key], *parent_dates])
         if action in ("bag", "unmold", "unmolding", "bagging"):
             freezes = [d for d in deps[key] if d in tasks and (tasks[d].get("action") == "freeze" or
                        re.match(r"freeze\b", str(tasks[d].get("text", "")), re.I))]
             if freezes and all(dates.get(d) for d in freezes):
-                dates[key] = max(dates[d] for d in freezes) + timedelta(days=1)
+                required_date = max(dates[d] for d in freezes) + timedelta(days=1)
+                if row.get("date") and dates[key] < required_date:
+                    reasons[key].add("Storage date conflicts with the freezing dependency")
+                else:
+                    dates[key] = max(dates[key], required_date)
             else:
                 dates[key] = None
-                row["needs_review"] = True
-    output = deepcopy(cooks)
-    for key in order + sorted(unresolved):
-        row = tasks[key]
-        violated = any(dates.get(d) is None or (dates[key] and dates[d] > dates[key]) for d in deps[key])
-        if violated:
-            dates[key] = None
-        output.append({**row, "item_id": _id("schedule", key), "task_id": key,
-            "date": dates[key].isoformat() if dates[key] else None,
-            "source_ids": row.get("source_ids", [key]), "source": "packet",
-            "needs_review": bool(row.get("needs_review")) or dates[key] is None,
-            "review_reason": "Unresolved dependency or cook date" if dates[key] is None else None})
-    rank = {key: n for n, key in enumerate(order + sorted(unresolved))}
-    return sorted(output, key=lambda r: (r.get("date") or "9999-12-31",
-        1 if r.get("source") == "cook_schedule" else 2 if r.get("task_id") in storage else 0,
-        rank.get(r.get("task_id"), -1), r.get("start") or "", r["item_id"]))
+                reasons[key].add("Unmolding or bagging requires a dated freezing step")
+
+    # Discover conflicts before propagating them, so an earlier-visited sibling
+    # cannot retain a valid-looking date when its shared dependency conflicts.
+    for key in order:
+        for parent in deps[key]:
+            if dates.get(parent) and dates.get(key) and dates[parent] > dates[key]:
+                reason = "Timing conflict: dependency occurs after its dependent task"
+                reasons[parent].add(reason)
+                reasons[key].add(reason)
+                if key in tasks:
+                    dates[key] = None
+    for key in order:
+        if any(dates.get(parent) is None or reasons[parent] for parent in deps[key]):
+            reasons[key].add("Dependency date is unresolved or conflicting")
+            if key in tasks:
+                dates[key] = None
+
+    output = {}
+    for key, row in nodes.items():
+        if key in cook_rows:
+            output[key] = row
+            if reasons[key]:
+                output[key].update(needs_review=True, review_reason="; ".join(sorted(reasons[key])))
+        else:
+            output[key] = {**row, "item_id": _id("schedule", key), "task_id": key,
+                "date": dates[key].isoformat() if dates[key] else None,
+                "source_ids": row.get("source_ids", [key]), "source": "packet",
+                "needs_review": bool(row.get("needs_review")) or bool(reasons[key]),
+                "review_reason": "; ".join(sorted(reasons[key])) or None}
+
+    def tie_key(key):
+        row = output[key]
+        return (row.get("date") or "9999-12-31",
+                1 if key in cook_rows else 2 if key in storage else 0,
+                row.get("start") or "", key)
+
+    final_order, unresolved, _ = _topological(nodes, deps, tie_key)
+    return [output[key] for key in final_order + sorted(unresolved, key=tie_key)]

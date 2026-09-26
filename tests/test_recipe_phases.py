@@ -12,7 +12,8 @@ def step(text, **extra):
 
 
 def bean(recipe="A", **extra):
-    return {"recipe": recipe, "instructions": [step("Cook black-eyed peas", phase="cook", prep={
+    return {"recipe": recipe, "dependent_cooks": [{"cook_id": recipe, "date": "2026-09-29",
+        "start": "2026-09-29T18:00:00-05:00", "timezone": "America/Chicago"}], "instructions": [step("Cook black-eyed peas", phase="cook", prep={
         "ingredient": "black-eyed peas", "amount": 1, "unit": "lb",
         "method": "pressure cook", "pressure_minutes": 10, "pressure_release": "natural",
         "liquid_ratio": "3:1", "outcome": "cooked beans", "storage": "use immediately",
@@ -156,6 +157,8 @@ def test_schedule_without_cook_date_does_not_invent_one():
 def test_source_text_can_supply_complete_bean_prep_without_synthetic_metadata():
     a = {"recipe": "A", "instructions": [step("Pressure cook 1 lb black-eyed peas for 10 minutes with a 3:1 water-to-bean ratio; natural release; use immediately.", phase="cook")]}
     b = {"recipe": "B", "instructions": [step("Pressure cook 8 oz black-eyed peas for 10 minutes with a 3:1 water-to-bean ratio; natural release; use immediately.", phase="cook")]}
+    for recipe in (a, b):
+        recipe["dependent_cooks"] = bean(recipe["recipe"])["dependent_cooks"]
     rows = phases.build_shared_prep([a, b])
     assert len(rows) == 1
     assert rows[0]["amount"] == 1.5 and rows[0]["recipes"] == ["A", "B"]
@@ -255,3 +258,106 @@ def test_merge_does_not_mislabel_amount_when_durations_differ():
     a["instructions"][0]["duration_minutes"] = 10
     b["instructions"][0]["duration_minutes"] = 60
     assert len(phases.build_shared_prep([a, b])) == 2
+
+
+@pytest.mark.parametrize("text", [
+    "Chop onions, but do not prepare ahead of time.",
+    "Chop onions; don't make ahead.", "Chop onions, not ahead of time.",
+    "Chop onions in advance; use immediately.", "Chop onions ahead of time, just before cooking.",
+])
+def test_native_phase_does_not_authorize_negated_or_immediate_advance_prep(text):
+    row = phases.classify_legacy_steps("A", [step(text, phase="prep_or_flavor_base")])["instructions"][0]
+    assert row["phase"] == "prep_or_flavor_base"
+    assert row["can_do_ahead"] is False
+
+
+@pytest.mark.parametrize("text", ["Chop onions ahead of time.", "Soak beans overnight.", "Prepare onions the day before."])
+def test_positive_source_timing_can_authorize_advance_prep(text):
+    assert phases.classify_legacy_steps("A", [step(text, phase="prep_or_flavor_base")])["instructions"][0]["can_do_ahead"] is True
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("Cook for 1 1/2 hours.", 90), ("Cook for 1/2 hour.", 30),
+    ("Cook for 2 1/4 hours.", 135), ("Cook for 1/0 hours.", None),
+    ("Cook for 1 ½ hours.", None), ("Cook for 1 1/2 to 2 hours.", None),
+])
+def test_fractional_duration_is_exact_or_unknown_and_reviewed(text, expected):
+    row = phases.classify_legacy_steps("A", [step(text, phase="cook")])["instructions"][0]
+    assert row["duration_minutes"] == expected
+    if expected is None:
+        assert row["duration_source"] is None and row["needs_review"] is True
+
+
+def test_same_day_explicit_dependency_outranks_prep_category():
+    source = cook()
+    rows = phases.build_production_schedule([source], [task("prep", can_do_ahead=False, depends_on=[source["item_id"]])], [])
+    assert [row.get("task_id", "cook") for row in rows] == ["cook", "prep"]
+
+
+def test_explicit_dependency_orders_storage_before_prep_even_with_category_ties():
+    rows = phases.build_production_schedule([cook()], [task("prep", can_do_ahead=False, depends_on=["freeze"])], [task("freeze", action="freeze")])
+    keys = [row.get("task_id", "cook") for row in rows]
+    assert keys.index("freeze") < keys.index("prep")
+
+
+def test_cook_dependencies_are_part_of_the_same_graph():
+    source = cook(depends_on=["prep"])
+    rows = phases.build_production_schedule([source], [task("prep", can_do_ahead=False)], [])
+    assert [row.get("task_id", "cook") for row in rows] == ["prep", "cook"]
+    assert next(row for row in rows if row.get("cook_id")) == source
+
+
+@pytest.mark.parametrize("sensitive", [False, True])
+def test_cannot_prepare_ahead_keeps_cook_day_and_marks_conflicting_chain(sensitive):
+    rows = phases.build_production_schedule([cook()], [
+        task("fixed", can_do_ahead=False, time_sensitive=sensitive),
+        task("ahead", depends_on=["fixed"], can_do_ahead=True),
+    ], [])
+    by_id = {row["task_id"]: row for row in rows if row.get("task_id")}
+    assert by_id["fixed"]["date"] == "2026-09-29"
+    assert all(row["needs_review"] and row["review_reason"] for row in by_id.values())
+    assert by_id["ahead"]["date"] is None
+
+
+def test_temporal_conflict_keeps_dependency_first_and_marks_both_rows():
+    source = cook(date="2026-10-01", start="2026-10-01T18:00:00-05:00")
+    earlier = cook(item_id="schedule:cook:2", cook_id=2)
+    rows = phases.build_production_schedule([earlier, source], [task("prep", can_do_ahead=False, depends_on=[source["item_id"]])], [])
+    keys = [row.get("task_id", row["item_id"]) for row in rows]
+    assert keys.index(source["item_id"]) < keys.index("prep")
+    assert next(row for row in rows if row.get("task_id") == "prep")["needs_review"] is True
+
+
+def test_unknown_sessions_never_merge_immediate_use_prep():
+    a, b = bean(), bean("B")
+    a.pop("dependent_cooks", None)
+    b.pop("dependent_cooks", None)
+    rows = phases.build_shared_prep([a, b])
+    assert len(rows) == 2 and all(row["needs_review"] for row in rows)
+
+
+@pytest.mark.parametrize("date_value, start", [("2026-10-01", "2026-10-01T18:00:00-05:00"), ("2026-09-29", "2026-09-29T20:00:00-05:00")])
+def test_different_dependent_sessions_keep_immediate_prep_separate(date_value, start):
+    a, b = bean(), bean("B")
+    a["dependent_cooks"] = [{"cook_id": 1, "date": "2026-09-29", "start": "2026-09-29T18:00:00-05:00", "timezone": "America/Chicago"}]
+    b["dependent_cooks"] = [{"cook_id": 2, "date": date_value, "start": start, "timezone": "America/Chicago"}]
+    assert len(phases.build_shared_prep([a, b])) == 2
+
+
+@pytest.mark.parametrize("text", ["Cook for 1 / 2 hour.", "Cook for 1 1 / 2 hours."])
+def test_spaced_fraction_denominator_cannot_become_a_whole_duration(text):
+    row = phases.classify_legacy_steps("A", [step(text, phase="cook")])["instructions"][0]
+    assert row["duration_minutes"] in (None, 30 if "1 1" not in text else 90)
+    if row["duration_minutes"] is None:
+        assert row["needs_review"]
+
+
+def test_conflict_propagates_to_an_already_visited_sibling_dependency():
+    rows = phases.build_production_schedule([cook()], [
+        task("parent", can_do_ahead=False),
+        task("a-sibling", can_do_ahead=False, depends_on=["parent"]),
+        task("z-ahead", can_do_ahead=True, depends_on=["parent"]),
+    ], [])
+    packet_rows = [row for row in rows if row.get("task_id")]
+    assert all(row["needs_review"] and row["review_reason"] for row in packet_rows)
+    assert next(row for row in packet_rows if row["task_id"] == "a-sibling")["date"] is None

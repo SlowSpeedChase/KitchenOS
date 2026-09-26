@@ -338,3 +338,40 @@ def test_native_unmolding_is_scheduled_after_source_freezing(tmp_db, tmp_vault):
     row = next(row for row in packet["production_schedule"] if row.get("text") == "Unmold and bag.")
     assert row["date"] == "2026-09-30"
     _validate_generated(WEEK, packet)
+
+
+@pytest.mark.parametrize("same_recipe", [False, True])
+def test_immediate_prep_stays_with_each_cook_session_and_quantity(tmp_db, tmp_vault, same_recipe):
+    recipes = recipe_dir(tmp_vault)
+    source = RECIPE.split("## Instructions")[0] + "## Instructions\n\n### Cook\n\n1. Pressure cook 1 lb black-eyed peas for 10 minutes with a 3:1 water-to-bean ratio; natural release; use immediately.\n"
+    (recipes / "Soup.md").write_text(source)
+    (recipes / "Other.md").write_text(source)
+    cooks = []
+    for name, day, scale in [("Soup", "2026-09-29", 1), ("Soup" if same_recipe else "Other", "2026-10-01", 2)]:
+        row = serving_ledger.create_cook(name, WEEK, scale=scale, servings_produced=4 * scale)
+        serving_ledger.schedule_cook(row["id"], date=day, meal="dinner", start=day + "T18:00:00-05:00",
+            timezone="America/Chicago", duration_minutes=60, servings_to_eat=1)
+        cooks.append(row)
+    packet = build_week_draft(WEEK, recipes, inventory_rows=[], now=NOW)
+    prep = [row for row in packet["production_schedule"] if row.get("source") == "packet"]
+    assert [(row["date"], row["amount"]) for row in prep] == [("2026-09-29", 1), ("2026-10-01", 2)]
+    assert {source for row in packet["shared_prep"] for source in row["dependent_cook_ids"]} == {row["id"] for row in cooks}
+    source_steps = {card["recipe"]: card["instruction_phases"]["cook"][0]["source_id"] for card in packet["recipe_cards"]}
+    assert all(part["recipe_source_id"] == source_steps[part["recipe"]]
+               for row in packet["shared_prep"] for part in row["contributions"])
+    _validate_generated(WEEK, packet)
+
+
+def test_immediate_prep_can_merge_two_recipes_in_one_authoritative_session(tmp_db, tmp_vault):
+    recipes = recipe_dir(tmp_vault)
+    source = RECIPE.split("## Instructions")[0] + "## Instructions\n\n### Cook\n\n1. Pressure cook 1 lb black-eyed peas for 10 minutes with a 3:1 water-to-bean ratio; natural release; use immediately.\n"
+    for name in ("Soup", "Other"):
+        (recipes / f"{name}.md").write_text(source)
+        row = serving_ledger.create_cook(name, WEEK, servings_produced=4)
+        serving_ledger.schedule_cook(row["id"], date="2026-09-29", meal="dinner", start="2026-09-29T18:00:00-05:00",
+            timezone="America/Chicago", duration_minutes=60, servings_to_eat=1)
+    packet = build_week_draft(WEEK, recipes, inventory_rows=[], now=NOW)
+    assert len(packet["shared_prep"]) == 1
+    assert packet["shared_prep"][0]["amount"] == 2
+    assert len(packet["shared_prep"][0]["dependent_cook_ids"]) == 2
+    _validate_generated(WEEK, packet)
