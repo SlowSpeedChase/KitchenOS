@@ -4,7 +4,6 @@ from templates.recipe_template import (
     format_recipe_markdown,
     generate_tools_callout,
     generate_nutrition_section,
-    API_BASE_URL,
 )
 
 
@@ -21,7 +20,10 @@ def test_generate_tools_callout():
 
 
 def test_api_base_url_uses_tailscale():
-    assert API_BASE_URL == "http://chases-mac-mini.taila69703.ts.net:5001"
+    # Compatibility export is captured at import; reload after env isolation.
+    from importlib import reload
+    from templates import recipe_template
+    assert reload(recipe_template).API_BASE_URL == "https://chases-mac-mini.taila69703.ts.net"
 
 
 def test_tools_callout_contains_add_to_meal_plan():
@@ -33,7 +35,7 @@ def test_tools_callout_contains_add_to_meal_plan():
 
 def test_tools_callout_uses_tailscale_hostname():
     result = generate_tools_callout("Test.md")
-    assert "chases-mac-mini.taila69703.ts.net:5001" in result
+    assert 'https://chases-mac-mini.taila69703.ts.net' in result
     assert "localhost" not in result
 
 
@@ -379,3 +381,10 @@ class TestFrontmatterIsEscaped:
         assert fm["title"] == "Test Recipe"
         assert fm["video_title"] == "A Video"
         assert fm["source_channel"] == "A Channel"
+
+
+def test_recipe_actions_use_current_public_origin(monkeypatch):
+    monkeypatch.setenv("KITCHENOS_WEB_BASE_URL", "https://recipes.example/")
+    callout = generate_tools_callout("Test.md")
+    assert "https://recipes.example/reprocess?file=Test.md" in callout
+    assert "https://recipes.example/current/meal-plan" in callout

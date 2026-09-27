@@ -7,6 +7,7 @@ from urllib.parse import quote
 from youtube_transcript_api import YouTubeTranscriptApi
 from googleapiclient.discovery import build
 import functools
+import ipaddress
 import math
 import os
 import re
@@ -28,6 +29,7 @@ from lib.shopping_list_generator import (
     extract_legacy_manual_items,
     SHOPPING_LISTS_PATH,
 )
+from lib.web_origin import web_origin
 from lib.backup import create_backup
 from lib.recipe_index import get_recipe_index
 from lib.meal_plan_parser import (
@@ -71,18 +73,36 @@ VAULT_NAME = paths.vault_root().name
 app = Flask(__name__)
 
 
+def _loopback(address):
+    try:
+        ip = ipaddress.ip_address(address)
+        return (getattr(ip, "ipv4_mapped", None) or ip).is_loopback
+    except ValueError:
+        return False
+
+
+def _local_client():
+    # Only Caddy's immediate loopback socket can assert a forwarded client.
+    # Use the nearest hop; never a client-supplied leftmost address in a chain.
+    if not _loopback(request.remote_addr or ""):
+        return False
+    forwarded = request.headers.get("X-Forwarded-For")
+    return forwarded is None or _loopback(forwarded.rsplit(",", 1)[-1].strip())
+
+
 def require_token(view):
     """Require a bearer token for non-localhost callers when KITCHENOS_API_TOKEN is set.
 
-    No-op when the env var is unset. Localhost (Mac app, local browser UI) is always
-    exempt; remote callers (iPad over Tailscale) must send Authorization: Bearer <token>.
+    No-op when the env var is unset. Direct localhost (Mac app, local browser UI) is
+    exempt; Caddy-forwarded remote clients retain authentication and must send
+    Authorization: Bearer <token>.
     """
     @functools.wraps(view)
     def wrapper(*args, **kwargs):
         token = os.environ.get("KITCHENOS_API_TOKEN")
         if not token:
             return view(*args, **kwargs)
-        if request.remote_addr in ("127.0.0.1", "::1"):
+        if _local_client():
             return view(*args, **kwargs)
         if request.headers.get("Authorization", "") == f"Bearer {token}":
             return view(*args, **kwargs)
@@ -403,7 +423,11 @@ def get_video_info():
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint."""
-    return jsonify({'status': 'ok'})
+    response = jsonify({'status': 'ok'})
+    release = os.environ.get('KITCHENOS_RELEASE_SHA', '')
+    if re.fullmatch(r'[0-9a-f]{40}', release):
+        response.headers['X-KitchenOS-Release'] = release
+    return response
 
 
 @app.route('/api/recipes', methods=['GET'])
@@ -799,7 +823,7 @@ def plan_week_page():
         from lib.print_week import _targets_dict
         targets, _ = _targets_dict(paths.vault_root())
 
-    base = os.environ.get("KITCHENOS_API_BASE", "").rstrip("/")
+    base = web_origin()
     body = plan_week.render_plan_center_html(
         week, packet, targets, base,
         plan_week.shift_week(week, -1), plan_week.shift_week(week, 1))
@@ -830,7 +854,7 @@ def print_week_page():
     except FileNotFoundError:
         return error_page(f"No meal plan for {week} yet — plan a week first."), 404
 
-    base = os.environ.get("KITCHENOS_API_BASE", "").rstrip("/")
+    base = web_origin()
     body = print_week.render_packet_html(packet, base_url=base)
     html = _serve_page('print_week.html', [('<!--PACKET-->', body)])
     return html, 200, {'Content-Type': 'text/html'}

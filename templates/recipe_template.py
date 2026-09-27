@@ -1,21 +1,16 @@
 """Markdown template for recipe output"""
 
-import os
 from datetime import date
 import re
 from fractions import Fraction
 from urllib.parse import quote
 
+from lib.web_origin import web_origin
 from lib import frontmatter
 from lib.ingredient_parser import parse_ingredient
 
-# Base URL baked into recipe action buttons. Override with KITCHENOS_API_BASE.
-# Pin this to the stable Tailscale *hostname* (not a raw 100.x IP): a raw IP
-# drifts between extractions and produces near-identical recipe files that
-# differ only by button host, which Obsidian Sync then forks into "X 2.md".
-API_BASE_URL = os.environ.get(
-    "KITCHENOS_API_BASE", "http://chases-mac-mini.taila69703.ts.net:5001"
-).rstrip("/")
+# Compatibility export; renderers resolve the configured origin at call time.
+API_BASE_URL = web_origin()
 
 # Schema definition for recipe frontmatter
 # Used by migration to add missing fields
@@ -123,31 +118,32 @@ def generate_tools_callout(filename: str) -> str:
         Markdown callout block with buttons
     """
     encoded_filename = quote(filename, safe='')
+    base = web_origin()
     return f'''> [!tools]- Tools
 > ```button
 > name Re-extract
 > type link
-> action {API_BASE_URL}/reprocess?file={encoded_filename}
+> action {base}/reprocess?file={encoded_filename}
 > ```
 > ```button
 > name Refresh Template
 > type link
-> action {API_BASE_URL}/refresh?file={encoded_filename}
+> action {base}/refresh?file={encoded_filename}
 > ```
 > ```button
 > name Add to Meal Plan
 > type link
-> action {API_BASE_URL}/add-to-meal-plan?recipe={encoded_filename}
+> action {base}/add-to-meal-plan?recipe={encoded_filename}
 > ```
 > ```button
 > name View Meal Plan
 > type link
-> action {API_BASE_URL}/current/meal-plan
+> action {base}/current/meal-plan
 > ```
 > ```button
 > name Shopping List
 > type link
-> action {API_BASE_URL}/current/shopping-list
+> action {base}/current/shopping-list
 > ```
 
 '''

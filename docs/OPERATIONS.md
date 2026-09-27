@@ -158,20 +158,43 @@ content hash of `date + total + item names` on `trips.source_id` (source
 .venv/bin/python generate_price_dashboard.py --dry-run   # print markdown without saving
 ```
 
+### Shared home gateway
+
+The public origin is `https://chases-mac-mini.taila69703.ts.net`. DNS, TLS, Caddy, VPN On Demand,
+and recovery procedures live in the shared [gateway runbook](https://github.com/SlowSpeedChase/dotfiles/blob/main/docs/home-web-gateway.md).
+Keep local service/operator probes on `http://localhost:5001`; the Flask
+service remains the gateway's HTTP upstream.
+
+`KITCHENOS_WEB_BASE_URL` wins over deprecated `KITCHENOS_API_BASE`; when
+neither is set, generated links use the canonical origin. Remove a stale
+legacy override or set the new variable before regenerating views. Origins
+accept HTTP(S) and optional root slashes, but no credentials, path, query,
+or fragment. Invalid values fail validation.
+
+After gateway rollout, regenerate the web dashboard, inventory/nutrition
+views, and recipe action links using the existing commands in this runbook.
+`migrate_recipes.py` recognizes the retired localhost, raw Tailscale IP,
+MagicDNS HTTP, and `.local` action origins. Safari sync adds canonical
+bookmarks; its additive policy leaves existing bookmarks intact. These are
+operator rollout steps, not actions performed by the code migration.
+
+The iOS app upgrades only exact known legacy defaults when resolving config;
+custom settings and Keychain credentials survive. macOS keeps localhost.
+
 ### Generate web dashboard (tailnet launcher)
 
 Writes `Dashboards/KitchenOS Web.md` — a tap-anywhere launcher for the web app
 (Meal Planner, Nutrition Review, Inventory Review, System Health, Paste a
-Receipt, current plan/shopping list). Links point at `KITCHENOS_API_BASE`
-(default the Tailscale MagicDNS host
-`http://chases-mac-mini.taila69703.ts.net:5001`), so the note works from any
+Receipt, current plan/shopping list). Links point at `KITCHENOS_WEB_BASE_URL`
+(default the canonical HTTPS origin
+`https://chases-mac-mini.taila69703.ts.net`), so the note works from any
 device on the tailnet, not just localhost on the server. Re-run when the web
 base URL changes **or when `SECTIONS` in `lib/web_dashboard.py` changes**.
 
 ```bash
 .venv/bin/python scripts/generate_web_dashboard.py
 # point it at a different host first, if needed:
-KITCHENOS_API_BASE=http://other-host.taila69703.ts.net:5001 .venv/bin/python scripts/generate_web_dashboard.py
+KITCHENOS_WEB_BASE_URL=https://other-host.example .venv/bin/python scripts/generate_web_dashboard.py
 ```
 
 ### Sync Safari bookmarks
@@ -462,7 +485,9 @@ Two guards worth knowing before you widen its scope:
 
 ## 2. LaunchAgents (all 9)
 
-All 9 agents run as `~/Library/LaunchAgents/com.kitchenos.<name>.plist`, with
+All 9 agents use the labels below. The API can be deployed through the reviewed
+release procedure below; the other jobs follow this legacy installation pattern.
+Agents run as `~/Library/LaunchAgents/com.kitchenos.<name>.plist`, with
 `ops/com.kitchenos.<name>.plist` in the repo as the canonical source —
 **edit the repo copy, then re-copy it to `~/Library/LaunchAgents/` and
 reload**, don't hand-edit the installed copy. General pattern:
@@ -475,6 +500,77 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.<name>.plist
 launchctl unload ~/Library/LaunchAgents/com.kitchenos.<name>.plist
 launchctl load ~/Library/LaunchAgents/com.kitchenos.<name>.plist
 ```
+
+### Reviewed API releases for the shared gateway
+
+The gateway API deployment uses `scripts/deploy_api.py`, independently of the dirty
+primary checkout. **Do not copy feature source into that checkout or install its
+checked-in API plist after switching to this release path.** The other eight jobs
+retain their existing deployment process. This is API-only deployment, not a
+migration of every KitchenOS scheduled workflow.
+
+First complete the [gateway network prerequisites](https://github.com/SlowSpeedChase/dotfiles/blob/main/docs/home-web-gateway.md):
+verify the enabled router reservation, active interface, and split-DNS-only upstreams
+before configuring environments, merging, deploying or activating the gateway.
+Use the exact reviewed/merged commit SHA, from a clean feature or separate release
+checkout. The deployer uses `git archive`; dirty and untracked files are excluded.
+
+Prepare a private external environment file (mode `0600`) without printing it.
+Preserve the existing API token and all unrelated credentials/settings. It must set
+`KITCHENOS_API_TOKEN` to a nonempty value, and explicit absolute paths for
+`KITCHENOS_DB`, `KITCHENOS_VAULT`, `KITCHENOS_STORAGE_TABLE`, and
+`KITCHENOS_ITEM_ALIASES` to the existing data.
+These paths must exist outside the release runtime. Preserve the current storage
+table and learned `config/item_aliases.json` cache in external shared locations
+and configure these paths before staging; do not reset them from repository defaults.
+Ensure API and scheduled receipt jobs use the same shared data paths when migrating
+those files; otherwise keep their existing locations until a coordinated move. Set the canonical `KITCHENOS_WEB_BASE_URL`.
+No deployment step initializes, migrates, copies, or restores the DB or vault.
+
+Run from the reviewed checkout, substituting its full approved SHA and the private
+config path. `stage` creates a separate venv and installs the reviewed requirements;
+it does not start services. Existing requirements are version ranges, so retain the
+created venv with the release for reproducible rollback.
+
+```bash
+reviewed_sha='REPLACE_WITH_FULL_REVIEWED_SHA'
+private_env='/absolute/path/to/private.env'
+python3.11 scripts/deploy_api.py stage --sha "$reviewed_sha" \
+  --python "$(command -v python3.11)" --env-file "$private_env"
+release="$HOME/Library/Application Support/KitchenOS API/releases/$reviewed_sha"
+plutil -lint "$release/api.plist"
+~/Dev/dotfiles/dev/bin/check-agent-names "$release/api.plist"
+# Inspect the candidate's paths and named launcher; never display .env.
+python3.11 scripts/deploy_api.py activate --sha "$reviewed_sha"
+```
+
+Activation checks the release's private configuration, backs up the installed
+`com.kitchenos.api` plist and its load state, then stops only that job and installs
+the release-specific named `KitchenOS · API` shim. It requires `/health` to return
+HTTP 200 with the exact `X-KitchenOS-Release` SHA and a forwarded remote
+`GET /api/recipes` to return HTTP 401 without sending a token. A stale process,
+missing token, or partial bootstrap fails acceptance and restores the previous
+plist/load state. The journal and rollback data contain paths/SHAs, never secrets.
+The process binds `0.0.0.0:5001`, preserving direct private-network diagnostics.
+
+```bash
+python3.11 scripts/deploy_api.py rollback
+```
+
+Rollback restores the exact saved plist (including the initial dirty-checkout
+launcher), without changing any checkout files. It restores whether the old job
+was loaded. It does not undo application data mutations. If rollback reports an
+incomplete recovery, retain `activation-state.json` and retry after resolving the
+launchd/filesystem failure. Stage/activate/rollback commands serialize on a runtime
+lock. For a subsequent deployment, roll back the existing activation first; this
+first-release tool refuses to overwrite an active recovery baseline.
+
+Changing the responsible executable can require TCC grants against the new shim.
+Check normal API functionality, background-agent names, and any required TCC access
+after approved deployment; a synthetic probe does not establish these. Keep the
+previous runtime, venv and backups through gateway/device/reboot acceptance.
+Run approved artifact generation from this release using the same external config
+only after both canonical gateway origins pass.
 
 ### Launchers (`ops/agents/` and `.venv/bin/`)
 
@@ -669,7 +765,7 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.calendar-sync.plist
 ```
 
 Output ICS file: `{Obsidian Vault}/meal_calendar.ics`, also served at
-`http://localhost:5001/calendar.ics`.
+`https://chases-mac-mini.taila69703.ts.net/calendar.ics`.
 
 ### com.kitchenos.cleanup-icloud-old
 

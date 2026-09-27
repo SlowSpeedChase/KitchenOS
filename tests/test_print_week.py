@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from lib import print_week
 
 WEEK = "2026-W31"
@@ -76,15 +78,16 @@ class TestBuildWeekPacket:
 
 
 class TestRenderPacketHtml:
-    def test_renders_grid_shopping_prep_and_links(self, tmp_vault):
+    @pytest.mark.parametrize("base", ["https://ko.example", "https://chases-mac-mini.taila69703.ts.net"])
+    def test_renders_grid_shopping_prep_and_links(self, tmp_vault, base):
         vault, recipes = _setup_markdown_week(tmp_vault)
         packet = print_week.build_week_packet(WEEK, vault, recipes, pantry=[])
-        html = print_week.render_packet_html(packet, base_url="https://ko.example")
+        html = print_week.render_packet_html(packet, base_url=base)
 
         assert "week-grid" in html
         assert "The week" in html and "Shopping list" in html and "Get ahead" in html
         # recipe names link to their grid cards
-        assert "https://ko.example/recipe-card/Beef%20Bowl" in html
+        assert f"{base}/recipe-card/Beef%20Bowl" in html
         # macros shown as actual / target
         assert "/190g P" in html
         # targets header

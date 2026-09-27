@@ -109,3 +109,21 @@ fat: 12
     assert _fm(out)["nutrition_calories"] == 169
     assert _fm(out)["nutrition_fat"] == 12
     assert "calories: 3058" in out  # left for the normalizer to delete
+
+
+def test_migrate_legacy_public_urls_and_detect_needed_migration(monkeypatch):
+    from migrate_recipes import migrate_recipe_content, needs_content_migration
+    from templates.recipe_template import generate_tools_callout
+    canonical = "https://chases-mac-mini.taila69703.ts.net"
+    current = '---\ntitle: Test\ncssclasses:\n  - recipe\n---\n' + generate_tools_callout("Test.md")
+    # Build the already-current fixture independently of the old generator.
+    current = current.replace("http://chases-mac-mini.taila69703.ts.net:5001", canonical)
+    for old in ("http://localhost:5001", "http://100.103.114.106:5001", "http://100.111.6.10:5001", "http://chases-mac-mini.taila69703.ts.net:5001", "http://Chases-Mac-mini.local:5001"):
+        legacy = current.replace(canonical, old)
+        assert needs_content_migration(legacy), old
+        result, _ = migrate_recipe_content(legacy, "Test.md")
+        assert old not in result
+        assert canonical + "/reprocess?file=Test.md" in result
+    monkeypatch.setenv("KITCHENOS_WEB_BASE_URL", "https://migration.example/")
+    result, _ = migrate_recipe_content(current.replace(canonical, "http://localhost:5001"), "Test.md")
+    assert "https://migration.example/reprocess?file=Test.md" in result

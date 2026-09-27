@@ -1397,3 +1397,10 @@ def test_inventory_md_marks_an_unresolved_location(tmp_db, tmp_vault):
     ])
     assert "| pantry? |" in md
     assert "| fridge |" in md
+
+
+def test_review_link_uses_public_origin(monkeypatch):
+    from lib.inventory import render_inventory_md
+    assert "(https://chases-mac-mini.taila69703.ts.net/review)" in render_inventory_md([])
+    monkeypatch.setenv("KITCHENOS_WEB_BASE_URL", "https://inventory.example/")
+    assert "(https://inventory.example/review)" in render_inventory_md([])

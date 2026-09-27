@@ -484,7 +484,7 @@ title: "Test"
 # Test
 '''
     result, changes = migrate_recipe_content(content, "Test.md")
-    assert "chases-mac-mini.taila69703.ts.net:5001" in result
+    assert 'https://chases-mac-mini.taila69703.ts.net' in result
     assert "localhost:5001" not in result
 
 

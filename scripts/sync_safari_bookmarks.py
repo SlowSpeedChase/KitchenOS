@@ -77,7 +77,7 @@ def _check_base(base: str) -> None:
     if "localhost" in base or "127.0.0.1" in base or "://[::1]" in base:
         raise SyncError(
             f"base URL is loopback ({base}) — these bookmarks would only work on "
-            "this Mac. Set KITCHENOS_API_BASE to the tailnet host and re-run."
+            "this Mac. Set KITCHENOS_WEB_BASE_URL to the tailnet host and re-run."
         )
 
 
