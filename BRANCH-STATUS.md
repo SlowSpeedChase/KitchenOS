@@ -38,7 +38,7 @@ the reviewed release or restoring its rollback plist.
 - [x] Operations guide describes the unload confirmation gate
 
 ### Review
-- [ ] Draft PR opened
+- [x] Draft PR opened: https://github.com/SlowSpeedChase/KitchenOS/pull/81
 - [ ] Independent review completed
 - [ ] Review feedback addressed
 
