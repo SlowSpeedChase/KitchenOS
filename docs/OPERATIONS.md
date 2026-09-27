@@ -158,20 +158,43 @@ content hash of `date + total + item names` on `trips.source_id` (source
 .venv/bin/python generate_price_dashboard.py --dry-run   # print markdown without saving
 ```
 
+### Shared home gateway
+
+The public origin is `https://chases-mac-mini.taila69703.ts.net`. DNS, TLS, Caddy, VPN On Demand,
+and recovery procedures live in the shared [gateway runbook](https://github.com/SlowSpeedChase/dotfiles/blob/main/docs/home-web-gateway.md).
+Keep local service/operator probes on `http://localhost:5001`; the Flask
+service remains the gateway's HTTP upstream.
+
+`KITCHENOS_WEB_BASE_URL` wins over deprecated `KITCHENOS_API_BASE`; when
+neither is set, generated links use the canonical origin. Remove a stale
+legacy override or set the new variable before regenerating views. Origins
+accept HTTP(S) and optional root slashes, but no credentials, path, query,
+or fragment. Invalid values fail validation.
+
+After gateway rollout, regenerate the web dashboard, inventory/nutrition
+views, and recipe action links using the existing commands in this runbook.
+`migrate_recipes.py` recognizes the retired localhost, raw Tailscale IP,
+MagicDNS HTTP, and `.local` action origins. Safari sync adds canonical
+bookmarks; its additive policy leaves existing bookmarks intact. These are
+operator rollout steps, not actions performed by the code migration.
+
+The iOS app upgrades only exact known legacy defaults when resolving config;
+custom settings and Keychain credentials survive. macOS keeps localhost.
+
 ### Generate web dashboard (tailnet launcher)
 
 Writes `Dashboards/KitchenOS Web.md` — a tap-anywhere launcher for the web app
 (Meal Planner, Nutrition Review, Inventory Review, System Health, Paste a
-Receipt, current plan/shopping list). Links point at `KITCHENOS_API_BASE`
-(default the Tailscale MagicDNS host
-`http://chases-mac-mini.taila69703.ts.net:5001`), so the note works from any
+Receipt, current plan/shopping list). Links point at `KITCHENOS_WEB_BASE_URL`
+(default the canonical HTTPS origin
+`https://chases-mac-mini.taila69703.ts.net`), so the note works from any
 device on the tailnet, not just localhost on the server. Re-run when the web
 base URL changes **or when `SECTIONS` in `lib/web_dashboard.py` changes**.
 
 ```bash
 .venv/bin/python scripts/generate_web_dashboard.py
 # point it at a different host first, if needed:
-KITCHENOS_API_BASE=http://other-host.taila69703.ts.net:5001 .venv/bin/python scripts/generate_web_dashboard.py
+KITCHENOS_WEB_BASE_URL=https://other-host.example .venv/bin/python scripts/generate_web_dashboard.py
 ```
 
 ### Sync Safari bookmarks
@@ -669,7 +692,7 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.calendar-sync.plist
 ```
 
 Output ICS file: `{Obsidian Vault}/meal_calendar.ics`, also served at
-`http://localhost:5001/calendar.ics`.
+`https://chases-mac-mini.taila69703.ts.net/calendar.ics`.
 
 ### com.kitchenos.cleanup-icloud-old
 

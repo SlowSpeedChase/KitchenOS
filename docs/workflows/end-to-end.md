@@ -1,5 +1,7 @@
 # End-to-End Workflow
 
+Public web links use `https://chases-mac-mini.taila69703.ts.net`. For DNS, TLS, Caddy, VPN On Demand, and recovery, see the [shared gateway runbook](https://github.com/SlowSpeedChase/dotfiles/blob/main/docs/home-web-gateway.md). Local operator health probes stay on loopback HTTP.
+
 How KitchenOS actually works today, stage by stage. Written as a snapshot of the wired-up system — if you change something, update this doc.
 
 Stages: **Capture → Plan → Shop → Prep → Cook → Review.**
@@ -51,7 +53,7 @@ Five entry points, all converge on `extract_recipe.py` (or `import_crouton.py` f
 
 ### 1a. iOS Share Sheet → API
 - On iPhone, share a YouTube URL to the **KitchenOS Shortcut**.
-- Shortcut hits the API server at `http://chases-mac-mini.taila69703.ts.net:5001/extract` (Tailscale).
+- Shortcut hits the API server at `https://chases-mac-mini.taila69703.ts.net/extract` (Tailscale).
 - API spawns `extract_recipe.py` as a subprocess (5-min timeout) and returns `{status, recipe}` on success.
 - Shortcut shows a success card linking to the new recipe in Obsidian.
 
@@ -94,7 +96,7 @@ Three ways meals land on a meal plan. Output is always `Meal Plans/<week>.md` wi
 - Open `/plan-week` (defaults to **next** week; `?week=` for another). One page: a glanceable per-day status (slots filled + protein vs target) and three big steps — **1** fill the week (opens the planner), **2** review nutrition, **3** print the week for the fridge. This is the single entry point for the weekly ritual, so you don't have to remember which of the five surfaces to open. Unplanned weeks show a "start here" empty state.
 
 ### 2b. Meal planner web UI (the main interface)
-- Open `http://localhost:5001/meal-planner` (or `100.103.114.106:5001` from iPad over Tailscale).
+- Open `https://chases-mac-mini.taila69703.ts.net/meal-planner`.
 - Layout: **left sidebar** = recipe library with search box + filter chips (cuisine, protein, dietary, seasonal); **right grid** = 7-day × 4-slot board for the selected ISO week.
 - Drag a recipe from the sidebar onto a slot → auto-saves via `PUT /api/meal-plan/<week>`.
 - Week selector buttons jump weeks; URL is `?week=2026-W18` so refreshes stick.
@@ -103,7 +105,7 @@ Three ways meals land on a meal plan. Output is always `Meal Plans/<week>.md` wi
 - **Servings multiplier:** type `[[Recipe Name]] x2` to scale (the `xN` lives outside the wikilink so Obsidian links still resolve).
 
 ### 2c. Recipe-page button (Obsidian)
-Each recipe markdown contains an **Add to Meal Plan** button (Obsidian Buttons plugin) that opens `http://chases-mac-mini.taila69703.ts.net:5001/add-to-meal-plan?recipe=<file>` in the browser. The form has three branches:
+Each recipe markdown contains an **Add to Meal Plan** button (Obsidian Buttons plugin) that opens `https://chases-mac-mini.taila69703.ts.net/add-to-meal-plan?recipe=<file>` in the browser. The form has three branches:
 
 1. **Schedule directly** → pick week / day / slot → API creates a **ledger cook** (not a raw wikilink) and regenerates the week note from it.
 2. **Add to existing meal** → pick a meal from `vault/Meals/` → API appends this recipe to that meal's `sub_recipes` and offers an optional "now schedule it" prompt.
@@ -169,7 +171,7 @@ Calendar reminders for prep ride along with the meal-plan calendar (Stage 5).
 
 ## 5. Cook — at the stove
 
-- **Calendar** — `com.kitchenos.calendar-sync` runs daily at 6:05 AM, regenerating `meal_calendar.ics` from every meal plan. Apple Calendar (or Obsidian Full Calendar plugin) subscribes to `http://localhost:5001/calendar.ics`.
+- **Calendar** — `com.kitchenos.calendar-sync` runs daily at 6:05 AM, regenerating `meal_calendar.ics` from every meal plan. Apple Calendar (or Obsidian Full Calendar plugin) subscribes to `https://chases-mac-mini.taila69703.ts.net/calendar.ics`.
 - **Print the whole week** — open `/print/week` (defaults to the current week; `?week=` for another) for a one-page fridge packet: the plan grid with each day's macros vs your targets, the consolidated shopping list, and the do-ahead prep. Recipe names link to their grid cards. Read-only (prep comes from the cached tasks sidecar; `?tasks=1` regenerates). It reads whichever week model owns the week (ledger cooks or the markdown plan), branching off the shopping-list generator's `source`.
 - **Printable grid card** — open `/recipe-card/<name>` for a one-page, print-ready "grid" view (ingredients with gram weights on the left; a staircase of merged cells on the right showing what combines with what, in order). Tap **Print** for a fridge/binder card. The step grouping is AI-inferred (cached in a `<recipe>.grid.json` sidecar; `?force=1` recomputes) and marked for review — the recipe's own steps are never changed.
 - **Re-render or re-extract** — the per-recipe buttons:

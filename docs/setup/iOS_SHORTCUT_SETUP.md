@@ -9,7 +9,8 @@ Extract recipes from YouTube videos via iOS Share Sheet. Works from anywhere usi
 
 ## Prerequisites
 
-- Tailscale installed on Mac and iOS device (same Tailnet)
+- Shared home gateway configured: [DNS, TLS, Caddy, VPN On Demand, and recovery](https://github.com/SlowSpeedChase/dotfiles/blob/main/docs/home-web-gateway.md)
+- Tailscale installed on Mac and iOS device for access away from home
 - API server running on Mac
 - Ollama running on Mac
 
@@ -44,7 +45,7 @@ curl http://localhost:5001/health
 
 **Action 2: Get Contents of URL**
 - Add: **Get Contents of URL**
-- URL: `http://chases-mac-mini.taila69703.ts.net:5001/extract`
+- URL: `https://chases-mac-mini.taila69703.ts.net/extract`
 - Method: **POST**
 - Request Body: **JSON**
 - Add key: `url` with value: select **Shortcut Input**
@@ -85,9 +86,9 @@ restart/uninstall commands rather than hand-authoring one here.
 ## Troubleshooting
 
 **"Could not connect to server"**
-- Check Tailscale is connected on both devices
+- Away from home, check Tailscale / VPN On Demand is connected on the phone
 - Verify server is running: `curl http://localhost:5001/health`
-- Check the Mac's Tailscale hostname (`chases-mac-mini.taila69703.ts.net`) resolves from the iOS device
+- Open `https://chases-mac-mini.taila69703.ts.net` from the phone; follow the shared gateway runbook for DNS or certificate failures
 
 **"Extraction failed"**
 - Ensure Ollama is running: `ollama serve`

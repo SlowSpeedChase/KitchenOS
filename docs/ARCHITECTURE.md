@@ -69,12 +69,24 @@ it. It runs as the `com.kitchenos.api` LaunchAgent on port 5001.
 above) rather than running extraction in-process; most other routes read and
 write the vault and `data/kitchenos.db` directly.
 
-It is exposed off the Mac mini over **Tailscale**
-(`chases-mac-mini.taila69703.ts.net:5001`) for remote callers — the iOS
-Shortcut, MCP server, and the native app. When `KITCHENOS_API_TOKEN` is set,
+The shared **HTTPS home gateway** exposes the public origin
+(`https://chases-mac-mini.taila69703.ts.net`) for remote callers — the iOS
+Shortcut and native iOS app. The local MCP server and macOS app retain
+loopback HTTP. `lib/web_origin.py` resolves every generated public URL from
+`KITCHENOS_WEB_BASE_URL`, legacy `KITCHENOS_API_BASE`, then the canonical
+origin. When `KITCHENOS_API_TOKEN` is set,
 remote (non-localhost) callers of the Siri-facing endpoints (`/api/recipes`,
 `/api/recipes/<name>`, `/api/meal-plan/<week>`, `/api/suggest-meal`) must
 send `Authorization: Bearer <token>`; localhost is always exempt.
+
+The iOS default is the canonical HTTPS origin. `KitchenOSConfig.resolved`
+persists an upgrade only for the exact retired defaults
+`http://100.111.6.10:5001`, `http://chases-mac-mini.taila69703.ts.net:5001`,
+and `http://Chases-Mac-mini.local:5001`; custom endpoints and credentials
+remain unchanged. No multi-origin fallback is added.
+
+Gateway DNS, TLS, Caddy, VPN On Demand, and recovery live in the shared
+[home gateway runbook](https://github.com/SlowSpeedChase/dotfiles/blob/main/docs/home-web-gateway.md).
 
 The browsable pages are phone-first, reached over the tailnet from an iPhone.
 Two modules serve that:

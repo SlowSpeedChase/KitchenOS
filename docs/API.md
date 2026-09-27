@@ -10,8 +10,17 @@ and why" (pipeline flow, AI stack, background services) see
 `docs/OPERATIONS.md`.
 
 The API server is a synchronous Flask app (`api_server.py`), run as the
-`com.kitchenos.api` LaunchAgent on port 5001, exposed over Tailscale at
-`chases-mac-mini.taila69703.ts.net:5001`.
+`com.kitchenos.api` LaunchAgent on port 5001, reached through the shared HTTPS gateway at
+`https://chases-mac-mini.taila69703.ts.net`.
+
+Generated public URLs resolve through `lib.web_origin.web_origin()`:
+`KITCHENOS_WEB_BASE_URL` → deprecated `KITCHENOS_API_BASE` → the canonical
+origin above. Values must be HTTP(S) origins without credentials, a nonroot
+path, query, or fragment; trailing root slashes are removed. Internal MCP
+and operator health calls remain `http://localhost:5001`.
+
+DNS, TLS, Caddy, VPN On Demand, and recovery are documented in the shared
+[home gateway runbook](https://github.com/SlowSpeedChase/dotfiles/blob/main/docs/home-web-gateway.md).
 
 **Auth**: when `KITCHENOS_API_TOKEN` is set, remote (non-localhost) callers of
 the token-gated routes below must send `Authorization: Bearer <token>`.
