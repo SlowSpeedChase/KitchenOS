@@ -550,7 +550,9 @@ the release-specific named `KitchenOS · API` shim. It requires `/health` to ret
 HTTP 200 with the exact `X-KitchenOS-Release` SHA and a forwarded remote
 `GET /api/recipes` to return HTTP 401 without sending a token. A stale process,
 missing token, or partial bootstrap fails acceptance and restores the previous
-plist/load state. The journal and rollback data contain paths/SHAs, never secrets.
+plist/load state. After each stop, the deployer waits for launchd to report the job
+fully removed before loading either the reviewed or rollback plist. The journal and
+rollback data contain paths/SHAs, never secrets.
 The process binds `0.0.0.0:5001`, preserving direct private-network diagnostics.
 
 ```bash

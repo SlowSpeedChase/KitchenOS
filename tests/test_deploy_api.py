@@ -62,6 +62,28 @@ def deployment(tmp_path):
     return source, sha, config, root, agents, plist, old, state, runner
 
 
+def delayed_unload_runner(state, runner, unload_results):
+    bootout_seen = False
+
+    def delayed_unload(args):
+        nonlocal bootout_seen
+        if args[:2] == ['launchctl', 'bootout']:
+            state['calls'].append(args)
+            bootout_seen = True
+            return subprocess.CompletedProcess(args, 0, '', '')
+        if args[:2] == ['launchctl', 'print'] and bootout_seen and unload_results:
+            state['calls'].append(args)
+            code = unload_results.pop(0)
+            if code == 113:
+                state['loaded'] = False
+            return subprocess.CompletedProcess(args, code, '', '')
+        if args[:2] == ['launchctl', 'bootstrap']:
+            assert unload_results == []
+        return runner(args)
+
+    return delayed_unload
+
+
 def test_staging_archives_only_reviewed_commit_and_does_not_switch_service(deployment):
     source, sha, config, root, agents, plist, old, state, runner = deployment
     release = deploy.stage(source, sha, root, Path('/test/python'), config, runner)
@@ -88,6 +110,56 @@ def test_activation_failure_restores_exact_prior_plist_and_service(deployment, f
     assert state['loaded'] is True
     assert json.loads((root / 'activation-state.json').read_text())['status'] == 'rolled-back'
     assert (source / 'api_server.py').read_text() == 'dirty = True\n'
+
+
+def test_activation_waits_until_launchd_reports_old_job_gone(deployment):
+    source, sha, config, root, agents, plist, old, state, runner = deployment
+    release = deploy.stage(source, sha, root, Path('/test/python'), config, runner)
+    state['calls'].clear()
+    unload_results = [0, 0, 113]
+    sleeps = []
+    delayed_unload = delayed_unload_runner(state, runner, unload_results)
+
+    deploy.activate(root, release, agents, 501, delayed_unload, sleeps.append)
+
+    launchctl_actions = [call[1] for call in state['calls'] if call[0] == 'launchctl']
+    assert launchctl_actions == ['print', 'bootout', 'print', 'print', 'print', 'bootstrap']
+    assert len(sleeps) == 2
+    assert state['loaded'] is True
+
+
+def test_wait_for_unload_times_out_while_job_remains_loaded(monkeypatch):
+    calls = []
+    sleeps = []
+
+    def still_loaded(args):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, 'state = running', '')
+
+    monkeypatch.setattr(deploy, 'UNLOAD_WAIT_ATTEMPTS', 3, raising=False)
+    with pytest.raises(RuntimeError, match='unload'):
+        deploy.wait_for_unload(501, deploy.LABEL, still_loaded, sleeps.append)
+
+    assert calls == [['launchctl', 'print', 'gui/501/com.kitchenos.api']] * 3
+    assert len(sleeps) == 2
+
+
+def test_rollback_waits_until_launchd_reports_new_job_gone(deployment):
+    source, sha, config, root, agents, plist, old, state, runner = deployment
+    release = deploy.stage(source, sha, root, Path('/test/python'), config, runner)
+    deploy.activate(root, release, agents, 501, runner)
+    state['calls'].clear()
+    unload_results = [0, 0, 113]
+    sleeps = []
+    delayed_unload = delayed_unload_runner(state, runner, unload_results)
+
+    deploy.rollback(root, delayed_unload, sleeps.append)
+
+    launchctl_actions = [call[1] for call in state['calls'] if call[0] == 'launchctl']
+    assert launchctl_actions == ['print', 'bootout', 'print', 'print', 'print', 'bootstrap']
+    assert len(sleeps) == 2
+    assert plist.read_bytes() == old
+    assert state['loaded'] is True
 
 
 def test_success_and_explicit_rollback_preserve_source_and_original_load_state(deployment):
