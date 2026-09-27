@@ -388,3 +388,14 @@ class TestNullCaloriesAreMissingNotZero:
                 encoding="utf-8")
             data = compute_dashboard("2026-W03", vault)
             assert any("Ghost" in w for w in data["warnings"]), data["warnings"]
+
+
+def test_refresh_link_uses_public_origin(tmp_path, monkeypatch):
+    (tmp_path / "Meal Plans").mkdir()
+    (tmp_path / "Recipes").mkdir()
+    create_meal_plan(tmp_path / "Meal Plans", "2026-W03", {})
+    markdown, _ = generate_dashboard("2026-W03", tmp_path)
+    assert "(https://chases-mac-mini.taila69703.ts.net/refresh-nutrition?week=2026-W03)" in markdown
+    monkeypatch.setenv("KITCHENOS_WEB_BASE_URL", "https://nutrition.example/")
+    markdown, _ = generate_dashboard("2026-W03", tmp_path)
+    assert "(https://nutrition.example/refresh-nutrition?week=2026-W03)" in markdown

@@ -2,7 +2,7 @@
 """Regenerate the 'Dashboards/KitchenOS Web.md' vault note.
 
 A tap-anywhere launcher for the KitchenOS web app whose links point at the
-Tailscale host (``KITCHENOS_API_BASE``), so they work from any device on the
+Tailscale host (``KITCHENOS_WEB_BASE_URL``), so they work from any device on the
 tailnet. Run after changing the web base URL. See lib/web_dashboard.py.
 """
 

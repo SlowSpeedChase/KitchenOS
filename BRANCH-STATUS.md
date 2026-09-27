@@ -1,0 +1,80 @@
+# Branch Status: home-web-gateway
+
+**Created:** 2026-09-26
+**Design Doc:** https://github.com/SlowSpeedChase/dotfiles/blob/main/docs/home-web-gateway.md
+**Current Stage:** review
+**Last Rebased:** 2026-09-26
+
+## Overview
+
+Canonical HTTPS origin for public KitchenOS links and exact legacy iOS endpoint migration.
+
+## Dependencies
+
+- Shared dotfiles home gateway (DNS, TLS, Caddy).
+- Isolated from the dirty calendar checkout; base origin/main 3633209.
+
+---
+
+## Stages
+
+### Planning
+- [x] Design doc exists and approved
+- [x] Conflict check completed (no overlapping work)
+- [x] Dependencies identified and noted
+- [x] Branch and worktree created
+- [x] Implementation plan written (superpowers:writing-plans)
+
+### Dev
+- [x] Tests written first (superpowers:test-driven-development)
+- [x] Core implementation complete
+- [x] Focused Python (363), ConfigTests (6), and full KitchenOSKit (76) pass
+- [x] No new Ruff findings (17 existing in touched files, same as baseline)
+- [x] Code follows project patterns
+- [ ] Deployment deferred: do not restart LaunchAgents or regenerate production artifacts in this task
+
+### Testing
+- [x] Unit tests pass
+- [x] Synthetic Flask integration coverage passes in the focused suite
+- [ ] Physical device / gateway rollout verification deferred; no deployment authorized
+- [x] Edge cases verified
+- [x] Verified with superpowers:verification-before-completion
+
+### Docs
+- [x] Doc obligations met per CLAUDE.md table (ARCHITECTURE / API / OPERATIONS / invariants)
+- [x] README updated (if interface changed)
+- [x] docs/plans/INDEX.md updated
+- [x] Code comments where needed
+
+### Review
+- [ ] Requested review (superpowers:requesting-code-review)
+- [ ] Review feedback addressed
+- [ ] Changes approved
+
+### Ready
+- [x] Rebased on latest main
+- [ ] Final test pass after rebase
+- [ ] BRANCH-STATUS.md fully checked
+- [ ] Ready for merge
+
+---
+
+## Notes
+
+- Task 6 of the controller-approved shared home gateway plan; base `origin/main` 3633209.
+- Python RED: 29 failures / 332 passes before implementation; one migration test import corrected and separately proved RED (1 fail / 7 pass).
+- Swift RED: 6 expected assertions for three retired default origins, before migration implementation.
+- Python GREEN: 363 focused tests; Swift ConfigTests 6 and full package 76 pass.
+- All Python runs set `PYTHON_DOTENV_DISABLED=1`, synthetic `/tmp` vault/DB, and `KITCHENOS_NO_LLM=1`; per-test fixtures further isolate data.
+- Bare pytest is excluded: corpus tests resolve main-worktree vault data, and `tests/test_backfill_nutrition.py::TestFoodStoreFloorCoversEveryTable::test_the_real_store_passes` explicitly overrides the temp DB with production. No e2e/live/corpus suite ran.
+- New Python files pass Ruff. Changed Python files have 17 findings already present at HEAD; zero added findings. `git diff --check` passes.
+- Explicit active-file allowlist only; no modifications to docs/plans/archive, docs/history, docs/superpowers, or docs/completed.
+- Self-review complete; independent controller review remains the review gate. No implementer subagents or Shepherd agent run (controller ruling).
+- No production vault/DB/bookmarks/server/.env/credentials accessed. No app deployment or production artifact regeneration.
+- The iOS conditional default has a test, but SwiftPM runs here execute on macOS; on-device verification belongs to rollout.
+
+---
+
+## Blocked Items
+
+No implementation blockers. Controller review and deployment verification remain pending.

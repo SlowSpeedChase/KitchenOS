@@ -24,7 +24,7 @@ NOT_BOOKMARKABLE = {
 class TestBaseUrl:
     def test_default_is_tailnet_host(self, monkeypatch):
         monkeypatch.delenv("KITCHENOS_API_BASE", raising=False)
-        assert wd.base_url() == wd.DEFAULT_API_BASE
+        assert wd.base_url() == "https://chases-mac-mini.taila69703.ts.net"
         assert "ts.net" in wd.base_url()  # MagicDNS, not a raw 100.x IP
 
     def test_env_override_wins_and_strips_trailing_slash(self, monkeypatch):

@@ -28,6 +28,7 @@ from lib.shopping_list_generator import (
     extract_legacy_manual_items,
     SHOPPING_LISTS_PATH,
 )
+from lib.web_origin import web_origin
 from lib.backup import create_backup
 from lib.recipe_index import get_recipe_index
 from lib.meal_plan_parser import (
@@ -799,7 +800,7 @@ def plan_week_page():
         from lib.print_week import _targets_dict
         targets, _ = _targets_dict(paths.vault_root())
 
-    base = os.environ.get("KITCHENOS_API_BASE", "").rstrip("/")
+    base = web_origin()
     body = plan_week.render_plan_center_html(
         week, packet, targets, base,
         plan_week.shift_week(week, -1), plan_week.shift_week(week, 1))
@@ -830,7 +831,7 @@ def print_week_page():
     except FileNotFoundError:
         return error_page(f"No meal plan for {week} yet — plan a week first."), 404
 
-    base = os.environ.get("KITCHENOS_API_BASE", "").rstrip("/")
+    base = web_origin()
     body = print_week.render_packet_html(packet, base_url=base)
     html = _serve_page('print_week.html', [('<!--PACKET-->', body)])
     return html, 200, {'Content-Type': 'text/html'}

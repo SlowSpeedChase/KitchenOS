@@ -546,6 +546,7 @@ def test_print_week_page_renders(client, tmp_vault):
     response = client.get('/print/week?week=2026-W31')
     assert response.status_code == 200
     body = response.get_data(as_text=True)
+    assert "https://chases-mac-mini.taila69703.ts.net/recipe-card/Beef%20Bowl" in body
     assert "week-grid" in body
     assert "Shopping list" in body and "Get ahead" in body
     assert "Print this week" in body  # the on-screen print button
@@ -580,8 +581,8 @@ def test_plan_week_page_planned(client, tmp_vault):
     assert response.status_code == 200
     body = response.get_data(as_text=True)
     assert "Plan your week" in body
-    assert "/meal-planner?week=2026-W31" in body
-    assert "/print/week?week=2026-W31" in body
+    assert "https://chases-mac-mini.taila69703.ts.net/meal-planner?week=2026-W31" in body
+    assert "https://chases-mac-mini.taila69703.ts.net/print/week?week=2026-W31" in body
 
 
 def test_plan_week_unplanned_is_empty_state_not_404(client, tmp_vault):
