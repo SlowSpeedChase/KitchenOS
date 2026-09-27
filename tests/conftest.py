@@ -5,6 +5,17 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _isolate_web_origin(monkeypatch):
+    """Public-link tests control both precedence layers, never shell config.
+
+    Tests exercising an override set only that variable after this fixture;
+    tests exercising the default start with neither variable present.
+    """
+    monkeypatch.delenv("KITCHENOS_WEB_BASE_URL", raising=False)
+    monkeypatch.delenv("KITCHENOS_API_BASE", raising=False)
+
+
 @pytest.fixture
 def tmp_vault(monkeypatch):
     """Point the vault at a temp dir for the duration of a test."""

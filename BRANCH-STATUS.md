@@ -28,7 +28,7 @@ Canonical HTTPS origin for public KitchenOS links and exact legacy iOS endpoint 
 ### Dev
 - [x] Tests written first (superpowers:test-driven-development)
 - [x] Core implementation complete
-- [x] Focused Python (363), ConfigTests (6), and full KitchenOSKit (76) pass
+- [x] Focused Python (391), ConfigTests (6), and full KitchenOSKit (76) pass
 - [x] No new Ruff findings (17 existing in touched files, same as baseline)
 - [x] Code follows project patterns
 - [ ] Deployment deferred: do not restart LaunchAgents or regenerate production artifacts in this task
@@ -78,3 +78,13 @@ Canonical HTTPS origin for public KitchenOS links and exact legacy iOS endpoint 
 ## Blocked Items
 
 No implementation blockers. Controller review and deployment verification remain pending.
+
+
+## Review fix round 1
+
+- P2: reject malformed/encoded authorities; retain bracketed IPv6, IDNA and valid DNS labels/ports.
+- P3: autouse fixture clears both public-origin environment variables; individual tests set only their chosen layer. Reload the recipe compatibility constant after isolation.
+- RED with ambient WEB/API overrides: 31 failed / 358 passed (18 authority, 13 consumer failures).
+- Self-review regression: max-length DNS label with port initially failed (1 failed / 44 passed); IDNA encoding corrected to apply to host only.
+- GREEN with both ambient variables set: 391 focused Python tests passed; changed-file Ruff and `git diff --check` passed.
+- Swift untouched; no rerun. Production/corpus/e2e restrictions unchanged. Ready for controller re-review.

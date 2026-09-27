@@ -4,7 +4,6 @@ from templates.recipe_template import (
     format_recipe_markdown,
     generate_tools_callout,
     generate_nutrition_section,
-    API_BASE_URL,
 )
 
 
@@ -21,7 +20,10 @@ def test_generate_tools_callout():
 
 
 def test_api_base_url_uses_tailscale():
-    assert API_BASE_URL == "https://chases-mac-mini.taila69703.ts.net"
+    # Compatibility export is captured at import; reload after env isolation.
+    from importlib import reload
+    from templates import recipe_template
+    assert reload(recipe_template).API_BASE_URL == "https://chases-mac-mini.taila69703.ts.net"
 
 
 def test_tools_callout_contains_add_to_meal_plan():
