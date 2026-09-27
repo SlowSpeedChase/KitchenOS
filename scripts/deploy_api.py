@@ -16,9 +16,12 @@ import shlex
 import shutil
 import subprocess
 import tarfile
+import time
 import uuid
 
 LABEL = 'com.kitchenos.api'
+UNLOAD_WAIT_ATTEMPTS = 50
+UNLOAD_WAIT_SECONDS = 0.2
 
 
 def run(args):
@@ -117,6 +120,18 @@ def loaded(uid, runner):
     return result.returncode == 0
 
 
+def wait_for_unload(uid, label, runner, sleeper=time.sleep):
+    for attempt in range(UNLOAD_WAIT_ATTEMPTS):
+        result = runner(['launchctl', 'print', f'gui/{uid}/{label}'])
+        if result.returncode == 113:
+            return
+        if result.returncode != 0:
+            raise RuntimeError('cannot establish service unload state')
+        if attempt + 1 < UNLOAD_WAIT_ATTEMPTS:
+            sleeper(UNLOAD_WAIT_SECONDS)
+    raise RuntimeError('service did not unload before timeout')
+
+
 def probe(sha, runner):
     for path, status in (('/health', '200'), ('/api/recipes', '401')):
         # Header capture proves this process is the reviewed release, not another
@@ -135,7 +150,7 @@ def probe(sha, runner):
             raise RuntimeError('API authentication probe failed')
 
 
-def activate(root, release, agents, uid, runner=run):
+def activate(root, release, agents, uid, runner=run, sleeper=time.sleep):
     root, release = root.resolve(), release.resolve()
     if release.parent != root / 'releases':
         raise ValueError('release must belong to selected runtime')
@@ -159,6 +174,7 @@ def activate(root, release, agents, uid, runner=run):
     try:
         if state['was_loaded']:
             checked(runner, ['launchctl', 'bootout', f'gui/{uid}/{LABEL}'])
+            wait_for_unload(uid, LABEL, runner, sleeper)
         atomic(destination, (release / 'api.plist').read_bytes())
         checked(runner, ['launchctl', 'bootstrap', f'gui/{uid}', destination])
         probe(sha, runner)
@@ -166,19 +182,20 @@ def activate(root, release, agents, uid, runner=run):
         save(root, state)
     except Exception:
         try:
-            rollback(root, runner)
+            rollback(root, runner, sleeper)
         except Exception:
             raise RuntimeError('activation failed; rollback incomplete, retry saved rollback') from None
         raise RuntimeError('activation failed; previous service restored') from None
 
 
-def rollback(root, runner=run):
+def rollback(root, runner=run, sleeper=time.sleep):
     state = json.loads((root / 'activation-state.json').read_text())
     if state['status'] == 'rolled-back':
         return
     uid = state['uid']
     if loaded(uid, runner):
         checked(runner, ['launchctl', 'bootout', f'gui/{uid}/{LABEL}'])
+        wait_for_unload(uid, LABEL, runner, sleeper)
     destination = Path(state['destination'])
     atomic(destination, Path(state['backup']).read_bytes())
     if state['was_loaded']:
