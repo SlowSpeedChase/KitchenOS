@@ -268,3 +268,14 @@ used by in-app UI (not currently wired to a dedicated Siri intent).
 
 See `docs/superpowers/specs/2026-06-21-siri-app-intents-voice-design.md` for
 the original design rationale and phrase catalogue.
+
+### Gateway client identity
+
+Protected routes preserve bearer authentication through Caddy. Only an immediate
+loopback socket may supply `X-Forwarded-For`; the nearest forwarded hop determines
+the local exemption. Direct remote callers cannot spoof it. Local clients without
+forwarding remain exempt. `KITCHENOS_API_TOKEN` is still optional for standalone
+use, but shared-gateway activation requires the unauthenticated protected-route
+probe to return 401, so production must configure it. Reviewed API releases expose
+a non-secret `X-KitchenOS-Release` SHA on `/health` for deployment verification;
+the health JSON remains unchanged.

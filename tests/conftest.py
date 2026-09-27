@@ -16,6 +16,12 @@ def _isolate_web_origin(monkeypatch):
     monkeypatch.delenv("KITCHENOS_API_BASE", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_alias_override(monkeypatch):
+    """A production shared-cache override must not escape per-test alias fixtures."""
+    monkeypatch.delenv("KITCHENOS_ITEM_ALIASES", raising=False)
+
+
 @pytest.fixture
 def tmp_vault(monkeypatch):
     """Point the vault at a temp dir for the duration of a test."""

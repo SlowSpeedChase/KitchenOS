@@ -7,6 +7,7 @@ from urllib.parse import quote
 from youtube_transcript_api import YouTubeTranscriptApi
 from googleapiclient.discovery import build
 import functools
+import ipaddress
 import math
 import os
 import re
@@ -72,18 +73,36 @@ VAULT_NAME = paths.vault_root().name
 app = Flask(__name__)
 
 
+def _loopback(address):
+    try:
+        ip = ipaddress.ip_address(address)
+        return (getattr(ip, "ipv4_mapped", None) or ip).is_loopback
+    except ValueError:
+        return False
+
+
+def _local_client():
+    # Only Caddy's immediate loopback socket can assert a forwarded client.
+    # Use the nearest hop; never a client-supplied leftmost address in a chain.
+    if not _loopback(request.remote_addr or ""):
+        return False
+    forwarded = request.headers.get("X-Forwarded-For")
+    return forwarded is None or _loopback(forwarded.rsplit(",", 1)[-1].strip())
+
+
 def require_token(view):
     """Require a bearer token for non-localhost callers when KITCHENOS_API_TOKEN is set.
 
-    No-op when the env var is unset. Localhost (Mac app, local browser UI) is always
-    exempt; remote callers (iPad over Tailscale) must send Authorization: Bearer <token>.
+    No-op when the env var is unset. Direct localhost (Mac app, local browser UI) is
+    exempt; Caddy-forwarded remote clients retain authentication and must send
+    Authorization: Bearer <token>.
     """
     @functools.wraps(view)
     def wrapper(*args, **kwargs):
         token = os.environ.get("KITCHENOS_API_TOKEN")
         if not token:
             return view(*args, **kwargs)
-        if request.remote_addr in ("127.0.0.1", "::1"):
+        if _local_client():
             return view(*args, **kwargs)
         if request.headers.get("Authorization", "") == f"Bearer {token}":
             return view(*args, **kwargs)
@@ -404,7 +423,11 @@ def get_video_info():
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint."""
-    return jsonify({'status': 'ok'})
+    response = jsonify({'status': 'ok'})
+    release = os.environ.get('KITCHENOS_RELEASE_SHA', '')
+    if re.fullmatch(r'[0-9a-f]{40}', release):
+        response.headers['X-KitchenOS-Release'] = release
+    return response
 
 
 @app.route('/api/recipes', methods=['GET'])

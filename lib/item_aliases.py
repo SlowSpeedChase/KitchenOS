@@ -9,6 +9,7 @@ a saved alias always wins over the model's suggestion.
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Optional
@@ -33,24 +34,32 @@ def strip_fresh(name: str) -> str:
     return cleaned or name
 
 
+def aliases_path() -> Path:
+    """Keep learned aliases outside versioned API releases when configured."""
+    value = os.environ.get("KITCHENOS_ITEM_ALIASES")
+    return Path(value).expanduser() if value else ALIASES_PATH
+
+
 def load_aliases() -> dict:
-    if not ALIASES_PATH.exists():
+    path = aliases_path()
+    if not path.exists():
         return {}
     try:
-        data = json.loads(ALIASES_PATH.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
     except (OSError, json.JSONDecodeError):
         return {}
 
 
 def save_aliases(aliases: dict) -> None:
-    ALIASES_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = ALIASES_PATH.with_suffix(".json.tmp")
+    path = aliases_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
     tmp.write_text(
         json.dumps(dict(sorted(aliases.items())), indent=2) + "\n",
         encoding="utf-8",
     )
-    tmp.replace(ALIASES_PATH)
+    tmp.replace(path)
 
 
 def canonicalize(raw_name: str, suggested: Optional[str]) -> str:
