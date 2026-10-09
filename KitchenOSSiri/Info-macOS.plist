@@ -3,7 +3,9 @@
 <plist version="1.0">
 <dict>
     <key>NSCalendarsFullAccessUsageDescription</key>
-    <string>KitchenOS reads your selected calendars to suggest cooking days. It never changes your events.</string>
+    <string>KitchenOS reads your selected calendars to suggest cooking days and syncs cooking events you export from KitchenOS.</string>
+    <key>NSRemindersFullAccessUsageDescription</key>
+    <string>KitchenOS syncs shopping and prep reminders you export, including completion and due dates.</string>
     <key>CFBundleDevelopmentRegion</key>
     <string>$(DEVELOPMENT_LANGUAGE)</string>
     <key>CFBundleDisplayName</key>
