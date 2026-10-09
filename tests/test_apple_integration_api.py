@@ -472,3 +472,92 @@ def test_owner_change_before_request_reservation_rejects_old_import(client,monke
     assert not read_shopping_note(WEEK).rows[0].completed
     with db.connect() as conn:
         assert conn.execute('SELECT COUNT(*) FROM apple_requests').fetchone()[0]==0
+
+
+def test_lost_first_save_ack_recovers_from_exact_journal_after_restart(client):
+    from lib.apple_integration import service
+    import importlib
+    context=activate(client)
+    first=work(client,context)
+    operation=first['operations'][0]
+    # EventKit saved the reserved title/fields, but its acknowledgement was lost.
+    importlib.reload(service)
+    fresh=work(client,context)
+    response=observe(client,context,[observation(fresh['items'][0])])
+    assert response.status_code==200,response.json
+    assert response.json['operations']==[]
+    recovered=store.get_item(operation['token'])
+    assert recovered.common_fields=={'completed':False,'due':None}
+    assert recovered.locator.item_id=='reminder'
+    assert client.get(BASE+'/status').json['conflicts']==[]
+    assert work(client,context)['operations']==[]
+    with db.connect() as conn:
+        rows=conn.execute('SELECT operation_id,status FROM apple_operations').fetchall()
+    assert [(r['operation_id'],r['status']) for r in rows]==[(operation['operation_id'],'acknowledged')]
+
+
+@pytest.mark.parametrize('change', ['title','fields','unexplained'])
+def test_first_present_object_without_exact_pending_save_still_conflicts(client,change):
+    context=activate(client);batch=work(client,context);item=batch['items'][0]
+    changes={}
+    if change=='title':
+        changes['title']='Unexplained changed title'
+    elif change=='fields':
+        changes['fields']={'completed':True,'due':None}
+    else:
+        with db.write_transaction() as conn:
+            conn.execute("UPDATE apple_operations SET status='superseded'")
+    response=observe(client,context,[observation(item,**changes)])
+    assert response.status_code==200
+    assert store.get_item(item['token']).common_fields is None
+    assert any(c['field']=='recovery' for c in client.get(BASE+'/status').json['conflicts'])
+    assert not read_shopping_note(WEEK).rows[0].completed
+
+
+def test_retained_cleanup_survives_work_polls_and_restart_until_ack(client):
+    from lib.apple_integration import service
+    import importlib
+    context=activate(client);batch=work(client,context);saved(client,context,batch['operations'][0]);old=batch['items'][0]
+    save_shopping_note(WEEK,[],[]);work(client,context);seed();replacement=work(client,context)['items'][0]
+    retained=store.get_item(old['token']).to_dict()
+    response=client.post(BASE+'/items/remove-owned',json={'context':context,'request_id':str(uuid4()),'items':[{'token':retained['token'],'expected_revision':retained['revision'],'observation':observation(retained)}]})
+    assert response.status_code==200
+    deletion=response.json['operations'][0]
+    for _ in range(2):
+        assert work(client,context)['operations']==[deletion]
+    importlib.reload(service)
+    assert work(client,context)['operations']==[deletion]
+    response=client.post(BASE+'/operations/'+deletion['operation_id']+'/ack',json={'context':context,'operation_id':deletion['operation_id'],'outcome':'deleted','locator':None,'observed_fields':{},'observed_hash':None})
+    assert response.status_code==200,response.json
+    assert store.get_item(replacement['token']).to_dict()==replacement
+    assert store.get_item(retained['token']).locator is None
+    assert len(work(client,context)['operations'])==1
+
+
+@pytest.mark.parametrize('empty', [False,True])
+def test_observation_response_filters_pending_operations_from_unavailable_scope(client,empty):
+    context=activate(client)
+    other_week='2026-W42'
+    save_shopping_note(other_week,[{'item':'tea','needed':{'amount':1,'unit':'whole'},'to_buy':{'amount':1,'unit':'whole'}}],[])
+    assert client.put(BASE+'/scopes/shopping/'+other_week,json={'domain':'shopping','week':other_week,'destination_id':'list','state':'active','expected_revision':0}).status_code==200
+    batch=work(client,context)
+    healthy=next(i for i in batch['items'] if i['week']==WEEK)
+    unavailable=next(i for i in batch['items'] if i['week']==other_week)
+    (paths.shopping_lists_dir()/(other_week+'.md')).unlink()
+    observations=[] if empty else [observation(healthy,availability='missing',locator=None,title=None,fields={},absence_confirmed=True)]
+    payload={'context':context,'request_id':str(uuid4()),'complete':True,'observations':observations}
+    response=client.post(BASE+'/observations',json=payload)
+    assert response.status_code==200,response.json
+    assert {o['token'] for o in response.json['operations']}=={healthy['token']}
+    assert unavailable['token'] not in {o['token'] for o in client.post(BASE+'/observations',json=payload).json['operations']}
+
+
+def test_completed_observation_replay_rechecks_scope_availability(client):
+    context=activate(client)
+    payload={'context':context,'request_id':str(uuid4()),'complete':True,'observations':[]}
+    response=client.post(BASE+'/observations',json=payload)
+    assert response.status_code==200 and len(response.json['operations'])==1
+    (paths.shopping_lists_dir()/(WEEK+'.md')).unlink()
+    response=client.post(BASE+'/observations',json=payload)
+    assert response.status_code==200
+    assert response.json['operations']==[]

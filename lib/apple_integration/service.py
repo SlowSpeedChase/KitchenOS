@@ -119,7 +119,14 @@ def _latest(items):
 def _conflict(item, field, observation=None, *, conn=None):
     evidence = observation.to_dict() if observation else None
     with db.write_transaction(conn) as tx:
-        store._supersede(tx,item.token)
+        if field=='retained_generation':
+            # Repeated discovery must not cancel the explicit cleanup that is
+            # resolving this very conflict. Its ack still checks the reservation.
+            tx.execute("UPDATE apple_operations SET status='superseded' "
+                       "WHERE token=? AND status='pending' AND retained_cleanup=0",
+                       (item.token,))
+        else:
+            store._supersede(tx,item.token)
         old = tx.execute("SELECT * FROM apple_conflicts WHERE token=? AND field=? AND status='open'",(item.token,field)).fetchone()
         payload = canonical_json(evidence)
         if old:
@@ -207,6 +214,21 @@ def status():
     return {'model_version':1,'configured':owner is not None,'connected':bool(owner and owner['connected']),'paused':bool(owner and owner['paused']),'settings_revision':owner['revision'] if owner else 0,'report':_report().to_dict(),'permissions':json.loads(owner['permissions']) if owner else {},'destinations':json.loads(owner['destinations']) if owner else {},'scopes':_scopes(),'conflicts':conflicts}
 
 
+def _available_operations(unavailable, candidates=None):
+    """Filter both fresh and cached responses through current pending work.
+
+    A completed request may be replayed after a source disappears or an operation
+    is superseded/acknowledged. Its cached response is evidence, not permission to
+    return a now-unsafe write. No new operations are introduced into a replay.
+    """
+    blocked=set(unavailable)
+    allowed={operation.operation_id:operation for operation in candidates} if candidates is not None else None
+    items={item.token:item for item in store.list_items()}
+    return [operation for operation in store.pending_operations()
+            if (items[operation.token].domain,items[operation.token].week) not in blocked
+            and (allowed is None or allowed.get(operation.operation_id)==operation)]
+
+
 def work(context: BridgeContext) -> dict:
     with _LOCK:
         owner=_owner(context)
@@ -223,7 +245,7 @@ def work(context: BridgeContext) -> dict:
         cleanup_tokens={o.token for o in operations if o.action=='delete'}
         retained=[i for i in store.list_items() if i.token not in latest_tokens and i.locator and i.state!='history' and ((i.domain,i.week) in active_scopes or i.token in cleanup_tokens)]
         unavailable=set(unavailable)
-        operations=[op for op in operations if (store.get_item(op.token).domain,store.get_item(op.token).week) not in unavailable]
+        operations=_available_operations(unavailable,operations)
         if len(items)+len(retained)+len(operations)+sum(len(r['observations']) for r in retries)>MAX_ITEMS:
             raise BatchTooLarge('Too many items for a complete batch')
         result={'model_version':1,'context':context.to_dict(),'items':[i.to_dict() for i in items], 'operations':[] if retries else [o.to_dict() for o in operations],'scopes':_scopes(),'report':_report(unavailable=len(unavailable)).to_dict(),'paused':False,'retry_requests':retries,'retained_items':[i.to_dict() for i in retained]}
@@ -248,7 +270,38 @@ def _record_observation(item, observation):
     return store.get_item(item.token)
 
 
-def _apply_observation(observation, request_id):
+def _recover_first_save(context, item, observation):
+    """A current exact pending creation is proof for a lost save acknowledgement.
+
+    Inspect before recording a discovered locator, which normally supersedes old
+    work. The ordinary ack path retains owner/scope/generation/revision and hash
+    checks; a marker alone or changed title/fields provides no such evidence.
+    """
+    if item.common_fields is not None or item.locator is not None:
+        return item
+    with db.connect() as conn:
+        rows=conn.execute(
+            "SELECT payload FROM apple_operations WHERE token=? AND generation=? "
+            "AND revision=? AND action='upsert' AND status='pending' "
+            "AND expected_apple_hash IS NULL",
+            (item.token,item.generation,item.revision),
+        ).fetchall()
+    for row in rows:
+        operation=AppleOperation.from_dict(json.loads(row['payload']))
+        if (operation.locator is None and operation.title==observation.title
+                and operation.fields==observation.fields
+                and operation.destination_id==observation.locator.calendar_id):
+            acknowledge(context,operation.operation_id,{
+                'operation_id':operation.operation_id,'outcome':'saved',
+                'locator':observation.locator.to_dict(),
+                'observed_fields':observation.fields,
+                'observed_hash':_observed_hash(observation),
+            })
+            return store.get_item(item.token)
+    return item
+
+
+def _apply_observation(observation, request_id, context):
     item=store.get_item(observation.token)
     if observation.availability=='unavailable' or (observation.availability=='missing' and not observation.absence_confirmed):
         with db.write_transaction() as conn:
@@ -276,6 +329,7 @@ def _apply_observation(observation, request_id):
                     conn.execute('UPDATE apple_items SET locator=NULL,common_payload=NULL WHERE token=?',(item.token,))
         return
     validate_fields(observation.fields,item.domain)
+    item=_recover_first_save(context,item,observation)
     item=_record_observation(item,observation)
     if item.state=='retired':
         if observation.fields.get('completed'):
@@ -328,7 +382,10 @@ def observe(context: BridgeContext, observations: list[Observation], request_id:
             if old['payload']!=payload or old['owner_id']!=context.owner_id or old['owner_generation']!=context.owner_generation:
                 raise RevisionConflict('Request ID payload changed')
             if old['result'] is not None:
-                return [AppleOperation.from_dict(v) for v in json.loads(old['result'])]
+                _recover()
+                unavailable=_refresh()
+                cached=[AppleOperation.from_dict(v) for v in json.loads(old['result'])]
+                return _available_operations(unavailable,cached)
         else:
             # Validate the whole incoming batch before recovery/import or any writes.
             with db.connect() as conn:
@@ -362,7 +419,7 @@ def observe(context: BridgeContext, observations: list[Observation], request_id:
             if observation.token in done:
                 continue
             try:
-                _apply_observation(observation,request_id)
+                _apply_observation(observation,request_id,context)
             except RevisionConflict:
                 # Semantic source drift is terminal for this observation; retain
                 # visible evidence rather than leave an unreplayable request.
@@ -371,7 +428,7 @@ def observe(context: BridgeContext, observations: list[Observation], request_id:
             with db.write_transaction() as conn:
                 conn.execute('UPDATE apple_requests SET progress=? WHERE request_id=?',(canonical_json(sorted(done)),request_id))
         _queue_new(unavailable)
-        operations=store.pending_operations()
+        operations=_available_operations(unavailable)
         with db.write_transaction() as conn:
             conn.execute('UPDATE apple_requests SET result=? WHERE request_id=?',(canonical_json([o.to_dict() for o in operations]),request_id))
         return operations
