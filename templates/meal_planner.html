@@ -696,6 +696,11 @@
             margin-top: 2px;
         }
 
+        .cooking-opportunity {
+            font-size: 0.75rem; font-weight: 400; line-height: 1.35;
+            margin-top: 0.35rem; white-space: normal;
+        }
+
         .day-header {
             text-align: center;
             padding: 8px 4px;
@@ -1995,6 +2000,8 @@
             }
         }
     </style>
+<link rel="stylesheet" href="/static/planning-calendar.css">
+<script src="/static/planning-calendar.js" defer></script>
 </head>
 <body>
     <div class="app">
@@ -2057,6 +2064,11 @@
                 </div>
                 <button class="nav-btn" id="next-week" aria-label="Next week">&rarr;</button>
             </div>
+            <div class="pc-switch" aria-label="Planner view">
+                <button type="button" id="view-grid" aria-pressed="true" onclick="setPlannerView('grid')">Grid</button>
+                <button type="button" id="view-calendar" aria-pressed="false" onclick="setPlannerView('calendar')">Calendar</button>
+            </div>
+            <div id="planning-calendar" hidden></div>
             <!-- Shown only in board mode. The chips, scale stepper, freezer and bin
                  all appear at once with nothing saying what they are; this is the
                  one sentence that makes the rest legible. -->
@@ -2169,6 +2181,17 @@
         const MEAL_LABELS = { breakfast: 'Breakfast', lunch: 'Lunch', snack: 'Snack', dinner: 'Dinner' };
 
         // --- State ---
+        let planningCalendar = null;
+        function setPlannerView(view) {
+            const calendar = view === 'calendar';
+            document.body.classList.toggle('pc-mode', calendar);
+            document.getElementById('planning-calendar').hidden = !calendar;
+            document.getElementById('view-calendar').setAttribute('aria-pressed', String(calendar));
+            document.getElementById('view-grid').setAttribute('aria-pressed', String(!calendar));
+            const url = new URL(location); url.searchParams.set('view', view); history.replaceState({}, '', url);
+            if (calendar && !planningCalendar) planningCalendar = window.KitchenPlanningCalendar.mount({root:document.getElementById('planning-calendar'),week:currentWeek,onScheduled:()=>loadWeekBoard(currentWeek)});
+            if (!calendar && planningCalendar) { planningCalendar.destroy(); planningCalendar = null; }
+        }
         let currentWeek = '';
         let dayDates = {};       // { Monday: '2026-02-23', ... }
         let allRecipes = [];
@@ -2267,6 +2290,7 @@
         let chipSortables = [];         // Sortable instances for the 'servings' chip-drag group
         let armedRecipe = null;         // card awaiting a slot tap (tap-to-assign); null = idle
         let ledgerBusy = false;         // true while a board mutation is in flight — serializes rapid taps
+        let availabilityLoadGen = 0;
         let boardLoadGen = 0;           // monotonically increasing — a stale loadWeekBoard response never renders over a newer one
         let boardStateUnknown = false;  // true when the last loadWeekBoard failed — legacy writes (save/suggest) must fail closed until a load succeeds
 
@@ -2274,6 +2298,12 @@
         document.addEventListener('DOMContentLoaded', init);
 
         async function init() {
+            setInterval(() => {
+                if (!document.hidden && currentWeek) loadCookingAvailability(currentWeek, boardLoadGen);
+            }, 60000);
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden && currentWeek) loadCookingAvailability(currentWeek, boardLoadGen);
+            });
             currentWeek = getWeekFromURL() || getCurrentISOWeek();
             updateURL(currentWeek);
             buildGrid();
@@ -2298,6 +2328,7 @@
             loadUseItUp().catch(err => console.error('use-it-up load failed', err));
 
             hideLoading();
+            setPlannerView(new URLSearchParams(location.search).get('view') || 'grid');
         }
 
         // --- Week Utilities ---
@@ -2358,6 +2389,7 @@
             const url = new URL(window.location);
             url.searchParams.set('week', week);
             window.history.replaceState({}, '', url);
+            planningCalendar?.setWeek(week);
         }
 
         // --- Week Display ---
@@ -3316,8 +3348,38 @@
             wireChipSortables();
         }
 
+        async function loadCookingAvailability(week, generation) {
+            const availabilityGeneration = ++availabilityLoadGen;
+            const labels = {
+                good: 'Good cooking day',
+                possible: 'Possible · flexible blocks',
+                busy: 'Busy · keep food easy',
+                unknown: 'Availability unknown'
+            };
+            function paint(days) {
+                if (availabilityGeneration !== availabilityLoadGen || generation !== boardLoadGen || week !== currentWeek) return;
+                DAYS.forEach(day => {
+                    const header = document.querySelector(`.day-header[data-day="${day}"]`);
+                    if (!header) return;
+                    header.querySelector('.cooking-opportunity')?.remove();
+                    const label = document.createElement('div');
+                    label.className = 'cooking-opportunity';
+                    label.textContent = labels[days[dayDates[day]]] || labels.unknown;
+                    header.appendChild(label);
+                });
+            }
+            paint({});
+            try {
+                const response = await fetch(`/api/cooking-availability/${week}`);
+                if (!response.ok) return;
+                const snapshot = await response.json();
+                paint(snapshot.days || {});
+            } catch (_) { /* Keep unknown when the server is unavailable. */ }
+        }
+
         async function loadWeekBoard(week) {
             const gen = ++boardLoadGen;
+            loadCookingAvailability(week, gen);
             let loaded;
             try {
                 const resp = await fetch(`/api/week-board/${week}`);

@@ -90,6 +90,12 @@ def require_token(view):
     return wrapper
 
 
+from lib.cooking_availability import register_routes as register_calendar_routes
+register_calendar_routes(app, require_token)
+from lib.planning_calendar import register_routes as register_planning_calendar_routes
+register_planning_calendar_routes(app, require_token)
+
+
 _recipe_cache = {"data": None, "timestamp": 0}
 _recipe_ingredient_cache = {"data": None, "timestamp": 0}
 RECIPE_CACHE_TTL = 300  # 5 minutes
@@ -698,6 +704,7 @@ def _annotate_stock(ingredients: list[dict]) -> list[dict]:
 @require_token
 def api_recipe_detail(name):
     """Return full recipe details as JSON."""
+    from lib.cooking_windows import recipe_duration
     recipes_dir = _resolve_recipes_dir()
     filepath = (recipes_dir / f"{name}.md").resolve()
     if not filepath.is_relative_to(recipes_dir.resolve()):
@@ -736,6 +743,7 @@ def api_recipe_detail(name):
             "dish_type": fm.get('dish_type'),
             "difficulty": fm.get('difficulty'),
             "servings": fm.get('servings'),
+            "cooking_duration": recipe_duration(fm),
             "prep_time": fm.get('prep_time'),
             "cook_time": fm.get('cook_time'),
             "total_time": fm.get('total_time'),
@@ -1790,6 +1798,21 @@ def api_bundle_delete(bundle_id):
     _regen_weeks(*affected)
     _sync_cook_history(*[c["recipe"] for c in removed])
     return jsonify({"status": "deleted", "cooks": len(removed)})
+
+
+@app.post('/api/cooks/<int:cook_id>/schedule')
+@require_token
+@_ledger_error
+def api_cook_schedule(cook_id):
+    from lib import serving_ledger
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or set(data) != {'date','meal','start','timezone','duration_minutes','servings_to_eat'}:
+        return jsonify(error='Choose date, meal, time, timezone, duration and servings'), 400
+    if serving_ledger.get_cook(cook_id) is None:
+        return jsonify(error='Cook not found'), 404
+    saved = serving_ledger.schedule_cook(cook_id, **data)
+    _regen_weeks(saved['cook']['week'])
+    return jsonify(saved)
 
 
 @app.route('/api/cooks/<int:cook_id>/move', methods=['POST'])
