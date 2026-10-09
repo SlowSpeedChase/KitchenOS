@@ -8,11 +8,12 @@ public enum PlanningWebPolicy {
             url.host?.lowercased() == base.host?.lowercased() && port(url) == port(base) &&
             url.user == nil && url.password == nil
     }
-    public static func plannerURL(base: URL, week: String) -> URL? {
-        guard sameOrigin(base, base), week.range(of: #"^\d{4}-W\d{2}$"#, options: .regularExpression) != nil else { return nil }
+    public static func plannerURL(base: URL, week: String, focusCookID: Int? = nil) -> URL? {
+        guard sameOrigin(base, base), WeekDate.date(forWeekID: week) != nil, focusCookID == nil || (focusCookID! > 0 && focusCookID! <= 9_007_199_254_740_991) else { return nil }
         var c = URLComponents(url: base, resolvingAgainstBaseURL: false)
         c?.path = "/meal-planner"
         c?.queryItems = [URLQueryItem(name:"week",value:week),URLQueryItem(name:"view",value:"calendar")]
+        if let focusCookID { c?.queryItems?.append(URLQueryItem(name: "focusCookID", value: String(focusCookID))) }
         c?.fragment = nil
         return c?.url
     }

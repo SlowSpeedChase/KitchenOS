@@ -5,7 +5,7 @@ import SwiftUI
 import KitchenOSKit
 
 /// The application (including Siri actions), not a window, owns the single writer.
-@MainActor final class AppleIntegrationCoordinator: ObservableObject {
+@MainActor final class AppleIntegrationCoordinator: ObservableObject, AppleIntegrationControlling {
     static let shared = AppleIntegrationCoordinator(store: EventKitAppleItemStore())
     static let domainChangedNotification = Notification.Name("KitchenOSAppleDomainChanged")
     let store: any AppleItemStore
@@ -83,6 +83,7 @@ import KitchenOSKit
         do {
             let value = try await service.perform(command)
             report = value; await refreshStatus()
+            if case .connect = command { return value }
             await CookingCalendarSync.shared.refresh(excludingOwnedTokens: await service.ownedCookingTokens())
             return value
         } catch {
@@ -103,6 +104,34 @@ import KitchenOSKit
         } catch is CancellationError { return }
         catch { message = "Apple sync needs attention. Check the connection and integration status." }
         await CookingCalendarSync.shared.refresh(excludingOwnedTokens: await service?.ownedCookingTokens() ?? [])
+    }
+    func preferredDestination(for domain: AppleDomain) -> String? {
+        let value = defaults.string(forKey: "appleIntegration.destination.\(domain.rawValue)")
+        return value?.isEmpty == false ? value : nil
+    }
+    func selectDestination(_ id: String, for domain: AppleDomain) {
+        defaults.set(id, forKey: "appleIntegration.destination.\(domain.rawValue)")
+    }
+    /// Intent and UI sends must retain the selected exact writable identity.
+    func validatedPreferredDestination(for domain: AppleDomain) async throws -> String {
+        guard isLocalServer, let id = preferredDestination(for: domain),
+              try await store.destinations(for: domain).contains(where: { $0.id == id }) else {
+            throw AppleIntegrationError.unavailable
+        }
+        return id
+    }
+    func readStatus() async throws -> IntegrationStatus {
+        let remote = try await AppleIntegrationClient(client: KitchenOSClient(config: .resolved(defaults: defaults))).status()
+        guard isLocalServer else { return remote }
+        var permissions = remote.permissions
+        var destinations = remote.destinations
+        for domain in AppleDomain.allCases {
+            permissions[domain.rawValue] = store.authorization(for: domain)
+            destinations[domain.rawValue] = (try? await store.destinations(for: domain)) ?? []
+        }
+        return IntegrationStatus(modelVersion: remote.modelVersion, configured: remote.configured, connected: remote.connected,
+            paused: remote.paused, settingsRevision: remote.settingsRevision, report: remote.report,
+            permissions: permissions, destinations: destinations, scopes: remote.scopes, conflicts: remote.conflicts)
     }
     func refreshStatus() async {
         do {

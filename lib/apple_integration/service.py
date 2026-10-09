@@ -480,6 +480,51 @@ def enqueue(domain, week):
     return {'success':True,'queued':count,'delivered':0,'items_sent':0,'sent':0,'native':True}
 
 
+def item_details(domain, week):
+    from .models import validate_scope
+    validate_scope(domain, week)
+    with db.connect() as conn:
+        count = conn.execute('SELECT COUNT(*) FROM apple_items WHERE domain=? AND week=?', (domain, week)).fetchone()[0]
+        if count > MAX_ITEMS:
+            raise BatchTooLarge('Too many items for a complete view')
+        items = store.list_items(domain=domain, week=week, conn=conn)
+        values = []
+        for item in items:
+            is_set, due = store.get_due_override(item.token, conn=conn)
+            values.append({**item.to_dict(), 'has_due_override': is_set, 'due_override': due})
+    return {'items': values}
+
+
+def conflict_detail(conflict_id):
+    _uuid(conflict_id)
+    with db.connect() as conn:
+        row = conn.execute("SELECT * FROM apple_conflicts WHERE conflict_id=? AND status='open'", (conflict_id,)).fetchone()
+        if row is None:
+            raise RevisionConflict('Conflict no longer available')
+        source = json.loads(row['source']) if row['source'] else None
+        evidence = json.loads(row['apple']) if row['apple'] else None
+        choices = ['keep_manual']
+        if row['field'].startswith('shopping_'):
+            choices = ['keep_kitchenos', 'keep_manual']
+        elif row['field'] != 'retained_generation':
+            if store.get_item(row['token'], conn=conn).state == 'suppressed':
+                choices += ['restore']
+            # Source recovery means the source itself could not be applied or
+            # recovered safely. A present Apple observation does not prove that
+            # source is now readable, and source_recovery is not an importable
+            # observation field. Keep this GET free of collect/recovery effects.
+            if (row['field'] != 'source_recovery' and evidence
+                    and evidence.get('availability') == 'present' and not evidence.get('issue')):
+                choices = ['keep_kitchenos']
+                # Mirror resolve_conflict's exact keep_apple patch selection:
+                # recovery imports the whole dictionary; other fields must exist.
+                if row['field'] == 'recovery' or row['field'] in evidence.get('fields', {}):
+                    choices.append('keep_apple')
+                choices.append('keep_manual')
+        return {'conflict_id': row['conflict_id'], 'token': row['token'], 'field': row['field'],
+                'revision': row['revision'], 'source': source, 'apple': evidence, 'choices': choices}
+
+
 def link(token):
     _uuid(token)
     item=store.get_item(token)

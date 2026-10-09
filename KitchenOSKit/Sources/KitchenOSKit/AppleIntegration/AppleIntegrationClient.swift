@@ -6,6 +6,20 @@ public struct AppleIntegrationClient: Sendable {
     private let prefix = "/api/apple-integration"
     public init(client: KitchenOSClient) { self.client = client }
 
+    public func link(token: UUID) async throws -> KitchenOSItemLink {
+        try await client.getJSON(client.baseURL.appendingPathComponent(prefix + "/links/" + token.uuidString.lowercased()))
+    }
+    public func items(domain: AppleDomain, week: String) async throws -> [AppleItemDetail] {
+        guard WeekDate.date(forWeekID: week) != nil else { throw AppleIntegrationError.invalidDate }
+        var url = URLComponents(url: client.baseURL.appendingPathComponent(prefix + "/items"), resolvingAgainstBaseURL: false)!
+        url.queryItems = [URLQueryItem(name: "domain", value: domain.rawValue), URLQueryItem(name: "week", value: week)]
+        struct Response: Decodable { let items: [AppleItemDetail] }
+        let response: Response = try await client.getJSON(url.url!)
+        return response.items
+    }
+    public func conflict(_ id: UUID) async throws -> AppleConflictDetail {
+        try await client.getJSON(client.baseURL.appendingPathComponent(prefix + "/conflicts/" + id.uuidString.lowercased()))
+    }
     public func registerOwner(_ id: UUID, permissions: [String: AppleAuthorization]? = nil,
                               destinations: [String: [AppleDestination]]? = nil) async throws -> BridgeContext {
         struct Request: Encodable { let owner_id: String; let permissions: [String: AppleAuthorization]?; let destinations: [String: [AppleDestination]]? }

@@ -172,11 +172,22 @@
         const [data,board]=await Promise.all([json(`/api/planning-calendar/${currentWeek}?duration_minutes=${duration}${selected?'&exclude_cook_id='+selected.id:''}`,{signal:controller.signal}),json(`/api/week-board/${currentWeek}`,{signal:controller.signal})]);
         if(destroyed||gen!==generation)return;snapshot=data;cooks=board.cooks;
         status.textContent=data.fresh?`Calendar updated · ${new Date(data.synced_at).toLocaleString()} · ${zone()}`:'Calendar needs refresh';
-        renderTray();renderCalendar();if(selected){renderOpenings();warn();}
+        renderTray();renderCalendar();if(selected){renderOpenings();warn();}focusLinkedCook();
       }catch(err){if(err.name!=='AbortError'&&gen===generation){
           status.textContent='Couldn’t refresh calendar. Check your connection and try again.';
           if(snapshot){snapshot={...snapshot,fresh:false,events:[],choices:{},days:Object.fromEntries(Object.keys(snapshot.days).map(d=>[d,{covered:false,windows:[]}]))};renderCalendar();if(selected){renderOpenings();warn();}}
         }}
+    }
+    let pendingFocus = new URLSearchParams(window.location.search).get('focusCookID');
+    if (pendingFocus && !/^[1-9][0-9]*$/.test(pendingFocus)) pendingFocus = null;
+    function focusLinkedCook() {
+      if (!pendingFocus) return;
+      const id = Number(pendingFocus); pendingFocus = null;
+      const cook = Number.isSafeInteger(id) ? cooks.find(c => c.id === id) : null;
+      if (!cook || cook.bundle_id || cook.cooked_at) {
+        status.textContent = 'This cooking item is no longer available to schedule. No changes were made.'; return;
+      }
+      choose(cook); editor.scrollIntoView({block: 'nearest'}); dateInput.focus();
     }
     const timer=setInterval(()=>{if(!document.hidden&&!submitting)load();},60000);load();
     return {setWeek(value){if(value===currentWeek)return;currentWeek=value;selected=null;dayIndex=0;editor.hidden=true;snapshot=null;timeline.replaceChildren();tray.replaceChildren();load();},destroy(){destroyed=true;generation++;controller?.abort();clearInterval(timer);root.replaceChildren();}};

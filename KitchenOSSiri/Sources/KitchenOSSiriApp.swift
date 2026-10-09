@@ -11,6 +11,7 @@ struct KitchenOSSiriApp: App {
 
     var body: some Scene {
         WindowGroup {
+            NativeNavigationHost {
             #if os(macOS)
             // Mac: the native sidebar app with the full feature surface.
             AppShell()
@@ -42,6 +43,7 @@ struct KitchenOSSiriApp: App {
                 }
             }
             #endif
+            }
         }
     }
 }

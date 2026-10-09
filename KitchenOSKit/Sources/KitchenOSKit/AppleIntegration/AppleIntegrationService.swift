@@ -22,6 +22,7 @@ public struct AppleOwnedSelection: Sendable {
     public init(token: UUID, revision: Int) { self.token = token; self.revision = revision }
 }
 public enum AppleIntegrationCommand: Sendable {
+    case connect
     case activate(AppleDomain, week: String, destination: String)
     case sync
     case setPaused(Bool, revision: Int)
@@ -131,6 +132,8 @@ public actor AppleIntegrationService {
     }
     private func execute(_ command: AppleIntegrationCommand) async throws -> SyncReport {
         try await checkAuthority()
+        // Connecting is setup only, including when earlier delivery proof is retained.
+        if case .connect = command { return try await executeCommand(command) }
         var recovered = Totals()
         var command = command
         if pendingAcknowledgement != nil, case let .setPaused(value, revision) = command {
@@ -153,6 +156,9 @@ public actor AppleIntegrationService {
     }
     private func executeCommand(_ command: AppleIntegrationCommand) async throws -> SyncReport {
         switch command {
+        case .connect:
+            _ = try await register()
+            return try await api.status().report
         case .sync: return try await synchronize()
         case let .setPaused(value, revision):
             let report = try await api.setPaused(value, expectedRevision: revision)

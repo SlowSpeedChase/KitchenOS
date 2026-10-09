@@ -299,6 +299,28 @@ private actor ServiceAPI: AppleIntegrationAPI {
         XCTAssertEqual(result.created, 1)
         XCTAssertGreaterThan(result.unavailable, 0)
     }
+    func testConnectDoesNotFlushPendingDeliveryProof() async throws {
+        let api = ServiceAPI(); let store = ServiceStore(); let old = item(linked: true); let op = deletion(old)
+        store.objects = [token]
+        await api.configure(items: [], operations: [op], retained: [old], ackFailures: 100, reservedRemoval: op)
+        let service = service(api, store)
+        do { _ = try await service.perform(.removeOwned([AppleOwnedSelection(token: token, revision: 1)])) } catch {}
+        let before = await api.calls.count
+        _ = try await service.perform(.connect)
+        let after = await api.calls
+        XCTAssertEqual(Array(after.dropFirst(before)), ["owner", "status"])
+        XCTAssertEqual(store.writes.count, 1)
+    }
+    func testConnectRegistersWithoutPublishingHistoricalWork() async throws {
+        let api = ServiceAPI(); let store = ServiceStore()
+        await api.configure(connected: false)
+        let result = try await service(api, store).perform(.connect)
+        let calls = await api.calls
+        XCTAssertEqual(calls, ["owner", "status"])
+        XCTAssertTrue(store.observed.isEmpty); XCTAssertTrue(store.writes.isEmpty)
+        XCTAssertEqual(store.requestCount, 0)
+        XCTAssertEqual(result.created, 0)
+    }
     func testPausedAndDisconnectedDoNotRegisterOrWrite() async throws {
         for paused in [true, false] {
             let api = ServiceAPI(); let store = ServiceStore(); await api.configure(paused: paused, connected: paused)

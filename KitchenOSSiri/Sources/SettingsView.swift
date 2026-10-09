@@ -45,6 +45,8 @@ struct SettingsView: View {
             }
             #endif
 
+            AppleIntegrationSettingsView()
+
             Section("Obsidian") {
                 TextField("Vault name", text: $obsidianVault)
                     .textFieldStyle(.roundedBorder)

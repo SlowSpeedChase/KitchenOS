@@ -2764,6 +2764,86 @@ def api_pantry_put():
     return jsonify({"status": "saved", "count": len(items)})
 
 
+# ----- Saved native source views (never infer or spend inventory) -----
+
+def _saved_shopping_payload(week):
+    from lib.shopping_note import read_shopping_note
+    document = read_shopping_note(week)
+    return {"week": week, "content_hash": document.content_hash,
+            "rows": [{"id": row.id, "text": row.text, "completed": row.completed,
+                      "issue": document.issues.get(row.id) or ("identity_missing" if not row.id else None)}
+                     for row in document.rows]}
+
+
+@app.route('/api/shopping-list/saved/<week>', methods=['GET'])
+@require_token
+def api_saved_shopping_get(week):
+    from lib.apple_integration.models import RevisionConflict
+    try:
+        return jsonify(_saved_shopping_payload(parse_iso_week(week)))
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    except FileNotFoundError:
+        return jsonify(error="No saved shopping list for this week"), 404
+    except RevisionConflict as exc:
+        return jsonify(error=str(exc)), 409
+    except (OSError, UnicodeError):
+        return jsonify(error="Saved shopping list is unavailable"), 503
+
+
+@app.route('/api/shopping-list/saved/<week>/completion', methods=['POST'])
+@require_token
+def api_saved_shopping_completion(week):
+    from uuid import UUID
+    from lib import paths
+    from lib.shopping_note import set_completed
+    from lib.note_mutation import mutate_note
+    from lib.apple_integration.models import RevisionConflict
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or set(data) != {'row_id', 'completed', 'expected_hash', 'operation_id'}:
+        return jsonify(error="row_id, completed, expected_hash and operation_id required"), 400
+    try:
+        week = parse_iso_week(week)
+        if (type(data['completed']) is not bool or not isinstance(data['row_id'], str)
+                or not re.fullmatch(r'(gen|manual):[A-Za-z0-9_-]{1,64}', data['row_id'])
+                or not isinstance(data['expected_hash'], str)
+                or not re.fullmatch(r'[a-f0-9]{64}', data['expected_hash'])
+                or not isinstance(data['operation_id'], str)):
+            raise ValueError('Invalid saved shopping update')
+        operation = str(UUID(data['operation_id']))
+        path = shopping_list_path(paths.shopping_lists_dir(), week)
+        if not path.is_file():
+            return jsonify(error="No saved shopping list for this week"), 404
+        mutate_note(path, data['expected_hash'],
+                    lambda text: set_completed(text, data['row_id'], data['completed']), operation)
+        return jsonify(_saved_shopping_payload(week))
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    except RevisionConflict as exc:
+        return jsonify(error=str(exc)), 409
+    except (OSError, UnicodeError):
+        return jsonify(error="Saved shopping list is unavailable"), 503
+
+
+@app.route('/api/tasks/<week>/saved', methods=['GET'])
+@require_token
+def api_saved_tasks_get(week):
+    from lib.apple_integration import prep
+    from lib.apple_integration.models import SourceUnavailable, RevisionConflict
+    try:
+        week = parse_iso_week(week)
+        payload, _ = prep._read(week)
+        return jsonify(payload)
+    except FileNotFoundError:
+        return jsonify(error="No saved prep tasks for this week"), 404
+    except (SourceUnavailable, RevisionConflict):
+        return jsonify(error="Saved prep tasks need an explicit refresh in KitchenOS"), 409
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    except (OSError, UnicodeError):
+        return jsonify(error="Saved prep tasks are unavailable"), 503
+
+
 # ----- Pantry-aware shopping list flow -----
 
 @app.route('/api/shopping-list/preview', methods=['POST'])

@@ -112,6 +112,16 @@ def register_routes(app, require_token):
             raise RequestEntityTooLarge()
         return {'operations':[o.to_dict() for o in service.remove_owned(BridgeContext.from_dict(data['context']),data['items'],data['request_id'])]}
 
+    @endpoint('/items',['GET'])
+    def item_details():
+        if set(request.args) != {'domain', 'week'}:
+            raise InvalidPayload('domain and week required')
+        return service.item_details(request.args['domain'], request.args['week'])
+
+    @endpoint('/conflicts/<conflict_id>',['GET'])
+    def conflict_detail(conflict_id):
+        return service.conflict_detail(conflict_id)
+
     @endpoint('/links/<token>',['GET'])
     def link(token):
         return service.link(token)

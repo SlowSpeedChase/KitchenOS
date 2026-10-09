@@ -19,6 +19,7 @@ struct PlanningCalendarSheet: View {
 
 struct PlanningCalendarWebView {
     let week: String
+    var focusCookID: Int? = nil
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeWebView(_ coordinator: Coordinator) -> WKWebView {
         let config = KitchenOSConfig.resolved()
@@ -30,12 +31,18 @@ struct PlanningCalendarWebView {
         let webView = WKWebView(frame:.zero,configuration:settings)
         coordinator.origin = config.baseURL
         webView.navigationDelegate = coordinator
-        if let url = PlanningWebPolicy.plannerURL(base:config.baseURL,week:week) {
+        load(webView, coordinator: coordinator)
+        return webView
+    }
+    func load(_ webView: WKWebView, coordinator: Coordinator) {
+        let config = KitchenOSConfig.resolved()
+        guard let origin = coordinator.origin, PlanningWebPolicy.sameOrigin(config.baseURL, origin) else { return }
+        if let url = PlanningWebPolicy.plannerURL(base:config.baseURL,week:week, focusCookID: focusCookID), coordinator.loadedURL != url {
+            coordinator.loadedURL = url
             var request=URLRequest(url:url)
             if let token=config.credentials.token() { request.setValue("Bearer \(token)",forHTTPHeaderField:"Authorization") }
             webView.load(request)
         }
-        return webView
     }
     static func clean(_ webView: WKWebView) {
         webView.stopLoading()
@@ -45,6 +52,7 @@ struct PlanningCalendarWebView {
     }
     final class Coordinator: NSObject, WKNavigationDelegate {
         var origin: URL?
+        var loadedURL: URL?
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
             guard let url=action.request.url, let origin else { decisionHandler(.cancel);return }
             if PlanningWebPolicy.sameOrigin(url,origin), action.targetFrame?.isMainFrame == true,
@@ -64,13 +72,13 @@ struct PlanningCalendarWebView {
 #if os(macOS)
 extension PlanningCalendarWebView: NSViewRepresentable {
     func makeNSView(context: Context) -> WKWebView { makeWebView(context.coordinator) }
-    func updateNSView(_ view: WKWebView, context: Context) {}
+    func updateNSView(_ view: WKWebView, context: Context) { load(view, coordinator: context.coordinator) }
     static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) { clean(view) }
 }
 #else
 extension PlanningCalendarWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView { makeWebView(context.coordinator) }
-    func updateUIView(_ view: WKWebView, context: Context) {}
+    func updateUIView(_ view: WKWebView, context: Context) { load(view, coordinator: context.coordinator) }
     static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) { clean(view) }
 }
 #endif
