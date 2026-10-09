@@ -78,6 +78,13 @@ CREATE TABLE IF NOT EXISTS apple_file_edits (
     status TEXT NOT NULL CHECK(status IN ('pending','applied','conflict')),
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS apple_source_patches (
+    operation_id TEXT PRIMARY KEY, token TEXT NOT NULL REFERENCES apple_items(token),
+    domain TEXT NOT NULL, expected_revision INTEGER NOT NULL,
+    item_payload TEXT NOT NULL, patch TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending','applied','conflict')),
+    result TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 CREATE TABLE IF NOT EXISTS planning_calendar_barrier (
  id INTEGER PRIMARY KEY CHECK(id=1), cleared_at TEXT NOT NULL
 );
@@ -208,6 +215,7 @@ _INVENTORY_COLS = (
 # Columns added after the original schema shipped. ``connect()`` adds any that
 # an existing DB is missing — SQLite ``ADD COLUMN`` is cheap and append-only.
 _MIGRATIONS = {
+    "apple_items": [("due_override", "TEXT")],
     "inventory": (
         ("for_recipe", "TEXT"), ("expires", "TEXT"),
         # Set when a cook uses a row it cannot safely decrement (a container).

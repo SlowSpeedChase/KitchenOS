@@ -179,10 +179,10 @@ next regeneration.
 |---|---|
 | `models.py` | Version-one snake_case wire dataclasses, strict `from_dict`/`to_dict`, `canonical_hash`, `validate_fields`, and `validate_observations`; typed `InvalidPayload`, `RevisionConflict`, `OwnershipConflict`, and `SourceUnavailable` errors. |
 | `merge.py` | `merge_fields(common, source, apple)` produces separate source/Apple patches and conflicts. No common snapshot plus an existing marker requires recovery. |
-| `store.py` | `register_owner`, `activate_scope`/`update_scope`, `refresh_source`, `reserve_operation`, and `acknowledge` enforce owner, scope, generation, and revision checks. `get_item`, `list_items`, and `pending_operations` read persisted work; `set_title_override` and `set_suppressed` preserve preferences independently of source content. |
+| `store.py` | `get_due_override`/`set_due_override` distinguish unset and explicitly cleared due preferences. `reserve_source_patch`, `pending_source_patches`, `finish_source_patch`, and `conflict_source_patch` journal interrupted source imports. `register_owner`, `activate_scope`/`update_scope`, `refresh_source`, `reserve_operation`, and `acknowledge` enforce owner, scope, generation, and revision checks. `get_item`, `list_items`, and `pending_operations` read persisted work; `set_title_override` and `set_suppressed` preserve preferences independently of source content. |
 
 `inventory_db._SCHEMA` creates `apple_bridge`, `apple_scopes`, `apple_items`,
-`apple_operations`, `apple_conflicts`, and `apple_file_edits`. Reservations have
+`apple_operations`, `apple_conflicts`, `apple_file_edits`, and `apple_source_patches`. Reservations have
 unique operation UUIDs and remain pending until acknowledged. An identical
 reservation reuses its UUID; an identical acknowledgement is inert. Source,
 common, and pending payloads remain separate. Retired generations remain stored
@@ -377,3 +377,41 @@ in `docs/setup/`.
   (worst coverage/confidence first), live deterministic recompute with USDA
   candidates, and human match pinning that the engine's cache honors on the
   next recompute.
+
+
+### Shopping note identity and recoverable imports
+
+| Module | Public boundary |
+|---|---|
+| `lib/note_mutation.py` | `content_hash`, `mutate_note(path, expected_hash, transform, operation_id)`, and `recover_note_edits` preserve exact UTF-8 before/after images for known week notes and prep sidecars under the configured vault. Thread locks and filesystem `flock` serialize cooperating processes; unique sibling temporary files are fsynced and atomically replaced after a final content check. |
+| `lib/shopping_note.py` | `ShoppingRow`/`ShoppingDocument`, `read_shopping_note`, `parse_document`, `generated_identity`, `save_shopping_note`, `set_completed`, and `strip_item_marker` implement validated `gen:`/`manual:` row identities. Generated IDs use normalized ingredient plus aggregator bucket before display formatting. Both shopping API save endpoints call this writer; reads never migrate implicitly. |
+| `lib/apple_integration/shopping.py` | `collect`, `apply`, and `recover_pending` expose Markdown membership/title/quantity/completion and SQLite due overrides. Import completion changes only the exact marked row and never calls pantry spending. Missing, unmarked, malformed, or duplicate-ID notes fail closed. |
+
+The v3 encoded note metadata holds row identity snapshots and unresolved amount
+change evidence; v1/v2 generated-item provenance remains readable for explicit
+migration. A checked quantity change keeps its checked state and raises
+`shopping_amount_changed`. An identity edit such as flour to eggs preserves the
+note bytes and blocks export/import as `shopping_identity_changed`. Identical
+manual rows have independent random IDs. Inventory matches remain plain bullets.
+Checked rows leaving generation remain visible history; journaled completed
+history (including acknowledged completion) is retained when rows are removed.
+Suppression belongs to an export generation and survives normal source refresh.
+
+Due overrides use `apple_items.due_override`: SQL NULL means unset, JSON null
+means explicitly cleared. The setter checks the latest generation and expected
+revision; replacement generations start unset. The adapter includes effective
+due in its content revision. Call `collect` then `refresh_source` after changing
+an override to update the source payload; the metadata setter itself only
+advances the journal revision.
+
+The service must run adapter `recover_pending()` **before source refresh**.
+A source import reserves `apple_source_patches` before file work, uses the same
+operation ID for `apple_file_edits`, then commits due metadata and the source
+patch result in one short SQLite transaction. An interrupted import may resume
+only against its recorded before/after image and unchanged generation/revision.
+Drift remains a conflict; a pending reservation is never a synchronized result.
+No DB transaction is held across file replacement or external Apple work.
+
+Advisory locks cannot stop a non-cooperating editor between the last hash check
+and rename. The journal can recover only bytes the process actually observed;
+it does not claim to recover an unseen external edit in that interval.

@@ -980,46 +980,22 @@ def generate_shopping_list_endpoint():
     if not result['success']:
         return jsonify(result), 400
 
-    generated_purchase_items = result.get('purchase_items', result['items'])
-
-    # Check for existing manual items before overwriting
-    manual_items = []
-    filename = filepath.name
-    if filepath.exists():
-        existing_result = parse_shopping_list_file(week)
-        if existing_result['success']:
-            previous_generated = existing_result.get('generated_items')
-            if previous_generated is None:
-                legacy_candidates = extract_manual_items(
-                    existing_result['items'], generated_purchase_items)
-                manual_items = extract_legacy_manual_items(
-                    legacy_candidates, result.get('lines') or [])
-            else:
-                manual_candidates = extract_manual_items(
-                    existing_result['items'], previous_generated)
-                if (existing_result.get('generated_items_version') or 1) < 2:
-                    manual_items = extract_legacy_manual_items(
-                        manual_candidates, result.get('lines') or [])
-                else:
-                    manual_items = manual_candidates
-
-    # Combine generated items with manual items
-    all_items = generated_purchase_items + manual_items
-
-    # Inventory matches are informational only — they carry no checkbox, so they
-    # never reach Reminders or come back as manual items. Generation is read-only;
-    # the user verifies each matched product and amount before shopping.
+    from lib.shopping_note import save_shopping_note
+    from lib.apple_integration.models import RevisionConflict
     lines = result.get('lines') or []
     inventory_matches = result.get('inventory_matches', []) if use_pantry else []
-    markdown = generate_shopping_list_markdown(
-        week, all_items, inventory_matches=inventory_matches,
-        generated_items=generated_purchase_items)
-
-    # Ensure Shopping Lists folder exists
-    SHOPPING_LISTS_PATH.mkdir(parents=True, exist_ok=True)
-
-    # Write file
-    filepath.write_text(markdown, encoding='utf-8')
+    try:
+        document = save_shopping_note(
+            week, lines, inventory_matches,
+            selected_items=None if lines else result.get('purchase_items', result['items']))
+    except RevisionConflict as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 409
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    filename = filepath.name
+    all_items = document.rows
+    generated_purchase_items = [row for row in document.rows if row.kind == 'gen']
+    manual_items = [row for row in document.rows if row.kind == 'manual']
 
     return jsonify({
         'success': True,
@@ -2798,18 +2774,26 @@ def api_shopping_list_confirm():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
-    SHOPPING_LISTS_PATH.mkdir(parents=True, exist_ok=True)
-    markdown = generate_shopping_list_markdown(
-        week, items, inventory_matches=inventory_matches)
+    from lib.shopping_note import save_shopping_note
+    from lib.apple_integration.models import RevisionConflict
+    # Structured demand assigns generated IDs before rendering. A selection
+    # without matching generation evidence is a distinct manual row.
+    generated = generate_shopping_list(week, pantry=pantry_module.load_pantry())
+    lines = generated.get('lines', []) if generated.get('success') else []
+    try:
+        document = save_shopping_note(week, lines, inventory_matches, selected_items=items)
+    except RevisionConflict as exc:
+        return jsonify({'error': str(exc)}), 409
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
     filename = out_path.name
-    out_path.write_text(markdown, encoding="utf-8")
 
     if decisions:
         pantry = pantry_module.load_pantry()
         updated = pantry_module.apply_decisions(decisions, pantry)
         pantry_module.save_pantry(updated)
 
-    return jsonify({"status": "saved", "filename": filename, "items": len(items)})
+    return jsonify({"status": "saved", "filename": filename, "items": len(document.rows)})
 
 
 # ----- Cross-recipe prep tasks -----

@@ -76,12 +76,13 @@ def test_recipe_path_escape_is_rejected_without_mutating_outside_file(client, tm
 class TestGenerateShoppingListMerge:
     """Tests for shopping list regeneration with manual item preservation."""
 
-    def test_preserves_manual_items_on_regeneration(self, tmp_path):
+    def test_preserves_manual_items_on_regeneration(self, tmp_path, monkeypatch):
         """Manual items are preserved when regenerating shopping list."""
         import api_server
         import lib.shopping_list_generator
 
         # Create test shopping list with a manual item
+        monkeypatch.setenv("KITCHENOS_VAULT", str(tmp_path))
         test_shopping_list = tmp_path / "Shopping Lists"
         test_shopping_list.mkdir()
         existing_file = test_shopping_list / "2026-W35.md"
@@ -103,7 +104,10 @@ class TestGenerateShoppingListMerge:
                     'success': True,
                     'items': ['2 cups flour', '1 tsp salt'],
                     'recipes': ['Test Recipe'],
-                    'lines': [],
+                    'lines': lib.shopping_list_generator.compute_lines([
+                        {'item': 'flour', 'amount': '2', 'unit': 'cup'},
+                        *([{'item': 'salt', 'amount': '1', 'unit': 'tsp'}] if week != '2026-W36' else []),
+                    ]),
                     'warnings': []
                 }
 
@@ -118,12 +122,13 @@ class TestGenerateShoppingListMerge:
                 assert 'organic eggs (manual item)' in result_content
                 assert '2 cups flour' in result_content
 
-    def test_returns_manual_count_in_response(self, tmp_path):
+    def test_returns_manual_count_in_response(self, tmp_path, monkeypatch):
         """Response includes count of manual items preserved."""
         import api_server
         import lib.shopping_list_generator
 
         # Create test shopping list with manual items
+        monkeypatch.setenv("KITCHENOS_VAULT", str(tmp_path))
         test_shopping_list = tmp_path / "Shopping Lists"
         test_shopping_list.mkdir()
         existing_file = test_shopping_list / "2026-W36.md"
@@ -143,7 +148,10 @@ class TestGenerateShoppingListMerge:
                     'success': True,
                     'items': ['2 cups flour'],
                     'recipes': ['Test Recipe'],
-                    'lines': [],
+                    'lines': lib.shopping_list_generator.compute_lines([
+                        {'item': 'flour', 'amount': '2', 'unit': 'cup'},
+                        *([{'item': 'salt', 'amount': '1', 'unit': 'tsp'}] if week != '2026-W36' else []),
+                    ]),
                     'warnings': []
                 }
 
@@ -158,11 +166,12 @@ class TestGenerateShoppingListMerge:
                 assert data['generated_count'] == 1
                 assert data['item_count'] == 3
 
-    def test_works_without_existing_file(self, tmp_path):
+    def test_works_without_existing_file(self, tmp_path, monkeypatch):
         """Endpoint works when no existing file (no manual items to preserve)."""
         import api_server
         import lib.shopping_list_generator
 
+        monkeypatch.setenv("KITCHENOS_VAULT", str(tmp_path))
         test_shopping_list = tmp_path / "Shopping Lists"
         test_shopping_list.mkdir()
 
@@ -174,7 +183,10 @@ class TestGenerateShoppingListMerge:
                     'success': True,
                     'items': ['2 cups flour', '1 tsp salt'],
                     'recipes': ['Test Recipe'],
-                    'lines': [],
+                    'lines': lib.shopping_list_generator.compute_lines([
+                        {'item': 'flour', 'amount': '2', 'unit': 'cup'},
+                        *([{'item': 'salt', 'amount': '1', 'unit': 'tsp'}] if week != '2026-W36' else []),
+                    ]),
                     'warnings': []
                 }
 

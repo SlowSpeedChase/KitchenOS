@@ -74,6 +74,10 @@ def render(markdown: str, week: Optional[str] = None) -> str:
             html.append("</ul>")
             in_list = False
 
+    # These comments are storage metadata, never visible ingredient text.
+    markdown = re.sub(
+        r"<!-- kitchenos-(?:item|shopping-v3|generated-items(?:-v2)?):[^>]* -->",
+        "", markdown)
     for raw in markdown.splitlines():
         line = raw.rstrip()
 

@@ -299,3 +299,77 @@ def set_suppressed(token: str, suppressed: bool, *, expected_revision: int, conn
     if type(suppressed) is not bool:
         raise InvalidPayload('suppressed must be boolean')
     return _edit_metadata(token, expected_revision, suppressed=suppressed, conn=conn)
+
+
+def get_due_override(token: str, *, conn=None) -> tuple[bool, dict | None]:
+    """Return (is_set, due); SQL NULL is unset, JSON null explicitly clears."""
+    with _read(conn) as tx:
+        row = _row(tx, token)
+        _current(tx, row)
+        value = row['due_override']
+        return (value is not None, json.loads(value) if value is not None else None)
+
+
+def set_due_override(token: str, due: dict | None, *, expected_revision: int, conn=None) -> SyncItem:
+    """Set latest-generation reminder metadata with compare-and-set semantics.
+
+    The returned item has the new journal revision; adapters must collect and
+    refresh_source to update its source payload/revision with the effective due.
+    """
+    validate_fields({'due': due}, 'shopping')
+    with db.write_transaction(conn) as tx:
+        row = _row(tx, token)
+        _current(tx, row)
+        if row['domain'] not in {'shopping', 'prep'} or row['revision'] != expected_revision or row['state'] in {'retired', 'history'}:
+            raise RevisionConflict('Due override item changed or is detached')
+        tx.execute('UPDATE apple_items SET due_override=?, revision=revision+1 WHERE token=?',
+                   (canonical_json(due), token))
+        _supersede(tx, token)
+        return _item(_row(tx, token))
+
+
+def reserve_source_patch(item: SyncItem, patch: dict, operation_id: str, *, conn=None) -> dict:
+    """Persist the entire retry contract before a source adapter touches a file."""
+    validate_fields(patch, item.domain)
+    if not isinstance(operation_id, str) or not operation_id or len(operation_id) > 128:
+        raise InvalidPayload('Invalid operation ID')
+    with db.write_transaction(conn) as tx:
+        _bridge(tx)
+        scope = _scope(tx, item.domain, item.week)
+        if item.destination_id != scope['destination_id']:
+            raise RevisionConflict('Source patch destination changed')
+        old = tx.execute('SELECT * FROM apple_source_patches WHERE operation_id=?', (operation_id,)).fetchone()
+        if old:
+            if old['item_payload'] != canonical_json(item.to_dict()) or old['patch'] != canonical_json(patch) or old['status'] == 'conflict':
+                raise RevisionConflict('Source operation payload changed or conflicted')
+            return dict(old)
+        row = _row(tx, item.token)
+        _current(tx, row)
+        if _item(row) != item or row['state'] != 'active':
+            raise RevisionConflict('Source patch item changed or is inactive')
+        # Do not allow a second import to interleave a pending file/DB update.
+        if tx.execute("SELECT 1 FROM apple_source_patches WHERE token=? AND status='pending'", (item.token,)).fetchone():
+            raise RevisionConflict('A source patch is awaiting recovery')
+        tx.execute("INSERT INTO apple_source_patches(operation_id,token,domain,expected_revision,item_payload,patch,status) VALUES(?,?,?,?,?,?,'pending')",
+                   (operation_id, item.token, item.domain, item.revision, canonical_json(item.to_dict()), canonical_json(patch)))
+        return dict(tx.execute('SELECT * FROM apple_source_patches WHERE operation_id=?', (operation_id,)).fetchone())
+
+
+def pending_source_patches(domain: str, *, conn=None) -> list[dict]:
+    """Adapters recover these before the service refreshes any source snapshots."""
+    with _read(conn) as tx:
+        return [dict(row) for row in tx.execute("SELECT * FROM apple_source_patches WHERE domain=? AND status='pending' ORDER BY created_at,rowid", (domain,))]
+
+
+def finish_source_patch(operation_id: str, result: SourceItem, *, conn=None) -> None:
+    """Commit with the override transaction; pending alone is never delivery."""
+    with db.write_transaction(conn) as tx:
+        changed = tx.execute("UPDATE apple_source_patches SET status='applied', result=? WHERE operation_id=? AND status='pending'",
+                             (canonical_json(result.to_dict()), operation_id)).rowcount
+        if changed != 1:
+            raise RevisionConflict('Source patch is not pending')
+
+
+def conflict_source_patch(operation_id: str, *, conn=None) -> None:
+    with db.write_transaction(conn) as tx:
+        tx.execute("UPDATE apple_source_patches SET status='conflict' WHERE operation_id=? AND status='pending'", (operation_id,))
