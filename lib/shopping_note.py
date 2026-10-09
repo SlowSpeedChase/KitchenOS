@@ -171,6 +171,13 @@ def save_shopping_note(week: str, generated_lines: list[dict], inventory_matches
             raise RevisionConflict('Generated shopping identity changed; preserve and resolve the note')
         old_by_id = {r.id: r for r in old.rows if r.id}
         snapshots = dict(old.metadata.get('rows', {}))
+        # A hand-edited checked amount may already match the new demand. Keep
+        # its unresolved evidence before replacing the generated text snapshot.
+        for row_id, issue in old.issues.items():
+            snapshot = dict(snapshots[row_id])
+            snapshot['conflict'] = issue
+            snapshot.setdefault('previous_text', snapshot['text'])
+            snapshots[row_id] = snapshot
         purchase = []
         for line in generated_lines:
             identity = generated_identity(line)
@@ -232,7 +239,7 @@ def save_shopping_note(week: str, generated_lines: list[dict], inventory_matches
             snap = dict(snapshots.get(row.id, {}))
             if prior and completed and prior.text != row.text:
                 snap['conflict'] = 'shopping_amount_changed'
-                snap['previous_text'] = prior.text
+                snap.setdefault('previous_text', prior.text)
             snap.update(identity=row.identity, text=row.text, text_identity=_text_identity(row.text), retired=False)
             snapshots[row.id] = snap
         result_ids = {r.id for r in result}

@@ -397,3 +397,48 @@ def test_checked_history_from_common_payload_survives_source_row_removal(active)
         conn.execute('UPDATE apple_items SET common_payload=? WHERE token=?', ('{"completed":true,"due":null}', item.token))
     active.write_text(active.read_text().replace(next(l for l in active.read_text().splitlines() if l.startswith('- [ ]')), ''))
     assert shopping.collect(WEEK)[0].state == 'history'
+
+
+def test_checked_quantity_edit_conflict_survives_matching_regeneration(active):
+    from lib.apple_integration import shopping
+    from lib.shopping_note import read_shopping_note, save_shopping_note
+    original = saved()
+    export()
+    row_id = original.rows[0].id
+    active.write_text(active.read_text().replace('- [ ] 1 cup flour', '- [x] 2 cups flour'))
+    assert read_shopping_note(WEEK).issues[row_id] == 'shopping_amount_changed'
+    for _ in range(3):
+        regenerated = save_shopping_note(WEEK, [flour('2')], [])
+        assert regenerated.rows[0].id == row_id
+        assert regenerated.rows[0].completed is True
+        assert regenerated.rows[0].text == '2 cups flour'
+        assert regenerated.issues[row_id] == 'shopping_amount_changed'
+        assert regenerated.metadata['rows'][row_id]['previous_text'] == '1 cup flour'
+        assert shopping.collect(WEEK)[0].state == 'conflict'
+
+
+@pytest.mark.parametrize('detached_state', ['retired', 'history'])
+def test_reappearing_row_does_not_inherit_detached_due_override(active, detached_state):
+    import json
+    from lib.apple_integration import shopping
+    saved()
+    original = export()
+    due = {'date': '2026-10-10', 'time': None, 'timezone': None}
+    source = shopping.apply(original, {'due': due}, str(uuid4()))
+    current = store.refresh_source(source)
+    assert shopping.collect(WEEK)[0].fields['due'] == due
+    store.refresh_source(replace(source, state=detached_state))
+    assert store.get_due_override(current.token) == (True, due)
+
+    reappearing = shopping.collect(WEEK)[0]
+    assert reappearing.state == 'active'
+    assert reappearing.fields['due'] is None
+    replacement = store.refresh_source(reappearing)
+    assert replacement.generation == current.generation + 1
+    assert replacement.token != current.token
+    assert replacement.fields['due'] is None
+    assert store.get_due_override(replacement.token) == (False, None)
+    with db.connect() as conn:
+        persisted = json.loads(conn.execute('SELECT source_payload FROM apple_items WHERE token=?', (replacement.token,)).fetchone()[0])
+        assert persisted['fields']['due'] is None
+    assert shopping.collect(WEEK)[0].source_revision == replacement.source_revision

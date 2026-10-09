@@ -54,7 +54,10 @@ def collect(week: str) -> list[SourceItem]:
     sources = []
     for row in document.rows:
         prior = latest.pop(row.id, None)
-        due = store.get_due_override(prior.token)[1] if prior else None
+        # A reappearing row starts a replacement generation; detached metadata
+        # must not enter the new source payload before refresh_source creates it.
+        due = (store.get_due_override(prior.token)[1]
+               if prior and prior.state not in {'retired', 'history'} else None)
         source = _source(week, row, document, prior, due)
         sources.append(source)
         if source.state == 'conflict' and prior:
