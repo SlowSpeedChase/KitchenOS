@@ -29,6 +29,55 @@ from typing import Callable, Optional, TypeVar
 T = TypeVar("T")
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS apple_bridge (
+    id INTEGER PRIMARY KEY CHECK(id = 1), owner_id TEXT NOT NULL,
+    owner_generation INTEGER NOT NULL CHECK(owner_generation > 0),
+    paused INTEGER NOT NULL DEFAULT 0 CHECK(paused IN (0, 1))
+);
+CREATE TABLE IF NOT EXISTS apple_scopes (
+    domain TEXT NOT NULL CHECK(domain IN ('shopping','prep','cooking')),
+    week TEXT NOT NULL, destination_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('active','paused','archived')),
+    revision INTEGER NOT NULL CHECK(revision > 0), PRIMARY KEY(domain, week)
+);
+CREATE TABLE IF NOT EXISTS apple_items (
+    token TEXT PRIMARY KEY, logical_id TEXT NOT NULL,
+    domain TEXT NOT NULL, week TEXT NOT NULL, generation INTEGER NOT NULL,
+    destination_id TEXT NOT NULL, source_payload TEXT NOT NULL,
+    common_payload TEXT, locator TEXT, title_override TEXT,
+    suppressed INTEGER NOT NULL DEFAULT 0 CHECK(suppressed IN (0, 1)),
+    state TEXT NOT NULL CHECK(state IN ('active','retired','history','conflict','suppressed')),
+    revision INTEGER NOT NULL CHECK(revision > 0),
+    UNIQUE(domain, week, logical_id, generation),
+    FOREIGN KEY(domain, week) REFERENCES apple_scopes(domain, week)
+);
+CREATE TABLE IF NOT EXISTS apple_operations (
+    operation_id TEXT PRIMARY KEY, token TEXT NOT NULL REFERENCES apple_items(token),
+    generation INTEGER NOT NULL, revision INTEGER NOT NULL,
+    owner_id TEXT NOT NULL, owner_generation INTEGER NOT NULL,
+    scope_revision INTEGER NOT NULL, action TEXT NOT NULL CHECK(action IN ('upsert','delete')),
+    expected_apple_hash TEXT, payload TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending','acknowledged','superseded','failed')),
+    result TEXT, acknowledged_payload TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_apple_pending_operation
+    ON apple_operations(token, generation, revision, action, COALESCE(expected_apple_hash, ''))
+    WHERE status = 'pending';
+CREATE TABLE IF NOT EXISTS apple_conflicts (
+    conflict_id TEXT PRIMARY KEY, token TEXT NOT NULL REFERENCES apple_items(token),
+    field TEXT NOT NULL, base TEXT, source TEXT, apple TEXT,
+    status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','resolved')),
+    revision INTEGER NOT NULL DEFAULT 1, resolution TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS apple_file_edits (
+    operation_id TEXT PRIMARY KEY, path TEXT NOT NULL,
+    before_hash TEXT NOT NULL, after_hash TEXT NOT NULL,
+    before_text TEXT NOT NULL, after_text TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending','applied','conflict')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 CREATE TABLE IF NOT EXISTS planning_calendar_barrier (
  id INTEGER PRIMARY KEY CHECK(id=1), cleared_at TEXT NOT NULL
 );

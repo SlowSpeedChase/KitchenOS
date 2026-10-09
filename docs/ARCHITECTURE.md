@@ -171,6 +171,29 @@ next regeneration.
   The public post-commit refresh boundary catches and logs every ordinary exception
   so a durable write cannot become retryable because its derived view failed.
 
+## Durable Apple sync foundation
+
+`lib/apple_integration/` keeps native sync state in the same SQLite database:
+
+| Module | Public boundary |
+|---|---|
+| `models.py` | Version-one snake_case wire dataclasses, strict `from_dict`/`to_dict`, `canonical_hash`, `validate_fields`, and `validate_observations`; typed `InvalidPayload`, `RevisionConflict`, `OwnershipConflict`, and `SourceUnavailable` errors. |
+| `merge.py` | `merge_fields(common, source, apple)` produces separate source/Apple patches and conflicts. No common snapshot plus an existing marker requires recovery. |
+| `store.py` | `register_owner`, `activate_scope`/`update_scope`, `refresh_source`, `reserve_operation`, and `acknowledge` enforce owner, scope, generation, and revision checks. `get_item`, `list_items`, and `pending_operations` read persisted work; `set_title_override` and `set_suppressed` preserve preferences independently of source content. |
+
+`inventory_db._SCHEMA` creates `apple_bridge`, `apple_scopes`, `apple_items`,
+`apple_operations`, `apple_conflicts`, and `apple_file_edits`. Reservations have
+unique operation UUIDs and remain pending until acknowledged. An identical
+reservation reuses its UUID; an identical acknowledgement is inert. Source,
+common, and pending payloads remain separate. Retired generations remain stored
+for stale-callback rejection, while history items are detached from later edits.
+The file-edit journal retains before/after text and hashes for recovery.
+
+All mutating store helpers accept an optional `conn` borrowed from
+`inventory_db.write_transaction`; the caller retains commit/rollback ownership.
+No transaction spans EventKit or a network call, and this layer never changes
+inventory or sends Apple content to an LLM.
+
 ## Receipt → inventory
 
 Items enter inventory via five paths, condensed from `CLAUDE.md`'s
