@@ -456,7 +456,7 @@ it does not claim to recover an unseen external edit in that interval.
 
 | Module | Public boundary |
 |---|---|
-| `lib/apple_integration/service.py` | `activate`, `update_scope`, `work`, `observe`, `acknowledge`, `resolve_conflict`, `restore`, `remove_owned`, `register_owner`, `disconnect`, `settings`, `status`, `link`, `configured`, and `enqueue` compose source adapters with the shared merge/journal. Recovery precedes source refresh; no DB transaction spans file or native/network work. |
+| `lib/apple_integration/service.py` | `activate`, `update_scope`, `work`, `observe`, `acknowledge`, `resolve_conflict`, `restore`, `remove_owned`, `register_owner`, `disconnect`, `settings`, `status`, `item_details`, `conflict_detail`, `link`, `configured`, and `enqueue` compose source adapters with the shared merge/journal. Recovery precedes source refresh; no DB transaction spans file or native/network work. |
 | `lib/apple_integration/routes.py` | `register_routes(app, require_token)` installs the version-one API, strict envelopes, complete batch limits and localhost writer gate independently of optional bearer auth. Exact contracts and native retry order are in `docs/API.md`. |
 | `lib/apple_integration/shopping.py` | `resolve(item, choice, operation_id)` performs amount/ingredient-identity conflict edits with exact note hashes and recoverable images. `keep_manual` assigns a new row identity; it never transfers an edited ingredient onto the old generated ID. |
 | `lib/apple_integration/store.py` | `reserve_cleanup` is the explicit bounded-removal path for retained generations. Ordinary callbacks reject replaced generations; cleanup acknowledgements can affect only their specifically reserved old row. Scope destination is a default for new items; archive/reactivation preserves existing identities. |
@@ -482,3 +482,64 @@ Completion only changes the exact source checkbox/task; Calendar absence only
 unschedules. No Apple content reaches prompts or application logs. Native ownership
 and last-moment hash verification remain EventKit responsibilities, not assumptions
 that a locator or authenticated HTTP body can prove by itself.
+
+### Native writer, lifecycle and source navigation
+
+`KitchenOSKit/AppleIntegration` defines DTOs, authenticated transport, the
+`AppleItemStore`/`AppleIntegrationAPI` boundaries, the serialized
+`AppleIntegrationService`, lifecycle scheduler and read/control models. The Mac
+app's `EventKitAppleItemStore` owns one lazily created EventKit store on a serial
+worker. EventKit objects never cross that worker; value DTOs do. The shared
+`AppleIntegrationCoordinator` is the entry point for buttons, five Mac App Intents,
+notifications and periodic reconciliation. An explicit command queue spans
+suspension points; actor isolation alone would permit overlapping commands.
+
+iOS uses the shared source/navigation/status clients and compiles without the
+EventKit writer. `AppRouter` presents exact `kitchenos-native://item/<UUID>` links
+through authenticated link lookup. Shopping reads saved IDs and mutates completion
+through the note journal; prep reads saved fresh tasks without inference; cooking
+focuses the exact ledger ID. Deep-link navigation itself has no domain write.
+`PlannedCookEntity` also resolves by ledger ID, and Schedule Cooking uses the
+transactional schedule API with a placement-state precondition.
+
+The coordinator starts with the Mac app, survives closing its last window, and
+stops at quit. Launch, wake/activation, source changes, a 300-second cadence and a
+250ms EventKit notification debounce trigger reconciliation. Sleeping/offline or
+quit means delayed sync. Transient retry backoff is bounded at 30 seconds; retries
+read current state. One domain's unavailable store can be reported while healthy
+domains finish, subject to the global unfinished-observation replay fence.
+Changing the configured server requires restarting the Mac app before another
+writer is constructed. No Apple content is sent to an LLM.
+
+Native recovery replays the exact pending observation UUID/payload/context,
+then rereads server work and Apple objects before admitting outbound operations.
+A successful Apple mutation awaiting HTTP acknowledgement retains its exact proof
+in memory and retries that acknowledgement before another write. After a process
+crash, a first saved object can be recovered by marker and its exact pending
+journal. Lost deletion proof cannot be reconstructed from uncertain Calendar
+absence and needs review. Connect is setup only and bypasses proof flushing;
+pause/resume may preserve and later unblock it.
+
+### Public EventKit limits
+
+Identifiers locate objects; exact ownership markers authorize them. Search uses
+item/external IDs and readable destinations, with finite Calendar windows around
+today and known event starts. Previously linked, unlocatable Calendar objects stay
+unavailable. A never-linked first save moved beyond those windows before its lost
+acknowledgement is recovered can be duplicated; the adapter cannot prove global
+absence. Reminder deletion evidence is limited to prior in-process ownership and
+unchanged visible local-store coverage, not remote account sync completeness.
+
+The final ownership/hash check precedes each save/delete, but public EventKit has
+no atomic compare-and-swap. A concurrent Apple edit can occur in that gap.
+Likewise, external editors do not share note locks and may write between the final
+hash check and atomic replacement; journals recover only observed bytes. Timed
+civil reminder values cannot distinguish both occurrences of a repeated DST hour.
+Provider persistence, alarms/unmanaged fields, real permissions and lifecycle
+behavior require dedicated-destination acceptance beyond automated fixtures.
+
+Owned cooking markers are excluded from external busy snapshots because the
+ledger already contributes their intervals. Exact copied markers on foreign events
+may exclude those events from availability but confer no write authority. Legacy
+ICS and AppleScript exports are unowned representations and are never adopted by
+title; native scopes cannot fall back to another writer when paused/offline.

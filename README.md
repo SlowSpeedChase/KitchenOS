@@ -188,6 +188,30 @@ when off the local network — and adds:
 - **CoreSpotlight search** so recipes are findable system-wide by meaning,
   not just exact title
 
+- **Mac Apple integration** for shopping/prep completion and due dates in
+  Reminders, and scheduled cooking times in Calendar. One designated Mac writes
+  Apple items through the local API; iOS shows integration status.
+
+In Mac Settings → **Apple integration**, connect, allow the needed access, choose
+writable shopping/prep lists and a cooking calendar, then explicitly send a week.
+Connecting alone publishes nothing. **Sync now** reconciles activated weeks;
+queued work and conflicts stay visible. The Mac app and API must be running:
+closing the last window keeps syncing, while sleep or quit pauses it until wake
+or launch. Shopping completion never spends pantry stock or logs cooking.
+
+The Mac Shortcuts action library has five actions: **Send Shopping List to
+Reminders**, **Send Prep Tasks to Reminders**, **Sync Cooking Calendar**,
+**Schedule Cooking**, and **Sync KitchenOS**. Create a named shortcut from an
+action; automatic Mac phrases are not registered. Schedule Cooking saves an
+existing cook in KitchenOS; an inactive week needs Sync Cooking Calendar before
+Apple delivery.
+
+Setup, recovery, legacy Reminders/ICS coexistence, and acceptance limitations
+live in [docs/OPERATIONS.md](docs/OPERATIONS.md#mac-apple-integration).
+Automated fixtures and builds do not establish installed Shortcuts discovery,
+Apple provider persistence, signing, or live permission/lifecycle acceptance;
+those checks remain pending in dedicated test destinations.
+
 Build/sign/deploy commands and how the app connects to the API server live
 in [docs/OPERATIONS.md](docs/OPERATIONS.md) and [docs/setup/](docs/setup/).
 
