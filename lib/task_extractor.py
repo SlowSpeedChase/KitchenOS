@@ -438,11 +438,21 @@ def mark_task_done(week: str, task_id: str, done: bool = True, *,
         text = sidecar.read_bytes().decode('utf-8') if sidecar.exists() else ''
         if expected_hash is None:
             expected_hash = content_hash(text)
-        cached = json.loads(text) if text else (generated or {})
+        repair_unreadable = False
+        try:
+            cached = json.loads(text) if text else (generated or {})
+        except json.JSONDecodeError as exc:
+            if generated is None:
+                raise RevisionConflict('Task sidecar is unreadable') from exc
+            # Only the explicit legacy completion path may use the tasks it
+            # just generated. The journal keeps the malformed before bytes.
+            cached = generated
+            repair_unreadable = True
         if not any(t.get('id') == task_id for t in cached.get('tasks', [])):
             return {"success": False, "error": f"task {task_id} not found"}
         mutate_note(sidecar, expected_hash,
-                    lambda before: _set_done(before or json.dumps(cached), task_id, bool(done)),
+                    lambda before: _set_done(json.dumps(cached) if repair_unreadable else
+                                             (before or json.dumps(cached)), task_id, bool(done)),
                     operation_id or str(uuid4()))
     return {"success": True, "task_id": task_id, "done": bool(done)}
 

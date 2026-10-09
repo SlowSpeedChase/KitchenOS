@@ -492,3 +492,47 @@ def test_cold_page_completion_also_records_source_plan_hash(vault):
     with Flask(__name__).test_request_context('/prep/done'):
         task_extractor.mark_task_done('2026-W18', '95d6123b4f7d')
     assert task_extractor.load_cached_tasks('2026-W18')['plan_hash'] == expected
+
+
+def test_malformed_cache_page_completion_repairs_exact_journaled_bytes(vault):
+    """Unreadable disk JSON must not strand tasks shown by the prep page."""
+    from flask import Flask
+    from lib import inventory_db as db
+    from lib.apple_integration import prep
+    from lib.apple_integration.models import SourceUnavailable
+    sidecar = vault / 'Meal Plans' / '2026-W18.tasks.json'
+    original = b'{invalid json\r\n'
+    sidecar.write_bytes(original)
+    with Flask(__name__).test_request_context('/prep'):
+        shown = task_extractor.extract_tasks('2026-W18')
+    assert len(shown['tasks']) == 3
+    assert sidecar.read_bytes() == original
+    with pytest.raises(SourceUnavailable):
+        prep.collect('2026-W18')
+    with Flask(__name__).test_request_context('/prep/done'):
+        result = task_extractor.mark_task_done('2026-W18', '95d6123b4f7d', operation_id='repair-completion')
+    assert result == {'success': True, 'task_id': '95d6123b4f7d', 'done': True}
+    repaired = task_extractor.load_cached_tasks('2026-W18')
+    assert len(repaired['tasks']) == 3
+    assert repaired['tasks'][0]['id'] == shown['tasks'][0]['id']
+    assert repaired['tasks'][0]['done'] is True
+    assert [t['done'] for t in repaired['tasks'][1:]] == [False, False]
+    assert task_extractor._is_cache_fresh('2026-W18', repaired)
+    with db.connect() as conn:
+        edit = conn.execute('SELECT * FROM apple_file_edits WHERE operation_id=?', ('repair-completion',)).fetchone()
+        assert edit['before_text'].encode('utf-8') == original
+        assert edit['after_text'].encode('utf-8') == sidecar.read_bytes()
+        assert edit['status'] == 'applied'
+
+
+def test_malformed_cache_with_stale_expected_hash_never_repairs(vault):
+    from lib.apple_integration.models import RevisionConflict
+    from lib.note_mutation import content_hash
+    sidecar = vault / 'Meal Plans' / '2026-W18.tasks.json'
+    original = b'{invalid json\r\n'
+    sidecar.write_bytes(original)
+    with pytest.raises(RevisionConflict):
+        task_extractor.mark_task_done('2026-W18', '95d6123b4f7d',
+                                      expected_hash=content_hash('older bytes'),
+                                      operation_id='stale-completion')
+    assert sidecar.read_bytes() == original
