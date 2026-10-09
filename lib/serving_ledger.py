@@ -857,7 +857,8 @@ def schedules_for_week(week: str) -> list[dict]:
 
 
 def schedule_cook(cook_id: int, *, date: str, meal: str, start: str,
-                  timezone: str, duration_minutes: int, servings_to_eat: float,
+                  timezone: str, duration_minutes: int, servings_to_eat: float | None,
+                  expected_unplaced: bool | None = None,
                   conn: sqlite3.Connection | None = None) -> dict:
     """Reserve time and first serving atomically; retries never eat twice.
 
@@ -872,8 +873,13 @@ def schedule_cook(cook_id: int, *, date: str, meal: str, start: str,
     from lib.planning_calendar import timestamp, iso_date
     _validate_placement('slot', date, meal)
     valid_duration(duration_minutes)
-    if type(servings_to_eat) not in (int, float) or not math.isfinite(servings_to_eat) or servings_to_eat <= 0:
-        raise ValueError('Servings must be a finite positive number')
+    if expected_unplaced is not None and type(expected_unplaced) is not bool:
+        raise ValueError('Expected placement must be a boolean')
+    # Native callers preserve an omitted count as null, never a guessed serving.
+    # That is legal only for an anchored cook whose state is fenced below.
+    if not (servings_to_eat is None and expected_unplaced is False):
+        if type(servings_to_eat) not in (int, float) or not math.isfinite(servings_to_eat) or servings_to_eat <= 0:
+            raise ValueError('Servings must be a finite positive number')
     try:
         zone = ZoneInfo(timezone)
     except (ValueError, TypeError, ZoneInfoNotFoundError):
@@ -896,6 +902,8 @@ def schedule_cook(cook_id: int, *, date: str, meal: str, start: str,
         if row['bundle_id'] or row['cooked_at']:
             raise ValueError('Choose an uncooked single recipe')
         unplaced = row['date'] is None or row['meal'] is None
+        if expected_unplaced is not None and unplaced != expected_unplaced:
+            raise ValueError('Cook placement changed; choose the cook again')
         _move_cook_in_txn(tx, cook_id, date, meal)
         if unplaced:
             _check_capacity(tx, cook_id, float(servings_to_eat))

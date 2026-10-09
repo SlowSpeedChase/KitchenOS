@@ -111,3 +111,66 @@ def test_api_delete_schedule_preserves_cook():
     assert sl.schedules_for_week('2026-W39') == []
     assert client.delete(f"/api/cooks/{c['id']}/schedule").status_code == 200
     assert client.delete('/api/cooks/999/schedule').status_code == 404
+
+
+def test_expected_placement_is_checked_inside_transaction_before_first_serving():
+    from lib import inventory_db as db
+    c = cook()
+    sl.schedule_cook(c['id'], **args(servings_to_eat=2))
+    with db.write_transaction() as conn:
+        # Another writer cleared the anchor since the native client's exact GET.
+        conn.execute('UPDATE cooks SET date=NULL, meal=NULL WHERE id=?', (c['id'],))
+        conn.execute('DELETE FROM cook_schedule WHERE cook_id=?', (c['id'],))
+        before = list(conn.execute('SELECT * FROM placements WHERE cook_id=?', (c['id'],)))
+        for servings in [None, 1.5]:
+            with pytest.raises(ValueError, match='placement changed'):
+                sl.schedule_cook(c['id'], **args(servings_to_eat=servings), expected_unplaced=False, conn=conn)
+        assert list(conn.execute('SELECT * FROM placements WHERE cook_id=?', (c['id'],))) == before
+        assert conn.execute('SELECT date FROM cooks WHERE id=?', (c['id'],)).fetchone()[0] is None
+        assert conn.execute('SELECT COUNT(*) FROM cook_schedule WHERE cook_id=?', (c['id'],)).fetchone()[0] == 0
+
+
+def test_precondition_rejects_new_anchor_and_preserves_unspecified_existing_servings():
+    c = cook()
+    sl.schedule_cook(c['id'], **args(servings_to_eat=2))
+    before = sl.get_cook(c['id'])
+    with pytest.raises(ValueError, match='placement changed'):
+        sl.schedule_cook(c['id'], **args(), expected_unplaced=True)
+    assert sl.get_cook(c['id']) == before
+    saved = sl.schedule_cook(c['id'], **args(servings_to_eat=None), expected_unplaced=False)
+    assert saved['cook'] == before
+    assert sum(p['count'] for p in saved['cook']['placements']) == 2
+
+
+def test_native_schedule_api_accepts_optional_precondition_and_refuses_stale_placement():
+    from api_server import app
+    c = cook(); client = app.test_client()
+    first = client.post(f"/api/cooks/{c['id']}/schedule", json=dict(args(servings_to_eat=1.5), expected_unplaced=True))
+    assert first.status_code == 200
+    moved = client.post(f"/api/cooks/{c['id']}/schedule", json=dict(args(servings_to_eat=None), expected_unplaced=False))
+    assert moved.status_code == 200
+    assert sum(p['count'] for p in moved.json['cook']['placements']) == 1.5
+    sl.update_cook(c['id'], date=None, meal=None)
+    before = sl.get_cook(c['id'])
+    response = client.post(f"/api/cooks/{c['id']}/schedule", json=dict(args(servings_to_eat=None), expected_unplaced=False))
+    assert response.status_code == 400
+    assert 'placement changed' in response.json['error']
+    assert sl.get_cook(c['id']) == before
+    assert sl.schedules_for_week('2026-W39') == []
+
+
+@pytest.mark.parametrize('expected', [0, 1, 'false', [], {}])
+def test_schedule_rejects_nonboolean_precondition(expected):
+    c = cook()
+    with pytest.raises(ValueError, match='boolean'):
+        sl.schedule_cook(c['id'], **args(), expected_unplaced=expected)
+    assert sl.get_cook(c['id'])['date'] is None
+
+
+def test_unspecified_servings_cannot_create_first_placement_or_bypass_legacy_validation():
+    c = cook()
+    for extra in [{}, {'expected_unplaced': True}, {'expected_unplaced': False}]:
+        with pytest.raises(ValueError):
+            sl.schedule_cook(c['id'], **args(servings_to_eat=None), **extra)
+    assert sl.get_cook(c['id'])['placements'] == []
+    assert sl.schedules_for_week('2026-W39') == []

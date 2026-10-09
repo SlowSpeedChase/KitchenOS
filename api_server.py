@@ -1626,6 +1626,18 @@ def _apply_cook_patch(cook_id, data) -> tuple:
     return before, updated, consumption
 
 
+@app.get('/api/cooks/<int:cook_id>')
+@require_token
+@_ledger_error
+def api_cook_get(cook_id):
+    """Resolve a persisted native cook identity without reconstructing its title."""
+    from lib import serving_ledger
+    cook = serving_ledger.get_cook(cook_id)
+    if cook is None:
+        return jsonify(error='Cook not found'), 404
+    return jsonify(cook)
+
+
 @app.route('/api/cooks/<int:cook_id>', methods=['PATCH'])
 @require_token
 @_ledger_error
@@ -1795,8 +1807,11 @@ def api_bundle_delete(bundle_id):
 def api_cook_schedule(cook_id):
     from lib import serving_ledger
     data = request.get_json(silent=True)
-    if not isinstance(data, dict) or set(data) != {'date','meal','start','timezone','duration_minutes','servings_to_eat'}:
+    required = {'date','meal','start','timezone','duration_minutes','servings_to_eat'}
+    if not isinstance(data, dict) or not required <= set(data) or set(data) - required - {'expected_unplaced'}:
         return jsonify(error='Choose date, meal, time, timezone, duration and servings'), 400
+    if 'expected_unplaced' in data and type(data['expected_unplaced']) is not bool:
+        return jsonify(error='Expected placement must be a boolean'), 400
     if serving_ledger.get_cook(cook_id) is None:
         return jsonify(error='Cook not found'), 404
     saved = serving_ledger.schedule_cook(cook_id, **data)
