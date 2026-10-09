@@ -401,8 +401,10 @@ same unschedule authority.
 `pending_schedule_views` coalesces work by week and increments its revision in
 the ledger transaction. `serving_ledger.drain_schedule_views()` serializes each
 known week-note path, renders committed DB state outside the transaction, and
-clears only its captured revision. A concurrent scheduled move triggers another
-render. IO failure propagates with durable work retained. Owned calls drain before
+clears only its captured revision. `week_view.write_week_markdown` takes that
+same reentrant lock across its complete read/render/write, including ordinary API
+regeneration, so an older renderer cannot overwrite an acknowledged Calendar
+view. A concurrent scheduled move triggers another render. IO failure propagates with durable work retained. Owned calls drain before
 returning; borrowed callers **must commit first, then call `recover_pending()` or
 `drain_schedule_views()`** before declaring success. Recovery performs no Apple,
 network or inference work. Source patches commit as applied together with the

@@ -209,3 +209,75 @@ def test_replaced_generation_refuses_finished_retry(active):
     replacement = store.refresh_source(result)
     assert replacement.generation == item.generation + 1
     with pytest.raises(RevisionConflict): cooking.apply(item, MOVE, operation)
+
+
+def test_ordinary_renderer_cannot_overwrite_acknowledged_calendar_move(active, monkeypatch):
+    """An old API regen must finish before Calendar renders and clears its job."""
+    from threading import Event, RLock, current_thread
+    from lib import note_mutation
+    from api_server import _regen_weeks
+    from lib.apple_integration import cooking
+
+    captured = Event()
+    release_old_render = Event()
+    drain_waiting_or_finished = Event()
+
+    class ObservedRLock:
+        """Keep real locking; signal contention instead of guessing with sleeps."""
+        def __init__(self):
+            self.lock = RLock()
+
+        def __enter__(self):
+            if not self.lock.acquire(blocking=False):
+                drain_waiting_or_finished.set()
+                self.lock.acquire()
+            return self
+
+        def __exit__(self, *exc):
+            self.lock.release()
+
+    path = paths.meal_plans_dir() / f'{WEEK}.md'
+    monkeypatch.setitem(note_mutation._LOCKS, str(path.resolve()), ObservedRLock())
+    real_render = week_view.render_week_markdown
+    real_drain = sl.drain_schedule_views
+    old_renderer_thread = None
+
+    def paused_render(week, recipes_dir):
+        content = real_render(week, recipes_dir)
+        if current_thread() is old_renderer_thread:
+            captured.set()
+            assert release_old_render.wait(10)
+        return content
+
+    def ordinary_regen():
+        nonlocal old_renderer_thread
+        old_renderer_thread = current_thread()
+        _regen_weeks(WEEK)
+
+    def observed_drain():
+        try:
+            return real_drain()
+        finally:
+            drain_waiting_or_finished.set()
+
+    monkeypatch.setattr(week_view, 'render_week_markdown', paused_render)
+    monkeypatch.setattr(sl, 'drain_schedule_views', observed_drain)
+    item = export()
+    with ThreadPoolExecutor(2) as pool:
+        old = pool.submit(ordinary_regen)
+        assert captured.wait(10)
+        newer = pool.submit(cooking.apply, item, {'start': '2026-09-24T00:30:00Z'}, str(uuid4()))
+        try:
+            # Release the old snapshot only when Calendar has either finished
+            # (the regression) or is provably waiting for the ordinary writer.
+            assert drain_waiting_or_finished.wait(10)
+        finally:
+            release_old_render.set()
+        old.result(timeout=10)
+        newer.result(timeout=10)
+
+    content = (paths.meal_plans_dir() / f'{WEEK}.md').read_text()
+    assert '[[The Sexy Skillet Lasagna]] x1' in content.split('## Wednesday (Sep 23)')[1].split('## Thursday')[0]
+    assert '[[The Sexy Skillet Lasagna]]' not in content.split('## Tuesday (Sep 22)')[1].split('## Wednesday')[0]
+    with db.connect() as conn:
+        assert list(conn.execute('SELECT * FROM pending_schedule_views')) == []
