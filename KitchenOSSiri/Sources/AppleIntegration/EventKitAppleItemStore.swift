@@ -15,6 +15,16 @@ import KitchenOSKit
             finish(Result { try worker.requireAccess(domain); return worker.store.calendars(for: EventKitWorker.entity(domain)).filter(\.allowsContentModifications).map { AppleDestination(id: $0.calendarIdentifier, title: $0.title) } })
         }
     }
+    func availabilityCalendars() async throws -> [AppleDestination] {
+        try await worker.perform { worker, finish in
+            finish(Result {
+                try worker.requireAccess(.cooking)
+                return worker.store.calendars(for: .event).map {
+                    AppleDestination(id: $0.calendarIdentifier, title: "\($0.title) — \($0.source.title)")
+                }
+            })
+        }
+    }
     func createDestination(name: String, domain: AppleDomain) async throws -> AppleDestination {
         try await worker.perform { worker, finish in finish(Result { try worker.createDestination(name: name, domain: domain) }) }
     }
@@ -330,7 +340,7 @@ private final class EventKitWorker: @unchecked Sendable {
         guard let end = calendar.date(byAdding: .day, value: 35, to: start) else { throw AppleIntegrationError.invalidDate }
         let predicate = store.predicateForEvents(withStart: start, end: end, calendars: [firm, flexible])
         let events = try store.events(matching: predicate).filter {
-            $0.status != .canceled && $0.availability != .free && self.ownership($0).isDisjoint(with: excludingOwnedTokens) &&
+            $0.status != .canceled && $0.availability != .free && !AppleOwnership.excludesFromAvailability(url: $0.url, notes: $0.notes) &&
             !($0.attendees?.contains(where: { $0.isCurrentUser && $0.participantStatus == .declined }) ?? false)
         }.map {
             try PlanningCalendarEvent(calendarID: $0.calendar.calendarIdentifier,

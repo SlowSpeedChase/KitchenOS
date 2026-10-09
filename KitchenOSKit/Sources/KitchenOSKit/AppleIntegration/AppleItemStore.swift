@@ -5,6 +5,8 @@ import Foundation
     /// Call only from explicit foreground setup, never from background reconciliation.
     func requestAccess(for domain: AppleDomain) async throws -> AppleAuthorization
     func destinations(for domain: AppleDomain) async throws -> [AppleDestination]
+    /// Reader selection includes read-only calendars. Writer destinations stay writable-only.
+    func availabilityCalendars() async throws -> [AppleDestination]
     func createDestination(name: String, domain: AppleDomain) async throws -> AppleDestination
     func observe(_ items: [SyncItem]) async throws -> [Observation]
     func apply(_ operation: AppleOperation) async throws -> OperationAck
@@ -41,4 +43,14 @@ public enum AppleOwnership {
         if let url, let token = token(in: url.absoluteString) { values.insert(token) }
         return values
     }
+}
+
+public extension AppleItemStore {
+    func availabilityCalendars() async throws -> [AppleDestination] { try await destinations(for: .cooking) }
+}
+
+public extension AppleOwnership {
+    /// Archived exports retain their strict marker but are omitted from active work.
+    /// A copied marker can hide availability; this read-only policy grants no write authority.
+    static func excludesFromAvailability(url: URL?, notes: String?) -> Bool { !tokens(url: url, notes: notes).isEmpty }
 }

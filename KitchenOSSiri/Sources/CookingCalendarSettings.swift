@@ -1,5 +1,4 @@
 import SwiftUI
-import EventKit
 import KitchenOSKit
 
 #if os(macOS)
@@ -7,44 +6,36 @@ import KitchenOSKit
 @MainActor
 final class CookingCalendarSync: ObservableObject {
     static let shared = CookingCalendarSync()
-    @Published var calendars: [EKCalendar] = []
+    @Published var calendars: [AppleDestination] = []
     @Published var message = "Connect Calendar to find days that suit cooking."
     @Published var working = false
-    private let store = EKEventStore()
     private let defaults = UserDefaults.standard
+    private var refreshAgain = false
     private var connected: Bool { defaults.bool(forKey: "cookingCalendar.connected") }
-
-    private var isLocalServer: Bool {
-        ["localhost", "127.0.0.1", "::1", "[::1]"].contains(KitchenOSConfig.resolved().baseURL.host ?? "")
-    }
+    private var coordinator: AppleIntegrationCoordinator { .shared }
+    private var store: any AppleItemStore { coordinator.store }
 
     func connect() async {
-        guard isLocalServer else {
+        guard coordinator.isLocalServer else {
             message = "Connect Calendar on the Mac running your KitchenOS server, using its localhost connection."
             return
         }
         do {
-            guard try await store.requestFullAccessToEvents() else {
+            guard try await coordinator.requestAccess(for: .cooking) == .authorized else {
                 message = "Allow Calendar access in System Settings, then connect again."
                 return
             }
-            calendars = store.calendars(for: .event)
+            await loadCalendars()
             message = "Choose your commitments calendar and Time Blocking, then save."
-        } catch {
-            message = "Couldn’t connect Calendar. Check Calendar permission and try again."
-        }
+        } catch { message = "Couldn’t connect Calendar. Check Calendar permission and try again." }
     }
-
-    func loadCalendars() {
-        if EKEventStore.authorizationStatus(for: .event) == .fullAccess {
-            calendars = store.calendars(for: .event)
-        }
+    func loadCalendars() async {
+        guard coordinator.isLocalServer, store.authorization(for: .cooking) == .authorized else { calendars = []; return }
+        calendars = (try? await store.availabilityCalendars()) ?? []
     }
-
     func save(firmID: String, flexibleID: String) async {
         guard !working, !firmID.isEmpty, !flexibleID.isEmpty, firmID != flexibleID else {
-            message = "Choose two different calendars."
-            return
+            message = "Choose two different calendars."; return
         }
         if firmID != defaults.string(forKey: "cookingCalendar.firm") || flexibleID != defaults.string(forKey: "cookingCalendar.flexible") {
             defaults.set(true, forKey: "cookingCalendar.clearPending")
@@ -54,97 +45,65 @@ final class CookingCalendarSync: ObservableObject {
         defaults.set(true, forKey: "cookingCalendar.connected")
         await refresh()
     }
-
     func disconnect() async {
         guard !working else { return }
         defaults.set(false, forKey: "cookingCalendar.connected")
-        // Retry clearing on the next refresh if the server is temporarily offline.
         defaults.set(true, forKey: "cookingCalendar.clearPending")
         await refresh()
     }
-
-    func run() async {
-        while !Task.isCancelled {
-            await refresh()
-            do { try await Task.sleep(for: .seconds(300)) } catch { return }
-        }
+    private func clear(_ client: KitchenOSClient) async throws {
+        // Keep this set until BOTH representations are cleared, including on retry.
+        defaults.set(true, forKey: "cookingCalendar.clearPending")
+        try await client.syncCookingAvailability(days: [:])
+        try await client.clearPlanningCalendar()
+        defaults.set(false, forKey: "cookingCalendar.clearPending")
     }
-
-    func refresh() async {
-        guard isLocalServer else {
-            message = "Calendar sync runs on the server Mac using a localhost connection."
-            return
+    func refresh(excludingOwnedTokens: Set<UUID> = []) async {
+        guard coordinator.isLocalServer else {
+            message = "Calendar sync runs on the server Mac using a localhost connection."; return
         }
-        guard !working else { return }
+        guard !working else { refreshAgain = true; return }
         guard connected || defaults.bool(forKey: "cookingCalendar.clearPending") else { return }
         working = true
-        defer { working = false }
-        let client = KitchenOSClient(config: .resolved())
+        defer {
+            working = false
+            if refreshAgain { refreshAgain = false; Task { await self.refresh(excludingOwnedTokens: excludingOwnedTokens) } }
+        }
+        let config = KitchenOSConfig.resolved()
+        let client = KitchenOSClient(config: config)
         do {
-            if defaults.bool(forKey: "cookingCalendar.clearPending") {
-                try await client.syncCookingAvailability(days: [:])
-                try await client.clearPlanningCalendar()
-                defaults.set(false, forKey: "cookingCalendar.clearPending")
-            }
-            if !connected {
-                message = "Calendar disconnected. Calendar details cleared."
-                return
-            }
-            loadCalendars()
+            if defaults.bool(forKey: "cookingCalendar.clearPending") { try await clear(client) }
+            guard connected else { message = "Calendar disconnected. Calendar details cleared."; return }
+            await loadCalendars()
             let firmID = defaults.string(forKey: "cookingCalendar.firm") ?? ""
             let flexibleID = defaults.string(forKey: "cookingCalendar.flexible") ?? ""
-            guard EKEventStore.authorizationStatus(for: .event) == .fullAccess,
-                  firmID != flexibleID,
-                  let firm = calendars.first(where: { $0.calendarIdentifier == firmID }),
-                  let flexible = calendars.first(where: { $0.calendarIdentifier == flexibleID }) else {
-                defaults.set(true, forKey: "cookingCalendar.clearPending")
-                try await client.syncCookingAvailability(days: [:])
-                try await client.clearPlanningCalendar()
-                defaults.set(false, forKey: "cookingCalendar.clearPending")
-                message = "Choose two different calendars. If they’re missing, reconnect Calendar."
-                return
+            guard store.authorization(for: .cooking) == .authorized, firmID != flexibleID,
+                  calendars.contains(where: { $0.id == firmID }), calendars.contains(where: { $0.id == flexibleID }) else {
+                try await clear(client)
+                message = "Choose two different calendars. If they’re missing, reconnect Calendar."; return
             }
-            var calendar = Calendar(identifier: .gregorian)
-            calendar.timeZone = .current
-            let start = calendar.startOfDay(for: Date())
-            guard let end = calendar.date(byAdding: .day, value: 35, to: start) else { return }
-            let predicate = store.predicateForEvents(withStart: start, end: end, calendars: [firm, flexible])
-            let generatedAt = Date()
-            let sourceEvents = store.events(matching: predicate).filter {
-                $0.status != .canceled && $0.availability != .free &&
-                !($0.attendees?.contains(where: { $0.isCurrentUser && $0.participantStatus == .declined }) ?? false)
+            let snapshot: PlanningCalendarSnapshot
+            do { snapshot = try await store.availabilitySnapshot(firmID: firmID, flexibleID: flexibleID, excludingOwnedTokens: excludingOwnedTokens) }
+            catch { try await clear(client); throw error }
+            guard coordinator.isLocalServer, KitchenOSConfig.resolved().baseURL == config.baseURL,
+                  connected, firmID == defaults.string(forKey: "cookingCalendar.firm"), flexibleID == defaults.string(forKey: "cookingCalendar.flexible") else {
+                refreshAgain = true; return
             }
-            let events = sourceEvents.map { CookingCalendarEvent(start: $0.startDate, end: $0.endDate,
-                                         flexible: $0.calendar.calendarIdentifier == flexibleID) }
-            let detailedEvents = try sourceEvents.map { event in
-                try PlanningCalendarEvent(calendarID: event.calendar.calendarIdentifier,
-                    eventID: event.calendarItemExternalIdentifier ?? event.calendarItemIdentifier,
-                    title: event.title ?? "Untitled event", start: event.startDate, end: event.endDate,
-                    allDay: event.isAllDay, flexible: event.calendar.calendarIdentifier == flexibleID, timezone: calendar.timeZone)
+            guard store.authorization(for: .cooking) == .authorized else { try await clear(client); return }
+            try await client.syncCookingAvailability(days: snapshot.cookingAvailability())
+            guard coordinator.isLocalServer, KitchenOSConfig.resolved().baseURL == config.baseURL else {
+                defaults.set(true, forKey: "cookingCalendar.clearPending"); return
             }
-            let formatter = DateFormatter()
-            formatter.calendar = calendar
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.timeZone = calendar.timeZone
-            formatter.dateFormat = "yyyy-MM-dd"
-            var days: [String: CookingOpportunity] = [:]
-            for offset in 0..<35 {
-                guard let day = calendar.date(byAdding: .day, value: offset, to: start) else { continue }
-                days[formatter.string(from: day)] = CookingOpportunity.classify(day: day, events: events, calendar: calendar)
+            try await client.syncPlanningCalendar(snapshot)
+            guard coordinator.isLocalServer, KitchenOSConfig.resolved().baseURL == config.baseURL else {
+                defaults.set(true, forKey: "cookingCalendar.clearPending"); return
             }
-            let detailed = try PlanningCalendarSnapshot(firmID: firmID, flexibleID: flexibleID,
-                generatedAt: generatedAt, timezone: calendar.timeZone.identifier,
-                coverageStart: formatter.string(from: start), coverageEnd: formatter.string(from: end), events: detailedEvents)
-            guard connected, firmID == defaults.string(forKey: "cookingCalendar.firm"),
-                  flexibleID == defaults.string(forKey: "cookingCalendar.flexible") else { return }
-            try await client.syncCookingAvailability(days: days)
-            try await client.syncPlanningCalendar(detailed)
+            // Permission may have changed while either request was suspended.
+            guard store.authorization(for: .cooking) == .authorized else { try await clear(client); return }
             message = "Availability updated at \(Date().formatted(date: .omitted, time: .shortened))."
         } catch KitchenOSError.http(404) {
             message = "Update the KitchenOS server to enable the detailed calendar view."
-        } catch {
-            message = "Couldn’t update availability. Check the KitchenOS connection and refresh."
-        }
+        } catch { message = "Couldn’t update availability. Check the KitchenOS connection and refresh." }
     }
 }
 
@@ -161,14 +120,14 @@ struct CookingCalendarSettings: View {
             if !sync.calendars.isEmpty {
                 Picker("Commitments (iCloud)", selection: $firmID) {
                     Text("Choose a calendar").tag("")
-                    ForEach(sync.calendars, id: \.calendarIdentifier) { c in
-                        Text("\(c.title) — \(c.source.title)").tag(c.calendarIdentifier)
+                    ForEach(sync.calendars, id: \.id) { c in
+                        Text(c.title).tag(c.id)
                     }
                 }
                 Picker("Flexible (Time Blocking)", selection: $flexibleID) {
                     Text("Choose a calendar").tag("")
-                    ForEach(sync.calendars, id: \.calendarIdentifier) { c in
-                        Text("\(c.title) — \(c.source.title)").tag(c.calendarIdentifier)
+                    ForEach(sync.calendars, id: \.id) { c in
+                        Text(c.title).tag(c.id)
                     }
                 }
                 Button("Save calendars and refresh") { Task { await sync.save(firmID: firmID, flexibleID: flexibleID) } }
@@ -180,7 +139,7 @@ struct CookingCalendarSettings: View {
                 .font(.caption).foregroundStyle(.secondary)
         }
         .disabled(sync.working)
-        .onAppear { sync.loadCalendars() }
+        .task { await sync.loadCalendars() }
     }
 }
 

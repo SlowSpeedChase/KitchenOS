@@ -4,6 +4,9 @@ import CoreSpotlight
 
 @main
 struct KitchenOSSiriApp: App {
+    #if os(macOS)
+    @NSApplicationDelegateAdaptor(KitchenOSAppDelegate.self) private var appDelegate
+    #endif
     @StateObject private var router = RecipeRouter.shared
 
     var body: some Scene {
@@ -11,7 +14,6 @@ struct KitchenOSSiriApp: App {
             #if os(macOS)
             // Mac: the native sidebar app with the full feature surface.
             AppShell()
-                .task { await CookingCalendarSync.shared.run() }
             #else
             // iOS/iPadOS: the Siri/AI companion tabs.
             TabView {

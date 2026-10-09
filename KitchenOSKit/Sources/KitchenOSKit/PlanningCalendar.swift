@@ -74,3 +74,30 @@ public extension KitchenOSClient {
         try await postJSON(path: "/api/planning-calendar/snapshot", body: Clear())
     }
 }
+
+public extension PlanningCalendarSnapshot {
+    /// Compatibility and detailed views share one filtered EventKit read, including
+    /// owned-token exclusion. Never republish a snapshot past the server's six-hour TTL.
+    func cookingAvailability(now: Date = Date()) throws -> [String: CookingOpportunity] {
+        let generatedFormatter = ISO8601DateFormatter()
+        generatedFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        guard let generated = generatedFormatter.date(from: generated_at), now.timeIntervalSince(generated) >= 0, now.timeIntervalSince(generated) < 6 * 3600,
+              let zone = TimeZone(identifier: timezone) else { throw AppleIntegrationError.unavailable }
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = zone
+        let date = DateFormatter(); date.calendar = calendar; date.locale = Locale(identifier: "en_US_POSIX")
+        date.timeZone = zone; date.dateFormat = "yyyy-MM-dd"
+        guard let start = date.date(from: coverage_start), let end = date.date(from: coverage_end), end > start else { throw AppleIntegrationError.invalidDate }
+        let instant = ISO8601DateFormatter()
+        let values = try events.map { event -> CookingCalendarEvent in
+            guard let start = instant.date(from: event.start), let end = instant.date(from: event.end) else { throw AppleIntegrationError.invalidDate }
+            return CookingCalendarEvent(start: start, end: end, flexible: event.role == "flexible")
+        }
+        var days: [String: CookingOpportunity] = [:]; var day = start
+        while day < end {
+            guard days.count < 35, let next = calendar.date(byAdding: .day, value: 1, to: day) else { throw AppleIntegrationError.invalidDate }
+            days[date.string(from: day)] = CookingOpportunity.classify(day: day, events: values, calendar: calendar)
+            day = next
+        }
+        return days
+    }
+}
