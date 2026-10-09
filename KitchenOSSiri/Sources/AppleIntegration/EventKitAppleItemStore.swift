@@ -39,6 +39,10 @@ private final class EventKitWorker: @unchecked Sendable {
     fileprivate lazy var store = EKEventStore()
     private var visibleAtObservation: [UUID: Set<String>] = [:]
     private var visibleLocators: [UUID: Locator] = [:]
+    // Representation hints only, never cached authorization to write. Expected-hash
+    // verification always reads current EventKit values. Preserve the last observed
+    // alias when the proposed operation changes its target timezone.
+    private var wireReferences: [UUID: AppleFields] = [:]
 
     static func entity(_ domain: AppleDomain) -> EKEntityType { domain == .cooking ? .event : .reminder }
     static func authorization(_ domain: AppleDomain) -> AppleAuthorization {
@@ -78,7 +82,7 @@ private final class EventKitWorker: @unchecked Sendable {
             self.queue.async {
                 if let error { finish(.failure(error)); return }
                 self.store.reset()
-                self.visibleAtObservation.removeAll(); self.visibleLocators.removeAll()
+                self.visibleAtObservation.removeAll(); self.visibleLocators.removeAll(); self.wireReferences.removeAll()
                 finish(.success(Self.authorization(domain)))
             }
         }
@@ -175,16 +179,13 @@ private final class EventKitWorker: @unchecked Sendable {
             readable: visible, complete: scan.complete && (domain == .cooking || reminderComplete))
         return (decision, candidates.values.first)
     }
-    private func fields(_ object: EKCalendarItem) throws -> AppleFields {
+    private func fields(_ object: EKCalendarItem, reference: AppleFields? = nil) throws -> AppleFields {
         if let reminder = object as? EKReminder {
-            return AppleFields(completed: reminder.isCompleted, due: try reminder.dueDateComponents.map { try DueValue(components: $0) })
+            return try AppleFieldMapping.reminder(completed: reminder.isCompleted, dueComponents: reminder.dueDateComponents, reference: reference)
         }
         guard let event = object as? EKEvent, !event.isAllDay,
               let zone = event.timeZone, let start = event.startDate, let end = event.endDate else { throw AppleIntegrationError.invalidFields }
-        let minutes = end.timeIntervalSince(start) / 60
-        guard minutes.rounded() == minutes else { throw AppleIntegrationError.invalidFields }
-        let formatter = ISO8601DateFormatter(); formatter.timeZone = zone
-        return try AppleFields(start: formatter.string(from: start), timezone: zone.identifier, durationMinutes: Int(minutes))
+        return try AppleFieldMapping.cooking(start: start, end: end, timezone: zone, reference: reference)
     }
     private func issue(_ object: EKCalendarItem) -> AppleObservationIssue? {
         if object.hasRecurrenceRules { return .unsupportedRecurrence }
@@ -211,7 +212,11 @@ private final class EventKitWorker: @unchecked Sendable {
                         case .present:
                             if let object {
                                 availability = .present; objectLocator = self.locator(object); title = object.title ?? ""
-                                problem = self.issue(object); observed = (try? self.fields(object)) ?? AppleFields()
+                                problem = self.issue(object)
+                                // Common fields retain the previously observed wire spelling;
+                                // a first-save recovery has only its original source fields.
+                                observed = (try? self.fields(object, reference: item.commonFields ?? item.fields)) ?? AppleFields()
+                                if problem == nil { self.wireReferences[item.token] = observed }
                                 self.visibleAtObservation[item.token] = scan.calendars; self.visibleLocators[item.token] = objectLocator
                             }
                         case .missing: availability = .missing; confirmed = true
@@ -229,7 +234,8 @@ private final class EventKitWorker: @unchecked Sendable {
         process(0)
     }
     private func ack(_ operation: AppleOperation, outcome: AppleAckOutcome, object: EKCalendarItem? = nil) -> OperationAck {
-        let values = object.flatMap { try? fields($0) } ?? AppleFields()
+        let reference = outcome == .saved ? operation.fields : (wireReferences[operation.token] ?? operation.fields)
+        let values = object.flatMap { try? fields($0, reference: reference) } ?? AppleFields()
         return OperationAck(operationID: operation.operationID, outcome: outcome, locator: object.map(locator), observedFields: values,
             observedHash: object.flatMap { try? values.canonicalHash(title: $0.title ?? "") })
     }
@@ -250,7 +256,7 @@ private final class EventKitWorker: @unchecked Sendable {
                         finish(.success(self.ack(operation, outcome: .changed))); return
                     }
                     guard let expected = operation.expectedAppleHash,
-                          try self.fields(fresh).canonicalHash(title: fresh.title ?? "") == expected else {
+                          try self.fields(fresh, reference: self.wireReferences[operation.token] ?? operation.fields).canonicalHash(title: fresh.title ?? "") == expected else {
                         finish(.success(self.ack(operation, outcome: .changed, object: fresh))); return
                     }
                     object = fresh
@@ -276,6 +282,7 @@ private final class EventKitWorker: @unchecked Sendable {
                     if let reminder = object as? EKReminder { try self.store.remove(reminder, commit: true) }
                     else if let event = object as? EKEvent { try self.store.remove(event, span: .thisEvent, commit: true) }
                     self.visibleAtObservation.removeValue(forKey: operation.token); self.visibleLocators.removeValue(forKey: operation.token)
+                    self.wireReferences.removeValue(forKey: operation.token)
                     finish(.success(self.ack(operation, outcome: .deleted))); return
                 }
                 try self.update(object, operation: operation)
@@ -285,11 +292,12 @@ private final class EventKitWorker: @unchecked Sendable {
                     finish(.success(self.ack(operation, outcome: .failed))); return
                 }
                 self.visibleAtObservation[operation.token] = scan.calendars; self.visibleLocators[operation.token] = self.locator(saved)
-                let persisted = try self.fields(saved)
+                let persisted = try self.fields(saved, reference: operation.fields)
                 let expected = try operation.fields.canonicalHash(title: operation.title)
                 guard try persisted.canonicalHash(title: saved.title ?? "") == expected else {
                     finish(.success(self.ack(operation, outcome: .changed, object: saved))); return
                 }
+                self.wireReferences[operation.token] = persisted
                 finish(.success(self.ack(operation, outcome: .saved, object: saved)))
             } catch { finish(.failure(error)) }
         }

@@ -61,4 +61,95 @@ final class AppleIntegrationModelsTests: XCTestCase {
         XCTAssertNoThrow(try JSONDecoder().decode(Locator.self, from: Data(#"{"calendar_id":"list","item_id":"item","external_id":null}"#.utf8)))
     }
 
+    private var wireToken: UUID { UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")! }
+    private func sourceOperation(fields: AppleFields, title: String) -> AppleOperation {
+        AppleOperation(operationID: wireToken, token: wireToken, generation: 1, revision: 1, action: .upsert,
+                       destinationID: "destination", locator: nil, title: title, fields: fields, expectedAppleHash: nil)
+    }
+    private func londonSource() throws -> AppleFields {
+        try AppleFields(start: "2026-12-10T18:00:00+00:00", timezone: "Europe/London", durationMinutes: 30)
+    }
+    private func utcReminderSource() throws -> AppleFields {
+        AppleFields(completed: false, due: try DueValue(date: "2026-12-10", time: "18:00", timezone: "UTC"))
+    }
+    private func londonSnapshot(reference: AppleFields) throws -> AppleFields {
+        let start = try AppleFields.instant("2026-12-10T18:00:00+00:00")
+        return try AppleFieldMapping.cooking(start: start, end: start.addingTimeInterval(1800), timezone: TimeZone(identifier: "Europe/London")!, reference: reference)
+    }
+    private func utcReminderSnapshot(reference: AppleFields) throws -> AppleFields {
+        try AppleFieldMapping.reminder(completed: false, dueComponents: reference.due!.dateComponents(), reference: reference)
+    }
+    func testWinterLondonCookingSavedAckMatchesPythonWire() throws {
+        let source = try londonSource()
+        let observed = try londonSnapshot(reference: source)
+        let ack = OperationAck(operationID: wireToken, outcome: .saved,
+            locator: Locator(calendarID: "destination", itemID: "item", externalID: nil),
+            observedFields: observed, observedHash: try observed.canonicalHash(title: "Cook"))
+        XCTAssertEqual(ack.observedFields.start, "2026-12-10T18:00:00+00:00")
+        XCTAssertEqual(ack.observedFields, source)
+        XCTAssertEqual(ack.observedHash, "28547ca9f70a6bd8b1e2c1cea812f27093f1a790f4dd109271d953ef21e4c997")
+    }
+    func testWinterLondonInterruptedFirstSaveObservationMatchesPendingOperation() throws {
+        let operation = try sourceOperation(fields: londonSource(), title: "Cook")
+        let observation = Observation(token: wireToken, generation: 1, revision: 1, availability: .present,
+            locator: Locator(calendarID: "destination", itemID: "recovered", externalID: nil), title: "Cook",
+            fields: try londonSnapshot(reference: operation.fields), absenceConfirmed: false, issue: nil)
+        // Task 5's recovery boundary compares the full title/fields literally.
+        XCTAssertEqual(observation.fields, operation.fields)
+        XCTAssertEqual(observation.title, operation.title)
+        XCTAssertEqual(try observation.fields.canonicalHash(title: observation.title!), "28547ca9f70a6bd8b1e2c1cea812f27093f1a790f4dd109271d953ef21e4c997")
+    }
+    func testUTCTimedReminderSavedAckPreservesWireAlias() throws {
+        let source = try utcReminderSource()
+        let observed = try utcReminderSnapshot(reference: source)
+        let ack = OperationAck(operationID: wireToken, outcome: .saved,
+            locator: Locator(calendarID: "destination", itemID: "item", externalID: nil),
+            observedFields: observed, observedHash: try observed.canonicalHash(title: "Prep"))
+        XCTAssertEqual(ack.observedFields.due?.timezone, "UTC")
+        XCTAssertEqual(ack.observedFields, source)
+        XCTAssertEqual(ack.observedHash, "61001196ed770346b30e3bcf71bb34020ac9312a37dfd94511423280874d1cd9")
+    }
+    func testUTCTimedReminderInterruptedFirstSaveObservationMatchesPendingOperation() throws {
+        let operation = try sourceOperation(fields: utcReminderSource(), title: "Prep")
+        let observation = Observation(token: wireToken, generation: 1, revision: 1, availability: .present,
+            locator: Locator(calendarID: "destination", itemID: "recovered", externalID: nil), title: "Prep",
+            fields: try utcReminderSnapshot(reference: operation.fields), absenceConfirmed: false, issue: nil)
+        XCTAssertEqual(observation.fields, operation.fields)
+        XCTAssertEqual(observation.title, operation.title)
+        XCTAssertEqual(try observation.fields.canonicalHash(title: observation.title!), "61001196ed770346b30e3bcf71bb34020ac9312a37dfd94511423280874d1cd9")
+    }
+    func testEqualWinterOffsetDoesNotConcealRealTimezoneChange() throws {
+        let source = try londonSource()
+        let start = try AppleFields.instant("2026-12-10T18:00:00+00:00")
+        let actual = try AppleFieldMapping.cooking(start: start, end: start.addingTimeInterval(1800), timezone: TimeZone(identifier: "GMT")!, reference: source)
+        XCTAssertEqual(actual.timezone, "GMT")
+        XCTAssertNotEqual(try actual.canonicalHash(title: "Cook"), "28547ca9f70a6bd8b1e2c1cea812f27093f1a790f4dd109271d953ef21e4c997")
+    }
+    func testPreservingTimezoneAliasDoesNotHideChangedReminderValues() throws {
+        let source = try utcReminderSource()
+        var components = try source.due!.dateComponents(); components.hour = 19
+        let actual = try AppleFieldMapping.reminder(completed: true, dueComponents: components, reference: source)
+        XCTAssertEqual(actual.completed, true)
+        XCTAssertEqual(actual.due?.time, "19:00")
+        XCTAssertNotEqual(try actual.canonicalHash(title: "Prep"), "61001196ed770346b30e3bcf71bb34020ac9312a37dfd94511423280874d1cd9")
+    }
+
+    func testUTCCookingAliasSurvivesSavedAndRecoveredFieldHash() throws {
+        let source = try AppleFields(start: "2026-12-10T18:00:00+00:00", timezone: "UTC", durationMinutes: 30)
+        let start = try AppleFields.instant(source.start!)
+        let observed = try AppleFieldMapping.cooking(start: start, end: start.addingTimeInterval(1800), timezone: TimeZone(identifier: "UTC")!, reference: source)
+        XCTAssertEqual(observed, source)
+        XCTAssertEqual(try observed.canonicalHash(title: "Cook"), "08fe535cecb1b22f6809d6302f48584cef47c21221de3dde7e82386a82e5bbf6")
+    }
+    func testExpectedHashUsesPreviousAliasWhenProposedTimezoneChanges() throws {
+        let previous = try utcReminderSource()
+        let proposed = AppleFields(completed: false, due: try DueValue(date: "2026-12-10", time: "12:00", timezone: "America/Chicago"))
+        let freshComponents = try previous.due!.dateComponents()
+        let fresh = try AppleFieldMapping.reminder(completed: false, dueComponents: freshComponents, reference: previous)
+        XCTAssertEqual(try fresh.canonicalHash(title: "Prep"), "61001196ed770346b30e3bcf71bb34020ac9312a37dfd94511423280874d1cd9")
+        // Using a proposed new zone to spell the old object cannot authorize its write.
+        let wrongReference = try AppleFieldMapping.reminder(completed: false, dueComponents: freshComponents, reference: proposed)
+        XCTAssertNotEqual(try wrongReference.canonicalHash(title: "Prep"), "61001196ed770346b30e3bcf71bb34020ac9312a37dfd94511423280874d1cd9")
+    }
+
 }

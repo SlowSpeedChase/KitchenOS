@@ -128,6 +128,37 @@ public struct AppleFields: Codable, Sendable, Equatable {
     }
 }
 
+/// Pure boundary mapping shared by the EventKit worker and store-free tests.
+/// The reference carries wire spelling; the snapshot supplies every actual value.
+public enum AppleFieldMapping {
+    public static func reminder(completed: Bool, dueComponents: DateComponents?, reference: AppleFields? = nil) throws -> AppleFields {
+        let due = try dueComponents.map { components in
+            let actual = try DueValue(components: components)
+            guard let zone = components.timeZone, actual.time != nil else { return actual }
+            return try DueValue(date: actual.date, time: actual.time,
+                timezone: wireTimezone(zone, reference: reference?.due?.timezone))
+        }
+        return AppleFields(completed: completed, due: due)
+    }
+    public static func cooking(start: Date, end: Date, timezone: TimeZone, reference: AppleFields? = nil) throws -> AppleFields {
+        let minutes = end.timeIntervalSince(start) / 60
+        guard minutes.rounded() == minutes else { throw AppleIntegrationError.invalidFields }
+        let formatter = ISO8601DateFormatter(); formatter.timeZone = timezone
+        let formatted = formatter.string(from: start)
+        // Python datetime.isoformat() uses an explicit zero offset, including London
+        // in winter. Hashes and first-save recovery compare the exact wire spelling.
+        let timestamp = formatted.hasSuffix("Z") ? String(formatted.dropLast()) + "+00:00" : formatted
+        return try AppleFields(start: timestamp, timezone: wireTimezone(timezone, reference: reference?.timezone), durationMinutes: Int(minutes))
+    }
+    private static func wireTimezone(_ actual: TimeZone, reference: String?) -> String {
+        // Foundation turns UTC into GMT. Retain the original wire alias only when
+        // Foundation resolves it to this exact zone; matching today's offset would
+        // incorrectly conceal a real change such as Europe/London -> GMT in winter.
+        if let reference, TimeZone(identifier: reference)?.identifier == actual.identifier { return reference }
+        return actual.identifier
+    }
+}
+
 public struct SourceItem: Codable, Sendable, Equatable {
     public let logicalID: String
     public let domain: AppleDomain
