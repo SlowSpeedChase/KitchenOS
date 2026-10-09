@@ -334,7 +334,12 @@ in `docs/setup/`.
   do-ahead/dependency flags, cached in a `<week>.tasks.json` sidecar. The
   meal-planner UI surfaces today's tasks plus a "Get ahead" section for
   upcoming do-ahead items, with `done` state stable across plan edits via
-  hashed task IDs.
+  hashed task IDs. `mark_task_done` accepts optional `expected_hash` and
+  `operation_id` for exact-file compare/retry while preserving existing callers.
+  Newly generated sidecars record `plan_hash`: freshness requires both the
+  existing sidecar/plan mtime rule and source-hash equality, so an intervening
+  meal-plan edit cannot certify old tasks as current. Legacy sidecars retain
+  the mtime-only rule until explicitly regenerated.
 - **Meal-bundle macros** — a meal (`vault/Meals/<Name>.meal.md`) is a named set
   of sub-recipes, each with a fractional `servings` share, bound to a slot.
   `lib/meal_nutrition.py` rolls its calories/macros up from its sub-recipes'
@@ -383,9 +388,10 @@ in `docs/setup/`.
 
 | Module | Public boundary |
 |---|---|
-| `lib/note_mutation.py` | `content_hash`, `mutate_note(path, expected_hash, transform, operation_id)`, and `recover_note_edits` preserve exact UTF-8 before/after images for known week notes and prep sidecars under the configured vault. Thread locks and filesystem `flock` serialize cooperating processes; unique sibling temporary files are fsynced and atomically replaced after a final content check. |
+| `lib/note_mutation.py` | `content_hash`, `mutation_lock(path)`, `mutate_note(path, expected_hash, transform, operation_id)`, and `recover_note_edits` preserve exact UTF-8 before/after images for known week notes and prep sidecars under the configured vault. The public reentrant file lock spans read/merge/write and nested journal edits without releasing the outer advisory lock. Thread locks and filesystem `flock` serialize cooperating processes; unique sibling temporary files are fsynced and atomically replaced after a final content check. |
 | `lib/shopping_note.py` | `ShoppingRow`/`ShoppingDocument`, `read_shopping_note`, `parse_document`, `generated_identity`, `save_shopping_note`, `set_completed`, and `strip_item_marker` implement validated `gen:`/`manual:` row identities. Generated IDs use normalized ingredient plus aggregator bucket before display formatting. Both shopping API save endpoints call this writer; reads never migrate implicitly. |
 | `lib/apple_integration/shopping.py` | `collect`, `apply`, and `recover_pending` expose Markdown membership/title/quantity/completion and SQLite due overrides. Import completion changes only the exact marked row and never calls pantry spending. Missing, unmarked, malformed, or duplicate-ID notes fail closed. |
+| `lib/apple_integration/prep.py` | `collect`, `apply`, and `recover_pending` sync exact stable task IDs from fresh `YYYY-Www.tasks.json` sidecars. Polling never invokes inference; missing/stale/unsafe data requests refresh instead of retiring reminders. Completion/undo use the same recoverable writer and per-week lock as regeneration; classification runs outside it, then re-reads current done flags. Due overrides are isolated to the current export generation and never change plan placement or task IDs. |
 
 The v3 encoded note metadata holds row identity snapshots and unresolved amount
 change evidence; v1/v2 generated-item provenance remains readable for explicit

@@ -22,6 +22,7 @@ from lib.safe_paths import parse_iso_week
 
 _LOCKS: dict[str, threading.RLock] = {}
 _LOCKS_GUARD = threading.Lock()
+_LOCK_DEPTH = threading.local()
 
 
 def content_hash(text: str) -> str:
@@ -59,13 +60,38 @@ def _locked(path):
     with _LOCKS_GUARD:
         lock = _LOCKS.setdefault(str(path), threading.RLock())
     with lock:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with (path.parent / ('.' + path.name + '.lock')).open('a+b') as handle:
-            fcntl.flock(handle, fcntl.LOCK_EX)
+        depths = getattr(_LOCK_DEPTH, 'paths', None)
+        if depths is None:
+            depths = _LOCK_DEPTH.paths = {}
+        key = str(path)
+        if depths.get(key, 0):
+            depths[key] += 1
             try:
                 yield
             finally:
+                depths[key] -= 1
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with (path.parent / ('.' + path.name + '.lock')).open('a+b') as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            depths[key] = 1
+            try:
+                yield
+            finally:
+                del depths[key]
                 fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+@contextmanager
+def mutation_lock(path: Path):
+    """Lock one known note across read/merge/write, including nested journal edits.
+
+    The outer acquisition owns the advisory lock's descriptor until exit;
+    nested calls on the same thread reuse it without unlocking the outer call.
+    No database transaction should span work inside this file lock.
+    """
+    with _locked(_known_path(path)):
+        yield
 
 
 def _replace(path, text, before):

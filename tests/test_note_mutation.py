@@ -147,3 +147,47 @@ def test_unknown_journal_path_cannot_be_recovered(note, tmp_path):
                      (op, str(outside), digest('before'), digest('after'), 'before', 'after'))
     assert recover_note_edits() == [op]
     assert outside.read_text() == 'before'
+
+
+def _nested_locked_writer(path, ready, release, result):
+    from lib.note_mutation import mutation_lock, mutate_note
+    with mutation_lock(Path(path)):
+        with mutation_lock(Path(path)):
+            mutate_note(Path(path), digest('before\r\n'), lambda _: 'nested', str(uuid4()))
+        ready.set()
+        release.wait(10)
+    result.put('released')
+
+
+def test_nested_lock_keeps_outer_advisory_lock_until_exit(note):
+    """A nested journal edit must neither deadlock nor release the outer flock."""
+    ctx = multiprocessing.get_context('spawn')
+    ready, release, competing_ready = ctx.Event(), ctx.Event(), ctx.Event()
+    result = ctx.Queue()
+    first = ctx.Process(target=_nested_locked_writer, args=(str(note), ready, release, result))
+    second = ctx.Process(target=_competing_write, args=(str(note), digest('nested'), competing_ready, release, result))
+    try:
+        first.start()
+        assert ready.wait(10), 'nested lock or mutate_note deadlocked'
+        second.start()
+        assert not competing_ready.wait(.3), 'nested exit released the outer file lock'
+        release.set()
+        first.join(10)
+        second.join(10)
+        assert first.exitcode == second.exitcode == 0
+        assert sorted([result.get(timeout=2), result.get(timeout=2)]) == ['released', 'saved']
+        assert note.read_text() == 'nestedwinner'
+    finally:
+        release.set()
+        for process in (first, second):
+            if process.pid and process.is_alive():
+                process.terminate()
+                process.join(5)
+
+
+def test_public_mutation_lock_rejects_unknown_path(note):
+    from lib.note_mutation import mutation_lock
+    bad = paths.vault_root() / 'My Meal System.md'
+    with pytest.raises(ValueError):
+        with mutation_lock(bad):
+            pytest.fail('unknown path locked')

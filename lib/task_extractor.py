@@ -8,9 +8,9 @@ Model: Claude Haiku via the Anthropic SDK (already wired in the project).
 Falls back to Ollama mistral:7b when ANTHROPIC_API_KEY is missing, mirroring
 lib/meal_suggester.py.
 
-The sidecar is regenerated when the meal plan's mtime is newer than the
-sidecar's `generated_at`. `done` flags are preserved across regeneration
-because task IDs are deterministic (sha1 of recipe + step number).
+The sidecar is regenerated when its mtime is older than the meal plan, or
+its recorded plan_hash no longer matches. `done` flags survive regeneration
+because task IDs are deterministic (sha1 of recipe + day + slot + step).
 """
 from __future__ import annotations
 
@@ -22,10 +22,14 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from uuid import uuid4
 
 import requests
 
 from lib import llm_gate, paths
+from lib.note_mutation import content_hash, mutate_note, mutation_lock
+from lib.safe_paths import parse_iso_week
+from lib.apple_integration.models import RevisionConflict
 from lib.meal_plan_parser import flatten_to_recipes, parse_meal_plan
 from lib.recipe_parser import parse_recipe_body, parse_recipe_file
 from lib.shopping_list_generator import find_recipe_file
@@ -96,10 +100,12 @@ def _parse_week_to_year(week: str) -> tuple[int, int]:
 
 
 def _meal_plan_path(week: str) -> Path:
+    parse_iso_week(week)
     return paths.meal_plans_dir() / f"{week}.md"
 
 
 def _sidecar_path(week: str) -> Path:
+    parse_iso_week(week)
     return paths.meal_plans_dir() / f"{week}.tasks.json"
 
 
@@ -329,7 +335,17 @@ def _is_cache_fresh(week: str, cached: dict) -> bool:
     sidecar = _sidecar_path(week)
     if not sidecar.exists():
         return False
-    return sidecar.stat().st_mtime >= plan.stat().st_mtime
+    if sidecar.stat().st_mtime < plan.stat().st_mtime:
+        return False
+    if 'plan_hash' in cached:
+        expected = cached['plan_hash']
+        if not isinstance(expected, str) or not re.fullmatch(r'[0-9a-f]{64}', expected):
+            return False
+        try:
+            return expected == content_hash(plan.read_bytes().decode('utf-8'))
+        except (OSError, UnicodeError):
+            return False
+    return True
 
 
 def extract_tasks(week: str, force: bool = False) -> dict:
@@ -362,18 +378,22 @@ def extract_tasks(week: str, force: bool = False) -> dict:
     if not force and llm_gate.on_page_render():
         if cached is not None:
             return cached
+        plan = _meal_plan_path(week)
+        plan_hash = content_hash(plan.read_bytes().decode('utf-8') if plan.exists() else '')
         cold_steps = _collect_scheduled_steps(week)
         cold_tasks = (
             _normalize_classified(_heuristic_classify(cold_steps), cold_steps)
             if cold_steps else []
         )
         # Deliberately not persisted — same rule as the fallback below.
-        return {"week": week, "generated_at": _now_iso(), "tasks": cold_tasks}
+        return {"week": week, "generated_at": _now_iso(), "tasks": cold_tasks, "plan_hash": plan_hash}
 
+    plan = _meal_plan_path(week)
+    expected_plan_hash = content_hash(plan.read_bytes().decode('utf-8') if plan.exists() else '')
     steps = _collect_scheduled_steps(week)
     if not steps:
-        payload = {"week": week, "generated_at": _now_iso(), "tasks": []}
-        _save_sidecar(week, payload)
+        payload = {"week": week, "generated_at": _now_iso(), "tasks": [], "plan_hash": expected_plan_hash}
+        _save_sidecar(week, payload, expected_plan_hash=expected_plan_hash)
         return payload
 
     prompt = _build_prompt(steps)
@@ -387,37 +407,53 @@ def extract_tasks(week: str, force: bool = False) -> dict:
 
     tasks = _normalize_classified(classified, steps)
 
-    # Carry forward done flags from prior cache by stable id.
-    if cached is not None:
-        prior_done = {t["id"]: t.get("done", False) for t in cached.get("tasks", [])}
-        for task in tasks:
-            if prior_done.get(task["id"]):
-                task["done"] = True
-
-    payload = {"week": week, "generated_at": _now_iso(), "tasks": tasks}
+    payload = {"week": week, "generated_at": _now_iso(), "tasks": tasks, "plan_hash": expected_plan_hash}
     # A heuristic answer reached during a page render is the *clock's* answer,
     # not the machine's — the budget cut inference short. `_is_cache_fresh` only
-    # compares mtimes, so persisting it would freeze it in place until the plan
+    # certifies source freshness, so persisting it would freeze it until the plan
     # is next edited. Off a request there is no budget, so a heuristic there is
     # the real answer this machine can give, and it caches as before.
     if not (fell_back and llm_gate.on_page_render()):
-        _save_sidecar(week, payload)
+        _save_sidecar(week, payload, expected_plan_hash=expected_plan_hash)
+    else:
+        with mutation_lock(_sidecar_path(week)):
+            _merge_done(payload, load_cached_tasks(week) or {})
     return payload
 
 
-def mark_task_done(week: str, task_id: str, done: bool = True) -> dict:
-    """Flip the `done` flag of a single task in the cached sidecar."""
-    cached = load_cached_tasks(week) or extract_tasks(week)
-    found = False
-    for task in cached.get("tasks", []):
-        if task.get("id") == task_id:
-            task["done"] = bool(done)
-            found = True
-            break
-    if not found:
-        return {"success": False, "error": f"task {task_id} not found"}
-    _save_sidecar(week, cached)
+def mark_task_done(week: str, task_id: str, done: bool = True, *,
+                   expected_hash: str | None = None,
+                   operation_id: str | None = None) -> dict:
+    """Flip one exact task ID under the shared recoverable sidecar lock.
+
+    Existing callers retain their success/error dictionaries. Sync callers can
+    supply the exact file hash and retry operation ID; stale bytes conflict.
+    Inference, if needed by a legacy caller, always runs outside the lock.
+    """
+    sidecar = _sidecar_path(week)
+    generated = None
+    if expected_hash is None and load_cached_tasks(week) is None:
+        generated = extract_tasks(week)
+    with mutation_lock(sidecar):
+        text = sidecar.read_bytes().decode('utf-8') if sidecar.exists() else ''
+        if expected_hash is None:
+            expected_hash = content_hash(text)
+        cached = json.loads(text) if text else (generated or {})
+        if not any(t.get('id') == task_id for t in cached.get('tasks', [])):
+            return {"success": False, "error": f"task {task_id} not found"}
+        mutate_note(sidecar, expected_hash,
+                    lambda before: _set_done(before or json.dumps(cached), task_id, bool(done)),
+                    operation_id or str(uuid4()))
     return {"success": True, "task_id": task_id, "done": bool(done)}
+
+
+def _set_done(text: str, task_id: str, done: bool) -> str:
+    cached = json.loads(text)
+    matches = [task for task in cached.get('tasks', []) if task.get('id') == task_id]
+    if len(matches) != 1:
+        raise RevisionConflict('Task is missing or duplicated')
+    matches[0]['done'] = done
+    return json.dumps(cached, indent=2) + '\n'
 
 
 def _build_prompt(steps: list[ScheduledStep]) -> str:
@@ -425,12 +461,32 @@ def _build_prompt(steps: list[ScheduledStep]) -> str:
     return CLASSIFY_PROMPT.format(recipes_block=_build_recipes_block(steps))
 
 
-def _save_sidecar(week: str, payload: dict) -> None:
+def _merge_done(payload: dict, current: dict) -> None:
+    prior_done = {t['id']: t.get('done', False) for t in current.get('tasks', [])}
+    for task in payload.get('tasks', []):
+        if task['id'] in prior_done:
+            task['done'] = prior_done[task['id']]
+
+
+def _save_sidecar(week: str, payload: dict, *, expected_plan_hash: str | None = None) -> None:
+    """Merge current completion flags and journal the sidecar under one lock."""
     sidecar = _sidecar_path(week)
-    sidecar.parent.mkdir(parents=True, exist_ok=True)
-    tmp = sidecar.with_suffix(sidecar.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(sidecar)
+    with mutation_lock(sidecar):
+        text = sidecar.read_bytes().decode('utf-8') if sidecar.exists() else ''
+        try:
+            current = json.loads(text) if text else {}
+        except json.JSONDecodeError:
+            # Explicit regeneration can repair unusable cache bytes, while
+            # the shared journal still retains their exact before image.
+            current = {}
+        if expected_plan_hash is not None:
+            plan = _meal_plan_path(week)
+            actual = content_hash(plan.read_bytes().decode('utf-8') if plan.exists() else '')
+            if actual != expected_plan_hash:
+                raise RevisionConflict('Meal plan changed during task extraction; refresh required')
+        _merge_done(payload, current)
+        mutate_note(sidecar, content_hash(text),
+                    lambda _: json.dumps(payload, indent=2) + '\n', str(uuid4()))
 
 
 def _now_iso() -> str:
