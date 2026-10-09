@@ -140,3 +140,67 @@ def recover_pending() -> list[str]:
         except (RevisionConflict, ValueError, UnicodeError):
             conflicts.append(record['operation_id'])
     return conflicts
+
+
+def resolve(item: SyncItem, choice: str, operation_id: str) -> SourceItem | None:
+    """Resolve note identity/amount conflicts inside the adapter, by exact hash.
+
+    keep_kitchenos accepts generated quantity and reopens its checkbox; an
+    ingredient identity edit restores the recorded ingredient instead.
+    keep_manual keeps the visible edited line, under a NEW manual identity.
+    Existing Apple objects for that old identity must be detached by the caller.
+    """
+    from lib import shopping_note as note
+    from lib.note_mutation import mutation_lock
+    if choice not in {'keep_kitchenos','keep_manual'}:
+        raise RevisionConflict('Shopping source conflicts accept keep_kitchenos or keep_manual')
+    path=shopping_list_path(paths.shopping_lists_dir(),item.week)
+    with mutation_lock(path):
+        document=read_shopping_note(item.week)
+        row=next((r for r in document.rows if r.id==item.logical_id),None)
+        issue=document.issues.get(item.logical_id)
+        with db.connect() as conn:
+            edit=conn.execute('SELECT * FROM apple_file_edits WHERE operation_id=?',(operation_id,)).fetchone()
+        if edit and edit['after_hash']==document.content_hash and store.get_item(item.token)==item:
+            if choice=='keep_manual' and row is None:
+                return None
+            if choice=='keep_kitchenos' and row is not None and issue is None:
+                return _source(item.week,row,document,item,store.get_due_override(item.token)[1])
+        if row is None or issue not in {'shopping_amount_changed','shopping_identity_changed'}:
+            raise RevisionConflict('Shopping conflict changed')
+        if _source(item.week,row,document,item,store.get_due_override(item.token)[1]).source_revision!=item.source_revision:
+            raise RevisionConflict('Shopping source changed before resolution')
+        if store.get_item(item.token)!=item:
+            raise RevisionConflict('Shopping item changed')
+        def transform(text):
+            doc=note.parse_document(text)
+            snap=dict(doc.metadata['rows'][item.logical_id])
+            ident=item.logical_id
+            replacement=row.text
+            completed=row.completed
+            if choice=='keep_manual':
+                ident='manual:'+uuid4().hex
+                snap={'identity':None,'text':replacement}
+                del doc.metadata['rows'][item.logical_id]
+            else:
+                if issue=='shopping_identity_changed':
+                    replacement=snap['text']
+                completed=False
+                snap.pop('conflict',None);snap.pop('previous_text',None)
+                snap.update(text=replacement,text_identity=note._text_identity(replacement),retired=False)
+            doc.metadata['rows'][ident]=snap
+            lines=text.splitlines(keepends=True)
+            for index,line in enumerate(lines):
+                marker=note._MARKER.search(line.rstrip('\r\n'))
+                if marker and marker[1]==item.logical_id:
+                    ending='\r\n' if line.endswith('\r\n') else '\n' if line.endswith('\n') else ''
+                    lines[index]=f"- [{'x' if completed else ' '}] {replacement} <!-- kitchenos-item:{ident} -->{ending}"
+            return note._METADATA.sub(lambda match:'<!-- kitchenos-shopping-v3:'+note._encode(doc.metadata)+' -->',''.join(lines))
+        written=mutate_note(path,document.content_hash,transform,operation_id)
+        after=read_shopping_note(item.week)
+        if after.content_hash!=written or store.get_item(item.token)!=item:
+            raise RevisionConflict('Shopping conflict changed during resolution')
+        if choice=='keep_manual':
+            return None
+        changed=next(r for r in after.rows if r.id==item.logical_id)
+        return _source(item.week,changed,after,item,store.get_due_override(item.token)[1])

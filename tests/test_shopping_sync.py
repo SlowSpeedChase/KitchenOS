@@ -277,6 +277,10 @@ def test_marker_free_legacy_send(active, monkeypatch):
     import api_server
     from lib import reminders, shopping_list_generator
     saved()
+    # This case exercises unconfigured one-way fallback. The normal adapter
+    # fixture registers a native owner, which now correctly prevents fallback.
+    with db.write_transaction() as conn:
+        conn.execute('DELETE FROM apple_bridge')
     sent = []
     monkeypatch.setattr(shopping_list_generator, 'SHOPPING_LISTS_PATH', active.parent)
     monkeypatch.setattr(reminders, 'add_to_reminders', lambda items, name: sent.extend(items) or len(items))

@@ -86,7 +86,7 @@ def test_wire_batch_roundtrip_retains_nested_locators_and_null_due():
         'locator': {'calendar_id': 'list', 'item_id': 'item', 'external_id': None},
         'title': 'Limes', 'fields': {'due': None, 'completed': False}, 'expected_apple_hash': None,
     }
-    payload = {'context': context, 'items': [], 'operations': [operation]}
+    payload = {'context': context, 'items': [], 'operations': [operation], 'model_version': 1, 'scopes': [], 'report': {'created':0,'updated':0,'deleted':0,'queued':0,'conflicts':0,'unavailable':0,'last_success':None}, 'paused':False, 'retry_requests':[], 'retained_items':[]}
     batch = WorkBatch.from_dict(payload)
     assert batch.to_dict() == payload
     assert batch.operations[0].locator.item_id == 'item'

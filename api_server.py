@@ -94,6 +94,8 @@ from lib.cooking_availability import register_routes as register_calendar_routes
 register_calendar_routes(app, require_token)
 from lib.planning_calendar import register_routes as register_planning_calendar_routes
 register_planning_calendar_routes(app, require_token)
+from lib.apple_integration.routes import register_routes as register_apple_routes
+register_apple_routes(app, require_token)
 
 
 _recipe_cache = {"data": None, "timestamp": 0}
@@ -1014,6 +1016,7 @@ def generate_shopping_list_endpoint():
 
 
 @app.route('/send-to-reminders', methods=['POST'])
+@require_token
 def send_to_reminders_endpoint():
     """Send this week's unchecked shopping-list items to Apple Reminders.
 
@@ -1034,6 +1037,14 @@ def send_to_reminders_endpoint():
     except ValueError as exc:
         return jsonify({'success': False, 'error': str(exc)}), 400
 
+    from lib.apple_integration import service as apple_service
+    try:
+        queued = apple_service.enqueue('shopping', week)
+    except (apple_service.RevisionConflict, apple_service.SourceUnavailable) as exc:
+        return jsonify(success=False, error=str(exc), queued=0, delivered=0), 409
+    if queued is not None:
+        return jsonify(queued)
+
     # Parse shopping list
     result = parse_shopping_list_file(week)
 
@@ -1044,6 +1055,7 @@ def send_to_reminders_endpoint():
         return jsonify({
             'success': True,
             'items_sent': 0,
+            'queued': 0, 'delivered': 0,
             'items_skipped': result['skipped'],
             'message': 'No unchecked items to send'
         })
@@ -1056,6 +1068,7 @@ def send_to_reminders_endpoint():
         return jsonify({
             'success': True,
             'items_sent': sent,
+            'queued': 0, 'delivered': sent,
             'items_skipped': result['skipped']
         })
     except Exception as e:
@@ -2767,6 +2780,7 @@ def api_shopping_list_preview():
 
 
 @app.route('/api/shopping-list/confirm', methods=['POST'])
+@require_token
 def api_shopping_list_confirm():
     data = request.get_json(force=True, silent=True) or {}
     week = data.get("week")
@@ -2818,6 +2832,7 @@ def api_tasks_get(week):
 
 
 @app.route('/api/tasks/<week>/<task_id>/done', methods=['POST'])
+@require_token
 def api_task_mark_done(week, task_id):
     if not re.match(r'^\d{4}-W\d{2}$', week):
         return jsonify({"error": "Invalid week format. Expected YYYY-WNN"}), 400
@@ -3804,18 +3819,28 @@ def api_prep_to_reminders():
     data = request.get_json(force=True, silent=True) or {}
     scope = "ahead" if data.get("scope") == "ahead" else "today"
 
+    from lib.apple_integration import service as apple_service
+    from datetime import date
+    week = data.get('week') or date.today().strftime('%G-W%V')
+    try:
+        queued = apple_service.enqueue('prep', week)
+    except (apple_service.InvalidPayload, apple_service.RevisionConflict, apple_service.SourceUnavailable) as exc:
+        return jsonify(error=str(exc), queued=0, delivered=0), 409
+    if queued is not None:
+        return jsonify({**queued, 'list': 'Prep', 'scope': scope})
+
     prep = kitchen_today.prep_tasks()
     items = [
         f"{t['text']} — {t['recipe']}" if t.get("recipe") else t.get("text", "")
         for t in prep[scope] if not t.get("done") and t.get("text")
     ]
     if not items:
-        return jsonify({"sent": 0, "list": "Prep", "scope": scope})
+        return jsonify({"sent": 0, "list": "Prep", "scope": scope, "queued": 0, "delivered": 0})
     try:
         sent = add_to_reminders(items, "Prep")
     except Exception as exc:
         return jsonify({"error": str(exc)}), 502
-    return jsonify({"sent": sent, "list": "Prep", "scope": scope})
+    return jsonify({"sent": sent, "list": "Prep", "scope": scope, "queued": 0, "delivered": sent})
 
 
 @app.route('/', methods=['GET'])

@@ -62,6 +62,8 @@ def _bridge(conn):
     row = conn.execute('SELECT * FROM apple_bridge WHERE id=1').fetchone()
     if row is None:
         raise OwnershipConflict('No designated Mac')
+    if not row['connected']:
+        raise OwnershipConflict('Bridge is disconnected')
     if row['paused']:
         raise OwnershipConflict('Bridge is paused')
     return row
@@ -84,6 +86,9 @@ def register_owner(owner_id: str, *, conn=None) -> BridgeContext:
         row = tx.execute('SELECT * FROM apple_bridge WHERE id=1').fetchone()
         if row is None:
             tx.execute('INSERT INTO apple_bridge(id, owner_id, owner_generation) VALUES(1, ?, 1)', (owner_id,))
+        elif not row['connected']:
+            tx.execute('UPDATE apple_bridge SET owner_id=?, connected=1, revision=revision+1 WHERE id=1', (owner_id,))
+            context = BridgeContext(owner_id, row['owner_generation'])
         elif row['owner_id'] != owner_id:
             raise OwnershipConflict('Another Mac already owns the integration')
         else:
@@ -121,11 +126,6 @@ def update_scope(request: ScopeRequest, *, conn=None) -> dict:
                     "UPDATE apple_operations SET status='superseded' WHERE status='pending' AND token IN "
                     '(SELECT token FROM apple_items WHERE domain=? AND week=?)', (request.domain, request.week),
                 )
-                if row['destination_id'] != request.destination_id or request.state == 'archived':
-                    tx.execute(
-                        "UPDATE apple_items SET state='retired', revision=revision+1 WHERE domain=? AND week=? AND state NOT IN ('retired','history')",
-                        (request.domain, request.week),
-                    )
         return dict(tx.execute('SELECT * FROM apple_scopes WHERE domain=? AND week=?', (request.domain, request.week)).fetchone())
 
 
@@ -140,7 +140,6 @@ def refresh_source(item: SourceItem, *, conn=None) -> SyncItem:
             (item.domain, item.week, item.logical_id),
         ).fetchone()
         replacement = row is not None and (
-            row['destination_id'] != scope['destination_id'] or
             (row['state'] in {'retired', 'history'} and item.state == 'active')
         )
         if row is None or replacement:
@@ -194,14 +193,14 @@ def reserve_operation(item: SyncItem, action: str, expected_apple_hash: str | No
         if current != item:
             raise RevisionConflict('Item snapshot changed')
         scope = _scope(tx, row['domain'], row['week'])
-        if row['destination_id'] != scope['destination_id'] or row['state'] == 'history':
+        if row['state'] == 'history':
             raise RevisionConflict('Item is detached')
         if action == 'upsert' and row['state'] != 'active':
             raise RevisionConflict('Item is not exportable')
         if action == 'delete' and row['state'] not in {'retired', 'suppressed'}:
             raise RevisionConflict('Only retired or suppressed items may be deleted')
         operation = AppleOperation(str(uuid4()), item.token, item.generation, item.revision, action,
-                                   item.destination_id, item.locator, item.title, item.fields, expected_apple_hash)
+                                   item.locator.calendar_id if item.locator else item.destination_id, item.locator, item.title, item.fields, expected_apple_hash)
         existing = tx.execute(
             "SELECT payload FROM apple_operations WHERE token=? AND generation=? AND revision=? AND action=? AND expected_apple_hash IS ? AND status='pending'",
             (item.token, item.generation, item.revision, action, expected_apple_hash),
@@ -237,8 +236,11 @@ def acknowledge(context: BridgeContext, operation_id: str, locator: Locator | No
         if operation['owner_id'] != context.owner_id or operation['owner_generation'] != context.owner_generation:
             raise OwnershipConflict('Operation belongs to an older owner')
         row = _row(tx, operation['token'])
-        _current(tx, row)
-        scope = _scope(tx, row['domain'], row['week'])
+        if not operation['retained_cleanup']:
+            _current(tx, row)
+            scope = _scope(tx, row['domain'], row['week'])
+        else:
+            scope = tx.execute('SELECT * FROM apple_scopes WHERE domain=? AND week=?', (row['domain'],row['week'])).fetchone()
         if scope['revision'] != operation['scope_revision']:
             raise RevisionConflict('Scope changed since reservation')
         validate_fields(observed_fields, row['domain'])
@@ -261,9 +263,12 @@ def acknowledge(context: BridgeContext, operation_id: str, locator: Locator | No
                 raise InvalidPayload('Deleted acknowledgement must have no locator or fields')
             common = None
         tx.execute(
-            'UPDATE apple_items SET common_payload=?, locator=?, revision=revision+1 WHERE token=?',
-            (common, canonical_json(locator.to_dict()) if locator else None, row['token']),
+            'UPDATE apple_items SET common_payload=?, locator=?, common_title=?, revision=revision+1 WHERE token=?',
+            (common, canonical_json(locator.to_dict()) if locator else None, payload.title if payload.action == 'upsert' else None, row['token']),
         )
+        if operation['retained_cleanup']:
+            tx.execute("UPDATE apple_items SET suppressed=1,state=CASE WHEN state='active' THEN 'suppressed' ELSE state END WHERE token=?",(row['token'],))
+            tx.execute("UPDATE apple_conflicts SET status='resolved',resolution='remove_owned' WHERE token=? AND status='open'",(row['token'],))
         result = _item(_row(tx, row['token']))
         tx.execute(
             "UPDATE apple_operations SET status='acknowledged', result=?, acknowledged_payload=? WHERE operation_id=?",
@@ -339,8 +344,6 @@ def reserve_source_patch(item: SyncItem, patch: dict, operation_id: str, *, conn
     with db.write_transaction(conn) as tx:
         _bridge(tx)
         scope = _scope(tx, item.domain, item.week)
-        if item.destination_id != scope['destination_id']:
-            raise RevisionConflict('Source patch destination changed')
         old = tx.execute('SELECT * FROM apple_source_patches WHERE operation_id=?', (operation_id,)).fetchone()
         if old:
             if old['item_payload'] != canonical_json(item.to_dict()) or old['patch'] != canonical_json(patch) or old['status'] == 'conflict':
@@ -376,3 +379,23 @@ def finish_source_patch(operation_id: str, result: SourceItem, *, conn=None) -> 
 def conflict_source_patch(operation_id: str, *, conn=None) -> None:
     with db.write_transaction(conn) as tx:
         tx.execute("UPDATE apple_source_patches SET status='conflict' WHERE operation_id=? AND status='pending'", (operation_id,))
+
+
+def reserve_cleanup(item: SyncItem, expected_apple_hash: str, *, conn=None) -> AppleOperation:
+    """Explicit per-object deletion, including retained generations; no adoption.
+
+    Separate from ordinary lifecycle work: its callback can clear only this row,
+    even when a newer generation exists. The service validates fresh observation.
+    """
+    with db.write_transaction(conn) as tx:
+        owner = _bridge(tx)
+        if get_item(item.token, conn=tx) != item or item.locator is None:
+            raise RevisionConflict('Cleanup snapshot changed or has no owned locator')
+        scope = tx.execute('SELECT * FROM apple_scopes WHERE domain=? AND week=?', (item.domain,item.week)).fetchone()
+        old=tx.execute("SELECT payload FROM apple_operations WHERE token=? AND revision=? AND expected_apple_hash=? AND retained_cleanup=1 AND status='pending'",(item.token,item.revision,expected_apple_hash)).fetchone()
+        if old:
+            return AppleOperation.from_dict(json.loads(old['payload']))
+        _supersede(tx,item.token)
+        operation=AppleOperation(str(uuid4()),item.token,item.generation,item.revision,'delete',item.locator.calendar_id,item.locator,item.title,item.fields,expected_apple_hash)
+        tx.execute("INSERT INTO apple_operations(operation_id,token,generation,revision,owner_id,owner_generation,scope_revision,action,expected_apple_hash,payload,status,retained_cleanup) VALUES(?,?,?,?,?,?,?,'delete',?,?,'pending',1)",(operation.operation_id,item.token,item.generation,item.revision,owner['owner_id'],owner['owner_generation'],scope['revision'],expected_apple_hash,canonical_json(operation.to_dict())))
+        return operation

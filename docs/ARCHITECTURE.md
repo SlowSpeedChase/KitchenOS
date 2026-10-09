@@ -451,3 +451,34 @@ No DB transaction is held across file replacement or external Apple work.
 Advisory locks cannot stop a non-cooperating editor between the last hash check
 and rename. The journal can recover only bytes the process actually observed;
 it does not claim to recover an unseen external edit in that interval.
+
+## Native bridge service and HTTP boundary
+
+| Module | Public boundary |
+|---|---|
+| `lib/apple_integration/service.py` | `activate`, `update_scope`, `work`, `observe`, `acknowledge`, `resolve_conflict`, `restore`, `remove_owned`, `register_owner`, `disconnect`, `settings`, `status`, `link`, `configured`, and `enqueue` compose source adapters with the shared merge/journal. Recovery precedes source refresh; no DB transaction spans file or native/network work. |
+| `lib/apple_integration/routes.py` | `register_routes(app, require_token)` installs the version-one API, strict envelopes, complete batch limits and localhost writer gate independently of optional bearer auth. Exact contracts and native retry order are in `docs/API.md`. |
+| `lib/apple_integration/shopping.py` | `resolve(item, choice, operation_id)` performs amount/ingredient-identity conflict edits with exact note hashes and recoverable images. `keep_manual` assigns a new row identity; it never transfers an edited ingredient onto the old generated ID. |
+| `lib/apple_integration/store.py` | `reserve_cleanup` is the explicit bounded-removal path for retained generations. Ordinary callbacks reject replaced generations; cleanup acknowledgements can affect only their specifically reserved old row. Scope destination is a default for new items; archive/reactivation preserves existing identities. |
+
+`apple_requests` stores the exact owner-bound request payload, per-token progress
+and terminal response. At most one observation request remains unfinished; restart
+work exposes its exact typed retry envelope and withholds outbound operations until
+replay completes. Semantic source drift becomes a visible conflict, while IO stays
+retryable. Native clients must fetch fresh Apple/server state again after replay.
+`apple_resolutions` separately journals explicit conflict choices, allowing the
+service to finish a split file/DB resolution before normal source refresh.
+
+Narrow migrations add owner connection/settings/permission reports and last
+success, item `last_observation`/`common_title`, and an explicit retained-cleanup
+operation flag. A verified common title distinguishes a generated title change
+from the user's display override. Locators follow moved Apple objects; configured
+defaults never move existing objects back. A retained incomplete old object blocks
+replacement export until explicit detach/removal; completed history stays detached.
+
+Send-to-Reminders, prep send and the CLI call `configured`/`enqueue`. Once native
+mode is configured, paused/disconnected owners cannot trigger AppleScript fallback.
+Completion only changes the exact source checkbox/task; Calendar absence only
+unschedules. No Apple content reaches prompts or application logs. Native ownership
+and last-moment hash verification remain EventKit responsibilities, not assumptions
+that a locator or authenticated HTTP body can prove by itself.

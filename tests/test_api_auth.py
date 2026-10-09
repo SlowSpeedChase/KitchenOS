@@ -117,8 +117,8 @@ def test_meal_and_freezer_routes_are_gated(client, monkeypatch, method, path):
 KNOWN_UNGATED = {
     "api_recipe_save", "api_recipe_import_text", "api_macro_targets",
     "api_pantry_get", "api_pantry_put",
-    "api_shopping_list_preview", "api_shopping_list_confirm",
-    "api_tasks_get", "api_task_mark_done",
+    "api_shopping_list_preview",
+    "api_tasks_get",
     "api_inventory_list", "api_use_it_up", "api_cook_now",
     "api_inventory_add", "api_inventory_paste", "api_inventory_remove",
     "api_inventory_update", "api_inventory_extend", "api_inventory_set_expiry",

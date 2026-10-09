@@ -89,15 +89,17 @@ def test_old_owner_generation_rejected(active):
             store.acknowledge(invalid, operation.operation_id, LOCATOR, item.fields)
 
 
-def test_destination_replacement_retains_old_generation_and_rejects_ack(active):
+def test_destination_default_change_preserves_generation_but_rejects_old_operation(active):
     context, scope, item = active
     operation = store.reserve_operation(item, 'upsert', None)
     store.activate_scope('shopping', '2026-W41', 'other-list', expected_revision=scope['revision'])
-    replacement = store.refresh_source(source())
-    assert replacement.generation == 2 and replacement.token != item.token
-    assert store.get_item(item.token).state == 'retired'
+    refreshed = store.refresh_source(source())
+    assert refreshed.generation == 1 and refreshed.token == item.token
+    assert refreshed.destination_id == 'list'
     with pytest.raises(RevisionConflict):
         store.acknowledge(context, operation.operation_id, LOCATOR, item.fields)
+    new_item = store.refresh_source(source(logical_id='new-row'))
+    assert new_item.destination_id == 'other-list'
 
 
 def test_history_is_detached_from_future_mutations(active):

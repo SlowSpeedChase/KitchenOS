@@ -1,7 +1,7 @@
 """Version-one wire contracts and strict validation for the native bridge."""
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, fields as dataclass_fields
+from dataclasses import asdict, dataclass, field as dataclass_field, fields as dataclass_fields
 from datetime import date, datetime
 import hashlib
 import json
@@ -25,6 +25,10 @@ COOKING_FIELDS = frozenset({'start', 'timezone', 'duration_minutes'})
 
 class InvalidPayload(ValueError):
     """Malformed or unsupported data; do not partially apply it."""
+
+
+class BatchTooLarge(InvalidPayload):
+    """A complete batch cannot fit; never truncate it."""
 
 
 class RevisionConflict(RuntimeError):
@@ -334,13 +338,25 @@ class WorkBatch(Wire):
     context: BridgeContext
     items: list[SyncItem]
     operations: list[AppleOperation]
+    model_version: int = MODEL_VERSION
+    scopes: list[dict] = dataclass_field(default_factory=list)
+    report: SyncReport = dataclass_field(default_factory=SyncReport)
+    paused: bool = False
+    retry_requests: list[ObservationRetry] = dataclass_field(default_factory=list)
+    retained_items: list[SyncItem] = dataclass_field(default_factory=list)
 
     def __post_init__(self):
         _nested(self, 'context', BridgeContext)
-        for name, cls in [('items', SyncItem), ('operations', AppleOperation)]:
+        _nested(self, 'report', SyncReport)
+        if self.model_version != MODEL_VERSION or type(self.paused) is not bool or not isinstance(self.scopes,list) or len(self.scopes)>5000:
+            raise InvalidPayload('Invalid work envelope')
+        if not isinstance(self.retry_requests,list) or len(self.retry_requests)>1:
+            raise InvalidPayload('Invalid retry requests')
+        object.__setattr__(self,'retry_requests',[v if isinstance(v,ObservationRetry) else ObservationRetry.from_dict(v) for v in self.retry_requests])
+        for name, cls in [('items', SyncItem), ('retained_items', SyncItem), ('operations', AppleOperation)]:
             values = getattr(self, name)
-            if not isinstance(values, list):
-                raise InvalidPayload(f'{name} must be a list')
+            if not isinstance(values, list) or len(values)>5000:
+                raise InvalidPayload(f'{name} must be a bounded list')
             converted = [v if isinstance(v, cls) else cls.from_dict(v) for v in values]
             object.__setattr__(self, name, converted)
 
@@ -382,12 +398,48 @@ class IntegrationStatus(Wire):
     destinations: dict
     scopes: list[dict]
     conflicts: list[dict]
+    model_version: int = MODEL_VERSION
+    configured: bool = False
+    connected: bool = False
+    paused: bool = False
+    settings_revision: int = 0
 
     def __post_init__(self):
         _nested(self, 'report', SyncReport)
+        if self.model_version != MODEL_VERSION or any(type(v) is not bool for v in (self.configured,self.connected,self.paused)) or type(self.settings_revision) is not int or self.settings_revision<0:
+            raise InvalidPayload('Invalid status envelope')
         for mapping in (self.permissions, self.destinations):
             if not isinstance(mapping, dict) or mapping.keys() - DOMAINS:
                 raise InvalidPayload('Unknown status domain')
         if not isinstance(self.scopes, list) or not isinstance(self.conflicts, list) or len(self.conflicts) > 100:
             raise InvalidPayload('Invalid or unbounded status summary')
         canonical_json(self.to_dict())
+
+
+@dataclass(frozen=True)
+class ObservationRetry(Wire):
+    request_id: str
+    observations: list[Observation]
+
+    def __post_init__(self):
+        _uuid(self.request_id)
+        values=validate_observations(self.observations)
+        if len(values)>5000:
+            raise InvalidPayload('Too many retry observations')
+        object.__setattr__(self,'observations',values)
+
+
+@dataclass(frozen=True)
+class OwnedRemovalItem(Wire):
+    token: str
+    expected_revision: int
+    observation: Observation
+
+    def __post_init__(self):
+        _uuid(self.token)
+        _positive(self.expected_revision,'expected_revision')
+        _nested(self,'observation',Observation)
+        if self.observation.token!=self.token or self.observation.revision!=self.expected_revision:
+            raise InvalidPayload('Removal observation identity/revision mismatch')
+        if self.observation.availability!='present' or self.observation.issue is not None:
+            raise InvalidPayload('Removal requires verified present ownership')

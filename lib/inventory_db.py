@@ -78,6 +78,15 @@ CREATE TABLE IF NOT EXISTS apple_file_edits (
     status TEXT NOT NULL CHECK(status IN ('pending','applied','conflict')),
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS apple_resolutions (
+ conflict_id TEXT PRIMARY KEY REFERENCES apple_conflicts(conflict_id),
+ choice TEXT NOT NULL, expected_revision INTEGER NOT NULL,
+ status TEXT NOT NULL CHECK(status IN ('pending','applied','conflict'))
+);
+CREATE TABLE IF NOT EXISTS apple_requests (
+ request_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, owner_generation INTEGER NOT NULL,
+ payload TEXT NOT NULL, result TEXT, progress TEXT NOT NULL DEFAULT '[]'
+);
 CREATE TABLE IF NOT EXISTS apple_source_patches (
     operation_id TEXT PRIMARY KEY, token TEXT NOT NULL REFERENCES apple_items(token),
     domain TEXT NOT NULL, expected_revision INTEGER NOT NULL,
@@ -218,7 +227,9 @@ _INVENTORY_COLS = (
 # Columns added after the original schema shipped. ``connect()`` adds any that
 # an existing DB is missing — SQLite ``ADD COLUMN`` is cheap and append-only.
 _MIGRATIONS = {
-    "apple_items": [("due_override", "TEXT")],
+    "apple_items": [("due_override", "TEXT"), ("last_observation", "TEXT"), ("common_title", "TEXT")],
+    "apple_bridge": [("connected", "INTEGER NOT NULL DEFAULT 1"), ("revision", "INTEGER NOT NULL DEFAULT 1"), ("permissions", "TEXT NOT NULL DEFAULT '{}'"), ("destinations", "TEXT NOT NULL DEFAULT '{}'"), ("last_success", "TEXT")],
+    "apple_operations": [("retained_cleanup", "INTEGER NOT NULL DEFAULT 0")],
     "inventory": (
         ("for_recipe", "TEXT"), ("expires", "TEXT"),
         # Set when a cook uses a row it cannot safely decrement (a container).
