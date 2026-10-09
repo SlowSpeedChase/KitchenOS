@@ -331,7 +331,8 @@ SyncItem = SourceItem + {revision:int>0, generation:int>0, token:UUID,
 Observation = {token:UUID, generation:int>0, revision:int>0,
   availability:"present"|"missing"|"unavailable", locator:Locator?,
   title:string?, fields:object, absence_confirmed:bool,
-  issue:null|"unsupported_all_day"|"unsupported_recurrence"|"identity_ambiguous"}
+  issue:null|"unsupported_all_day"|"unsupported_recurrence"|"identity_ambiguous",
+  has_user_notes:bool?}
 AppleOperation = {operation_id:UUID, token:UUID, generation:int>0,
   revision:int>0, action:"upsert"|"delete", destination_id:string,
   locator:Locator?, title:string, fields:object, expected_apple_hash:SHA256?}
@@ -379,6 +380,8 @@ adopt old AppleScript reminders, clear a list/calendar, or mutate foreign object
 | GET `/work` (**local writer**) | Query `owner_id=<UUID>&owner_generation=<positive integer>`; no body | `WorkBatch` |
 | POST `/observations` (**local writer**) | `{context:BridgeContext, request_id:UUID, complete:true, observations:[Observation]}` | `{operations:[AppleOperation], report:SyncReport}` |
 | POST `/operations/<uuid>/ack` (**local writer**) | `{context:BridgeContext, operation_id:UUID, outcome:"saved"|"deleted"|"changed"|"failed", locator:Locator?, observed_fields:object, observed_hash:SHA256?}` | `{report:SyncReport}` |
+| POST `/operations/<uuid>/recover-saved` (**local writer**) | `{context:BridgeContext, ack:OperationAck, observation:Observation}`; saved ack operation ID matches path | `{report:SyncReport}` |
+| POST `/sync/complete` (**local writer**) | `{context:BridgeContext, scopes:[Scope], request_ids:[UUID]}`; exact scopes from fresh work and completed observation request IDs covering its current items | `{report:SyncReport}` |
 | POST `/conflicts/<uuid>/resolve` | `{choice:"keep_kitchenos"|"keep_apple"|"keep_manual"|"restore", expected_revision:int>0}` | `{report:SyncReport}` |
 | POST `/items/<token>/restore` | `{expected_revision:int>0}` | `{item:SyncItem, report:SyncReport}` |
 | POST `/items/remove-owned` (**local writer**) | `{context:BridgeContext, request_id:UUID, items:[OwnedRemovalItem]}` | `{operations:[AppleOperation]}` |
@@ -425,6 +428,18 @@ Apple delivery. Permission reports reflect the native owner's latest report.
 `unavailable` in a work/observation response includes unreadable source scopes or
 uncertain observations from that reconciliation. Source failures do not imply
 Apple deletion. Status does not perform source inference or native IO.
+`has_user_notes` is true when Apple notes contain user prose beyond exact
+ownership-marker lines; omitted means false for older replay payloads. Retirement
+opens review instead of deleting such an item, and EventKit rechecks notes just
+before deletion.
+`last_success` records a complete converged pass, including an unchanged or empty
+active scope. The native owner freshly checks Apple permissions/destinations and
+observes current work after all writes; the completion endpoint revalidates owner,
+scopes, current item coverage and source availability. At least one active scope
+is required, with no pending work or open conflicts. An empty pass submits a
+completed empty observation request. Work/status reads and individual write acks
+do not advance the timestamp. An identical valid completion proof reuses its
+SQLite receipt timestamp rather than recording another success.
 
 Work `items` contains the latest generations in active scopes, excluding detached
 history and already-cleaned retirement rows. Suppressed/conflicted rows remain
@@ -465,6 +480,30 @@ only for new identities. Reactivation resumes those same objects.
    Neither advances common state. `saved` requires the final locator, all saved
    fields and the title/fields hash; `deleted` requires null locator, `{}` fields,
    and null hash. Ack operation UUID must match the path.
+7. After writes or source imports, repeat the fresh work/Apple observation pass.
+   Once every active scope is readable and converged with no pending work or
+   conflicts, POST `/sync/complete`. Partial, stale and unavailable passes cannot
+   record success.
+
+An already committed acknowledgement can be retried with the same payload under
+the same owner generation even after later item/scope revisions. It returns no
+additional delivery count and does not change `last_success`. Changed payloads
+remain rejected.
+
+If a save completes in Apple after its server operation was superseded, retain
+that saved acknowledgement and the original item identity. Fetch fresh work and
+verify the same generation's unique owned marker with a fresh Apple observation,
+even if active work no longer includes the item. The saved ack must match the
+original operation title/fields/hash; the current Apple title and fields may have
+changed. POST `/recover-saved` to record the receipt, link only the observed
+locator, and open `recovery`, `retirement`, or `retained_generation` review
+according to the current source state. No old save is imported into the newer
+source. A verified moved/reidentified object may have a different locator from
+the saved ack; an unreadable or missing result cannot establish recovery.
+Transient/lost responses retry the exact proof. A definitive 409 discards only
+that observation proof, retaining the saved acknowledgement for a fresh scan.
+Uncertain deletion keeps its acknowledgement pending for explicit review; no
+fresh scan invents deletion proof.
 
 The protocol maps confirmed missing reminders to suppression and confirmed missing
 cooking events to unscheduling only. The current native adapter never confirms a
@@ -477,22 +516,65 @@ Explicit restore retains its displayed due choice; normal retirement/reappearanc
 starts fresh per-generation metadata. A reappearing source whose old incomplete
 Apple object still has a locator gets `retained_generation` recovery and cannot
 create a duplicate until the old object is explicitly detached or removed.
+Suppressed exports are terminal for ordinary work and successful-pass coverage;
+they do not need an Apple observation until explicit restore or owned cleanup.
+Regenerated shopping demand after a retired historical row starts incomplete.
+
+Generated v3 shopping snapshots must keep the target text in the row's ingredient bucket, and conflict markers must use the declared amount/identity
+values. Invalid metadata makes the source unavailable before any conflict rows
+are published; it never offers an unsafe Keep KitchenOS choice.
+
+Explicit shopping activation prepares a missing or unmigrated note through the
+existing pantry-aware generator and canonical save writer. It never confirms
+pantry spending. Ordinary work/status reads leave missing and legacy notes
+untouched and report them unavailable until an explicit activation or normal save.
 
 ### Explicit choices and deletion
 
-- Ordinary field/recovery conflicts with a valid present observation support
+- Ordinary field/recovery conflicts with a valid present observation and
+  matching current source revision support Keep choices only while the item
+  and scope are active. Archived or inactive items offer manual separation;
+  reactivation can expose the other choices. A later Apple observation
+  refreshes an open recovery conflict's evidence and revision before import.
+  Active choices are
   `keep_kitchenos` (reserve a verified outbound update), `keep_apple` (import the
   selected field/full recovery snapshot), or `keep_manual` (detach the Apple object,
   leave it untouched, and suppress the source export). Unsupported shapes accept
-  detachment; they are never coerced. `restore` applies only to a suppressed source;
+  detachment; they are never coerced. A pending Keep KitchenOS correction survives
+  a fresh scan of the same Apple evidence; newer Apple edits require review again.
+  Common values advance only after acknowledgement or verified equality.
+  `restore` applies only to a suppressed source;
   the dedicated restore endpoint is the normal UI action.
-- `shopping_amount_changed`: `keep_kitchenos` accepts the current generated amount,
-  reopens its checkbox and removes the explicit amount conflict. `keep_manual`
+- Shopping conflict detail includes optional `shopping_demand` evidence:
+  `{state:"active",text:"3 lime"}` identifies the generated acceptance target;
+  `{state:"removed",text:null}` identifies demand that disappeared. `source.title`
+  retains the visible edited row. Reading this evidence never regenerates the note.
+  The generated target participates in the source revision, so a changed target
+  invalidates a choice presented earlier even when the edited row text is unchanged.
+  Each row has one open shopping source conflict: regeneration updates its evidence
+  and revision, including amount-to-ingredient changes. Superseded duplicate records
+  are closed without changing the note or Apple object. Missing, nonstring, empty
+  or multiline generated snapshot text makes the source unavailable instead of
+  publishing an unusable acceptance target; malformed metadata is never repaired
+  implicitly by reading it.
+  Older conflict records without this evidence offer only manual separation until
+  a refresh records the current target.
+- `shopping_amount_changed`: for active demand, `keep_kitchenos` accepts the shown
+  generated amount, reopens its checkbox and removes the explicit amount conflict.
+  For removed demand, it removes the exact shopping row and retires its Apple link;
+  the UI labels this **Remove item from shopping list**. `keep_manual`
   keeps the visible line under a genuinely new manual row ID and detaches the old
   Apple object. An ingredient identity edit uses the same choices, but
   `keep_kitchenos` restores the recorded original ingredient. These edits use the
   adapter's exact hash and durable note journal; the service never edits encoded
   metadata directly. Apple text is never sent to an LLM.
+- `retirement`: a removed source has an Apple title or supported field changed since
+  the acknowledged common snapshot. Automatic deletion is blocked; `keep_manual`
+  separates the object, or explicit remove-owned can delete it after fresh review.
+  Completed reminders remain history without deletion. Completion first observed
+  after source retirement freezes that journal generation as history and cancels
+  pending mutations. Later Apple reopening cannot resume deletion; reappearing
+  source demand receives a new incomplete generation without a retained-item block.
 - `retained_generation`: `keep_manual` leaves the old Apple object as a manual copy,
   clears only its bridge locator and unblocks the new generation. Alternatively,
   invoke remove-owned with the retained item's token and **its own** expected
@@ -514,3 +596,8 @@ ahead AppleScript behavior remains and adds `{queued:0,delivered:sent}`.
 scope; native `--clear` is rejected. Paused/offline native mode never invokes the
 legacy fallback. Shopping-confirm and task-done now use the same token gate as
 these sender paths. Existing MCP send calls preserve the full JSON response.
+A native sender's `queued` counts that scope's durable pending operations, source
+patches, resolutions and unfinished observation requests containing its tokens;
+already synchronized items contribute zero. Requests without item tokens cannot
+be attributed to a selected scope and remain visible in the global status.
+Sending an archived scope returns 409; reactivate it explicitly in the Mac app.

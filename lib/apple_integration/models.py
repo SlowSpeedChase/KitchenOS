@@ -242,6 +242,7 @@ class Observation(Wire):
     fields: dict
     absence_confirmed: bool
     issue: str | None
+    has_user_notes: bool = False
 
     def __post_init__(self):
         _uuid(self.token)
@@ -257,6 +258,8 @@ class Observation(Wire):
             raise InvalidPayload('Only missing observations can confirm absence')
         if self.availability == 'present' and self.locator is None:
             raise InvalidPayload('Present observations require a locator')
+        if type(self.has_user_notes) is not bool:
+            raise InvalidPayload('has_user_notes must be boolean')
         if self.issue is not None and (not isinstance(self.issue, str) or self.issue not in {'unsupported_all_day', 'unsupported_recurrence', 'identity_ambiguous'}):
             raise InvalidPayload('Unknown observation issue')
 

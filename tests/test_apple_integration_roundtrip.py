@@ -47,7 +47,8 @@ class FakeAppleStore:
             obj = matches[0]
             assert obj['generation'] == item['generation']
             return dict(base, availability='present', locator=deepcopy(obj['locator']),
-                        title=obj['title'], fields=deepcopy(obj['fields']))
+                        title=obj['title'], fields=deepcopy(obj['fields']),
+                        has_user_notes=obj.get('has_user_notes', False))
         # Like the native service, omit a never-linked uncertain no-match.
         if item['locator'] is None and item['common_fields'] is None:
             return None
@@ -309,3 +310,534 @@ def test_completed_shopping_quantity_change_stays_visible_until_choice(bridge):
     assert not read_shopping_note(WEEK).rows[0].completed
     assert not obj['fields']['completed'] and '3' in obj['title']
     assert bridge.apple.creations == 1 and not bridge.conflicts()
+
+
+def _retirement_source(bridge, domain):
+    if domain == 'shopping':
+        shopping()
+        return lambda: save_shopping_note(WEEK, [], [])
+    if domain == 'prep':
+        (paths.meal_plans_dir() / f'{WEEK}.md').write_text('# Plan\n[[Soup]]\n')
+        task = dict(id=task_extractor._stable_task_id('Soup', 'Monday', 'dinner', 1),
+                    recipe='Soup', day='Monday', slot='dinner', step=1, text='Chop onion.', done=False)
+        task_extractor._save_sidecar(WEEK, dict(week=WEEK, tasks=[task]))
+        return lambda: task_extractor._save_sidecar(WEEK, dict(week=WEEK, tasks=[]))
+    cook = ledger.create_cook(recipe='Soup', week=WEEK, servings_produced=4, scale=1)
+    bridge.ok('post', f"/api/cooks/{cook['id']}/schedule", json=dict(
+        date='2026-10-06', meal='dinner', start='2026-10-06T19:00:00-05:00',
+        timezone='America/Chicago', duration_minutes=60, servings_to_eat=1))
+    return lambda: ledger.delete_cook(cook['id'])
+
+
+@pytest.mark.parametrize('domain', ['shopping', 'prep', 'cooking'])
+@pytest.mark.parametrize('edit', ['title', 'fields', 'unchanged'])
+def test_source_retirement_requires_unchanged_apple_object(bridge, domain, edit):
+    """Catch deletion using a fresh hash that silently authorizes concurrent edits."""
+    retire = _retirement_source(bridge, domain)
+    bridge.activate(domain)
+    item = bridge.sync()['items'][0]
+    obj = bridge.apple.owned(item['token'])[0]
+    if edit == 'title':
+        obj['title'] = 'My edited title'
+    elif edit == 'fields':
+        if domain == 'cooking':
+            obj['fields']['duration_minutes'] = 120
+        else:
+            obj['fields']['due'] = {'date': '2026-10-09', 'time': None, 'timezone': None}
+    retire()
+    bridge.restart().sync()
+    if edit == 'unchanged':
+        assert not bridge.apple.owned(item['token'])
+        assert not bridge.conflicts()
+    else:
+        assert bridge.apple.owned(item['token']) == [obj]
+        assert any(c['token'] == item['token'] for c in bridge.conflicts())
+
+
+@pytest.mark.parametrize('domain', ['shopping', 'prep'])
+def test_retirement_preserves_just_completed_apple_history(bridge, domain):
+    retire = _retirement_source(bridge, domain)
+    bridge.activate(domain)
+    item = bridge.sync()['items'][0]
+    obj = bridge.apple.owned(item['token'])[0]
+    obj['fields']['completed'] = True
+    retire()
+    bridge.restart().sync()
+    assert bridge.apple.owned(item['token']) == [obj]
+    assert not bridge.conflicts()
+
+
+@pytest.mark.parametrize('new_apple_change', [False, True])
+def test_keep_kitchenos_survives_fresh_scan_but_rechecks_new_apple_edit(bridge, new_apple_change):
+    """Catch a resolution being superseded by the mandatory scan before apply."""
+    shopping(); bridge.activate('shopping'); item = bridge.sync()['items'][0]
+    desired = {'date': '2026-10-08', 'time': None, 'timezone': None}
+    store.set_due_override(item['token'], desired, expected_revision=item['revision'])
+    obj = bridge.apple.owned(item['token'])[0]
+    obj['fields']['due'] = {'date': '2026-10-09', 'time': None, 'timezone': None}
+    bridge.sync()
+    conflict = next(c for c in bridge.conflicts() if c['field'] == 'due')
+    bridge.ok('post', f"{BASE}/conflicts/{conflict['conflict_id']}/resolve", json={
+        'choice': 'keep_kitchenos', 'expected_revision': conflict['revision']})
+    if new_apple_change:
+        obj['fields']['due']['date'] = '2026-10-10'
+    bridge.restart().sync()
+    if new_apple_change:
+        assert obj['fields']['due']['date'] == '2026-10-10'
+        assert bridge.conflicts()
+    else:
+        assert obj['fields']['due'] == desired
+        assert not bridge.conflicts()
+        assert store.get_item(item['token']).common_fields['due'] == desired
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_explicit_shopping_activation_prepares_missing_or_v2_note(bridge, monkeypatch, legacy):
+    """Catch unusable first activation; real generation must credit pantry without spending."""
+    from lib import shopping_list_generator as generator
+    from lib.shopping_note import _encode
+    for name, directory in [('MEAL_PLANS_PATH', paths.meal_plans_dir()),
+                            ('RECIPES_PATH', paths.recipes_dir())]:
+        monkeypatch.setattr(generator, name, directory)
+    (paths.meal_plans_dir() / f'{WEEK}.md').write_text('# Plan\n[[Soup]]\n')
+    (paths.recipes_dir() / 'Soup.md').write_text(
+        '---\nservings: 1\n---\n# Soup\n## Ingredients\n\n'
+        '| Amount | Unit | Ingredient |\n| --- | --- | --- |\n'
+        '| 2 | whole | lime |\n| 2 | whole | carrot |\n\n## Instructions\nCook.\n')
+    with db.write_transaction() as conn:
+        conn.execute("INSERT INTO inventory(name,quantity,unit) VALUES('lime',6,'whole')")
+    note = paths.shopping_lists_dir() / f'{WEEK}.md'
+    if legacy:
+        note.write_text('- [x] 2 carrot\n- [ ] foil\n- [ ] foil\n'
+                        '<!-- kitchenos-generated-items-v2:' + _encode(['2 carrot']) + ' -->\n')
+    before = domain_snapshot()
+    bridge.activate('shopping')
+    batch = bridge.sync()
+    document = read_shopping_note(WEEK)
+    assert document.metadata and all(row.id for row in document.rows)
+    assert any('carrot' in row.text for row in document.rows)
+    assert not any('lime' in row.text for row in document.rows)
+    assert 'lime' in note.read_text()
+    if legacy:
+        assert next(row for row in document.rows if 'carrot' in row.text).completed
+        assert len({row.id for row in document.rows if row.text == 'foil'}) == 2
+    assert len(batch['items']) == len(document.rows)
+    assert domain_snapshot() == before
+
+
+
+def test_removed_hand_edited_demand_can_accept_removal_without_reexporting(bridge):
+    """Catch keeping an edited amount resurrecting demand that regeneration removed."""
+    shopping(); bridge.activate('shopping'); item = bridge.sync()['items'][0]
+    path = paths.shopping_lists_dir() / f'{WEEK}.md'
+    original = read_shopping_note(WEEK).rows[0].text
+    path.write_text(path.read_text().replace(original, '3 lime'))
+    save_shopping_note(WEEK, [], [])
+    bridge.work()
+    conflict = next(c for c in bridge.conflicts() if c['field'] == 'shopping_amount_changed')
+    bridge.ok('post', f"{BASE}/conflicts/{conflict['conflict_id']}/resolve", json={
+        'choice': 'keep_kitchenos', 'expected_revision': conflict['revision']})
+    bridge.restart().sync()
+    assert read_shopping_note(WEEK).rows == []
+    assert not bridge.apple.owned(item['token'])
+    assert not bridge.conflicts()
+
+
+@pytest.mark.parametrize('domain', ['shopping', 'prep'])
+def test_retired_completed_apple_object_is_frozen_and_reappearance_exports_new_generation(bridge, domain):
+    """Catch preserved-but-not-frozen completion blocking replacement or later deletion."""
+    retire = _retirement_source(bridge, domain)
+    bridge.activate(domain)
+    item = bridge.sync()['items'][0]
+    old = bridge.apple.owned(item['token'])[0]
+    retire()
+    # The delete is queued but not applied before the user completes in Apple.
+    pending = bridge.observe(bridge.work()['items'])['operations']
+    assert len(pending) == 1 and pending[0]['action'] == 'delete'
+    old['fields']['completed'] = True
+    bridge.restart().sync()
+    assert store.get_item(item['token']).state == 'history'
+    assert not store.pending_operations()
+    # Even reopening the historical object cannot resume the old deletion.
+    old['fields']['completed'] = False
+    bridge.restart().sync()
+    assert bridge.apple.owned(item['token']) == [old]
+    _retirement_source(bridge, domain)
+    batch = bridge.restart().sync()
+    replacement = next(value for value in batch['items'] if value['logical_id'] == item['logical_id'])
+    assert replacement['token'] != item['token'] and replacement['generation'] == 2
+    assert replacement['fields']['completed'] is False
+    assert bridge.apple.owned(replacement['token'])
+    assert bridge.apple.owned(item['token']) == [old]
+    assert not bridge.conflicts()
+
+
+@pytest.mark.parametrize('removed', [False, True])
+def test_shopping_conflict_detail_shows_generated_resolution_target(bridge, removed):
+    """Catch edited row title hiding the generated quantity or removal to be accepted."""
+    shopping(); bridge.activate('shopping'); bridge.sync()
+    path = paths.shopping_lists_dir() / f'{WEEK}.md'
+    original = read_shopping_note(WEEK).rows[0].text
+    path.write_text(path.read_text().replace(original, '9 lime'))
+    if removed:
+        save_shopping_note(WEEK, [], [])
+    else:
+        shopping(3)
+    before = path.read_bytes()
+    bridge.work()
+    conflict = next(c for c in bridge.conflicts() if c['field'] == 'shopping_amount_changed')
+    detail = bridge.ok('get', f"{BASE}/conflicts/{conflict['conflict_id']}")
+    assert detail['source']['title'] == '9 lime'
+    assert detail['shopping_demand'] == {'state': 'removed' if removed else 'active',
+                                         'text': None if removed else '3 lime'}
+    assert path.read_bytes() == before
+    bridge.ok('post', f"{BASE}/conflicts/{conflict['conflict_id']}/resolve", json={
+        'choice': 'keep_kitchenos', 'expected_revision': detail['revision']})
+    document = read_shopping_note(WEEK)
+    if removed:
+        assert not document.rows
+    else:
+        assert document.rows[0].text == '3 lime' and not document.rows[0].completed
+
+
+def test_changed_generated_target_invalidates_presented_shopping_resolution(bridge):
+    """Catch accepting an undisclosed generated quantity when edited text stayed the same."""
+    shopping(); bridge.activate('shopping'); bridge.sync()
+    path = paths.shopping_lists_dir() / f'{WEEK}.md'
+    path.write_text(path.read_text().replace(read_shopping_note(WEEK).rows[0].text, '9 lime'))
+    shopping(3); bridge.work()
+    conflict = next(c for c in bridge.conflicts() if c['field'] == 'shopping_amount_changed')
+    detail = bridge.ok('get', f"{BASE}/conflicts/{conflict['conflict_id']}")
+    shopping(4)
+    before = path.read_bytes()
+    response = bridge.client.post(f"{BASE}/conflicts/{conflict['conflict_id']}/resolve", json={
+        'choice': 'keep_kitchenos', 'expected_revision': detail['revision']})
+    assert response.status_code == 409
+    assert path.read_bytes() == before
+
+
+def test_changed_shopping_target_revises_one_conflict_and_resolution_clears_it(bridge):
+    """Catch every regeneration leaving an older, permanently unresolvable conflict."""
+    shopping(); bridge.activate('shopping'); bridge.sync()
+    path = paths.shopping_lists_dir() / f'{WEEK}.md'
+    path.write_text(path.read_text().replace(read_shopping_note(WEEK).rows[0].text, '9 lime'))
+    shopping(3); bridge.work()
+    first = bridge.conflicts()[0]
+    shopping(4); bridge.work()
+    conflicts = bridge.conflicts()
+    assert len(conflicts) == 1
+    latest = conflicts[0]
+    assert latest['conflict_id'] == first['conflict_id']
+    assert latest['revision'] > first['revision']
+    detail = bridge.ok('get', f"{BASE}/conflicts/{latest['conflict_id']}")
+    assert detail['shopping_demand'] == {'state': 'active', 'text': '4 lime'}
+    stale = bridge.client.post(f"{BASE}/conflicts/{first['conflict_id']}/resolve", json={
+        'choice': 'keep_kitchenos', 'expected_revision': first['revision']})
+    assert stale.status_code == 409
+    bridge.work()
+    assert bridge.conflicts() == conflicts  # unchanged evidence does not churn revisions
+    bridge.ok('post', f"{BASE}/conflicts/{latest['conflict_id']}/resolve", json={
+        'choice': 'keep_kitchenos', 'expected_revision': latest['revision']})
+    bridge.restart().sync()
+    assert read_shopping_note(WEEK).rows[0].text == '4 lime'
+    assert not bridge.conflicts()
+
+
+def test_shopping_identity_change_replaces_amount_conflict_without_stale_open_row(bridge):
+    """Catch an ingredient edit leaving the previous amount conflict open forever."""
+    shopping(); bridge.activate('shopping'); bridge.sync()
+    path = paths.shopping_lists_dir() / f'{WEEK}.md'
+    path.write_text(path.read_text().replace(read_shopping_note(WEEK).rows[0].text, '9 lime'))
+    shopping(3); bridge.work()
+    first = bridge.conflicts()[0]
+    path.write_text(path.read_text().replace('- [ ] 9 lime', '- [ ] 9 carrot'))
+    bridge.work()
+    conflicts = bridge.conflicts()
+    assert len(conflicts) == 1
+    latest = conflicts[0]
+    assert latest['field'] == 'shopping_identity_changed'
+    assert latest['conflict_id'] == first['conflict_id'] and latest['revision'] > first['revision']
+    bridge.ok('post', f"{BASE}/conflicts/{latest['conflict_id']}/resolve", json={
+        'choice': 'keep_kitchenos', 'expected_revision': latest['revision']})
+    bridge.restart().sync()
+    assert read_shopping_note(WEEK).rows[0].text == '3 lime'
+    assert not bridge.conflicts()
+
+
+def _pass_evidence(bridge):
+    batch = bridge.work()
+    request_id = str(uuid4())
+    bridge.ok('post', BASE + '/observations', json=dict(context=bridge.context, request_id=request_id,
+        complete=True, observations=[bridge.apple.observation(item) for item in batch['items']]))
+    return dict(context=bridge.context, scopes=batch['scopes'], request_ids=[request_id])
+
+
+@pytest.mark.parametrize('empty', [False, True])
+def test_successful_noop_pass_updates_success_but_reads_do_not(bridge, empty):
+    save_shopping_note(WEEK, [], []) if empty else shopping()
+    bridge.activate('shopping'); bridge.sync()
+    with db.write_transaction() as conn:
+        conn.execute("UPDATE apple_bridge SET last_success='2000-01-01T00:00:00+00:00'")
+    bridge.work(); bridge.ok('get', BASE + '/status')
+    assert service.status()['report']['last_success'] == '2000-01-01T00:00:00+00:00'
+    proof = _pass_evidence(bridge)
+    result = bridge.ok('post', BASE + '/sync/complete', json=proof)
+    assert result['report']['last_success'] > '2000-01-01T00:00:00+00:00'
+    repeated = bridge.ok('post', BASE + '/sync/complete', json=proof)
+    assert repeated['report']['last_success'] == result['report']['last_success']
+
+
+@pytest.mark.parametrize('failure', ['no_scopes', 'unavailable', 'pending', 'conflict', 'owner', 'scope', 'item', 'coverage'])
+def test_incomplete_or_stale_pass_never_updates_success(bridge, failure):
+    shopping(); bridge.activate('shopping'); bridge.sync()
+    proof = _pass_evidence(bridge)
+    with db.write_transaction() as conn:
+        conn.execute("UPDATE apple_bridge SET last_success='2000-01-01T00:00:00+00:00'")
+    item = store.list_items()[0]
+    if failure in {'no_scopes', 'scope'}:
+        scope = proof['scopes'][0]
+        bridge.ok('put', f'{BASE}/scopes/shopping/{WEEK}', json=dict(domain='shopping', week=WEEK,
+            destination_id=scope['destination_id'], state='archived', expected_revision=scope['revision']))
+        if failure == 'no_scopes':
+            proof['scopes'] = bridge.work()['scopes']
+    elif failure == 'unavailable':
+        (paths.shopping_lists_dir() / f'{WEEK}.md').unlink()
+    elif failure == 'pending':
+        store.reserve_operation(item, 'upsert', canonical_hash({'title': item.title, 'fields': item.fields}))
+    elif failure == 'conflict':
+        service._conflict(item, 'due')
+    elif failure == 'owner':
+        proof['context'] = dict(proof['context'], owner_generation=proof['context']['owner_generation'] + 1)
+    elif failure == 'item':
+        shopping(4)
+    elif failure == 'coverage':
+        request_id = str(uuid4())
+        bridge.ok('post', BASE + '/observations', json=dict(context=bridge.context, request_id=request_id, complete=True, observations=[]))
+        proof['request_ids'] = [request_id]
+    response = bridge.client.post(BASE + '/sync/complete', json=proof)
+    assert response.status_code in {400, 403, 409, 503}
+    assert service.status()['report']['last_success'] == '2000-01-01T00:00:00+00:00'
+
+
+@pytest.mark.parametrize('change', ['source', 'scope'])
+def test_committed_ack_retry_survives_later_source_or_scope_revision(bridge, change):
+    shopping(); bridge.activate('shopping')
+    operation = bridge.observe(bridge.work()['items'])['operations'][0]
+    ack = bridge.apple.apply(operation)
+    bridge.ack(operation, ack)
+    if change == 'source':
+        shopping(3); bridge.work()
+    else:
+        scope = bridge.work()['scopes'][0]
+        bridge.ok('put', f'{BASE}/scopes/shopping/{WEEK}', json=dict(domain='shopping',week=WEEK,
+            destination_id=scope['destination_id'],state='archived',expected_revision=scope['revision']))
+    before = store.get_item(operation['token'])
+    bridge.ack(operation, ack)
+    assert store.get_item(operation['token']) == before
+    altered = dict(ack, observed_fields=dict(ack['observed_fields'], completed=True))
+    altered['observed_hash'] = canonical_hash({'title': operation['title'], 'fields': altered['observed_fields']})
+    response = bridge.client.post(f"{BASE}/operations/{operation['operation_id']}/ack", json=dict(
+        context=bridge.context, operation_id=operation['operation_id'], **altered))
+    assert response.status_code == 409
+
+
+def test_superseded_saved_proof_recovers_locator_to_explicit_conflict_without_import(bridge):
+    shopping(); bridge.activate('shopping')
+    operation = bridge.observe(bridge.work()['items'])['operations'][0]
+    ack = bridge.apple.apply(operation)
+    shopping(3)
+    item = bridge.work()['items'][0]
+    proof = dict(context=bridge.context, ack=dict(operation_id=operation['operation_id'], **ack),
+                 observation=bridge.apple.observation(item))
+    before = (paths.shopping_lists_dir() / f'{WEEK}.md').read_bytes()
+    recovered = bridge.ok('post', f"{BASE}/operations/{operation['operation_id']}/recover-saved", json=proof)
+    assert recovered['report']['conflicts'] == 1
+    assert store.get_item(item['token']).locator.to_dict() == proof['observation']['locator']
+    assert store.get_item(item['token']).common_fields is None
+    bridge.restart().sync()
+    assert (paths.shopping_lists_dir() / f'{WEEK}.md').read_bytes() == before
+    assert len(bridge.conflicts()) == 1
+    bridge.ok('post', f"{BASE}/operations/{operation['operation_id']}/recover-saved", json=proof)
+    assert len(bridge.conflicts()) == 1
+    conflict = bridge.conflicts()[0]
+    bridge.ok('post', f"{BASE}/conflicts/{conflict['conflict_id']}/resolve", json=dict(
+        choice='keep_kitchenos', expected_revision=conflict['revision']))
+    bridge.sync()
+    assert bridge.apple.owned(item['token'])[0]['title'] == '3 lime'
+    assert bridge.apple.creations == 1 and not bridge.conflicts()
+
+
+def test_recovered_save_conflict_refreshes_apple_evidence_before_resolution(bridge):
+    shopping(); bridge.activate('shopping')
+    operation = bridge.observe(bridge.work()['items'])['operations'][0]
+    ack = bridge.apple.apply(operation)
+    shopping(3)
+    item = bridge.work()['items'][0]
+    proof = dict(context=bridge.context, ack=dict(operation_id=operation['operation_id'], **ack),
+                 observation=bridge.apple.observation(item))
+    bridge.ok('post', f"{BASE}/operations/{operation['operation_id']}/recover-saved", json=proof)
+    conflict = bridge.conflicts()[0]
+    old = bridge.ok('get', f"{BASE}/conflicts/{conflict['conflict_id']}")
+    obj = bridge.apple.owned(item['token'])[0]
+    obj['title'] = 'Edited again in Apple'
+    obj['fields']['completed'] = True
+
+    bridge.sync()
+
+    current = bridge.ok('get', f"{BASE}/conflicts/{conflict['conflict_id']}")
+    assert current['revision'] > old['revision']
+    assert current['apple']['title'] == 'Edited again in Apple'
+    assert current['apple']['fields']['completed'] is True
+    stale = bridge.client.post(f"{BASE}/conflicts/{conflict['conflict_id']}/resolve",
+                               json=dict(choice='keep_apple', expected_revision=old['revision']))
+    assert stale.status_code == 409
+
+
+@pytest.mark.parametrize('invalid', ['missing', 'owner', 'generation', 'tampered_ack'])
+def test_saved_proof_recovery_rejects_unverified_or_stale_evidence(bridge, invalid):
+    shopping(); bridge.activate('shopping')
+    operation = bridge.observe(bridge.work()['items'])['operations'][0]
+    ack = bridge.apple.apply(operation)
+    shopping(3); item = bridge.work()['items'][0]
+    observation = bridge.apple.observation(item)
+    context = dict(bridge.context)
+    if invalid == 'tampered_ack':
+        ack['observed_fields']['completed'] = True
+    elif invalid == 'missing':
+        observation.update(availability='missing', locator=None, title=None, fields={})
+    elif invalid == 'owner':
+        context['owner_generation'] += 1
+    else:
+        observation['generation'] += 1
+    before = store.get_item(item['token'])
+    response = bridge.client.post(f"{BASE}/operations/{operation['operation_id']}/recover-saved", json=dict(
+        context=context, ack=dict(operation_id=operation['operation_id'], **ack), observation=observation))
+    assert response.status_code in {400, 403, 409}
+    assert store.get_item(item['token']) == before
+
+
+def test_enqueue_counts_actual_scope_work_and_archived_scope_needs_activation(bridge):
+    shopping(); bridge.activate('shopping')
+    first = bridge.ok('post', '/send-to-reminders', json={'week': WEEK})
+    assert first['queued'] == 1 and first['delivered'] == 0
+    bridge.sync()
+    settled = bridge.ok('post', '/send-to-reminders', json={'week': WEEK})
+    assert settled['queued'] == 0 and settled['delivered'] == 0
+    scope = bridge.work()['scopes'][0]
+    bridge.ok('put', f'{BASE}/scopes/shopping/{WEEK}', json=dict(domain='shopping', week=WEEK,
+        destination_id=scope['destination_id'],state='archived',expected_revision=scope['revision']))
+    rejected = bridge.client.post('/send-to-reminders', json={'week': WEEK})
+    assert rejected.status_code == 409
+    assert not store.pending_operations()
+
+
+@pytest.mark.parametrize('domain', ['shopping', 'prep'])
+def test_completed_retirement_closes_only_obsolete_retirement_conflict(bridge, domain):
+    retire = _retirement_source(bridge, domain)
+    bridge.activate(domain); item = bridge.sync()['items'][0]
+    obj = bridge.apple.owned(item['token'])[0]
+    retire(); obj['title'] = 'An edited retired reminder'; bridge.sync()
+    assert any(c['field'] == 'retirement' for c in bridge.conflicts())
+    service._conflict(store.get_item(item['token']), 'source_recovery')
+    obj['fields']['completed'] = True
+    bridge.sync()
+    assert store.get_item(item['token']).state == 'history'
+    assert [c['field'] for c in bridge.conflicts()] == ['source_recovery']
+    assert bridge.apple.owned(item['token']) == [obj]
+
+
+
+def test_enqueue_counts_unfinished_observation_request_for_its_scope(bridge):
+    """Catch zero queued while a durable request for this scope blocks reconciliation."""
+    shopping(); bridge.activate('shopping'); bridge.sync()
+    item = bridge.work()['items'][0]
+    with db.write_transaction() as conn:
+        conn.execute('INSERT INTO apple_requests(request_id,owner_id,owner_generation,payload) VALUES(?,?,?,?)',
+                     (str(uuid4()), bridge.context['owner_id'], bridge.context['owner_generation'],
+                      json.dumps([bridge.apple.observation(item)])))
+    result = bridge.ok('post', '/send-to-reminders', json={'week': WEEK})
+    assert result['queued'] == 1 and result['delivered'] == 0
+
+
+def test_suppressed_export_is_terminal_for_work_and_completed_pass(bridge):
+    """Suppression needs no impossible Apple observation after its locator is cleared."""
+    shopping(); bridge.activate('shopping'); bridge.sync()
+    item = store.list_items()[0]
+    store.set_suppressed(item.token, True, expected_revision=item.revision)
+    with db.write_transaction() as conn:
+        conn.execute('UPDATE apple_items SET locator=NULL,common_payload=NULL WHERE token=?', (item.token,))
+    batch = bridge.work()
+    assert batch['items'] == []
+    proof = _pass_evidence(bridge)
+    result = bridge.ok('post', BASE + '/sync/complete', json=proof)
+    assert result['report']['last_success'] is not None
+
+
+def test_retirement_preserves_user_note_even_without_supported_field_edit(bridge):
+    """Note-only edits are user content and must stop automatic deletion."""
+    retire = _retirement_source(bridge, 'shopping')
+    bridge.activate('shopping'); item = bridge.sync()['items'][0]
+    obj = bridge.apple.owned(item['token'])[0]
+    obj['has_user_notes'] = True
+    retire()
+    bridge.sync()
+    assert bridge.apple.owned(item['token']) == [obj]
+    assert any(c['token'] == item['token'] and c['field'] == 'retirement' for c in bridge.conflicts())
+
+
+@pytest.mark.parametrize('later_state', ['changed_apple', 'history', 'archived', 'replaced'])
+def test_superseded_saved_recovery_survives_changed_or_inactive_source(bridge, later_state):
+    """A saved but unacknowledged object must reach durable review after source drift."""
+    shopping(); bridge.activate('shopping')
+    initial = bridge.work()['items'][0]
+    operation = bridge.observe([initial])['operations'][0]
+    ack = bridge.apple.apply(operation)
+    obj = bridge.apple.owned(initial['token'])[0]
+    if later_state == 'changed_apple':
+        shopping(3)
+        obj['title'] = 'My Apple title'
+        obj['fields']['completed'] = True
+    elif later_state == 'history':
+        path = paths.shopping_lists_dir() / f'{WEEK}.md'
+        path.write_text(path.read_text().replace('- [ ]', '- [x]'))
+        save_shopping_note(WEEK, [], [])
+    elif later_state == 'archived':
+        scope = bridge.work()['scopes'][0]
+        bridge.ok('put', f'{BASE}/scopes/shopping/{WEEK}', json=dict(domain='shopping', week=WEEK,
+            destination_id=scope['destination_id'], state='archived', expected_revision=scope['revision']))
+    else:
+        save_shopping_note(WEEK, [], [])
+        bridge.work()
+        shopping()
+    bridge.work()
+    assert store.get_item(initial['token']).revision != initial['revision'] or later_state == 'archived'
+    observation = bridge.apple.observation(initial)
+    proof = dict(context=bridge.context, ack=dict(operation_id=operation['operation_id'], **ack),
+                 observation=observation)
+
+    result = bridge.ok('post', f"{BASE}/operations/{operation['operation_id']}/recover-saved", json=proof)
+
+    assert result['report']['conflicts'] >= 1
+    assert store.get_item(initial['token']).locator.to_dict() == observation['locator']
+    with db.connect() as conn:
+        row = conn.execute('SELECT result FROM apple_operations WHERE operation_id=?',
+                           (operation['operation_id'],)).fetchone()
+        assert json.loads(row['result'])['recovered_saved'] == {
+            'ack': proof['ack'], 'observation': proof['observation']}
+    assert bridge.apple.owned(initial['token']) == [obj]
+    bridge.ok('post', f"{BASE}/operations/{operation['operation_id']}/recover-saved", json=proof)
+    assert bridge.apple.creations == 1
+    if later_state == 'archived':
+        conflict = next(c for c in bridge.conflicts() if c['token'] == initial['token'])
+        detail = bridge.ok('get', f"{BASE}/conflicts/{conflict['conflict_id']}")
+        assert detail['choices'] == ['keep_manual']
+        for choice in ('keep_kitchenos', 'keep_apple'):
+            denied = bridge.client.post(f"{BASE}/conflicts/{conflict['conflict_id']}/resolve",
+                                        json=dict(choice=choice, expected_revision=detail['revision']))
+            assert denied.status_code == 409
+        current_scope = bridge.work()['scopes'][0]
+        bridge.ok('put', f'{BASE}/scopes/shopping/{WEEK}', json=dict(domain='shopping', week=WEEK,
+            destination_id=current_scope['destination_id'], state='active',
+            expected_revision=current_scope['revision']))
+        detail = bridge.ok('get', f"{BASE}/conflicts/{conflict['conflict_id']}")
+        assert {'keep_kitchenos', 'keep_apple', 'keep_manual'} <= set(detail['choices'])

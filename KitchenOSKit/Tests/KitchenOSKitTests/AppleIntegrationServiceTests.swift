@@ -47,6 +47,48 @@ private actor ServiceAPI: AppleIntegrationAPI {
     var acknowledgements: [OperationAck] = []
     var ackContexts: [BridgeContext] = []
     var workUnavailable = 0
+    var scopes: [AppleScope] = []
+    var completionRequests: [[UUID]] = []
+    var conflictCount = 0
+    var lastSuccess: String?
+    var rejectAckOnce = false
+    var recoveryFailures = 0
+    var staleRecoveryOnce = false
+    var omitSupersededItem = false
+    var supersededOperationID: UUID?
+    var recoveryProofs: [Observation] = []
+    func configurePass(scopes: [AppleScope], conflicts: Int = 0, rejectAck: Bool = false, recoveryFailures: Int = 0, staleRecovery: Bool = false) {
+        self.staleRecoveryOnce = staleRecovery
+        self.scopes = scopes; self.conflictCount = conflicts; self.rejectAckOnce = rejectAck; self.recoveryFailures = recoveryFailures
+    }
+    func omitItemAfterSupersededSave(archived: Bool) {
+        omitSupersededItem = true
+        if archived {
+            scopes = [AppleScope(domain: .shopping, week: "2026-W41", destinationID: "list", status: .archived, revision: 2)]
+        }
+    }
+    func currentReport() -> SyncReport {
+        SyncReport(created: 0, updated: 0, deleted: 0, queued: operations.count, conflicts: conflictCount,
+            unavailable: 0, lastSuccess: lastSuccess)
+    }
+    func completeSync(context: BridgeContext, scopes: [AppleScope], requestIDs: [UUID]) async throws -> SyncReport {
+        calls.append("complete"); completionRequests.append(requestIDs)
+        guard !requestIDs.isEmpty, scopes == self.scopes, context == bridge, operations.isEmpty,
+              conflictCount == 0, workUnavailable == 0 else { throw KitchenOSError.http(409) }
+        lastSuccess = "2026-10-09T12:00:00+00:00"
+        return currentReport()
+    }
+    func recoverSaved(_ ack: OperationAck, observation: Observation, context: BridgeContext) async throws -> SyncReport {
+        calls.append("recover"); recoveryProofs.append(observation)
+        guard context == bridge, observation.availability == .present, observation.issue == nil else { throw KitchenOSError.http(409) }
+        if staleRecoveryOnce {
+            staleRecoveryOnce = false; items = [item(revision: 4)]
+            throw KitchenOSError.http(409)
+        }
+        conflictCount = 1; items = omitSupersededItem ? [] : [item(linked: true, revision: 5)]
+        if recoveryFailures > 0 { recoveryFailures -= 1; throw KitchenOSError.unreachable }
+        return currentReport()
+    }
     var reservedRemoval: AppleOperation?
     var calls: [String] = []
     var observed: [[Observation]] = []
@@ -71,12 +113,12 @@ private actor ServiceAPI: AppleIntegrationAPI {
         calls.append("status")
         if offline { throw KitchenOSError.unreachable }
         return IntegrationStatus(modelVersion: 1, configured: true, connected: connected, paused: paused,
-            settingsRevision: 1, report: report(operations.count), permissions: [:], destinations: [:], scopes: [], conflicts: [])
+            settingsRevision: 1, report: currentReport(), permissions: [:], destinations: [:], scopes: scopes, conflicts: [])
     }
     func work(context: BridgeContext) async throws -> WorkBatch {
         calls.append("work"); if offline { throw KitchenOSError.unreachable }
         if let gate { self.gate = nil; await gate.wait() }
-        return WorkBatch(modelVersion: 1, context: bridge, items: items, operations: operations, scopes: [],
+        return WorkBatch(modelVersion: 1, context: bridge, items: items, operations: operations, scopes: scopes,
             report: report(operations.count, unavailable: workUnavailable), paused: paused, retryRequests: retries, retainedItems: retained)
     }
     func observe(_ values: [Observation], context: BridgeContext, requestID: UUID) async throws -> [AppleOperation] {
@@ -97,6 +139,12 @@ private actor ServiceAPI: AppleIntegrationAPI {
     }
     func acknowledge(_ ack: OperationAck, context: BridgeContext) async throws -> SyncReport {
         calls.append("ack"); acknowledgements.append(ack); ackContexts.append(context)
+        if supersededOperationID == ack.operationID { throw KitchenOSError.http(409) }
+        if rejectAckOnce {
+            supersededOperationID = ack.operationID
+            rejectAckOnce = false; operations = []; items = omitSupersededItem ? [] : [item(revision: 2)]
+            throw KitchenOSError.http(409)
+        }
         if ackFailures > 0 { ackFailures -= 1; throw KitchenOSError.unreachable }
         if loseAck { loseAck = false; throw KitchenOSError.unreachable }
         let deletedToken = operations.first { $0.operationID == ack.operationID }?.token
@@ -129,6 +177,7 @@ private actor ServiceAPI: AppleIntegrationAPI {
     var applyGate: Gate?
     var observed: [[UUID]] = []
     var observedRevisions: [Int] = []
+    var editedAfterSave = false
     func authorization(for domain: AppleDomain) -> AppleAuthorization { .authorized }
     func requestAccess(for domain: AppleDomain) async throws -> AppleAuthorization { requestCount += 1; return .authorized }
     func destinations(for domain: AppleDomain) async throws -> [AppleDestination] { [AppleDestination(id: "list", title: "List")] }
@@ -136,7 +185,15 @@ private actor ServiceAPI: AppleIntegrationAPI {
     func observe(_ items: [SyncItem]) async throws -> [Observation] {
         observed.append(items.map(\.token)); observedRevisions += items.map(\.revision)
         if items.contains(where: { failingDomains.contains($0.domain) }) { throw AppleIntegrationError.unavailable }
-        return items.map { observation($0, present: objects.contains($0.token)) }
+        return items.map { item in
+            let present = objects.contains(item.token)
+            if present && editedAfterSave {
+                return Observation(token: item.token, generation: item.generation, revision: item.revision,
+                    availability: .present, locator: Locator(calendarID: "list", itemID: "saved", externalID: nil),
+                    title: "My Apple title", fields: AppleFields(completed: true, due: nil), absenceConfirmed: false, issue: nil)
+            }
+            return observation(item, present: present)
+        }
     }
     func apply(_ op: AppleOperation) async throws -> OperationAck {
         active += 1; maximumConcurrentWrites = max(maximumConcurrentWrites, active)
@@ -168,6 +225,128 @@ private actor ServiceAPI: AppleIntegrationAPI {
         AppleOperation(operationID: UUID(), token: retained.token, generation: retained.generation, revision: retained.revision,
             action: .delete, destinationID: retained.destinationID, locator: retained.locator, title: retained.title,
             fields: retained.fields, expectedAppleHash: try! retained.fields.canonicalHash(title: retained.title))
+    }
+    private var activeScope: AppleScope {
+        AppleScope(domain: .shopping, week: "2026-W41", destinationID: "list", status: .active, revision: 1)
+    }
+    func testNoopAndEmptyActivePassReportSuccessfulScan() async throws {
+        for empty in [false, true] {
+            let api = ServiceAPI(); let store = ServiceStore()
+            store.objects = [token]
+            await api.configure(items: empty ? [] : [item(linked: true)], operations: [])
+            await api.configurePass(scopes: [activeScope])
+            let result = try await service(api, store).perform(.sync)
+            XCTAssertEqual(result.lastSuccess, "2026-10-09T12:00:00+00:00")
+            let requests = await api.completionRequests
+            XCTAssertEqual(requests.count, 1); XCTAssertFalse(try XCTUnwrap(requests.first).isEmpty)
+            XCTAssertTrue(store.writes.isEmpty)
+        }
+    }
+    func testPartialConflictAndUnscopedPassNeverReportCompletion() async throws {
+        for failure in ["unavailable", "conflict", "no_scope"] {
+            let api = ServiceAPI(); let store = ServiceStore(); store.objects = [token]
+            await api.configure(items: [item(linked: true)], operations: [], workUnavailable: failure == "unavailable" ? 1 : 0)
+            await api.configurePass(scopes: failure == "no_scope" ? [] : [activeScope], conflicts: failure == "conflict" ? 1 : 0)
+            let result = try await service(api, store).perform(.sync)
+            let requests = await api.completionRequests
+            XCTAssertTrue(requests.isEmpty); XCTAssertNil(result.lastSuccess)
+        }
+    }
+    func testSupersededSavedAckRequiresFreshProofAndDurableRecoveryBeforeContinuing() async throws {
+        let api = ServiceAPI(); let store = ServiceStore()
+        await api.configurePass(scopes: [], rejectAck: true, recoveryFailures: 1)
+        let service = service(api, store)
+        let result = try await service.perform(.sync)
+        XCTAssertEqual(result.conflicts, 1)
+        let proofs = await api.recoveryProofs
+        XCTAssertEqual(proofs.count, 2); XCTAssertEqual(proofs.first, proofs.last)
+        XCTAssertEqual(proofs.first?.revision, 2)
+        XCTAssertEqual(store.writes, [token])
+        let before = await api.calls.count
+        _ = try await service.perform(.sync)
+        let calls = await api.calls
+        XCTAssertFalse(Array(calls.dropFirst(before)).contains("ack"))
+        XCTAssertFalse(Array(calls.dropFirst(before)).contains("recover"))
+    }
+    func testRejectedRecoveryObservationGetsFreshProofWithoutDiscardingSavedAck() async throws {
+        let api = ServiceAPI(); let store = ServiceStore()
+        await api.configurePass(scopes: [], rejectAck: true, staleRecovery: true)
+        let service = service(api, store)
+        do { _ = try await service.perform(.sync) } catch { }
+        let result = try await service.perform(.sync)
+        let proofs = await api.recoveryProofs
+        XCTAssertEqual(proofs.map(\.revision), [2, 4])
+        XCTAssertEqual(result.conflicts, 1)
+        XCTAssertEqual(store.writes, [token])
+        let acks = await api.acknowledgements
+        XCTAssertEqual(acks.count, 2); XCTAssertEqual(acks.first, acks.last)
+    }
+    func testChangedAppleValuesReachDurableRecoveryWithoutBlockingCommands() async throws {
+        let api = ServiceAPI(); let store = ServiceStore(); store.editedAfterSave = true
+        await api.configurePass(scopes: [], rejectAck: true)
+        let service = service(api, store)
+        let result = try await service.perform(.sync)
+        XCTAssertEqual(result.conflicts, 1)
+        let proofs = await api.recoveryProofs
+        XCTAssertEqual(proofs.first?.title, "My Apple title")
+        XCTAssertEqual(store.writes, [token])
+        _ = try await service.perform(.disconnect)
+        let calls = await api.calls
+        XCTAssertTrue(calls.contains("disconnect"))
+    }
+    func testArchivedSourceStillRecoversSavedProofAndUnblocksCommands() async throws {
+        let api = ServiceAPI(); let store = ServiceStore()
+        await api.configurePass(scopes: [], rejectAck: true)
+        await api.omitItemAfterSupersededSave(archived: true)
+        let service = service(api, store)
+        let result = try await service.perform(.sync)
+        XCTAssertEqual(result.conflicts, 1)
+        let proofs = await api.recoveryProofs
+        XCTAssertEqual(proofs.first?.token, token)
+        XCTAssertEqual(store.writes, [token])
+        _ = try await service.perform(.disconnect)
+        let calls = await api.calls
+        XCTAssertTrue(calls.contains("disconnect"))
+    }
+    func testOnlyCurrentScheduledCookingTokensLeaveExternalBusySnapshot() async throws {
+        let api = ServiceAPI(); let store = ServiceStore()
+        let current = UUID()
+        let old = UUID()
+        let cooking = try AppleFields(start: "2026-10-09T18:00:00+00:00", timezone: "UTC", durationMinutes: 30)
+        func cook(_ id: UUID, state: AppleItemState, locator: Locator?) -> SyncItem {
+            SyncItem(logicalID: "cook:" + id.uuidString, domain: .cooking, week: "2026-W41",
+                title: "Cook soup", fields: cooking, sourceRevision: String(repeating: "a", count: 64),
+                state: state, revision: 1, generation: 1, token: id, destinationID: "calendar",
+                locator: locator, commonFields: locator == nil ? nil : cooking)
+        }
+        let retired = cook(old, state: .retired,
+            locator: Locator(calendarID: "calendar", itemID: "old-event", externalID: nil))
+        await api.configure(items: [cook(current, state: .active, locator: nil), retired], operations: [])
+        let writer = service(api, store)
+        _ = try await writer.perform(.sync)
+        let tokens = await writer.ownedCookingTokens()
+        XCTAssertEqual(tokens, [current])
+    }
+    func testArchiveClearsCachedCookingAvailabilityExclusions() async throws {
+        let api = ServiceAPI(); let store = ServiceStore()
+        let cooking = try AppleFields(start: "2026-10-09T18:00:00+00:00", timezone: "UTC", durationMinutes: 30)
+        let planned = SyncItem(logicalID: "cook:1", domain: .cooking, week: "2026-W41",
+            title: "Cook soup", fields: cooking, sourceRevision: String(repeating: "a", count: 64),
+            state: .active, revision: 1, generation: 1, token: token, destinationID: "calendar",
+            locator: nil, commonFields: nil)
+        let scope = AppleScope(domain: .cooking, week: "2026-W41", destinationID: "calendar",
+            status: .active, revision: 1)
+        await api.configure(items: [planned], operations: [])
+        await api.configurePass(scopes: [scope])
+        let writer = service(api, store)
+        _ = try await writer.perform(.sync)
+        let before = await writer.ownedCookingTokens()
+        XCTAssertEqual(before, [token])
+
+        _ = try await writer.perform(.archive(.cooking, week: "2026-W41"))
+
+        let after = await writer.ownedCookingTokens()
+        XCTAssertTrue(after.isEmpty)
     }
     func testRetainedDeleteRetriesExactAckBeforeAnyRescan() async throws {
         let api = ServiceAPI(); let store = ServiceStore(); let old = item(linked: true); let op = deletion(old)

@@ -446,3 +446,120 @@ def test_reappearing_row_does_not_inherit_detached_due_override(active, detached
         persisted = json.loads(conn.execute('SELECT source_payload FROM apple_items WHERE token=?', (replacement.token,)).fetchone()[0])
         assert persisted['fields']['due'] is None
     assert shopping.collect(WEEK)[0].source_revision == replacement.source_revision
+
+
+@pytest.mark.parametrize('demand', ['1', '3', None])
+def test_unchecked_hand_edited_amount_survives_regeneration_for_review(active, demand):
+    """Catch regeneration overwriting edited amount or removing its evidence."""
+    from lib.shopping_note import save_shopping_note, read_shopping_note
+    before = saved()
+    active.write_text(active.read_text().replace('- [ ] 1 cup flour', '- [ ] 2 cups flour'))
+    ident = before.rows[0].id
+    assert read_shopping_note(WEEK).issues[ident] == 'shopping_amount_changed'
+    result = save_shopping_note(WEEK, [] if demand is None else [flour(demand)], [])
+    row = next(row for row in result.rows if row.id == ident)
+    assert row.text == '2 cups flour' and not row.completed
+    assert result.issues[ident] == 'shopping_amount_changed'
+
+
+
+def test_legacy_plural_identity_does_not_transfer_completion_to_new_food_id(active):
+    """Catch fuzzy identity migration transferring completion between distinct keys."""
+    from lib.shopping_note import save_shopping_note, _encode
+    active.parent.mkdir()
+    active.write_text('- [x] 2 carrots\n<!-- kitchenos-generated-items-v2:'
+                      + _encode(['2 carrots']) + ' -->\n')
+    result = save_shopping_note(WEEK, [dict(item='carrot', needed={'amount': 2, 'unit': 'whole'},
+                                          to_buy={'amount': 2, 'unit': 'whole'})], [])
+    current = next(row for row in result.rows if row.text == '2 carrot')
+    previous = next(row for row in result.rows if row.text == '2 carrots')
+    assert not current.completed and previous.completed
+    assert current.id != previous.id
+    assert result.metadata['rows'][previous.id]['retired'] is True
+
+
+@pytest.mark.parametrize('bad_text', ['missing', None, 17, {'item': 'flour'}])
+def test_malformed_generated_snapshot_is_unavailable_without_note_or_conflict_mutation(active, bad_text):
+    """Catch publishing generated demand whose text cannot be displayed or safely accepted."""
+    from lib import shopping_note as note
+    from lib.apple_integration import shopping
+    original = saved()
+    item = export()
+    metadata = original.metadata
+    snapshot = metadata['rows'][original.rows[0].id]
+    if bad_text == 'missing':
+        del snapshot['text']
+    else:
+        snapshot['text'] = bad_text
+    active.write_text(note._METADATA.sub(lambda _: '<!-- kitchenos-shopping-v3:' + note._encode(metadata) + ' -->', active.read_text()))
+    before = active.read_bytes()
+    with pytest.raises(SourceUnavailable):
+        shopping.collect(WEEK)
+    assert active.read_bytes() == before
+    assert store.get_item(item.token) == item
+    with db.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM apple_conflicts WHERE status='open'").fetchone()[0] == 0
+
+
+def test_generated_snapshot_cannot_offer_another_ingredient_under_old_id(active):
+    """A valid-looking target must never turn a linked flour row into carrots."""
+    from lib import shopping_note as note
+    from lib.apple_integration import shopping
+    original = saved()
+    item = export()
+    metadata = original.metadata
+    metadata['rows'][original.rows[0].id]['text'] = '2 cups carrots'
+    active.write_text(note._METADATA.sub(
+        lambda _: '<!-- kitchenos-shopping-v3:' + note._encode(metadata) + ' -->',
+        active.read_text()))
+    before = active.read_bytes()
+
+    with pytest.raises(SourceUnavailable):
+        shopping.collect(WEEK)
+
+    assert active.read_bytes() == before
+    assert store.get_item(item.token) == item
+    with db.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM apple_conflicts WHERE status='open'").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize('bad_marker', [{'field': 'shopping_amount_changed'}, ['shopping_amount_changed'], 'unsupported_conflict'])
+def test_invalid_later_conflict_marker_blocks_all_conflict_writes(active, bad_marker):
+    """A bad later row cannot leave an earlier review conflict half-published."""
+    from lib import shopping_note as note
+    from lib.apple_integration import shopping
+    from lib.shopping_note import save_shopping_note
+    carrots = {'item': 'carrots', 'needed': {'amount': '2', 'unit': 'cup'},
+               'to_buy': {'amount': '2', 'unit': 'cup'}, 'status': 'buy'}
+    original = save_shopping_note(WEEK, [flour(), carrots], [])
+    for source in shopping.collect(WEEK):
+        store.refresh_source(source)
+    metadata = original.metadata
+    metadata['rows'][original.rows[1].id]['conflict'] = bad_marker
+    content = active.read_text().replace(original.rows[0].text, '3 cups flour')
+    active.write_text(note._METADATA.sub(
+        lambda _: '<!-- kitchenos-shopping-v3:' + note._encode(metadata) + ' -->',
+        content))
+    before = active.read_bytes()
+
+    with pytest.raises(SourceUnavailable):
+        shopping.collect(WEEK)
+
+    assert active.read_bytes() == before
+    with db.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM apple_conflicts WHERE status='open'").fetchone()[0] == 0
+
+
+def test_retired_completed_generated_demand_reappears_unchecked(active):
+    """A later need for the same ingredient cannot inherit the old purchase."""
+    from lib.shopping_note import save_shopping_note
+    first = saved()
+    active.write_text(active.read_text().replace('- [ ]', '- [x]'))
+    retired = save_shopping_note(WEEK, [], [])
+    assert retired.rows[0].completed and retired.metadata['rows'][first.rows[0].id]['retired']
+
+    renewed = save_shopping_note(WEEK, [flour()], [])
+
+    assert renewed.rows[0].id == first.rows[0].id
+    assert renewed.rows[0].completed is False
+    assert renewed.metadata['rows'][first.rows[0].id]['retired'] is False

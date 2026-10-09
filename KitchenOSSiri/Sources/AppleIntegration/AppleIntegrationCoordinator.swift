@@ -84,7 +84,7 @@ import KitchenOSKit
             let value = try await service.perform(command)
             report = value; await refreshStatus()
             if case .connect = command { return value }
-            await CookingCalendarSync.shared.refresh(excludingOwnedTokens: await service.ownedCookingTokens())
+            await CookingCalendarSync.shared.refresh(excludingOwnedTokens: await availabilityExclusions(service))
             return value
         } catch {
             await refreshStatus()
@@ -102,8 +102,16 @@ import KitchenOSKit
             report = try await service.reconcile(trigger: trigger)
             await refreshStatus()
         } catch is CancellationError { return }
-        catch { message = "Apple sync needs attention. Check the connection and integration status." }
-        await CookingCalendarSync.shared.refresh(excludingOwnedTokens: await service?.ownedCookingTokens() ?? [])
+        catch {
+            status = nil
+            message = "Apple sync needs attention. Check the connection and integration status."
+        }
+        await CookingCalendarSync.shared.refresh(excludingOwnedTokens: await availabilityExclusions(service))
+    }
+    private func availabilityExclusions(_ service: AppleIntegrationService?) async -> Set<UUID> {
+        guard let service else { return [] }
+        return AppleOwnership.availabilityExclusions(await service.ownedCookingTokens(),
+            status: status, syncReport: report)
     }
     func preferredDestination(for domain: AppleDomain) -> String? {
         let value = defaults.string(forKey: "appleIntegration.destination.\(domain.rawValue)")
@@ -141,7 +149,10 @@ import KitchenOSKit
                     report.conflicts > 0 ? "Apple sync has changes to review." :
                     report.queued > 0 ? "Apple changes are queued." : "Apple sync is up to date."
             }
-        } catch { message = "Couldn’t read Apple integration status. Check the KitchenOS connection." }
+        } catch {
+            status = nil
+            message = "Couldn’t read Apple integration status. Check the KitchenOS connection."
+        }
     }
     /// Foreground setup alone requests permission. Background refresh never prompts.
     func requestAccess(for domain: AppleDomain) async throws -> AppleAuthorization {

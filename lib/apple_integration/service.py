@@ -187,14 +187,27 @@ def activate(domain: str, week: str, destination_id: str) -> SyncReport:
     with _LOCK:
         _owner(active=True); _recover()
         store.activate_scope(domain,week,destination_id)
+        _prepare_activation(domain, week)
         unavailable=_refresh(); _queue_new(unavailable)
         return _report(unavailable=len(unavailable))
+
+
+def _prepare_activation(domain, week):
+    if domain == 'shopping':
+        try:
+            shopping.prepare_activation(week)
+        except SourceUnavailable:
+            # Keep the scope active and expose source availability through the
+            # ordinary refresh/report path; polling never generates or migrates.
+            pass
 
 
 def update_scope(request):
     with _LOCK:
         _owner(active=True); _recover()
         result=store.update_scope(request)
+        if request.state == 'active':
+            _prepare_activation(request.domain, request.week)
         unavailable=_refresh(); _queue_new(unavailable)
         return {'scope':result,'report':_report(unavailable=len(unavailable)).to_dict()}
 
@@ -238,7 +251,7 @@ def work(context: BridgeContext) -> dict:
         unavailable=_refresh(); _queue_new(unavailable)
         with db.connect() as conn:
             retries=[{'request_id':r['request_id'],'observations':json.loads(r['payload'])} for r in conn.execute('SELECT * FROM apple_requests WHERE owner_id=? AND owner_generation=? AND result IS NULL',(context.owner_id,context.owner_generation))]
-        items=[i for i in _eligible_items() if i.state!='history' and (i.state!='retired' or i.locator)]
+        items=[i for i in _eligible_items() if i.state not in {'history', 'suppressed'} and (i.state!='retired' or i.locator)]
         operations=store.pending_operations()
         latest_tokens={i.token for i in _latest(store.list_items())}
         active_scopes={(s['domain'],s['week']) for s in _scopes() if s['status']=='active'}
@@ -301,6 +314,32 @@ def _recover_first_save(context, item, observation):
     return item
 
 
+def _resolved_export(item):
+    """Find the still-pending correction chosen for this exact source snapshot.
+
+    The operation and resolved conflict are durable intent, not a new common
+    value. A fresh observation must still match the evidence the user chose.
+    """
+    with db.connect() as conn:
+        operations = conn.execute(
+            "SELECT payload FROM apple_operations WHERE token=? AND generation=? "
+            "AND revision=? AND action='upsert' AND status='pending'",
+            (item.token, item.generation, item.revision)).fetchall()
+        conflicts = conn.execute(
+            "SELECT field,source,apple FROM apple_conflicts WHERE token=? "
+            "AND status='resolved' AND resolution='keep_kitchenos'",
+            (item.token,)).fetchall()
+    for row in operations:
+        operation = AppleOperation.from_dict(json.loads(row['payload']))
+        for conflict in conflicts:
+            source = json.loads(conflict['source']) if conflict['source'] else {}
+            evidence = json.loads(conflict['apple']) if conflict['apple'] else None
+            if (source.get('source_revision') == item.source_revision and evidence
+                    and operation.expected_apple_hash == _observed_hash(Observation.from_dict(evidence))):
+                return operation, conflict['field']
+    return None
+
+
 def _apply_observation(observation, request_id, context):
     item=store.get_item(observation.token)
     if observation.availability=='unavailable' or (observation.availability=='missing' and not observation.absence_confirmed):
@@ -330,14 +369,45 @@ def _apply_observation(observation, request_id, context):
         return
     validate_fields(observation.fields,item.domain)
     item=_recover_first_save(context,item,observation)
+    resolution = _resolved_export(item)
     item=_record_observation(item,observation)
-    if item.state=='retired':
-        if observation.fields.get('completed'):
-            return # completed Apple objects remain history
-        store.reserve_operation(item,'delete',_observed_hash(observation)); return
-    decision=merge_fields(item.common_fields,item.fields,observation.fields)
     with db.connect() as conn:
         common_title=store._row(conn,item.token)['common_title']
+    if item.state=='retired':
+        if observation.fields.get('completed'):
+            # A completion discovered after source retirement is permanent
+            # history, even if Apple later reopens it. Preserve the verified
+            # observation without claiming an import into the absent source.
+            with db.write_transaction() as conn:
+                if store.get_item(item.token,conn=conn) != item:
+                    raise RevisionConflict('Item changed while preserving history')
+                conn.execute("UPDATE apple_items SET state='history',revision=revision+1 WHERE token=?", (item.token,))
+                store._supersede(conn,item.token)
+                conn.execute("UPDATE apple_conflicts SET status='resolved',resolution='history',revision=revision+1 "
+                             "WHERE token=? AND field='retirement' AND status='open'", (item.token,))
+            return
+        if (item.common_fields is None or observation.title != common_title
+                or observation.fields != item.common_fields or observation.has_user_notes):
+            _conflict(item,'retirement',observation); return
+        store.reserve_operation(item,'delete',_observed_hash(observation)); return
+    if resolution:
+        operation, field = resolution
+        if _observed_hash(observation) == operation.expected_apple_hash:
+            # Recording a recovered locator may supersede the old reservation;
+            # reserve again against the fresh locator and unchanged evidence.
+            store.reserve_operation(item,'upsert',_observed_hash(observation))
+            return
+        if observation.title != operation.title or observation.fields != operation.fields:
+            _conflict(item,field,observation); return
+        # Exact desired state may be a saved update whose ack was lost. Normal
+        # equality reconciliation can advance common without another write.
+    with db.connect() as conn:
+        if conn.execute("SELECT 1 FROM apple_conflicts WHERE token=? AND field='recovery' AND status='open'", (item.token,)).fetchone():
+            # Keep the explicit choice pending, but replace stale Apple evidence
+            # and bump its revision before a user can import an older snapshot.
+            _conflict(item,'recovery',observation)
+            return
+    decision=merge_fields(item.common_fields,item.fields,observation.fields)
     if item.common_fields is not None and observation.title and observation.title!=common_title:
         item=store.set_title_override(item.token,observation.title,expected_revision=item.revision)
         with db.write_transaction() as conn:
@@ -459,10 +529,115 @@ def acknowledge(context: BridgeContext, operation_id: str, result: dict) -> Sync
         if ack.observed_hash!=expected:
             raise RevisionConflict('Observed hash differs from verified save')
         store.acknowledge(context,operation_id,ack.locator,ack.observed_fields)
-        with db.write_transaction() as conn:
-            conn.execute('UPDATE apple_bridge SET last_success=? WHERE id=1',(datetime.now(timezone.utc).isoformat(),))
+        if row['status'] == 'acknowledged':
+            return _report() # exact committed retry is not another delivery
         return _report(**({'deleted':1} if op.action=='delete' else {'created':1} if op.locator is None else {'updated':1}))
 
+
+
+def complete_sync(context, scopes, request_ids):
+    """Commit a successful complete scan, including a no-op, exactly once."""
+    if (not isinstance(scopes, list) or not isinstance(request_ids, list) or not request_ids
+            or len(request_ids) > MAX_ITEMS or any(not isinstance(v, str) for v in request_ids)
+            or len(set(request_ids)) != len(request_ids)):
+        raise InvalidPayload('Complete scope and observation proof required')
+    for ident in request_ids:
+        _uuid(ident)
+    proof = canonical_hash({'context': context.to_dict(), 'scopes': scopes, 'request_ids': sorted(request_ids)})
+    with _LOCK:
+        _owner(context, active=True)
+        _recover()
+        unavailable = _refresh()
+        if unavailable:
+            raise SourceUnavailable('A source is unavailable')
+        with db.write_transaction() as conn:
+            _owner(context, active=True, conn=conn)
+            current_scopes = [dict(r) for r in conn.execute('SELECT * FROM apple_scopes ORDER BY domain,week')]
+            if scopes != current_scopes or not any(s['status'] == 'active' for s in current_scopes):
+                raise RevisionConflict('Active scopes changed or none are active')
+            report = _report()
+            if report.queued or report.conflicts:
+                raise RevisionConflict('Reconciliation still has pending work or conflicts')
+            observed = {}
+            for ident in request_ids:
+                request = conn.execute('SELECT * FROM apple_requests WHERE request_id=?', (ident,)).fetchone()
+                if (request is None or request['result'] is None or request['owner_id'] != context.owner_id
+                        or request['owner_generation'] != context.owner_generation):
+                    raise RevisionConflict('Observation request is incomplete or belongs to another owner')
+                for value in json.loads(request['payload']):
+                    observation = Observation.from_dict(value)
+                    if observation.token in observed:
+                        raise InvalidPayload('Repeated item in completion proof')
+                    observed[observation.token] = observation
+            active = {(s['domain'], s['week']) for s in current_scopes if s['status'] == 'active'}
+            items = [i for i in _latest(store.list_items(conn=conn)) if (i.domain, i.week) in active
+                     and i.state not in {'history', 'suppressed'} and (i.state != 'retired' or i.locator)]
+            if set(observed) != {i.token for i in items}:
+                raise RevisionConflict('Completion proof does not cover the current work')
+            for item in items:
+                observation = observed[item.token]
+                if (observation.generation != item.generation or observation.revision != item.revision
+                        or observation.availability != 'present' or observation.issue
+                        or observation.locator != item.locator or observation.title != item.title
+                        or observation.fields != item.fields or item.common_fields != item.fields):
+                    raise RevisionConflict('Completion proof is not a current converged observation')
+            receipt = conn.execute('SELECT completed_at FROM apple_sync_passes WHERE proof_hash=?', (proof,)).fetchone()
+            timestamp = receipt['completed_at'] if receipt else datetime.now(timezone.utc).isoformat()
+            conn.execute('INSERT OR IGNORE INTO apple_sync_passes(proof_hash,owner_id,owner_generation,completed_at) VALUES(?,?,?,?)',
+                         (proof, context.owner_id, context.owner_generation, timestamp))
+            conn.execute('UPDATE apple_bridge SET last_success=CASE WHEN last_success IS NULL OR last_success<? THEN ? ELSE last_success END WHERE id=1',
+                         (timestamp, timestamp))
+        return _report()
+
+
+def recover_saved(context, operation_id, ack_data, observation):
+    """Transfer verified superseded-save proof to a durable, explicit conflict."""
+    ack = OperationAck.from_dict(ack_data)
+    if ack.operation_id != operation_id or ack.outcome != 'saved':
+        raise InvalidPayload('Recovery requires a saved acknowledgement for this operation')
+    evidence = {'ack': ack.to_dict(), 'observation': observation.to_dict()}
+    with _LOCK:
+        _owner(context, active=True)
+        _recover()
+        _refresh()
+        with db.write_transaction() as conn:
+            _owner(context, active=True, conn=conn)
+            record = conn.execute('SELECT * FROM apple_operations WHERE operation_id=?', (operation_id,)).fetchone()
+            if record is None:
+                raise RevisionConflict('Unknown save operation')
+            if record['owner_id'] != context.owner_id or record['owner_generation'] != context.owner_generation:
+                raise OwnershipConflict('Save belongs to another owner generation')
+            previous = json.loads(record['result']) if record['result'] else {}
+            if 'recovered_saved' in previous:
+                if previous['recovered_saved'] != evidence:
+                    raise RevisionConflict('Recovery retry proof changed')
+                return _report()
+            operation = AppleOperation.from_dict(json.loads(record['payload']))
+            row = store._row(conn, operation.token)
+            item = store._item(row)
+            if (record['status'] != 'superseded' or operation.action != 'upsert'
+                    or item.generation != operation.generation or observation.token != item.token
+                    or observation.generation != operation.generation
+                    or observation.revision not in {operation.revision, item.revision}
+                    or observation.availability != 'present' or observation.issue or observation.locator is None
+                    or ack.observed_fields != operation.fields
+                    or ack.observed_hash != canonical_hash({'title': operation.title, 'fields': ack.observed_fields})
+                    or ack.locator is None or ack.locator.calendar_id != operation.destination_id):
+                raise RevisionConflict('Fresh owned-object proof does not match the superseded save')
+            # The old save receipt is checked against its original operation.
+            # The fresh uniquely owned observation may already have changed or
+            # moved. Link only that observed object; never import old source data.
+            conn.execute('UPDATE apple_items SET locator=?,last_observation=?,revision=revision+1 WHERE token=?',
+                         (canonical_json(observation.locator.to_dict()), canonical_json(observation.to_dict()), item.token))
+            current = store.get_item(item.token, conn=conn)
+            latest = conn.execute('SELECT MAX(generation) FROM apple_items WHERE domain=? AND week=? AND logical_id=?',
+                                  (item.domain, item.week, item.logical_id)).fetchone()[0]
+            field = ('retained_generation' if current.state == 'history' or current.generation < latest
+                     else 'retirement' if current.state == 'retired' else 'recovery')
+            conflict_id = _conflict(current, field, observation, conn=conn)
+            conn.execute('UPDATE apple_operations SET result=? WHERE operation_id=?',
+                         (canonical_json({'recovered_saved': evidence, 'conflict_id': conflict_id}), operation_id))
+        return _report()
 
 def enqueue(domain, week):
     """Existing send entrypoints queue configured native scopes, even offline."""
@@ -472,11 +647,25 @@ def enqueue(domain, week):
     scopes=[s for s in _scopes() if s['domain']==domain and s['week']==week]
     if not scopes:
         raise RevisionConflict('Select a native destination for this week in the Mac app')
+    if scopes[0]['status'] == 'archived':
+        raise RevisionConflict('Reactivate this archived week in the Mac app before sending')
     state=status()
     if state['connected'] and not state['paused'] and scopes[0]['status']=='active':
         with _LOCK:
             _recover();unavailable=_refresh();_queue_new(unavailable)
-    count=sum(i.state=='active' for i in _latest(store.list_items(domain=domain,week=week)))
+    with db.connect() as conn:
+        count = conn.execute("SELECT COUNT(*) FROM apple_operations o JOIN apple_items i ON i.token=o.token "
+                             "WHERE i.domain=? AND i.week=? AND o.status='pending'", (domain, week)).fetchone()[0]
+        count += conn.execute("SELECT COUNT(*) FROM apple_source_patches p JOIN apple_items i ON i.token=p.token "
+                              "WHERE i.domain=? AND i.week=? AND p.status='pending'", (domain, week)).fetchone()[0]
+        count += conn.execute("SELECT COUNT(*) FROM apple_resolutions r JOIN apple_conflicts c ON c.conflict_id=r.conflict_id "
+                              "JOIN apple_items i ON i.token=c.token WHERE i.domain=? AND i.week=? AND r.status='pending'", (domain, week)).fetchone()[0]
+        tokens = {row['token'] for row in conn.execute(
+            'SELECT token FROM apple_items WHERE domain=? AND week=?', (domain, week))}
+        # A journal request is one unit of pending recovery, even when it covers
+        # several items in this scope. Empty requests have no scope attribution.
+        count += sum(any(value['token'] in tokens for value in json.loads(row['payload']))
+                     for row in conn.execute('SELECT payload FROM apple_requests WHERE result IS NULL'))
     return {'success':True,'queued':count,'delivered':0,'items_sent':0,'sent':0,'native':True}
 
 
@@ -490,8 +679,11 @@ def item_details(domain, week):
         items = store.list_items(domain=domain, week=week, conn=conn)
         values = []
         for item in items:
-            is_set, due = store.get_due_override(item.token, conn=conn)
-            values.append({**item.to_dict(), 'has_due_override': is_set, 'due_override': due})
+            # Detail lists retained generations too. This read must not apply
+            # the current-generation guard used by mutable due preferences.
+            raw_due = store._row(conn, item.token)['due_override']
+            values.append({**item.to_dict(), 'has_due_override': raw_due is not None,
+                           'due_override': json.loads(raw_due) if raw_due is not None else None})
     return {'items': values}
 
 
@@ -504,16 +696,24 @@ def conflict_detail(conflict_id):
         source = json.loads(row['source']) if row['source'] else None
         evidence = json.loads(row['apple']) if row['apple'] else None
         choices = ['keep_manual']
+        shopping_demand = source.get('shopping_demand') if source else None
         if row['field'].startswith('shopping_'):
-            choices = ['keep_kitchenos', 'keep_manual']
-        elif row['field'] != 'retained_generation':
-            if store.get_item(row['token'], conn=conn).state == 'suppressed':
+            # Old conflict records may predate the generated-demand evidence.
+            # Never offer acceptance of a target this detail cannot disclose.
+            choices = ['keep_kitchenos', 'keep_manual'] if shopping_demand else ['keep_manual']
+        elif row['field'] not in {'retained_generation', 'retirement'}:
+            item = store.get_item(row['token'], conn=conn)
+            scope = conn.execute('SELECT status FROM apple_scopes WHERE domain=? AND week=?',
+                                 (item.domain, item.week)).fetchone()
+            active_scope = scope is not None and scope['status'] == 'active'
+            if item.state == 'suppressed' and active_scope:
                 choices += ['restore']
             # Source recovery means the source itself could not be applied or
             # recovered safely. A present Apple observation does not prove that
             # source is now readable, and source_recovery is not an importable
             # observation field. Keep this GET free of collect/recovery effects.
-            if (row['field'] != 'source_recovery' and evidence
+            if (row['field'] != 'source_recovery' and active_scope and item.state == 'active'
+                    and source and source.get('source_revision') == item.source_revision and evidence
                     and evidence.get('availability') == 'present' and not evidence.get('issue')):
                 choices = ['keep_kitchenos']
                 # Mirror resolve_conflict's exact keep_apple patch selection:
@@ -522,7 +722,8 @@ def conflict_detail(conflict_id):
                     choices.append('keep_apple')
                 choices.append('keep_manual')
         return {'conflict_id': row['conflict_id'], 'token': row['token'], 'field': row['field'],
-                'revision': row['revision'], 'source': source, 'apple': evidence, 'choices': choices}
+                'revision': row['revision'], 'source': source, 'apple': evidence, 'choices': choices,
+                'shopping_demand': shopping_demand}
 
 
 def link(token):
@@ -617,6 +818,12 @@ def resolve_conflict(conflict_id: str, choice: str, expected_revision: int, *, _
         if conflict is None or conflict['status']!='open' or conflict['revision']!=expected_revision:
             raise RevisionConflict('Conflict revision changed')
         item=store.get_item(conflict['token'])
+        if not conflict['field'].startswith('shopping_') and choice in {'keep_kitchenos', 'keep_apple'}:
+            with db.connect() as conn:
+                scope = conn.execute('SELECT status FROM apple_scopes WHERE domain=? AND week=?',
+                                     (item.domain, item.week)).fetchone()
+            if scope is None or scope['status'] != 'active' or item.state != 'active':
+                raise RevisionConflict('An active item and scope are required to accept this value')
         # Conflict source evidence is a SyncItem from service or SourceItem from
         # the shopping adapter. Compare the authoritative source revision either way.
         source=json.loads(conflict['source']) if conflict['source'] else {}
@@ -648,8 +855,8 @@ def resolve_conflict(conflict_id: str, choice: str, expected_revision: int, *, _
                     raise RevisionConflict('Item changed during resolution')
                 conn.execute("UPDATE apple_items SET locator=NULL,common_payload=NULL,suppressed=1,state=CASE WHEN state IN ('retired','history') THEN 'history' ELSE 'suppressed' END,revision=revision+1 WHERE token=?",(item.token,))
                 store._supersede(conn,item.token)
-        elif field=='retained_generation':
-            raise RevisionConflict('Retained objects require keep_manual or explicit remove-owned')
+        elif field in {'retained_generation', 'retirement'}:
+            raise RevisionConflict('Retired objects require keep_manual or explicit remove-owned')
         elif choice=='restore':
             restore(item.token,item.revision,_recover_first=False)
         elif observation is None or observation.availability!='present' or observation.issue:

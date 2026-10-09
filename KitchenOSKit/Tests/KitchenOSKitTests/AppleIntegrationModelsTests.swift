@@ -43,6 +43,28 @@ final class AppleIntegrationModelsTests: XCTestCase {
         XCTAssertEqual(AppleOwnership.token(in: "kitchenos-native://item/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"), token)
         for value in ["kitchenos://item/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "kitchenos-native://item/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee?delete=1", "kitchenos-native://item/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/extra"] { XCTAssertNil(AppleOwnership.token(in: value)) }
     }
+    func testOnlyOwnershipMarkerNotesAreSafeForAutomaticRetirement() throws {
+        let marker = AppleOwnership.url(for: wireToken).absoluteString
+        XCTAssertFalse(AppleOwnership.hasUserNotes(nil))
+        XCTAssertFalse(AppleOwnership.hasUserNotes(marker + "\n \n"))
+        XCTAssertTrue(AppleOwnership.hasUserNotes(marker + "\nRemember to ask Mom"))
+        XCTAssertTrue(AppleOwnership.hasUserNotes("A note without a marker"))
+
+        let observed = Observation(token: wireToken, generation: 1, revision: 1, availability: .present,
+            locator: Locator(calendarID: "destination", itemID: "item", externalID: nil),
+            title: "Buy", fields: AppleFields(completed: false, due: nil),
+            absenceConfirmed: false, issue: nil, hasUserNotes: true)
+        let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(observed)) as! [String: Any]
+        XCTAssertEqual(encoded["has_user_notes"] as? Bool, true)
+        XCTAssertEqual(try JSONDecoder().decode(Observation.self, from: JSONEncoder().encode(observed)).hasUserNotes, true)
+        let legacy = Observation(token: wireToken, generation: 1, revision: 1, availability: .present,
+            locator: Locator(calendarID: "destination", itemID: "item", externalID: nil),
+            title: "Buy", fields: AppleFields(completed: false, due: nil),
+            absenceConfirmed: false, issue: nil)
+        let legacyWire = try JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as! [String: Any]
+        XCTAssertNil(legacyWire["has_user_notes"])
+        XCTAssertNil(try JSONDecoder().decode(Observation.self, from: JSONEncoder().encode(legacy)).hasUserNotes)
+    }
     func testFirstSaveFoundByMarkerRequiresRecoveryInsteadOfCreation() {
         XCTAssertEqual(AppleLookupDecision.resolve(domain: .cooking, hadLocator: false, matches: 1, readable: true, complete: true), .present)
         XCTAssertEqual(AppleLookupDecision.resolve(domain: .cooking, hadLocator: false, matches: 0, readable: true, complete: true), .newItem)

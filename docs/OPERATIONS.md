@@ -1012,9 +1012,11 @@ subsequently authorized installation; they do not record those steps as performe
    so a rename remains the same destination. Missing/read-only selections require
    a new explicit choice; there is no automatic substitute.
 5. Choose **Week containing** (shown as a date range), then send shopping/prep or
-   sync the cooking calendar for that week. Generate/save missing shopping data
-   through the normal pantry-aware flow and explicitly refresh stale prep tasks
-   from the plan. Polling does not run task inference. Cooking exports only
+   sync the cooking calendar for that week. Explicit shopping activation generates
+   a missing list with pantry credit and migrates legacy row IDs through the normal
+   save flow, without spending inventory. Resolve malformed notes before retrying.
+   Explicitly refresh stale prep tasks from the plan. Polling never generates or
+   migrates shopping notes or runs task inference. Cooking exports only
    eligible uncooked, single-recipe cooks with valid timed schedules.
 
 **Read the result:** created/updated/removed counts reflect acknowledged Apple
@@ -1022,17 +1024,33 @@ operations; queued means work remains. Unavailable can mean permission loss,
 missing/read-only destination, incomplete store visibility, offline server, or a
 missing/stale source. It does not mean the source was deleted. Check connection,
 permission, destination and source, then **Sync now**. Reports show conflicts and
-last success; an aggregate success count across active weeks does not certify one
-selected item. Shopping completion records purchase progress without changing
-inventory, purchases, trips or cooking history.
+last success. **Last successful sync** advances after a complete fresh pass with
+all active scopes readable, no remaining work and no conflicts, including a pass
+that needed no writes. Reading status or finishing only part of a pass does not
+advance it. An aggregate success count across active weeks does not certify one
+selected item. A synchronized week's send can report zero queued; archived weeks
+require explicit reactivation in the Mac app before sending. Shopping completion
+records purchase progress without changing inventory, purchases, trips or cooking history.
 
 **Review conflicts:** Settings shows recorded KitchenOS and Apple values and
 only the choices currently supported. Keep KitchenOS or Keep Apple resolves a
 supported field conflict. Keep Apple item separate detaches without deleting.
-For a completed shopping row whose amount changed, **Accept quantity and reopen**
-explicitly accepts the new need; **Keep as a separate manual shopping item** gives
-it a new identity. Completion remains checked and the issue remains visible until
-review. Unsupported Calendar edits (cross-week, all-day, recurring or invalid
+For a shopping conflict, compare **Edited list item** with **Generated demand**.
+When generated demand is active, **Accept quantity and reopen** replaces the edited
+amount with the displayed generated amount and reopens the checkbox. When demand
+is **No longer needed**, **Remove item from shopping list** removes that row and
+retires its Apple link; unchanged incomplete reminders may be removed, while
+completed reminders stay as history. **Keep as a separate manual shopping item**
+preserves the edited text and completion under a new identity. Hand-edited amounts
+and completed checkboxes remain preserved until that explicit review. Malformed
+generated demand or conflict metadata leaves the shopping source unavailable for
+manual correction; it cannot transfer a new ingredient onto an old linked ID.
+Retiring a source removes only an unchanged, incomplete Apple object; concurrent
+Apple edits remain for separation or explicit owned-item removal. A completion
+observed after retirement freezes the old reminder as history and closes its
+obsolete retirement conflict, while other conflicts remain for review. Reopening
+it later cannot resume deletion, and reappearing demand gets a new incomplete
+export. Unsupported Calendar edits (cross-week, all-day, recurring or invalid
 15-minute time/duration) need correction or separation; they never silently move
 the ledger. Due overrides change reminder timing, not meal dates or instructions.
 
@@ -1050,6 +1068,13 @@ login is optional. iOS displays status and linked source views and is not anothe
 writer. After changing the configured server, restart the Mac app before writing
 against the new server. Native mode remains configured after disconnect, so legacy
 senders still queue rather than falling back to AppleScript.
+
+Saving the two availability calendars or tapping **Refresh availability**
+reconciles already active native scopes before the busy snapshot. It does not
+activate an archived week. Only currently linked cooking tokens are excluded
+from external busy time; a Keep Manual or archived Apple event remains busy.
+Disconnected or paused native sync performs no Apple writes, while the
+availability refresh can still report the existing Apple calendars.
 
 **Use Mac Shortcuts:** add an action from KitchenOS in the Mac action library,
 choose its parameters, save a named shortcut, then run it. The five actions are
@@ -1073,8 +1098,19 @@ a cold restart cannot prove absence. EventKit has no atomic hash-checked save or
 remote sync-completeness guarantee. External note editors do not share the server
 lock: an edit between hash check and replacement can be lost if never observed.
 Avoid editing the same linked field simultaneously while resolving an issue.
-A crash after Apple deletion but before acknowledgement can require manual review;
-the bridge will not invent deletion proof.
+If a source changes while an Apple save is finishing, the bridge retains the save
+proof and verifies the same owned marker after fresh work, including when the
+source has become archived or history and when Apple fields have changed.
+Successful recovery shows a conflict for review and preserves the newer
+KitchenOS source and the current Apple values. A note edit on an incomplete
+retired item also requires review; EventKit rechecks notes before any deletion.
+Suppressed exports are terminal until explicitly restored or cleaned up.
+Lost server
+responses retry the same proof; a rejected stale observation triggers a new scan
+on the next sync while preserving the saved acknowledgement. Missing/unreadable
+objects remain pending instead of being adopted. A crash after Apple deletion but
+before acknowledgement can require manual review; the bridge will not invent
+deletion proof.
 
 **Dedicated acceptance and cleanup, still pending:** use separately named test
 shopping/prep lists and a test cooking calendar after authorizing live tests.

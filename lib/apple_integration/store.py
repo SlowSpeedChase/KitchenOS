@@ -236,6 +236,12 @@ def acknowledge(context: BridgeContext, operation_id: str, locator: Locator | No
         if operation['owner_id'] != context.owner_id or operation['owner_generation'] != context.owner_generation:
             raise OwnershipConflict('Operation belongs to an older owner')
         row = _row(tx, operation['token'])
+        validate_fields(observed_fields, row['domain'])
+        ack_payload = canonical_json({'locator': locator.to_dict() if locator else None, 'observed_fields': observed_fields})
+        if operation['status'] == 'acknowledged':
+            if operation['acknowledged_payload'] != ack_payload or not operation['result']:
+                raise RevisionConflict('Acknowledgement no longer matches')
+            return SyncItem.from_dict(json.loads(operation['result']))
         if not operation['retained_cleanup']:
             _current(tx, row)
             scope = _scope(tx, row['domain'], row['week'])
@@ -243,12 +249,6 @@ def acknowledge(context: BridgeContext, operation_id: str, locator: Locator | No
             scope = tx.execute('SELECT * FROM apple_scopes WHERE domain=? AND week=?', (row['domain'],row['week'])).fetchone()
         if scope['revision'] != operation['scope_revision']:
             raise RevisionConflict('Scope changed since reservation')
-        validate_fields(observed_fields, row['domain'])
-        ack_payload = canonical_json({'locator': locator.to_dict() if locator else None, 'observed_fields': observed_fields})
-        if operation['status'] == 'acknowledged':
-            if operation['acknowledged_payload'] != ack_payload or row['revision'] != operation['revision'] + 1:
-                raise RevisionConflict('Acknowledgement no longer matches')
-            return SyncItem.from_dict(json.loads(operation['result']))
         if operation['status'] != 'pending' or row['revision'] != operation['revision'] or row['generation'] != operation['generation']:
             raise RevisionConflict('Stale operation')
         payload = AppleOperation.from_dict(json.loads(operation['payload']))

@@ -12,7 +12,7 @@ from uuid import uuid4
 from lib import inventory_db as db, paths
 from lib.note_mutation import mutate_note
 from lib.safe_paths import shopping_list_path
-from lib.shopping_note import read_shopping_note, set_completed
+from lib.shopping_note import _text_identity, read_shopping_note, set_completed
 from . import store
 from .models import (RevisionConflict, SourceItem, SourceUnavailable, SyncItem,
                      canonical_hash, canonical_json, validate_fields)
@@ -26,20 +26,87 @@ def _latest(week):
     return latest
 
 
+def _demand(snapshot):
+    """The exact generated outcome offered by Keep KitchenOS, not edited text."""
+    text = snapshot.get('text')
+    removed = snapshot.get('retired', False)
+    if (not isinstance(text, str) or not text.strip() or '\n' in text or '\r' in text
+            or '<!--' in text or type(removed) is not bool):
+        raise RevisionConflict('Generated shopping snapshot has no safe resolution target')
+    # A visible edit can differ from the generated target, but that target must
+    # still describe the ingredient bucket whose stable ID owns this row.
+    if not removed and (snapshot.get('identity') != _text_identity(text)
+                        or snapshot.get('text_identity') != _text_identity(text)):
+        raise RevisionConflict('Generated shopping target changed ingredient identity')
+    return {'state': 'removed' if removed else 'active',
+            'text': None if removed else text}
+
+
 def _source(week, row, document, prior=None, due=None):
     snapshot = document.metadata.get('rows', {}).get(row.id, {})
     state = 'conflict' if row.id in document.issues else 'history' if snapshot.get('retired') else 'active'
     fields = {'completed': row.completed, 'due': due}
-    values = {'id': row.id, 'title': row.text, 'fields': fields, 'identity': row.identity, 'state': state}
+    values = {'id': row.id, 'title': row.text, 'fields': fields, 'identity': row.identity, 'state': state,
+              'shopping_demand': _demand(snapshot) if row.kind == 'gen' else None}
     return SourceItem(row.id, 'shopping', week, row.text, fields, canonical_hash(values), state)
 
 
-def _record_conflict(item, field, source):
+def _record_conflict(item, field, source, snapshot):
+    evidence = {**source.to_dict(), 'shopping_demand': _demand(snapshot)}
+    payload = canonical_json(evidence)
     with db.write_transaction() as conn:
-        if not conn.execute("SELECT 1 FROM apple_conflicts WHERE token=? AND field=? AND status='open' AND source=?",
-                            (item.token, field, canonical_json(source.to_dict()))).fetchone():
+        # A generated row has one source-review decision, even when an amount
+        # edit becomes an ingredient edit. Keep its ID and invalidate old choices
+        # through the revision instead of accumulating unresolvable open rows.
+        conflicts = conn.execute(
+            "SELECT * FROM apple_conflicts WHERE token=? AND status='open' "
+            "AND field IN ('shopping_amount_changed','shopping_identity_changed') "
+            "ORDER BY created_at,rowid", (item.token,)).fetchall()
+        if conflicts:
+            current = conflicts[0]
+            if current['field'] != field or current['source'] != payload:
+                conn.execute('UPDATE apple_conflicts SET field=?,source=?,apple=NULL,revision=revision+1 WHERE conflict_id=?',
+                             (field, payload, current['conflict_id']))
+            # Repair duplicates already recorded by older code without claiming
+            # a user chose an outcome or changing any source/Apple object.
+            for stale in conflicts[1:]:
+                conn.execute("UPDATE apple_conflicts SET status='resolved',resolution='superseded',revision=revision+1 WHERE conflict_id=?",
+                             (stale['conflict_id'],))
+                conn.execute("UPDATE apple_resolutions SET status='conflict' WHERE conflict_id=? AND status='pending'",
+                             (stale['conflict_id'],))
+        else:
             conn.execute('INSERT INTO apple_conflicts(conflict_id,token,field,base,source,apple) VALUES(?,?,?,?,?,?)',
-                         (str(uuid4()), item.token, field, canonical_json(item.to_dict()), canonical_json(source.to_dict()), None))
+                         (str(uuid4()), item.token, field, canonical_json(item.to_dict()), payload, None))
+
+
+def prepare_activation(week: str) -> None:
+    """Only an explicit activation may generate a missing note or assign IDs."""
+    from lib import pantry
+    from lib.shopping_list_generator import generate_shopping_list
+    from lib.shopping_note import save_shopping_note
+    try:
+        try:
+            document = read_shopping_note(week)
+        except FileNotFoundError:
+            document = None
+        if document is not None and document.metadata and all(row.id for row in document.rows):
+            return
+        result = generate_shopping_list(week, pantry=pantry.load_pantry())
+        if not result['success']:
+            raise SourceUnavailable(result.get('error', 'Shopping generation unavailable'))
+        lines = result.get('lines') or []
+        save_shopping_note(week, lines, result.get('inventory_matches', []),
+                           selected_items=None if lines else result.get('purchase_items', result['items']))
+    except (OSError, UnicodeError, ValueError, RevisionConflict) as exc:
+        raise SourceUnavailable('Shopping note could not be prepared safely') from exc
+
+
+def _removed_source(item: SyncItem) -> SourceItem:
+    completed = item.fields.get('completed') or (item.common_fields or {}).get('completed')
+    state = 'history' if completed or item.state == 'history' else 'retired'
+    return SourceItem(item.logical_id, 'shopping', item.week, item.title, item.fields,
+                      canonical_hash({'id': item.logical_id, 'title': item.title,
+                                      'fields': item.fields, 'state': state}), state)
 
 
 def collect(week: str) -> list[SourceItem]:
@@ -48,6 +115,11 @@ def collect(week: str) -> list[SourceItem]:
         document = read_shopping_note(week)
         if not document.metadata or any(not row.id for row in document.rows):
             raise RevisionConflict('Shopping note needs explicit identity migration')
+        # Validate the complete document before publishing any source/conflict
+        # evidence. A malformed later row must not leave a partial review set.
+        for row in document.rows:
+            if row.kind == 'gen':
+                _demand(document.metadata['rows'][row.id])
     except (OSError, UnicodeError, ValueError, RevisionConflict) as exc:
         raise SourceUnavailable('Shopping note is unavailable or unsafe') from exc
     latest = _latest(week)
@@ -61,12 +133,9 @@ def collect(week: str) -> list[SourceItem]:
         source = _source(week, row, document, prior, due)
         sources.append(source)
         if source.state == 'conflict' and prior:
-            _record_conflict(prior, document.issues[row.id], source)
+            _record_conflict(prior, document.issues[row.id], source, document.metadata['rows'][row.id])
     for item in latest.values():
-        completed = item.fields.get('completed') or (item.common_fields or {}).get('completed')
-        state = 'history' if completed or item.state == 'history' else 'retired'
-        sources.append(SourceItem(item.logical_id, 'shopping', week, item.title, item.fields,
-                                  canonical_hash({'id': item.logical_id, 'title': item.title, 'fields': item.fields, 'state': state}), state))
+        sources.append(_removed_source(item))
     return sources
 
 
@@ -164,6 +233,8 @@ def resolve(item: SyncItem, choice: str, operation_id: str) -> SourceItem | None
         if edit and edit['after_hash']==document.content_hash and store.get_item(item.token)==item:
             if choice=='keep_manual' and row is None:
                 return None
+            if choice=='keep_kitchenos' and row is None:
+                return _removed_source(item)
             if choice=='keep_kitchenos' and row is not None and issue is None:
                 return _source(item.week,row,document,item,store.get_due_override(item.token)[1])
         if row is None or issue not in {'shopping_amount_changed','shopping_identity_changed'}:
@@ -172,27 +243,33 @@ def resolve(item: SyncItem, choice: str, operation_id: str) -> SourceItem | None
             raise RevisionConflict('Shopping source changed before resolution')
         if store.get_item(item.token)!=item:
             raise RevisionConflict('Shopping item changed')
+        remove = choice == 'keep_kitchenos' and document.metadata['rows'][item.logical_id].get('retired', False)
         def transform(text):
             doc=note.parse_document(text)
             snap=dict(doc.metadata['rows'][item.logical_id])
             ident=item.logical_id
             replacement=row.text
             completed=row.completed
-            if choice=='keep_manual':
+            if remove:
+                del doc.metadata['rows'][item.logical_id]
+            elif choice=='keep_manual':
                 ident='manual:'+uuid4().hex
                 snap={'identity':None,'text':replacement}
                 del doc.metadata['rows'][item.logical_id]
             else:
-                if issue=='shopping_identity_changed':
-                    replacement=snap['text']
+                replacement=snap['text']
                 completed=False
                 snap.pop('conflict',None);snap.pop('previous_text',None)
                 snap.update(text=replacement,text_identity=note._text_identity(replacement),retired=False)
-            doc.metadata['rows'][ident]=snap
+            if not remove:
+                doc.metadata['rows'][ident]=snap
             lines=text.splitlines(keepends=True)
             for index,line in enumerate(lines):
                 marker=note._MARKER.search(line.rstrip('\r\n'))
                 if marker and marker[1]==item.logical_id:
+                    if remove:
+                        lines[index] = ''
+                        continue
                     ending='\r\n' if line.endswith('\r\n') else '\n' if line.endswith('\n') else ''
                     lines[index]=f"- [{'x' if completed else ' '}] {replacement} <!-- kitchenos-item:{ident} -->{ending}"
             return note._METADATA.sub(lambda match:'<!-- kitchenos-shopping-v3:'+note._encode(doc.metadata)+' -->',''.join(lines))
@@ -202,5 +279,7 @@ def resolve(item: SyncItem, choice: str, operation_id: str) -> SourceItem | None
             raise RevisionConflict('Shopping conflict changed during resolution')
         if choice=='keep_manual':
             return None
+        if remove:
+            return _removed_source(item)
         changed=next(r for r in after.rows if r.id==item.logical_id)
         return _source(item.week,changed,after,item,store.get_due_override(item.token)[1])

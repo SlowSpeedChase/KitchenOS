@@ -58,6 +58,16 @@ public struct AppleIntegrationClient: Sendable {
         let response: ReportResponse = try await send("/operations/\(ack.operationID.uuidString.lowercased())/ack", body: Request(ack: ack, context: context))
         return response.report
     }
+    public func recoverSaved(_ ack: OperationAck, observation: Observation, context: BridgeContext) async throws -> SyncReport {
+        struct Request: Encodable { let context: BridgeContext; let ack: OperationAck; let observation: Observation }
+        let response: ReportResponse = try await send("/operations/\(ack.operationID.uuidString.lowercased())/recover-saved", body: Request(context: context, ack: ack, observation: observation))
+        return response.report
+    }
+    public func completeSync(context: BridgeContext, scopes: [AppleScope], requestIDs: [UUID]) async throws -> SyncReport {
+        struct Request: Encodable { let context: BridgeContext; let scopes: [AppleScope]; let request_ids: [String] }
+        let response: ReportResponse = try await send("/sync/complete", body: Request(context: context, scopes: scopes, request_ids: requestIDs.map { $0.uuidString.lowercased() }))
+        return response.report
+    }
     public func resolve(_ resolution: ConflictResolution) async throws -> SyncReport {
         struct Request: Encodable { let choice: AppleConflictChoice; let expected_revision: Int }
         let response: ReportResponse = try await send("/conflicts/\(resolution.conflictID.uuidString.lowercased())/resolve", body: Request(choice: resolution.choice, expected_revision: resolution.expectedRevision))

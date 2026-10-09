@@ -47,4 +47,35 @@ final class AppleConflictDetailTests: XCTestCase {
         XCTAssertEqual(conflict.value(apple: false), "Incomplete")
         XCTAssertEqual(conflict.value(apple: true), "Completed")
     }
+
+    private func shoppingDetail(removed: Bool) throws -> AppleConflictDetail {
+        let payload: [String: Any] = [
+            "conflict_id": UUID().uuidString, "token": UUID().uuidString, "revision": 4,
+            "field": "shopping_amount_changed",
+            "source": ["title": "9 lime", "fields": ["completed": false]],
+            "apple": NSNull(), "choices": ["keep_kitchenos", "keep_manual"],
+            "shopping_demand": ["state": removed ? "removed" : "active", "text": removed ? NSNull() : "3 lime" as Any]
+        ]
+        return try JSONDecoder().decode(AppleConflictDetail.self, from: JSONSerialization.data(withJSONObject: payload))
+    }
+
+    func testRemovedShoppingDemandExplainsRemovalAndMapsTheActualChoice() throws {
+        let conflict = try shoppingDetail(removed: true)
+        XCTAssertEqual(conflict.shoppingDemand?.state, .removed)
+        XCTAssertEqual(conflict.choiceLabel(.keepKitchenOS), "Remove item from shopping list")
+        XCTAssertTrue(conflict.value(apple: false).contains("9 lime"))
+        XCTAssertTrue(conflict.value(apple: false).contains("No longer needed"))
+        XCTAssertTrue(try XCTUnwrap(conflict.shoppingExplanation).contains("completed reminders stay as history"))
+        XCTAssertFalse(conflict.choiceLabel(.keepKitchenOS).contains("reopen"))
+    }
+
+    func testActiveShoppingDemandShowsEditedAndGeneratedAmountsBeforeReopening() throws {
+        let conflict = try shoppingDetail(removed: false)
+        XCTAssertEqual(conflict.shoppingDemand?.state, .active)
+        XCTAssertEqual(conflict.choiceLabel(.keepKitchenOS), "Accept quantity and reopen")
+        XCTAssertTrue(conflict.value(apple: false).contains("Edited list item: 9 lime"))
+        XCTAssertTrue(conflict.value(apple: false).contains("Generated demand: 3 lime"))
+        XCTAssertTrue(try XCTUnwrap(conflict.shoppingExplanation).contains("replaces the edited text"))
+        XCTAssertEqual(conflict.choiceLabel(.keepManual), "Keep as a separate manual shopping item")
+    }
 }

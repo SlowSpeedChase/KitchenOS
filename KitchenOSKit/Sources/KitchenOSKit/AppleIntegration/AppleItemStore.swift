@@ -43,6 +43,13 @@ public enum AppleOwnership {
         if let url, let token = token(in: url.absoluteString) { values.insert(token) }
         return values
     }
+    /// Only exact standalone ownership markers and blank lines are managed.
+    /// A user's prose must survive retirement even when title and fields match.
+    public static func hasUserNotes(_ notes: String?) -> Bool {
+        (notes ?? "").components(separatedBy: .newlines).contains { line in
+            !line.trimmingCharacters(in: .whitespaces).isEmpty && token(in: line) == nil
+        }
+    }
 }
 
 public extension AppleItemStore {
@@ -50,7 +57,21 @@ public extension AppleItemStore {
 }
 
 public extension AppleOwnership {
-    /// Archived exports retain their strict marker but are omitted from active work.
-    /// A copied marker can hide availability; this read-only policy grants no write authority.
-    static func excludesFromAvailability(url: URL?, notes: String?) -> Bool { !tokens(url: url, notes: notes).isEmpty }
+    /// An uncertain pass cannot prove that a marked event still mirrors its
+    /// ledger cook. Count all marked events as external busy until converged.
+    static func availabilityExclusions(_ linked: Set<UUID>, status: IntegrationStatus?, syncReport: SyncReport?) -> Set<UUID> {
+        guard let status, let syncReport, status.configured, status.connected, !status.paused,
+              status.report.lastSuccess != nil, syncReport.lastSuccess != nil,
+              status.report.queued == 0, status.report.conflicts == 0, status.report.unavailable == 0,
+              syncReport.queued == 0, syncReport.conflicts == 0, syncReport.unavailable == 0
+        else { return [] }
+        return linked
+    }
+    /// Linked active exports already exist in the cooking ledger. Detached manual
+    /// and archived Apple events remain external busy time, even with our marker.
+    /// Multiple distinct markers on one object never grant an exclusion.
+    static func excludesFromAvailability(url: URL?, notes: String?, excludingOwnedTokens: Set<UUID>) -> Bool {
+        let markers = tokens(url: url, notes: notes)
+        return markers.count == 1 && markers.first.map(excludingOwnedTokens.contains) == true
+    }
 }

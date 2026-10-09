@@ -96,7 +96,9 @@ def test_conflict_choices_do_not_offer_restore_for_active_item(client):
     assert result.json['choices']==['keep_manual']
     shopping=service._conflict(item,'shopping_amount_changed')
     result=client.get('/api/apple-integration/conflicts/'+shopping)
-    assert result.json['choices']==['keep_kitchenos','keep_manual']
+    # Synthetic/older shopping evidence has no generated acceptance target.
+    assert result.json['shopping_demand'] is None
+    assert result.json['choices']==['keep_manual']
 
 
 @pytest.mark.parametrize('field,expected', [
@@ -143,3 +145,64 @@ def test_source_recovery_choices_do_not_probe_or_claim_unavailable_source(client
     assert detail.json['choices']==(['keep_manual','restore'] if suppressed else ['keep_manual'])
     service.resolve_conflict(conflict,'keep_manual',detail.json['revision'],_recover_first=False)
     assert (paths.shopping_lists_dir()/(WEEK+'.md')).read_bytes()==before
+
+
+def test_item_details_reads_retained_and_replacement_generations(client):
+    """A historical generation must not make the whole native detail view 409."""
+    from dataclasses import replace
+    from lib.apple_integration import service, shopping
+    service.register_owner(str(uuid4()))
+    seed()
+    store.activate_scope('shopping', WEEK, 'list')
+    source = shopping.collect(WEEK)[0]
+    first = store.refresh_source(source)
+    store.refresh_source(replace(source, state='retired'))
+    replacement = store.refresh_source(source)
+    assert replacement.generation == first.generation + 1
+
+    response = client.get('/api/apple-integration/items?domain=shopping&week=' + WEEK)
+
+    assert response.status_code == 200, response.json
+    assert {entry['token'] for entry in response.json['items']} >= {first.token, replacement.token}
+
+
+@pytest.mark.parametrize('state', ['suppressed', 'conflict'])
+def test_inactive_item_conflict_offers_only_available_choices(client, state):
+    from dataclasses import replace
+    from lib.apple_integration import service, shopping
+    from lib.apple_integration.models import Observation, Locator
+    service.register_owner(str(uuid4())); seed()
+    store.activate_scope('shopping', WEEK, 'list')
+    item = store.refresh_source(shopping.collect(WEEK)[0])
+    if state == 'suppressed':
+        item = store.set_suppressed(item.token, True, expected_revision=item.revision)
+    else:
+        item = store.refresh_source(replace(shopping.collect(WEEK)[0], state='conflict'))
+    observation = Observation(item.token, item.generation, item.revision, 'present',
+                              Locator('list', 'reminder', None), item.title,
+                              {'completed': True, 'due': None}, False, None)
+    conflict = service._conflict(item, 'completed', observation)
+    detail = client.get('/api/apple-integration/conflicts/' + conflict)
+    assert detail.status_code == 200
+    assert detail.json['choices'] == (['keep_manual', 'restore'] if state == 'suppressed' else ['keep_manual'])
+    for choice in ('keep_kitchenos', 'keep_apple'):
+        response = client.post('/api/apple-integration/conflicts/' + conflict + '/resolve',
+                               json={'choice': choice, 'expected_revision': detail.json['revision']})
+        assert response.status_code == 409
+
+
+def test_stale_source_conflict_hides_values_that_cannot_be_accepted(client):
+    from dataclasses import replace
+    from lib.apple_integration import service, shopping
+    from lib.apple_integration.models import Observation, Locator
+    service.register_owner(str(uuid4())); seed()
+    store.activate_scope('shopping', WEEK, 'list')
+    item = store.refresh_source(shopping.collect(WEEK)[0])
+    observation = Observation(item.token, item.generation, item.revision, 'present',
+                              Locator('list', 'reminder', None), item.title,
+                              {'completed': True, 'due': None}, False, None)
+    conflict = service._conflict(item, 'completed', observation)
+    store.refresh_source(replace(shopping.collect(WEEK)[0], source_revision='b' * 64))
+    detail = client.get('/api/apple-integration/conflicts/' + conflict)
+    assert detail.status_code == 200
+    assert detail.json['choices'] == ['keep_manual']

@@ -81,11 +81,11 @@ struct AppleIntegrationSettingsView: View {
                     Button("Open linked item") { Task { await AppRouter.shared.open(.item(token: conflict.token)) } }
                     Text("KitchenOS: \(conflict.value(apple: false))")
                     Text("Apple: \(conflict.value(apple: true))")
-                    if conflict.field == "shopping_amount_changed" {
-                        Text("Accepting the KitchenOS quantity reopens this item. Keeping it as manual preserves its completion under a new identity.").font(.caption)
+                    if let explanation = conflict.shoppingExplanation {
+                        Text(explanation).font(.caption)
                     }
                     ForEach(conflict.choices, id: \.rawValue) { choice in
-                        Button(choice == .keepManual && conflict.field.hasPrefix("shopping_") ? "Keep as a separate manual shopping item" : choice == .keepKitchenOS && conflict.field == "shopping_amount_changed" ? "Accept quantity and reopen" : choice == .keepKitchenOS && conflict.field == "shopping_identity_changed" ? "Restore ingredient and reopen" : choice.label) {
+                        Button(conflict.choiceLabel(choice)) {
                             Task { await controls.resolve(conflict, choice: choice); await loadDetails() }
                         }
                     }

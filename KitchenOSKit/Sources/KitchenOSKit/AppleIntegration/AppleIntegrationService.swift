@@ -7,6 +7,8 @@ public protocol AppleIntegrationAPI: Sendable {
     func work(context: BridgeContext) async throws -> WorkBatch
     func observe(_ observations: [Observation], context: BridgeContext, requestID: UUID) async throws -> [AppleOperation]
     func acknowledge(_ ack: OperationAck, context: BridgeContext) async throws -> SyncReport
+    func recoverSaved(_ ack: OperationAck, observation: Observation, context: BridgeContext) async throws -> SyncReport
+    func completeSync(context: BridgeContext, scopes: [AppleScope], requestIDs: [UUID]) async throws -> SyncReport
     func setScope(_ request: ScopeRequest) async throws -> SyncReport
     func setPaused(_ paused: Bool, expectedRevision: Int) async throws -> SyncReport
     func resolve(_ resolution: ConflictResolution) async throws -> SyncReport
@@ -37,7 +39,13 @@ public enum AppleIntegrationTrigger: Sendable { case launch, wake, foreground, e
 /// The retained worker, rather than actor isolation alone, serializes whole commands
 /// across network and EventKit awaits. Each command has its own continuation/result.
 public actor AppleIntegrationService {
-    private struct PendingAcknowledgement { let ack: OperationAck; let context: BridgeContext }
+    private struct PendingAcknowledgement {
+        let ack: OperationAck
+        let context: BridgeContext
+        let operation: AppleOperation
+        let item: SyncItem
+        var recoveryObservation: Observation?
+    }
     private struct AcknowledgementDeferred: Error {}
     // Proof from this process's successful adapter mutation. Never reconstruct a
     // deleted acknowledgement from a later missing-object scan after restart.
@@ -175,7 +183,11 @@ public actor AppleIntegrationService {
             let status = try await api.status()
             guard let scope = status.scopes.first(where: { $0.domain == domain && $0.week == week }) else { throw KitchenOSError.http(409) }
             try await checkAuthority()
-            return try await api.setScope(ScopeRequest(domain: domain, week: week, destinationID: scope.destinationID, state: .archived, expectedRevision: scope.revision))
+            let result = try await api.setScope(ScopeRequest(domain: domain, week: week, destinationID: scope.destinationID, state: .archived, expectedRevision: scope.revision))
+            // Archive does not run freshWork. Invalidate the whole cached set
+            // so no just-archived event stays hidden from busy availability.
+            knownOwnedCookingTokens.removeAll()
+            return result
         case let .resolve(conflict, choice, revision):
             _ = try await api.resolve(ConflictResolution(conflictID: conflict, choice: choice, expectedRevision: revision))
             return try await synchronize()
@@ -212,22 +224,66 @@ public actor AppleIntegrationService {
         return error is URLError
     }
     private func flushAcknowledgement(totals: inout Totals) async throws {
-        guard let pending = pendingAcknowledgement else { return }
+        guard pendingAcknowledgement != nil else { return }
         let delays: [TimeInterval] = [1, 2, 4, 8, 16, 30]
         for attempt in 0...delays.count {
             try await checkAuthority()
             do {
-                let result = try await api.acknowledge(pending.ack, context: pending.context)
+                guard let pending = pendingAcknowledgement else { return }
+                let result: SyncReport
+                if let observation = pending.recoveryObservation {
+                    // A lost recovery response retries its exact evidence before
+                    // observing again; the server receipt is idempotent.
+                    result = try await api.recoverSaved(pending.ack, observation: observation, context: pending.context)
+                } else {
+                    do { result = try await api.acknowledge(pending.ack, context: pending.context) }
+                    catch KitchenOSError.http(409) {
+                        guard pending.ack.outcome == .saved else { throw AcknowledgementDeferred() }
+                        let observation = try await savedRecoveryObservation(pending, totals: &totals)
+                        pendingAcknowledgement?.recoveryObservation = observation
+                        result = try await api.recoverSaved(pending.ack, observation: observation, context: pending.context)
+                    }
+                }
                 pendingAcknowledgement = nil
                 totals.add(result); lastReport = result
                 return
             } catch {
                 try checkRunning()
+                if case KitchenOSError.http(409) = error,
+                   pendingAcknowledgement?.recoveryObservation != nil {
+                    // This proof was definitively rejected. Keep the saved ack,
+                    // but obtain current work and a fresh owned observation next
+                    // time. Transient/lost responses still replay exact proof.
+                    pendingAcknowledgement?.recoveryObservation = nil
+                    throw AcknowledgementDeferred()
+                }
                 guard transient(error) else { throw error }
                 guard attempt < delays.count else { throw AcknowledgementDeferred() }
                 try await sleep(delays[attempt])
             }
         }
+    }
+    private func savedRecoveryObservation(_ pending: PendingAcknowledgement, totals: inout Totals) async throws -> Observation {
+        let batch = try await freshWork(pending.context, totals: &totals)
+        guard !batch.paused else { throw AcknowledgementDeferred() }
+        // The source may have become history, archived, or replaced after the
+        // Apple save. The captured item still names its unique ownership marker.
+        let item = (batch.items + batch.retainedItems).first {
+            $0.token == pending.item.token && $0.generation == pending.item.generation
+        } ?? pending.item
+        guard pending.ack.observedFields == pending.operation.fields,
+              pending.ack.observedHash == (try pending.operation.fields.canonicalHash(title: pending.operation.title))
+        else { throw AcknowledgementDeferred() }
+        try await checkAuthority()
+        let values: [Observation]
+        do { values = try await store.observe([item]) }
+        catch { throw AcknowledgementDeferred() }
+        guard values.count == 1, let value = values.first,
+              value.token == item.token, value.generation == item.generation, value.revision == item.revision,
+              value.availability == .present, value.issue == nil, value.locator != nil
+        else { throw AcknowledgementDeferred() }
+        try await checkAuthority()
+        return value
     }
     private func synchronize() async throws -> SyncReport {
         var totals = Totals()
@@ -248,6 +304,7 @@ public actor AppleIntegrationService {
                     guard !batch.paused else { return totals.report(lastReport) }
                     let observationSerial = replaySerial
                     var allowed: [UUID: ScanVersion] = [:]; var blocked: Set<UUID> = []
+                    var requestIDs: [UUID] = []
                     for domain in AppleDomain.allCases {
                         let items = batch.items.filter { $0.domain == domain }
                         guard !items.isEmpty else { continue }
@@ -255,7 +312,9 @@ public actor AppleIntegrationService {
                         blocked.formUnion(unavailable)
                         try await checkAuthority()
                         do {
-                            _ = try await api.observe(values, context: context, requestID: UUID())
+                            let requestID = UUID()
+                            _ = try await api.observe(values, context: context, requestID: requestID)
+                            requestIDs.append(requestID)
                             for item in items { allowed[item.token] = ScanVersion(generation: item.generation, revision: item.revision) }
                         } catch KitchenOSError.http(503) {
                             // Source recovery may fail before the server reserves its
@@ -285,9 +344,47 @@ public actor AppleIntegrationService {
                            value.availability == .present, value.issue == nil { allowed[item.token] = ScanVersion(generation: item.generation, revision: item.revision) }
                         else { totals.unavailable += 1 }
                     }
-                    let changed = try await apply(operations, context: context, allowed: allowed, blocked: blocked, totals: &totals)
+                    let changed = try await apply(operations, items: batch.items + batch.retainedItems,
+                                                  context: context, allowed: allowed, blocked: blocked, totals: &totals)
                     if !changed || pass == 2 {
                         lastReport = try await api.status().report
+                        let activeScopes = batch.scopes.filter { $0.status == .active }
+                        if !changed, !activeScopes.isEmpty, totals.unavailable == 0,
+                           lastReport.queued == 0, lastReport.conflicts == 0, lastReport.unavailable == 0 {
+                            // Writes and source imports advance revisions. Only a
+                            // new complete Apple scan can certify the resulting state.
+                            let needsFreshScan = !operations.isEmpty || batch.items.contains {
+                                allowed[$0.token] != ScanVersion(generation: $0.generation, revision: $0.revision)
+                            }
+                            if needsFreshScan {
+                                if pass < 2 { continue }
+                                return totals.report(lastReport, pending: true)
+                            }
+                            for scope in activeScopes {
+                                let permission = await store.authorization(for: scope.domain)
+                                let destinations = try? await store.destinations(for: scope.domain)
+                                if permission != .authorized || destinations?.contains(where: { $0.id == scope.destinationID }) != true {
+                                    totals.unavailable += 1
+                                }
+                            }
+                            if totals.unavailable == 0 {
+                                try await checkAuthority()
+                                if requestIDs.isEmpty {
+                                    let requestID = UUID()
+                                    _ = try await api.observe([], context: context, requestID: requestID)
+                                    requestIDs.append(requestID)
+                                }
+                                do {
+                                    lastReport = try await api.completeSync(context: context, scopes: batch.scopes, requestIDs: requestIDs)
+                                } catch KitchenOSError.http(409) {
+                                    if pass < 2 { continue }
+                                    return totals.report(lastReport, pending: true)
+                                } catch KitchenOSError.http(503) {
+                                    totals.unavailable += 1
+                                    return totals.report(lastReport, pending: true)
+                                }
+                            }
+                        }
                         return totals.report(lastReport, pending: changed)
                     }
                 }
@@ -322,7 +419,11 @@ public actor AppleIntegrationService {
             guard batch.context == context, batch.retryRequests.isEmpty else { throw KitchenOSError.http(409) }
             replaySerial += 1
         }
-        knownOwnedCookingTokens = Set((batch.items + batch.retainedItems).filter { $0.domain == .cooking }.map(\.token))
+        // Only currently scheduled ledger cooks are already represented in
+        // planning. Retired, archived and detached Apple events remain busy.
+        knownOwnedCookingTokens = Set(batch.items.filter {
+            $0.domain == .cooking && $0.state == .active && $0.fields.start != nil
+        }.map(\.token))
         return batch
     }
     private func observations(for items: [SyncItem]) async throws -> ([Observation], Set<UUID>) {
@@ -352,7 +453,7 @@ public actor AppleIntegrationService {
         }
         return (values, blocked)
     }
-    private func apply(_ operations: [AppleOperation], context: BridgeContext, allowed: [UUID: ScanVersion], blocked: Set<UUID>, totals: inout Totals) async throws -> Bool {
+    private func apply(_ operations: [AppleOperation], items: [SyncItem], context: BridgeContext, allowed: [UUID: ScanVersion], blocked: Set<UUID>, totals: inout Totals) async throws -> Bool {
         var changed = false
         for operation in operations where !blocked.contains(operation.token) {
             guard allowed[operation.token] == ScanVersion(generation: operation.generation, revision: operation.revision) else { changed = true; continue }
@@ -363,6 +464,9 @@ public actor AppleIntegrationService {
             totals.recordAvailability(current.report)
             guard current.context == context, !current.paused, current.retryRequests.isEmpty else { return true }
             guard current.operations.contains(operation) else { changed = true; continue }
+            guard let item = items.first(where: {
+                $0.token == operation.token && $0.generation == operation.generation && $0.revision == operation.revision
+            }) else { changed = true; continue }
             try await checkAuthority()
             let ack: OperationAck
             do { ack = try await store.apply(operation) }
@@ -371,7 +475,7 @@ public actor AppleIntegrationService {
                 ack = OperationAck(operationID: operation.operationID, outcome: .failed, locator: nil, observedFields: AppleFields(), observedHash: nil)
             }
             if ack.outcome == .saved || ack.outcome == .deleted {
-                pendingAcknowledgement = PendingAcknowledgement(ack: ack, context: context)
+                pendingAcknowledgement = PendingAcknowledgement(ack: ack, context: context, operation: operation, item: item)
                 try await flushAcknowledgement(totals: &totals)
             } else {
                 // Changed/failed is not successful mutation proof and must never
@@ -407,7 +511,7 @@ public actor AppleIntegrationService {
             ($0.token, ScanVersion(generation: $0.observation.generation, revision: $0.observation.revision))
         })
         let changed: Bool
-        do { changed = try await apply(operations, context: context, allowed: allowed, blocked: [], totals: &totals) }
+        do { changed = try await apply(operations, items: candidates, context: context, allowed: allowed, blocked: [], totals: &totals) }
         catch is AcknowledgementDeferred {
             totals.unavailable = max(1, totals.unavailable)
             return totals.report(lastReport, pending: true)

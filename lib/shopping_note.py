@@ -121,10 +121,14 @@ def parse_document(content: str) -> ShoppingDocument:
                 raise RevisionConflict('Generated ID does not match its identity')
             if _text_identity(text) != snapshot.get('text_identity'):
                 issues[ident] = 'shopping_identity_changed'
-            elif completed and text != snapshot.get('text'):
+            elif text != snapshot.get('text'):
                 issues[ident] = 'shopping_amount_changed'
-        if snapshot.get('conflict'):
-            issues.setdefault(ident, snapshot['conflict'])
+        if 'conflict' in snapshot:
+            conflict = snapshot['conflict']
+            if kind != 'gen' or not isinstance(conflict, str) or conflict not in {
+                    'shopping_amount_changed', 'shopping_identity_changed'}:
+                raise RevisionConflict('Invalid shopping conflict marker')
+            issues.setdefault(ident, conflict)
         rows.append(ShoppingRow(ident, kind, text, completed, identity))
     return ShoppingDocument(rows, content_hash(content), metadata, issues)
 
@@ -234,18 +238,27 @@ def save_shopping_note(week: str, generated_lines: list[dict], inventory_matches
                     continue
                 selected[row.text] -= 1
             prior = old_by_id.get(row.id)
-            completed = prior.completed if prior else False
-            result.append(ShoppingRow(row.id, row.kind, row.text, completed, row.identity))
+            was_retired = snapshots.get(row.id, {}).get('retired') is True
+            completed = prior.completed if prior and not was_retired else False
+            # Preserve hand-edited text while retaining the new generated
+            # demand separately for an explicit Keep KitchenOS resolution.
+            edited = prior is not None and not was_retired and row.id in old.issues
+            text = prior.text if edited else row.text
+            result.append(ShoppingRow(row.id, row.kind, text, completed, row.identity))
             snap = dict(snapshots.get(row.id, {}))
+            if was_retired:
+                snap.pop('conflict', None)
+                snap.pop('previous_text', None)
             if prior and completed and prior.text != row.text:
                 snap['conflict'] = 'shopping_amount_changed'
                 snap.setdefault('previous_text', prior.text)
             snap.update(identity=row.identity, text=row.text, text_identity=_text_identity(row.text), retired=False)
             snapshots[row.id] = snap
         result_ids = {r.id for r in result}
-        # Checked rows leaving generated membership remain visible history.
+        # Checked history and unresolved hand edits remain visible even when
+        # generated demand disappears; regeneration must not discard evidence.
         for row in old_by_id.values():
-            if row.kind == 'gen' and row.completed and row.id not in result_ids:
+            if row.kind == 'gen' and (row.completed or row.id in old.issues) and row.id not in result_ids:
                 result.append(row)
                 snapshots[row.id] = {**snapshots.get(row.id, {}), 'identity': row.identity,
                                      'text': row.text, 'text_identity': _text_identity(row.text), 'retired': True}

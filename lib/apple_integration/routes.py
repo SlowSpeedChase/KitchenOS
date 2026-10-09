@@ -3,7 +3,7 @@ from functools import wraps
 from flask import jsonify, request
 from werkzeug.exceptions import BadRequest, UnsupportedMediaType, RequestEntityTooLarge
 from . import service
-from .models import BridgeContext, BatchTooLarge, InvalidPayload, OwnershipConflict, RevisionConflict, ScopeRequest, SourceUnavailable, validate_observations
+from .models import BridgeContext, BatchTooLarge, InvalidPayload, OwnershipConflict, RevisionConflict, ScopeRequest, SourceUnavailable, Observation, validate_observations
 
 MAX_BYTES=2*1024*1024
 
@@ -94,6 +94,16 @@ def register_routes(app, require_token):
         data=body(['context','operation_id','outcome','locator','observed_fields','observed_hash'])
         context=BridgeContext.from_dict(data.pop('context'))
         return {'report':service.acknowledge(context,operation_id,data).to_dict()}
+
+    @endpoint('/sync/complete',['POST'],local=True)
+    def complete_sync():
+        data=body(['context','scopes','request_ids'])
+        return {'report':service.complete_sync(BridgeContext.from_dict(data['context']),data['scopes'],data['request_ids']).to_dict()}
+
+    @endpoint('/operations/<operation_id>/recover-saved',['POST'],local=True)
+    def recover_saved(operation_id):
+        data=body(['context','ack','observation'])
+        return {'report':service.recover_saved(BridgeContext.from_dict(data['context']),operation_id,data['ack'],Observation.from_dict(data['observation'])).to_dict()}
 
     @endpoint('/conflicts/<conflict_id>/resolve',['POST'])
     def resolve(conflict_id):

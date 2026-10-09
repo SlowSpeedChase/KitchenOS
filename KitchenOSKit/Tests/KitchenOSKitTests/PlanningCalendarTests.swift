@@ -70,12 +70,34 @@ extension PlanningCalendarTests {
 }
 
 extension PlanningCalendarTests {
-    func testOnlyExactOwnershipMarkersExcludeAvailabilityIncludingArchivedTokens() {
-        let marker = "kitchenos-native://item/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-        XCTAssertTrue(AppleOwnership.excludesFromAvailability(url: URL(string: marker), notes: nil))
-        XCTAssertTrue(AppleOwnership.excludesFromAvailability(url: nil, notes: "My notes\n" + marker))
-        XCTAssertFalse(AppleOwnership.excludesFromAvailability(url: nil, notes: "Same cooking title"))
-        XCTAssertFalse(AppleOwnership.excludesFromAvailability(url: nil, notes: "See " + marker))
-        XCTAssertFalse(AppleOwnership.excludesFromAvailability(url: URL(string: marker + "?foreign=1"), notes: nil))
+    func testOnlyCurrentlyLinkedOwnedTokensExcludeAvailability() {
+        let owned = UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")!
+        let detached = UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")!
+        let marker = AppleOwnership.url(for: owned).absoluteString
+        let detachedMarker = AppleOwnership.url(for: detached).absoluteString
+        let excluded: Set<UUID> = [owned]
+        XCTAssertTrue(AppleOwnership.excludesFromAvailability(url: URL(string: marker), notes: nil, excludingOwnedTokens: excluded))
+        XCTAssertTrue(AppleOwnership.excludesFromAvailability(url: nil, notes: "My notes\n" + marker, excludingOwnedTokens: excluded))
+        XCTAssertFalse(AppleOwnership.excludesFromAvailability(url: URL(string: detachedMarker), notes: nil, excludingOwnedTokens: excluded))
+        XCTAssertFalse(AppleOwnership.excludesFromAvailability(url: URL(string: marker), notes: detachedMarker, excludingOwnedTokens: excluded))
+        XCTAssertFalse(AppleOwnership.excludesFromAvailability(url: nil, notes: "Same cooking title", excludingOwnedTokens: excluded))
+        XCTAssertFalse(AppleOwnership.excludesFromAvailability(url: nil, notes: "See " + marker, excludingOwnedTokens: excluded))
+        XCTAssertFalse(AppleOwnership.excludesFromAvailability(url: URL(string: marker + "?foreign=1"), notes: nil, excludingOwnedTokens: excluded))
+    }
+    func testUnsettledOrUnknownSyncCountsMarkedEventsAsExternalBusy() {
+        let token = UUID()
+        let linked: Set<UUID> = [token]
+        let settled = SyncReport(created: 0, updated: 0, deleted: 0, queued: 0,
+            conflicts: 0, unavailable: 0, lastSuccess: "2026-10-09T12:00:00+00:00")
+        let status = IntegrationStatus(modelVersion: 1, configured: true, connected: true, paused: false,
+            settingsRevision: 1, report: settled, permissions: [:], destinations: [:], scopes: [], conflicts: [])
+        XCTAssertEqual(AppleOwnership.availabilityExclusions(linked, status: status, syncReport: settled), linked)
+        XCTAssertTrue(AppleOwnership.availabilityExclusions(linked, status: nil, syncReport: settled).isEmpty)
+        let unavailable = SyncReport(created: 0, updated: 0, deleted: 0, queued: 0,
+            conflicts: 0, unavailable: 1, lastSuccess: settled.lastSuccess)
+        XCTAssertTrue(AppleOwnership.availabilityExclusions(linked, status: status, syncReport: unavailable).isEmpty)
+        let pending = SyncReport(created: 0, updated: 0, deleted: 0, queued: 1,
+            conflicts: 0, unavailable: 0, lastSuccess: settled.lastSuccess)
+        XCTAssertTrue(AppleOwnership.availabilityExclusions(linked, status: status, syncReport: pending).isEmpty)
     }
 }

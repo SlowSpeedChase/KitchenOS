@@ -44,7 +44,7 @@ def observe(client, context, items, **extra):
     return client.post(BASE + '/observations', json={'context':context,'request_id':str(uuid4()),'complete':True,'observations':items, **extra})
 
 def observation(item, **changes):
-    values = dict(token=item['token'], generation=item['generation'], revision=item['revision'], availability='present', locator={'calendar_id':'list','item_id':'reminder','external_id':None},title=item['title'],fields=item['fields'],absence_confirmed=False,issue=None)
+    values = dict(token=item['token'], generation=item['generation'], revision=item['revision'], availability='present', locator={'calendar_id':'list','item_id':'reminder','external_id':None},title=item['title'],fields=item['fields'],absence_confirmed=False,issue=None,has_user_notes=False)
     values.update(changes)
     return values
 

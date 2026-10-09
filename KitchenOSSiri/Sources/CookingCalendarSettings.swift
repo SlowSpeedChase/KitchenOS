@@ -11,6 +11,7 @@ final class CookingCalendarSync: ObservableObject {
     @Published var working = false
     private let defaults = UserDefaults.standard
     private var refreshAgain = false
+    private var pendingExclusions: Set<UUID>?
     private var connected: Bool { defaults.bool(forKey: "cookingCalendar.connected") }
     private var coordinator: AppleIntegrationCoordinator { .shared }
     private var store: any AppleItemStore { coordinator.store }
@@ -43,7 +44,9 @@ final class CookingCalendarSync: ObservableObject {
         defaults.set(firmID, forKey: "cookingCalendar.firm")
         defaults.set(flexibleID, forKey: "cookingCalendar.flexible")
         defaults.set(true, forKey: "cookingCalendar.connected")
-        await refresh()
+        // Sync the already active bridge scopes first, then calculate
+        // availability using its fresh set of linked cooking tokens.
+        await coordinator.refresh(trigger: .foreground)
     }
     func disconnect() async {
         guard !working else { return }
@@ -62,12 +65,21 @@ final class CookingCalendarSync: ObservableObject {
         guard coordinator.isLocalServer else {
             message = "Calendar sync runs on the server Mac using a localhost connection."; return
         }
-        guard !working else { refreshAgain = true; return }
+        guard !working else {
+            refreshAgain = true
+            pendingExclusions = excludingOwnedTokens
+            return
+        }
         guard connected || defaults.bool(forKey: "cookingCalendar.clearPending") else { return }
         working = true
         defer {
             working = false
-            if refreshAgain { refreshAgain = false; Task { await self.refresh(excludingOwnedTokens: excludingOwnedTokens) } }
+            if refreshAgain {
+                refreshAgain = false
+                let next = pendingExclusions ?? excludingOwnedTokens
+                pendingExclusions = nil
+                Task { await self.refresh(excludingOwnedTokens: next) }
+            }
         }
         let config = KitchenOSConfig.resolved()
         let client = KitchenOSClient(config: config)
@@ -131,7 +143,7 @@ struct CookingCalendarSettings: View {
                     }
                 }
                 Button("Save calendars and refresh") { Task { await sync.save(firmID: firmID, flexibleID: flexibleID) } }
-                Button("Refresh availability") { Task { await sync.refresh() } }
+                Button("Refresh availability") { Task { await AppleIntegrationCoordinator.shared.refresh(trigger: .foreground) } }
             }
             Button("Disconnect Calendar") { Task { await sync.disconnect() } }
             Text(sync.message).font(.caption).accessibilityAddTraits(.updatesFrequently)

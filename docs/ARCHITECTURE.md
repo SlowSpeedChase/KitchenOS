@@ -182,7 +182,8 @@ next regeneration.
 | `store.py` | `get_due_override`/`set_due_override` distinguish unset and explicitly cleared due preferences. `reserve_source_patch`, `pending_source_patches`, `finish_source_patch`, and `conflict_source_patch` journal interrupted source imports. `register_owner`, `activate_scope`/`update_scope`, `refresh_source`, `reserve_operation`, and `acknowledge` enforce owner, scope, generation, and revision checks. `get_item`, `list_items`, and `pending_operations` read persisted work; `set_title_override` and `set_suppressed` preserve preferences independently of source content. |
 
 `inventory_db._SCHEMA` creates `apple_bridge`, `apple_scopes`, `apple_items`,
-`apple_operations`, `apple_conflicts`, `apple_file_edits`, and `apple_source_patches`. Reservations have
+`apple_operations`, `apple_conflicts`, `apple_file_edits`, `apple_source_patches`, and
+`apple_sync_passes`. Reservations have
 unique operation UUIDs and remain pending until acknowledged. An identical
 reservation reuses its UUID; an identical acknowledgement is inert. Source,
 common, and pending payloads remain separate. Retired generations remain stored
@@ -420,7 +421,7 @@ and generation before returning their recorded result.
 |---|---|
 | `lib/note_mutation.py` | `content_hash`, `mutation_lock(path)`, `mutate_note(path, expected_hash, transform, operation_id)`, and `recover_note_edits` preserve exact UTF-8 before/after images for known week notes and prep sidecars under the configured vault. The public reentrant file lock spans read/merge/write and nested journal edits without releasing the outer advisory lock. Thread locks and filesystem `flock` serialize cooperating processes; unique sibling temporary files are fsynced and atomically replaced after a final content check. |
 | `lib/shopping_note.py` | `ShoppingRow`/`ShoppingDocument`, `read_shopping_note`, `parse_document`, `generated_identity`, `save_shopping_note`, `set_completed`, and `strip_item_marker` implement validated `gen:`/`manual:` row identities. Generated IDs use normalized ingredient plus aggregator bucket before display formatting. Both shopping API save endpoints call this writer; reads never migrate implicitly. |
-| `lib/apple_integration/shopping.py` | `collect`, `apply`, and `recover_pending` expose Markdown membership/title/quantity/completion and SQLite due overrides. Import completion changes only the exact marked row and never calls pantry spending. Missing, unmarked, malformed, or duplicate-ID notes fail closed. |
+| `lib/apple_integration/shopping.py` | `prepare_activation`, `collect`, `apply`, and `recover_pending` expose Markdown membership/title/quantity/completion and SQLite due overrides. Import completion changes only the exact marked row and never calls pantry spending. Missing, unmarked, malformed, or duplicate-ID notes fail closed. Generated demand must retain its ingredient identity, and invalid conflict markers fail before publishing any conflict. |
 | `lib/apple_integration/prep.py` | `collect`, `apply`, and `recover_pending` sync exact stable task IDs from fresh `YYYY-Www.tasks.json` sidecars. Polling never invokes inference; missing/stale/unsafe data requests refresh instead of retiring reminders. Completion/undo use the same recoverable writer and per-week lock as regeneration; classification runs outside it, then re-reads current done flags. Due overrides are isolated to the current export generation and never change plan placement or task IDs. |
 
 The v3 encoded note metadata holds row identity snapshots and unresolved amount
@@ -432,6 +433,8 @@ manual rows have independent random IDs. Inventory matches remain plain bullets.
 Checked rows leaving generation remain visible history; journaled completed
 history (including acknowledged completion) is retained when rows are removed.
 Suppression belongs to an export generation and survives normal source refresh.
+If the same generated demand reappears after retirement, its new generation
+starts incomplete; the old completion stays in history.
 
 Due overrides use `apple_items.due_override`: SQL NULL means unset, JSON null
 means explicitly cleared. The setter checks the latest generation and expected
@@ -456,7 +459,7 @@ it does not claim to recover an unseen external edit in that interval.
 
 | Module | Public boundary |
 |---|---|
-| `lib/apple_integration/service.py` | `activate`, `update_scope`, `work`, `observe`, `acknowledge`, `resolve_conflict`, `restore`, `remove_owned`, `register_owner`, `disconnect`, `settings`, `status`, `item_details`, `conflict_detail`, `link`, `configured`, and `enqueue` compose source adapters with the shared merge/journal. Recovery precedes source refresh; no DB transaction spans file or native/network work. |
+| `lib/apple_integration/service.py` | `activate`, `update_scope`, `work`, `observe`, `acknowledge`, `recover_saved`, `complete_sync`, `resolve_conflict`, `restore`, `remove_owned`, `register_owner`, `disconnect`, `settings`, `status`, `item_details`, `conflict_detail`, `link`, `configured`, and `enqueue` compose source adapters with the shared merge/journal. Recovery precedes source refresh; no DB transaction spans file or native/network work. |
 | `lib/apple_integration/routes.py` | `register_routes(app, require_token)` installs the version-one API, strict envelopes, complete batch limits and localhost writer gate independently of optional bearer auth. Exact contracts and native retry order are in `docs/API.md`. |
 | `lib/apple_integration/shopping.py` | `resolve(item, choice, operation_id)` performs amount/ingredient-identity conflict edits with exact note hashes and recoverable images. `keep_manual` assigns a new row identity; it never transfers an edited ingredient onto the old generated ID. |
 | `lib/apple_integration/store.py` | `reserve_cleanup` is the explicit bounded-removal path for retained generations. Ordinary callbacks reject replaced generations; cleanup acknowledgements can affect only their specifically reserved old row. Scope destination is a default for new items; archive/reactivation preserves existing identities. |
@@ -468,6 +471,8 @@ replay completes. Semantic source drift becomes a visible conflict, while IO sta
 retryable. Native clients must fetch fresh Apple/server state again after replay.
 `apple_resolutions` separately journals explicit conflict choices, allowing the
 service to finish a split file/DB resolution before normal source refresh.
+`apple_sync_passes` stores one owner-bound receipt per completed, converged scan;
+reads and individual write acknowledgements do not manufacture sync success.
 
 Narrow migrations add owner connection/settings/permission reports and last
 success, item `last_observation`/`common_title`, and an explicit retained-cleanup
@@ -514,7 +519,10 @@ writer is constructed. No Apple content is sent to an LLM.
 Native recovery replays the exact pending observation UUID/payload/context,
 then rereads server work and Apple objects before admitting outbound operations.
 A successful Apple mutation awaiting HTTP acknowledgement retains its exact proof
-in memory and retries that acknowledgement before another write. After a process
+and original item identity in memory and retries that acknowledgement before
+another write. Superseded saves can be linked to a fresh uniquely owned Apple
+object even after Apple values change or the source becomes history/archived;
+the receipt opens explicit review without importing the old save. After a process
 crash, a first saved object can be recovered by marker and its exact pending
 journal. Lost deletion proof cannot be reconstructed from uncertain Calendar
 absence and needs review. Connect is setup only and bypasses proof flushing;
@@ -532,14 +540,28 @@ unchanged visible local-store coverage, not remote account sync completeness.
 
 The final ownership/hash check precedes each save/delete, but public EventKit has
 no atomic compare-and-swap. A concurrent Apple edit can occur in that gap.
+Note-only user edits are included in retirement observations and checked again
+immediately before delete; exact ownership-marker-only notes remain eligible.
 Likewise, external editors do not share note locks and may write between the final
 hash check and atomic replacement; journals recover only observed bytes. Timed
 civil reminder values cannot distinguish both occurrences of a repeated DST hour.
 Provider persistence, alarms/unmanaged fields, real permissions and lifecycle
 behavior require dedicated-destination acceptance beyond automated fixtures.
 
-Owned cooking markers are excluded from external busy snapshots because the
-ledger already contributes their intervals. Exact copied markers on foreign events
-may exclude those events from availability but confer no write authority. Legacy
-ICS and AppleScript exports are unowned representations and are never adopted by
-title; native scopes cannot fall back to another writer when paused/offline.
+Only uniquely marked tokens still linked to active cooking work are excluded
+from external busy snapshots, because the ledger already contributes those
+intervals. Keep Manual detaches a token, so its Apple event becomes external
+busy time; archived events are also counted conservatively. Exact copied
+single markers on foreign events may still exclude them when their token is
+currently linked, but confer no write authority. Ambiguous multi-marker events
+are included as busy. A copied single marker on a second event can still hide
+that event until marker ambiguity is discovered in a sync scan.
+
+An unresolved or failed sync sends an empty exclusion set, conservatively
+counting marked events as busy; unrelated shopping work can therefore make
+availability temporarily pessimistic. Archive invalidates cached exclusions
+until a fresh pass.
+
+Legacy ICS and AppleScript exports are unowned representations and are never
+adopted by title; native scopes cannot fall back to another writer when
+paused/offline.

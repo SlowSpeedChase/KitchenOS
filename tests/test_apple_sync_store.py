@@ -258,9 +258,13 @@ def test_reappearing_source_supersedes_pending_old_generation_deletion(active):
         assert conn.execute('SELECT status FROM apple_operations WHERE operation_id=?',
                             (deletion.operation_id,)).fetchone()[0] == 'superseded'
     assert store.get_item(original.token).locator == LOCATOR
-    for operation, locator, fields in [(deletion, None, {}), (export, LOCATOR, original.fields)]:
-        with pytest.raises(RevisionConflict):
-            store.acknowledge(context, operation.operation_id, locator, fields)
+    with pytest.raises(RevisionConflict):
+        store.acknowledge(context, deletion.operation_id, None, {})
+    # A previously committed exact save is an inert retry even after the source
+    # generation changes; altered callback evidence must still be rejected.
+    assert store.acknowledge(context, export.operation_id, LOCATOR, original.fields) == saved
+    with pytest.raises(RevisionConflict):
+        store.acknowledge(context, export.operation_id, LOCATOR, {'completed': True, 'due': None})
     assert store.get_item(replacement.token) == replacement
 
     new_export = store.reserve_operation(replacement, 'upsert', None)

@@ -22,7 +22,43 @@ public struct AppleConflictDetail: Decodable, Sendable, Identifiable {
     public let source: ConflictSource
     public let apple: ConflictObservation?
     public let choices: [AppleConflictChoice]
-    enum CodingKeys: String, CodingKey { case token, field, revision, source, apple, choices; case conflictID = "conflict_id" }
+    public let shoppingDemand: ShoppingDemand?
+    enum CodingKeys: String, CodingKey {
+        case token, field, revision, source, apple, choices
+        case conflictID = "conflict_id", shoppingDemand = "shopping_demand"
+    }
+    public struct ShoppingDemand: Decodable, Sendable {
+        public enum State: String, Decodable, Sendable { case active, removed }
+        public let state: State
+        public let text: String?
+        enum CodingKeys: String, CodingKey { case state, text }
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            state = try c.decode(State.self, forKey: .state)
+            text = try c.decodeIfPresent(String.self, forKey: .text)
+            guard state == .removed ? text == nil : text?.isEmpty == false else {
+                throw DecodingError.dataCorruptedError(forKey: .text, in: c, debugDescription: "Generated demand must name an active item or an explicit removal")
+            }
+        }
+    }
+    public func choiceLabel(_ choice: AppleConflictChoice) -> String {
+        if choice == .keepManual && field.hasPrefix("shopping_") {
+            return "Keep as a separate manual shopping item"
+        }
+        if choice == .keepKitchenOS && field.hasPrefix("shopping_") {
+            if shoppingDemand?.state == .removed { return "Remove item from shopping list" }
+            if field == "shopping_amount_changed" { return "Accept quantity and reopen" }
+            if field == "shopping_identity_changed" { return "Restore ingredient and reopen" }
+        }
+        return choice.label
+    }
+    public var shoppingExplanation: String? {
+        guard field.hasPrefix("shopping_"), let demand = shoppingDemand else { return nil }
+        if demand.state == .removed {
+            return "This item is no longer needed by the generated list. Removing it retires its Apple link; unchanged incomplete reminders may be removed, and completed reminders stay as history. Keeping it as manual preserves the edited item and its completion."
+        }
+        return "Accepting the generated item replaces the edited text and reopens this item. Keeping it as manual preserves its text and completion under a new identity."
+    }
     public struct ConflictSource: Decodable, Sendable { public let title: String; public let fields: [String: AppleDetailValue] }
     public struct ConflictObservation: Decodable, Sendable { public let title: String?; public let fields: [String: AppleDetailValue] }
     public var label: String {
@@ -40,7 +76,12 @@ public struct AppleConflictDetail: Decodable, Sendable, Identifiable {
     }
     public func value(apple useApple: Bool) -> String {
         guard let fields = useApple ? apple?.fields : source.fields else { return "Unavailable" }
-        if field.hasPrefix("shopping_") { return (useApple ? apple?.title : source.title) ?? "Unavailable" }
+        if field.hasPrefix("shopping_") {
+            if useApple { return apple?.title ?? "Unavailable" }
+            guard let demand = shoppingDemand else { return source.title }
+            let generated = demand.state == .removed ? "No longer needed" : demand.text ?? "Unavailable"
+            return "Edited list item: \(source.title)\nGenerated demand: \(generated)"
+        }
         if field == "recovery" || field == "source_recovery" {
             // Whole-item recovery can import every observed field. Equal titles
             // must never conceal different completion, due or cooking values.

@@ -346,6 +346,8 @@ public struct Observation: Codable, Sendable, Equatable {
     public let fields: AppleFields
     public let absenceConfirmed: Bool
     public let issue: AppleObservationIssue?
+    /// Nil preserves the exact shape of older unfinished observation requests.
+    public let hasUserNotes: Bool?
     enum CodingKeys: String, CodingKey {
         case token
         case generation
@@ -356,8 +358,9 @@ public struct Observation: Codable, Sendable, Equatable {
         case fields
         case absenceConfirmed = "absence_confirmed"
         case issue
+        case hasUserNotes = "has_user_notes"
     }
-    public init(token: UUID, generation: Int, revision: Int, availability: AppleAvailability, locator: Locator?, title: String?, fields: AppleFields, absenceConfirmed: Bool, issue: AppleObservationIssue?) {
+    public init(token: UUID, generation: Int, revision: Int, availability: AppleAvailability, locator: Locator?, title: String?, fields: AppleFields, absenceConfirmed: Bool, issue: AppleObservationIssue?, hasUserNotes: Bool? = nil) {
         self.token = token
         self.generation = generation
         self.revision = revision
@@ -367,6 +370,7 @@ public struct Observation: Codable, Sendable, Equatable {
         self.fields = fields
         self.absenceConfirmed = absenceConfirmed
         self.issue = issue
+        self.hasUserNotes = hasUserNotes
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -379,6 +383,7 @@ public struct Observation: Codable, Sendable, Equatable {
         fields = try c.decode(AppleFields.self, forKey: .fields)
         absenceConfirmed = try c.decode(Bool.self, forKey: .absenceConfirmed)
         issue = try c.decode(Optional<AppleObservationIssue>.self, forKey: .issue)
+        hasUserNotes = try c.decodeIfPresent(Bool.self, forKey: .hasUserNotes)
     }
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -391,6 +396,7 @@ public struct Observation: Codable, Sendable, Equatable {
         try c.encode(fields, forKey: .fields)
         try c.encode(absenceConfirmed, forKey: .absenceConfirmed)
         try c.encode(issue, forKey: .issue)
+        try c.encodeIfPresent(hasUserNotes, forKey: .hasUserNotes)
     }
 }
 

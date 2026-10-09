@@ -216,6 +216,7 @@ private final class EventKitWorker: @unchecked Sendable {
                     var availability: AppleAvailability = .unavailable
                     var objectLocator: Locator?; var title: String?; var observed = AppleFields()
                     var confirmed = false; var problem: AppleObservationIssue?
+                    var hasUserNotes: Bool?
                     if let scan {
                         let (decision, object) = self.matching(token: item.token, domain: item.domain, prior: item.locator, scan: scan)
                         switch decision {
@@ -223,6 +224,7 @@ private final class EventKitWorker: @unchecked Sendable {
                             if let object {
                                 availability = .present; objectLocator = self.locator(object); title = object.title ?? ""
                                 problem = self.issue(object)
+                                hasUserNotes = AppleOwnership.hasUserNotes(object.notes) ? true : nil
                                 // Common fields retain the previously observed wire spelling;
                                 // a first-save recovery has only its original source fields.
                                 observed = (try? self.fields(object, reference: item.commonFields ?? item.fields)) ?? AppleFields()
@@ -236,7 +238,8 @@ private final class EventKitWorker: @unchecked Sendable {
                         }
                     }
                     observations[item.token] = Observation(token: item.token, generation: item.generation, revision: item.revision,
-                        availability: availability, locator: objectLocator, title: title, fields: observed, absenceConfirmed: confirmed, issue: problem)
+                        availability: availability, locator: objectLocator, title: title, fields: observed,
+                        absenceConfirmed: confirmed, issue: problem, hasUserNotes: hasUserNotes)
                 }
                 process(index + 1)
             }
@@ -289,6 +292,9 @@ private final class EventKitWorker: @unchecked Sendable {
                 guard object.calendar.allowsContentModifications else { finish(.success(self.ack(operation, outcome: .failed))); return }
                 if operation.action == .delete {
                     // Only the freshly resolved unique object above can reach removal.
+                    guard !AppleOwnership.hasUserNotes(object.notes) else {
+                        finish(.success(self.ack(operation, outcome: .changed, object: object))); return
+                    }
                     if let reminder = object as? EKReminder { try self.store.remove(reminder, commit: true) }
                     else if let event = object as? EKEvent { try self.store.remove(event, span: .thisEvent, commit: true) }
                     self.visibleAtObservation.removeValue(forKey: operation.token); self.visibleLocators.removeValue(forKey: operation.token)
@@ -340,7 +346,8 @@ private final class EventKitWorker: @unchecked Sendable {
         guard let end = calendar.date(byAdding: .day, value: 35, to: start) else { throw AppleIntegrationError.invalidDate }
         let predicate = store.predicateForEvents(withStart: start, end: end, calendars: [firm, flexible])
         let events = try store.events(matching: predicate).filter {
-            $0.status != .canceled && $0.availability != .free && !AppleOwnership.excludesFromAvailability(url: $0.url, notes: $0.notes) &&
+            $0.status != .canceled && $0.availability != .free &&
+            !AppleOwnership.excludesFromAvailability(url: $0.url, notes: $0.notes, excludingOwnedTokens: excludingOwnedTokens) &&
             !($0.attendees?.contains(where: { $0.isCurrentUser && $0.participantStatus == .declined }) ?? false)
         }.map {
             try PlanningCalendarEvent(calendarID: $0.calendar.calendarIdentifier,

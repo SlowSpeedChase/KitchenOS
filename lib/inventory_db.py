@@ -83,6 +83,10 @@ CREATE TABLE IF NOT EXISTS apple_resolutions (
  choice TEXT NOT NULL, expected_revision INTEGER NOT NULL,
  status TEXT NOT NULL CHECK(status IN ('pending','applied','conflict'))
 );
+CREATE TABLE IF NOT EXISTS apple_sync_passes (
+ proof_hash TEXT PRIMARY KEY, owner_id TEXT NOT NULL, owner_generation INTEGER NOT NULL,
+ completed_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS apple_requests (
  request_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, owner_generation INTEGER NOT NULL,
  payload TEXT NOT NULL, result TEXT, progress TEXT NOT NULL DEFAULT '[]'
