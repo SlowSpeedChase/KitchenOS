@@ -36,6 +36,11 @@ public enum AppleIntegrationTrigger: Sendable { case launch, wake, foreground, e
 /// The retained worker, rather than actor isolation alone, serializes whole commands
 /// across network and EventKit awaits. Each command has its own continuation/result.
 public actor AppleIntegrationService {
+    private struct PendingAcknowledgement { let ack: OperationAck; let context: BridgeContext }
+    private struct AcknowledgementDeferred: Error {}
+    // Proof from this process's successful adapter mutation. Never reconstruct a
+    // deleted acknowledgement from a later missing-object scan after restart.
+    private var pendingAcknowledgement: PendingAcknowledgement?
     private struct ScanVersion: Equatable { let generation: Int; let revision: Int }
     private struct Waiter { let id: UUID; let continuation: CheckedContinuation<SyncReport, Error> }
     private struct Job { let command: AppleIntegrationCommand; let trigger: Bool; var waiters: [Waiter] }
@@ -126,6 +131,27 @@ public actor AppleIntegrationService {
     }
     private func execute(_ command: AppleIntegrationCommand) async throws -> SyncReport {
         try await checkAuthority()
+        var recovered = Totals()
+        var command = command
+        if pendingAcknowledgement != nil, case let .setPaused(value, revision) = command {
+            // Settings controls may unblock a paused acknowledgement, but cannot
+            // authorize another Apple observation or write ahead of that proof.
+            let result = try await api.setPaused(value, expectedRevision: revision)
+            if value { return recovered.report(result, pending: true) }
+            command = .sync
+        }
+        do { try await flushAcknowledgement(totals: &recovered) }
+        catch is AcknowledgementDeferred {
+            recovered.unavailable = max(1, recovered.unavailable)
+            if case .sync = command { return recovered.report(lastReport, pending: true) }
+            // An unrelated command was never executed, so do not return success.
+            throw AppleIntegrationError.unavailable
+        }
+        let result = try await executeCommand(command)
+        recovered.add(result)
+        return recovered.report(result)
+    }
+    private func executeCommand(_ command: AppleIntegrationCommand) async throws -> SyncReport {
         switch command {
         case .sync: return try await synchronize()
         case let .setPaused(value, revision):
@@ -163,7 +189,11 @@ public actor AppleIntegrationService {
     }
     private struct Totals {
         var created = 0; var updated = 0; var deleted = 0; var unavailable = 0
-        mutating func add(_ report: SyncReport) { created += report.created; updated += report.updated; deleted += report.deleted }
+        mutating func add(_ report: SyncReport) {
+            created += report.created; updated += report.updated; deleted += report.deleted
+            recordAvailability(report)
+        }
+        mutating func recordAvailability(_ report: SyncReport) { unavailable = max(unavailable, report.unavailable) }
         func report(_ latest: SyncReport, pending: Bool = false) -> SyncReport {
             SyncReport(created: created, updated: updated, deleted: deleted, queued: max(latest.queued, pending ? 1 : 0),
                 conflicts: latest.conflicts, unavailable: max(latest.unavailable, unavailable), lastSuccess: latest.lastSuccess)
@@ -174,6 +204,24 @@ public actor AppleIntegrationService {
             switch error { case .unreachable: return true; case .http(let code): return code == 429 || code >= 500; default: return false }
         }
         return error is URLError
+    }
+    private func flushAcknowledgement(totals: inout Totals) async throws {
+        guard let pending = pendingAcknowledgement else { return }
+        let delays: [TimeInterval] = [1, 2, 4, 8, 16, 30]
+        for attempt in 0...delays.count {
+            try await checkAuthority()
+            do {
+                let result = try await api.acknowledge(pending.ack, context: pending.context)
+                pendingAcknowledgement = nil
+                totals.add(result); lastReport = result
+                return
+            } catch {
+                try checkRunning()
+                guard transient(error) else { throw error }
+                guard attempt < delays.count else { throw AcknowledgementDeferred() }
+                try await sleep(delays[attempt])
+            }
+        }
     }
     private func synchronize() async throws -> SyncReport {
         var totals = Totals()
@@ -189,7 +237,7 @@ public actor AppleIntegrationService {
                 let context = try await register()
                 // Changed acknowledgements request another complete pass, never a blind retry.
                 for pass in 0..<3 {
-                    var batch = try await freshWork(context)
+                    var batch = try await freshWork(context, totals: &totals)
                     lastReport = batch.report
                     guard !batch.paused else { return totals.report(lastReport) }
                     let observationSerial = replaySerial
@@ -210,7 +258,7 @@ public actor AppleIntegrationService {
                             // request that still cannot replay stops the pass safely.
                             blocked.formUnion(items.map(\.token))
                         }
-                        batch = try await freshWork(context)
+                        batch = try await freshWork(context, totals: &totals)
                         lastReport = batch.report
                         guard !batch.paused else { return totals.report(lastReport) }
                     }
@@ -237,6 +285,9 @@ public actor AppleIntegrationService {
                         return totals.report(lastReport, pending: changed)
                     }
                 }
+            } catch is AcknowledgementDeferred {
+                totals.unavailable = max(1, totals.unavailable)
+                return totals.report(lastReport, pending: true)
             } catch {
                 try checkRunning()
                 guard transient(error) else { throw error }
@@ -249,8 +300,9 @@ public actor AppleIntegrationService {
         }
         return totals.report(lastReport, pending: true)
     }
-    private func freshWork(_ context: BridgeContext) async throws -> WorkBatch {
+    private func freshWork(_ context: BridgeContext, totals: inout Totals) async throws -> WorkBatch {
         var batch = try await api.work(context: context)
+        totals.recordAvailability(batch.report)
         guard batch.context == context else { throw KitchenOSError.http(409) }
         // One unfinished request is permitted by the bridge. A repeated unfinished
         // request after successful replay is surfaced for review, not looped forever.
@@ -260,6 +312,7 @@ public actor AppleIntegrationService {
                 _ = try await api.observe(request.observations, context: context, requestID: request.requestID)
             }
             batch = try await api.work(context: context)
+            totals.recordAvailability(batch.report)
             guard batch.context == context, batch.retryRequests.isEmpty else { throw KitchenOSError.http(409) }
             replaySerial += 1
         }
@@ -301,6 +354,7 @@ public actor AppleIntegrationService {
             // Source/owner/scope may have changed while earlier items were saving.
             // Never execute an operation merely because an older response carried it.
             let current = try await api.work(context: context)
+            totals.recordAvailability(current.report)
             guard current.context == context, !current.paused, current.retryRequests.isEmpty else { return true }
             guard current.operations.contains(operation) else { changed = true; continue }
             try await checkAuthority()
@@ -310,18 +364,26 @@ public actor AppleIntegrationService {
                 try checkRunning()
                 ack = OperationAck(operationID: operation.operationID, outcome: .failed, locator: nil, observedFields: AppleFields(), observedHash: nil)
             }
-            let result = try await api.acknowledge(ack, context: context)
-            totals.add(result); lastReport = result
+            if ack.outcome == .saved || ack.outcome == .deleted {
+                pendingAcknowledgement = PendingAcknowledgement(ack: ack, context: context)
+                try await flushAcknowledgement(totals: &totals)
+            } else {
+                // Changed/failed is not successful mutation proof and must never
+                // become an automatic retry of an explicitly selected deletion.
+                let result = try await api.acknowledge(ack, context: context)
+                totals.add(result); lastReport = result
+            }
             if ack.outcome == .changed { changed = true }
             if ack.outcome == .failed { totals.unavailable += 1 }
         }
         return changed
     }
     private func remove(_ selections: [AppleOwnedSelection]) async throws -> SyncReport {
+        var totals = Totals()
         guard !selections.isEmpty, selections.count <= 5000, Set(selections.map(\.token)).count == selections.count else { throw AppleIntegrationError.invalidFields }
         let status = try await api.status()
         guard status.connected, !status.paused else { throw AppleIntegrationError.unavailable }
-        let context = try await register(); let batch = try await freshWork(context)
+        let context = try await register(); let batch = try await freshWork(context, totals: &totals)
         guard !batch.paused else { throw AppleIntegrationError.unavailable }
         let candidates = batch.items + batch.retainedItems
         var removals: [OwnedRemovalItem] = []
@@ -335,11 +397,15 @@ public actor AppleIntegrationService {
         }
         try await checkAuthority()
         let operations = try await api.removeOwned(removals, context: context, requestID: UUID())
-        var totals = Totals()
         let allowed = Dictionary(uniqueKeysWithValues: removals.map {
             ($0.token, ScanVersion(generation: $0.observation.generation, revision: $0.observation.revision))
         })
-        let changed = try await apply(operations, context: context, allowed: allowed, blocked: [], totals: &totals)
+        let changed: Bool
+        do { changed = try await apply(operations, context: context, allowed: allowed, blocked: [], totals: &totals) }
+        catch is AcknowledgementDeferred {
+            totals.unavailable = max(1, totals.unavailable)
+            return totals.report(lastReport, pending: true)
+        }
         if changed { totals.unavailable += 1 }
         // A changed delete needs a fresh explicit selection, especially for retained
         // generations that cannot enter the ordinary observation endpoint.
