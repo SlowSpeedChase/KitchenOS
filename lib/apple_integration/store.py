@@ -144,6 +144,10 @@ def refresh_source(item: SourceItem, *, conn=None) -> SyncItem:
             (row['state'] in {'retired', 'history'} and item.state == 'active')
         )
         if row is None or replacement:
+            if replacement:
+                # Once replaced, this generation cannot acknowledge any work.
+                # Retain its journal, but stop returning those operations forever.
+                _supersede(tx, row['token'])
             token = str(uuid4())
             tx.execute(
                 'INSERT INTO apple_items(token, logical_id, domain, week, generation, destination_id, source_payload, state, revision) VALUES(?,?,?,?,?,?,?,?,1)',

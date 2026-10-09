@@ -237,3 +237,35 @@ def test_file_edit_and_conflict_journals_survive_reconnect(active):
         assert conn.execute('SELECT status FROM apple_conflicts').fetchone()[0] == 'open'
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute('INSERT INTO apple_file_edits SELECT * FROM apple_file_edits')
+
+
+def test_reappearing_source_supersedes_pending_old_generation_deletion(active):
+    """A replaced generation must not leave unacknowledgeable pending work."""
+    context, _, original = active
+    export = store.reserve_operation(original, 'upsert', None)
+    saved = store.acknowledge(context, export.operation_id, LOCATOR, original.fields)
+    retired = store.refresh_source(source(state='retired'))
+    deletion = store.reserve_operation(retired, 'delete', canonical_hash(saved.fields))
+    assert store.pending_operations() == [deletion]
+
+    replacement = store.refresh_source(source())
+    assert replacement.generation == original.generation + 1
+    assert replacement.token != original.token
+    assert store.pending_operations() == []
+    with db.connect() as conn:
+        assert conn.execute('SELECT status FROM apple_operations WHERE operation_id=?',
+                            (deletion.operation_id,)).fetchone()[0] == 'superseded'
+    assert store.get_item(original.token).locator == LOCATOR
+    for operation, locator, fields in [(deletion, None, {}), (export, LOCATOR, original.fields)]:
+        with pytest.raises(RevisionConflict):
+            store.acknowledge(context, operation.operation_id, locator, fields)
+    assert store.get_item(replacement.token) == replacement
+
+    new_export = store.reserve_operation(replacement, 'upsert', None)
+    assert store.reserve_operation(replacement, 'upsert', None) == new_export
+    assert store.pending_operations() == [new_export]
+    new_locator = Locator('list', 'replacement-item', None)
+    new_saved = store.acknowledge(context, new_export.operation_id, new_locator, replacement.fields)
+    assert store.acknowledge(context, new_export.operation_id, new_locator, replacement.fields) == new_saved
+    assert new_saved.generation == replacement.generation
+    assert store.pending_operations() == []
