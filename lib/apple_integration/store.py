@@ -330,7 +330,10 @@ def set_due_override(token: str, due: dict | None, *, expected_revision: int, co
 
 def reserve_source_patch(item: SyncItem, patch: dict, operation_id: str, *, conn=None) -> dict:
     """Persist the entire retry contract before a source adapter touches a file."""
-    validate_fields(patch, item.domain)
+    # Explicit Calendar absence is lifecycle control, never a wire field.
+    if not (item.domain == 'cooking' and patch == {'unscheduled': True}
+            and type(patch['unscheduled']) is bool):
+        validate_fields(patch, item.domain)
     if not isinstance(operation_id, str) or not operation_id or len(operation_id) > 128:
         raise InvalidPayload('Invalid operation ID')
     with db.write_transaction(conn) as tx:

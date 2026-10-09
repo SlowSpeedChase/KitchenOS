@@ -77,3 +77,37 @@ def test_selected_cook_does_not_block_its_own_opening():
     c=cook();sl.schedule_cook(c['id'],**args(duration_minutes=180))
     result=pc.read_week('2026-W39',duration_minutes=180,exclude_cook_id=c['id'])
     assert any(w['start']=='2026-09-22T19:00:00-05:00' for w in result['days']['2026-09-22']['windows'])
+
+
+def test_unschedule_preserves_cook_and_retry_is_noop():
+    c = cook(); sl.schedule_cook(c['id'], **args())
+    before = sl.get_cook(c['id'])
+    assert sl.unschedule_cook(c['id']) == before
+    assert sl.unschedule_cook(c['id']) == before
+    assert sl.get_cook(c['id']) == before
+    assert sl.schedules_for_week('2026-W39') == []
+    with pytest.raises(ValueError): sl.unschedule_cook(999)
+
+
+def test_borrowed_schedule_and_unschedule_do_not_commit():
+    from lib import inventory_db as db
+    c = cook()
+    with pytest.raises(RuntimeError):
+        with db.write_transaction() as conn:
+            assert sl.schedule_cook(c['id'], **args(), conn=conn)['cook']['date'] == '2026-09-22'
+            assert sl.unschedule_cook(c['id'], conn=conn)['date'] == '2026-09-22'
+            raise RuntimeError()
+    assert sl.get_cook(c['id'])['date'] is None
+    assert sl.schedules_for_week('2026-W39') == []
+
+
+def test_api_delete_schedule_preserves_cook():
+    from api_server import app
+    c = cook(); sl.schedule_cook(c['id'], **args())
+    before = sl.get_cook(c['id']); client = app.test_client()
+    response = client.delete(f"/api/cooks/{c['id']}/schedule")
+    assert response.status_code == 200
+    assert sl.get_cook(c['id']) == before
+    assert sl.schedules_for_week('2026-W39') == []
+    assert client.delete(f"/api/cooks/{c['id']}/schedule").status_code == 200
+    assert client.delete('/api/cooks/999/schedule').status_code == 404

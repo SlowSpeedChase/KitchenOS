@@ -1791,6 +1791,16 @@ def api_cook_schedule(cook_id):
     return jsonify(saved)
 
 
+@app.delete('/api/cooks/<int:cook_id>/schedule')
+@require_token
+@_ledger_error
+def api_cook_unschedule(cook_id):
+    from lib import serving_ledger
+    if serving_ledger.get_cook(cook_id) is None:
+        return jsonify(error='Cook not found'), 404
+    return jsonify(cook=serving_ledger.unschedule_cook(cook_id), schedule=None)
+
+
 @app.route('/api/cooks/<int:cook_id>/move', methods=['POST'])
 @require_token
 @_ledger_error

@@ -88,6 +88,9 @@ CREATE TABLE IF NOT EXISTS apple_source_patches (
 CREATE TABLE IF NOT EXISTS planning_calendar_barrier (
  id INTEGER PRIMARY KEY CHECK(id=1), cleared_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS pending_schedule_views (
+ week TEXT PRIMARY KEY, revision INTEGER NOT NULL CHECK(revision > 0)
+);
 CREATE TABLE IF NOT EXISTS cook_schedule (
  cook_id INTEGER PRIMARY KEY REFERENCES cooks(id) ON DELETE CASCADE,
  start TEXT NOT NULL, timezone TEXT NOT NULL,

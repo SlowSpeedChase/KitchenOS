@@ -384,6 +384,34 @@ in `docs/setup/`.
   next recompute.
 
 
+### Calendar cooking writeback
+
+`lib/apple_integration/cooking.py` exposes `collect(week)`,
+`apply(item, patch, operation_id, *, conn=None)`, and `recover_pending()`.
+Logical IDs are `cook:<id>`. Content revisions include the cook, schedule and
+placements; writeback rechecks that revision under the same `BEGIN IMMEDIATE`
+transaction as the ledger and sync-journal changes. `schedule_cook(..., conn=None)`
+and `unschedule_cook(id, *, conn=None)` share the ledger's existing move/capacity
+rules. Deletion uses exactly `{'unscheduled': True}` as adapter lifecycle control,
+never as a wire field, and removes only `cook_schedule`: cook rows, servings,
+scale, cooked state and inventory remain intact. Cooked exports become history;
+removed schedules retire. The DELETE `/api/cooks/<id>/schedule` route uses this
+same unschedule authority.
+
+`pending_schedule_views` coalesces work by week and increments its revision in
+the ledger transaction. `serving_ledger.drain_schedule_views()` serializes each
+known week-note path, renders committed DB state outside the transaction, and
+clears only its captured revision. A concurrent scheduled move triggers another
+render. IO failure propagates with durable work retained. Owned calls drain before
+returning; borrowed callers **must commit first, then call `recover_pending()` or
+`drain_schedule_views()`** before declaring success. Recovery performs no Apple,
+network or inference work. Source patches commit as applied together with the
+ledger; only derived Markdown is pending after a crash. The bridge service must
+recover before collecting/exporting and report a recovery failure as queued work,
+never as synchronized. Exact finished operation retries verify the current source
+and generation before returning their recorded result.
+
+
 ### Shopping note identity and recoverable imports
 
 | Module | Public boundary |
