@@ -2,7 +2,7 @@
 
 **TL;DR:** Extend the existing native Mac app. Shopping and prep reminders sync completion in both directions; scheduled cooking syncs time changes in both directions. App buttons and Mac Shortcuts use the same operations. Preserve KitchenOS's ledger and inventory rules, prevent duplicate exports, and surface conflicting edits.
 
-Status: proposed design for user review. No product code or personal Apple data has been changed for this request.
+Status: approved by Chase on October 8, 2026. Implementation planning follows; no product code or personal Apple data has been changed for this request.
 
 ## Intended outcome and assumptions
 
