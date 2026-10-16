@@ -57,7 +57,7 @@ Tasks 1 and 2 can be implemented independently. Task 3 depends on Task 2; Task 4
 - [x] Run red: swift test --package-path KitchenOSKit --filter 'WebDestinationTests|WebDayResolverTests|RecipeNavigationResolverTests'. Expect failures for the missing implementation.
 - [x] Implement the three focused helpers. Do not implement a second API-host resolver or persistent last-recipe memory.
 - [x] Run the same tests green, plus existing ConfigTests and WeekDateTests. Add round-trip tests showing descriptor JSON has no model-supplied URL or credential.
-- [ ] Commit the helpers and tests after the required feature checklist.
+- [x] Commit the helpers and tests after the required feature checklist.
 
 ## Task 2: One-use browser handoff and bounded viewing authorization
 
@@ -81,7 +81,7 @@ Use Cache-Control: no-store and Vary: Cookie, Authorization for private response
 - [x] Run red: .venv/bin/python -m pytest tests/test_browser_handoff.py tests/test_api_auth.py -q.
 - [x] Implement the store, destination validation, endpoint-specific authorization, and routes. Keep token validation shared with require_token rather than drifting into a second bearer rule. Do not disable existing gating or add a new persistence schema.
 - [x] Run green with the same command plus tests/test_recipe_detail.py and tests/test_planning_calendar.py. Review headers/cookie attributes for both the current HTTP origin and HTTPS test origin.
-- [ ] Commit backend/contracts after the required checklist; do not deploy this partial state alone.
+- [x] Commit backend/contracts after the required checklist; do not deploy this partial state alone.
 
 ## Task 3: Browser bootstrap, viewing mode, and exact-day landing
 
@@ -105,7 +105,7 @@ Use Cache-Control: no-store and Vary: Cookie, Authorization for private response
 - [x] Implement selected-date handling using civil-date arithmetic and the current uncommitted calendar as the baseline. A meal list below the timeline must be scrolled into view; a visible calendar header alone does not satisfy the test.
 - [x] Implement viewing controls: allow local recipe scaling, previews, filters, and date/week changes; disable saved servings/add-to-week, Sortable/save initialization, scheduling, and all-day classification. Derive mode from the server, not a query flag. Do not change native bearer-authenticated functionality or remove cook-card ledger guards.
 - [x] Run green: .venv/bin/python -m pytest tests/e2e/test_siri_web_navigation.py tests/e2e/test_planning_calendar.py tests/e2e/test_planner_touch.py -m e2e -v; then .venv/bin/python -m pytest tests/test_web_dashboard.py -q. Verify the browser tests record zero mutation requests during navigation and expiry.
-- [ ] Commit the integrated web surface after the required checklist.
+- [x] Commit the integrated web surface after the required checklist.
 
 ## Task 4: Voice tools and foreground browser handoff
 
@@ -127,7 +127,7 @@ Use Cache-Control: no-store and Vary: Cookie, Authorization for private response
 - [x] Implement voice-only registration, structured resolution/store, authenticated handoff transport, platform opener, and conditional foreground result. Provide the local current date/week to the voice session for interpreting requests, but let the deterministic resolver own calendar arithmetic.
 - [x] Run the focused tests green, then swift test --package-path KitchenOSKit. Keep native chat and OpenRecipeIntent/Spotlight behavior unchanged.
 - [x] Build both supported targets: xcodegen generate; xcodebuild build -scheme KitchenOSSiri -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO; xcodebuild build -scheme KitchenOSSiri -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO. This verifies compilation/metadata, not real Siri or installation.
-- [ ] Commit after the feature checklist. Native changes are not active on devices until the verified app is installed.
+- [x] Commit after the feature checklist. Native changes are not active on devices until the verified app is installed.
 
 ## Task 5: Integration review, documentation, and release gate
 
@@ -137,10 +137,10 @@ Use Cache-Control: no-store and Vary: Cookie, Authorization for private response
 - [x] Run .venv/bin/python -m pytest -q for the normal suite and report any failures by name; run the focused e2e command from Task 3 explicitly because normal pytest excludes e2e. Run the full Swift suite and both app builds after the last code change. Do not assert physical-device behavior from these results.
 - [x] Document the request examples, current-week weekday convention, absent cross-invocation memory, 15-minute viewing grant/24-hour restriction marker, current HTTP-cookie tradeoff, restart/token-rotation behavior, and rebuild/install requirement. Document the bootstrap route as ephemeral and non-bookmarkable. Do not claim the wider browser auth gap is solved for clients without a handoff.
 - [x] Obtain a fresh code review covering Swift foreground dispatch, Python auth/store, and browser focus/read-only integration before deployment. Apply necessary fixes and rerun affected verification.
-- [ ] Deploy only after implementation review: preserve existing unrelated working-tree changes; follow docs/OPERATIONS.md for coordinated API/template/static update and native app install. Restart com.kitchenos.api for deployed Python/template changes. Do not replace the separate Safari web app with the native app bundle.
+- [x] Deploy only after implementation review: preserve existing unrelated working-tree changes; follow docs/OPERATIONS.md for coordinated API/template/static update and native app install. Restart com.kitchenos.api for deployed Python/template changes. Do not replace the separate Safari web app with the native app bundle.
 - [ ] On an authorized physical iPhone/iPad and Mac, verify a named recipe, find-and-show recipe, a current-week day, tomorrow crossing a week, and an empty day. Verify default-browser selection, unlock behavior, Tailscale reachability, and actual content loading. Use existing data for reads; do not create a real meal merely to test.
 - [ ] Verify server-unreachable, expired/replayed code, missing/ambiguous target, and “open that” in a new invocation. If the custom foreground handoff is not accepted on-device, do not claim success; investigate the foreground continuation API before changing the approved product behavior.
-- [ ] Record what was actually tested, any remaining device limitation, and the precise release state. Completion requires the requested recipe/day content to load visibly in the browser, not merely the dashboard or an empty HTML shell.
+- [x] Record what was actually tested, any remaining device limitation, and the precise release state. Completion requires the requested recipe/day content to load visibly in the browser, not merely the dashboard or an empty HTML shell.
 
 ## Review and execution choice
 
@@ -172,3 +172,27 @@ candidate before activation.
 - Review corrections cover cancellation, trusted HTTPS proxy origin, complete day
   content, touch browsing, and visible meal-first landing. Physical Siri invocation
   and unlock/default-browser behavior remain separate device checks.
+
+## Actual release state
+
+- Code commit: `e5299e93d15f0e47e7cc005b40fee0a2e2319c4a`, branch
+  `codex/siri-web-navigation`. All task commits were consolidated into this
+  reviewed release; the primary checkout's existing work remains untouched.
+- API staged and activated through the existing deployer under
+  `~/Library/Application Support/KitchenOS API/rollouts/siri-web-navigation`.
+  The active HTTPS health response reports this exact commit; remote unauthenticated
+  recipe access remains 401. The previous API and a SQLite backup are retained.
+- Signed Mac app installed and running at `~/Applications/KitchenOS Native.app`.
+  The previous native bundle is backed up; the separate Safari app is preserved.
+- Signed iPad app installed on the paired iPad Air. First launch is blocked by
+  iPadOS's signing/trust gate. Signature verification, current profile validity,
+  matching app/team identity, registered-device inclusion, and enabled Developer
+  Mode all pass. Developer-profile trust must be checked on the iPad itself.
+- Live HTTPS browser acceptance loaded an existing recipe and tomorrow's day at
+  phone size, verified Secure/HttpOnly/Strict cookie, code replay denial, write
+  denial, and zero domain-mutation requests. Tomorrow's real plan is empty and
+  correctly displays that state. No recipes or meals were created for testing.
+- Physical spoken Siri, unlock behavior, and actual default-browser continuation
+  remain unverified. Next device action: trust the developer under Settings →
+  General → VPN & Device Management, open KitchenOS, then say “Siri, ask KitchenOS”
+  and request “Show tomorrow's meal plan.”
