@@ -14,6 +14,7 @@ def client():
 
 @pytest.fixture(autouse=True)
 def _stub_index(monkeypatch):
+    monkeypatch.delenv("KITCHENOS_AUTH_MODE", raising=False)
     # /api/recipes must not touch the filesystem during auth tests.
     monkeypatch.setattr(
         api_server, "get_recipe_index",
@@ -564,3 +565,33 @@ def test_direct_custom_http_handoff_survives_gateway_origin_configuration(client
     assert response.status_code == 200
     assert 'Secure;' not in response.headers['Set-Cookie']
     assert client.get('/api/recipes', base_url='http://custom-kitchen.test:5001', **REMOTE).status_code == 200
+
+
+@pytest.mark.parametrize("cookie", [None, "expired-session"])
+def test_open_mode_loads_recipe_data_without_browser_credentials(client, viewing_setup, monkeypatch, cookie):
+    monkeypatch.setenv("KITCHENOS_AUTH_MODE", "open")
+    if cookie is not None:
+        client.set_cookie("kitchenos_view", cookie)
+    response = client.get("/api/recipes/Rice%20%26%20Beans", **REMOTE)
+    assert response.status_code == 200
+    assert "Simmer beans" in response.text
+
+
+def test_open_mode_old_cookie_does_not_lock_page_or_writes(client, viewing_setup, monkeypatch):
+    import json, re
+    monkeypatch.setenv("KITCHENOS_AUTH_MODE", "open")
+    client.set_cookie("kitchenos_view", "expired-session")
+    page = client.get("/recipe/Rice%20%26%20Beans", **REMOTE)
+    config = json.loads(re.search(r'id="browser-view-config">(.*?)</script>', page.text).group(1))
+    assert config == {"state": "active", "readOnly": False, "expires_at": None}
+    # Real handler validation should be reached, without mutating recipe data.
+    response = client.post("/api/browser-handoffs", json={}, **REMOTE)
+    assert response.status_code == 400
+    assert response.json["error"] == "Invalid destination"
+    assert client.get("/health", **REMOTE).status_code == 200
+
+
+@pytest.mark.parametrize("mode", ["required", "typo"])
+def test_only_explicit_open_mode_disables_auth(client, viewing_setup, monkeypatch, mode):
+    monkeypatch.setenv("KITCHENOS_AUTH_MODE", mode)
+    assert client.get("/api/recipes", **REMOTE).status_code == 401

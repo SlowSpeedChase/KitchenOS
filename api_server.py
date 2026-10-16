@@ -105,6 +105,11 @@ _VIEW_PAGE_ENDPOINTS = frozenset({"recipe_detail_page", "meal_planner"})
 _VIEW_BOOTSTRAP_ENDPOINTS = frozenset({"browser_open_page", "static"})
 
 
+def _open_access():
+    """Explicit owner opt-out of token and browser-session gates."""
+    return os.environ.get("KITCHENOS_AUTH_MODE") == "open"
+
+
 def _valid_explicit_bearer():
     """One bearer rule shared by the existing decorator and viewing guard."""
     token = os.environ.get("KITCHENOS_API_TOKEN")
@@ -144,7 +149,7 @@ def _token_fingerprint():
 @app.before_request
 def restrict_browser_view():
     """Apply the marker before loopback exemptions or legacy ungated handlers."""
-    if "kitchenos_view" not in request.cookies or _valid_explicit_bearer():
+    if _open_access() or "kitchenos_view" not in request.cookies or _valid_explicit_bearer():
         return None
     g.browser_view_marked = True
     g.browser_view_grant = browser_handoff_store.authorize(
@@ -178,6 +183,8 @@ def require_token(view):
     """Gate remote API callers; a marked browser is governed by the global guard."""
     @functools.wraps(view)
     def wrapper(*args, **kwargs):
+        if _open_access():
+            return view(*args, **kwargs)
         if getattr(g, "browser_view_grant", None) and request.endpoint in _VIEW_DATA_ENDPOINTS:
             return view(*args, **kwargs)
         if _valid_explicit_bearer():

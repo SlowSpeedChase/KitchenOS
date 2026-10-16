@@ -22,6 +22,8 @@ and operator health calls remain `http://localhost:5001`.
 DNS, TLS, Caddy, VPN On Demand, and recovery are documented in the shared
 [home gateway runbook](https://github.com/SlowSpeedChase/dotfiles/blob/main/docs/home-web-gateway.md).
 
+**Direct browser access**: Set `KITCHENOS_AUTH_MODE=open` in the active server environment and restart the API to allow ordinary links and browser actions without credentials. This bypasses both bearer-token checks and Siri viewing-cookie restrictions, including expired cookies. Anyone who can reach the server can read and change KitchenOS. Keep the existing API token for native clients; omit this setting or use `required` to restore the existing token/session behavior.
+
 **Auth**: when `KITCHENOS_API_TOKEN` is set, remote callers of the
 routes marked **🔒** must send `Authorization: Bearer <token>`. Existing
 loopback exemptions still apply except to a browser carrying `kitchenos_view`.

@@ -517,7 +517,7 @@ checkout. The deployer uses `git archive`; dirty and untracked files are exclude
 
 Prepare a private external environment file (mode `0600`) without printing it.
 Preserve the existing API token and all unrelated credentials/settings. It must set
-`KITCHENOS_API_TOKEN` to a nonempty value, and explicit absolute paths for
+`KITCHENOS_API_TOKEN` to a nonempty value (retain it for native clients), and explicit absolute paths for
 `KITCHENOS_DB`, `KITCHENOS_VAULT`, `KITCHENOS_STORAGE_TABLE`, and
 `KITCHENOS_ITEM_ALIASES` to the existing data.
 These paths must exist outside the release runtime. Preserve the current storage
@@ -548,7 +548,7 @@ Activation checks the release's private configuration, backs up the installed
 `com.kitchenos.api` plist and its load state, then stops only that job and installs
 the release-specific named `KitchenOS · API` shim. It requires `/health` to return
 HTTP 200 with the exact `X-KitchenOS-Release` SHA and a forwarded remote
-`GET /api/recipes` to return HTTP 401 without sending a token. A stale process,
+`GET /api/recipes` to return HTTP 401 without sending a token. When the owner explicitly sets `KITCHENOS_AUTH_MODE=open` in the private environment, the probe instead requires HTTP 200: ordinary browsers may read and change KitchenOS without a token or Siri session, including browsers carrying expired viewing cookies. Keep network reachability limited to the intended users. Restart the API after changing this setting. A stale process,
 missing token, or partial bootstrap fails acceptance and restores the previous
 plist/load state. After each stop, the deployer waits for launchd to report the job
 fully removed before loading either the reviewed or rollback plist. The journal and

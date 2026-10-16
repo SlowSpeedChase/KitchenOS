@@ -109,6 +109,7 @@ for key in ('KITCHENOS_DB', 'KITCHENOS_VAULT', 'KITCHENOS_STORAGE_TABLE', 'KITCH
     value = v.get(key, '')
     valid = valid and bool(value) and Path(value).is_absolute() and Path(value).exists()
     valid = valid and not Path(value).resolve().is_relative_to(Path(sys.argv[2]).resolve())
+print("open" if v.get("KITCHENOS_AUTH_MODE") == "open" else "required")
 sys.exit(0 if valid else 1)
 '''
 
@@ -132,8 +133,9 @@ def wait_for_unload(uid, label, runner, sleeper=time.sleep):
     raise RuntimeError('service did not unload before timeout')
 
 
-def probe(sha, runner):
-    for path, status in (('/health', '200'), ('/api/recipes', '401')):
+def probe(sha, runner, open_access=False):
+    api_status = "200" if open_access else "401"
+    for path, status in (('/health', '200'), ('/api/recipes', api_status)):
         # Header capture proves this process is the reviewed release, not another
         # process that kept port 5001 open. Auth probe uses no secret.
         args = ['curl', '-q', '--silent', '--show-error', '--noproxy', '*', '--include',
@@ -146,7 +148,7 @@ def probe(sha, runner):
             raise RuntimeError('release acceptance probe failed')
         if path == '/health' and f'x-kitchenos-release: {sha}' not in payload.lower():
             raise RuntimeError('running API does not identify the reviewed release')
-        if path == '/api/recipes' and 'Unauthorized' not in payload:
+        if path == '/api/recipes' and not open_access and 'Unauthorized' not in payload:
             raise RuntimeError('API authentication probe failed')
 
 
@@ -160,7 +162,7 @@ def activate(root, release, agents, uid, runner=run, sleeper=time.sleep):
     state_file = root / 'activation-state.json'
     if state_file.exists() and json.loads(state_file.read_text())['status'] != 'rolled-back':
         raise RuntimeError('roll back existing activation before another deployment')
-    checked(runner, [release / '.venv/bin/python', '-c', CONFIG_CHECK, release / '.env', root])
+    auth_mode = checked(runner, [release / '.venv/bin/python', '-c', CONFIG_CHECK, release / '.env', root]).strip()
     checked(runner, ['plutil', '-lint', release / 'api.plist'])
     destination = agents / (LABEL + '.plist')
     if not destination.is_file() or destination.is_symlink():
@@ -177,7 +179,7 @@ def activate(root, release, agents, uid, runner=run, sleeper=time.sleep):
             wait_for_unload(uid, LABEL, runner, sleeper)
         atomic(destination, (release / 'api.plist').read_bytes())
         checked(runner, ['launchctl', 'bootstrap', f'gui/{uid}', destination])
-        probe(sha, runner)
+        probe(sha, runner, open_access=auth_mode == "open")
         state['status'] = 'active'
         save(root, state)
     except Exception:
