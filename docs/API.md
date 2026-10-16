@@ -24,8 +24,9 @@ DNS, TLS, Caddy, VPN On Demand, and recovery are documented in the shared
 
 **Auth**: when `KITCHENOS_API_TOKEN` is set, remote (non-localhost) callers of
 the token-gated routes below must send `Authorization: Bearer <token>`.
-Localhost (the Mac app, local browser UI, MCP server, LaunchAgents) is always
-exempt. Gated routes are marked **🔒** in the table.
+Direct localhost callers (the Mac app, local browser UI, MCP server, LaunchAgents)
+are exempt. A remote browser forwarded through the loopback gateway is still a
+remote caller. Gated routes are marked **🔒** in the table.
 
 Two things this does **not** currently amount to, both worth knowing before you
 rely on it:
@@ -39,7 +40,13 @@ rely on it:
   bare, so the moment `KITCHENOS_API_TOKEN` is set, every gated route 401s for a
   remote browser and the planner, freezer and board stop working from any
   machine but this one. `KitchenOSKit` does send it, so the native app is fine.
-  The token is currently unset, which is the only reason this isn't biting.
+  Reviewed gateway deployments require a token, so remote browser access needs
+  a browser authentication flow before these API-backed views can work. The
+  recipe page distinguishes access failures from missing recipes and renders its
+  **Open in Obsidian** link on the server, before fetching recipe details. That
+  link uses the configured vault name and recipe filename, works even when the
+  API request fails, and does not carry the API token. Failed loads hide the
+  empty recipe panels and disable **Add to this week**.
 
 ## 1. HTTP endpoints
 
