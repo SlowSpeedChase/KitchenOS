@@ -29,6 +29,28 @@ from typing import Callable, Optional, TypeVar
 T = TypeVar("T")
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS planning_calendar_barrier (
+ id INTEGER PRIMARY KEY CHECK(id=1), cleared_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS cook_schedule (
+ cook_id INTEGER PRIMARY KEY REFERENCES cooks(id) ON DELETE CASCADE,
+ start TEXT NOT NULL, timezone TEXT NOT NULL,
+ duration_minutes INTEGER NOT NULL CHECK(duration_minutes BETWEEN 15 AND 360)
+);
+CREATE TABLE IF NOT EXISTS planning_calendar_snapshot (
+ id INTEGER PRIMARY KEY CHECK(id=1), payload_json TEXT NOT NULL,
+ received_at TEXT NOT NULL, revision TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS planning_calendar_choices (
+ selection_id TEXT NOT NULL, occurrence_id TEXT NOT NULL,
+ occurrence_end TEXT NOT NULL, choice TEXT NOT NULL CHECK(choice IN ('blocking','background')),
+ PRIMARY KEY(selection_id, occurrence_id)
+);
+CREATE TABLE IF NOT EXISTS cooking_availability (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    days_json TEXT NOT NULL,
+    synced_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS trips (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     date TEXT NOT NULL,

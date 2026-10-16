@@ -281,6 +281,9 @@ def update_cook(cook_id: int, **fields) -> dict:
                     raise OverplacementError(
                         f"cook {cook_id}: {placed} servings already placed;"
                         f" cannot shrink to {new_cap}")
+            current = conn.execute("SELECT date, meal FROM cooks WHERE id=?", (cook_id,)).fetchone()
+            if current and any(k in fields and fields[k] != current[k] for k in ("date", "meal")):
+                conn.execute("DELETE FROM cook_schedule WHERE cook_id=?", (cook_id,))
             sets = ", ".join(f"{k} = ?" for k in fields)
             conn.execute(f"UPDATE cooks SET {sets} WHERE id = ?",
                          (*fields.values(), cook_id))
@@ -428,6 +431,7 @@ def _move_cook_in_txn(conn, cook_id: int, date: str, meal: str) -> None:
     old_date, old_meal = row["date"], row["meal"]
     if (old_date, old_meal) == (date, meal):
         return
+    conn.execute("DELETE FROM cook_schedule WHERE cook_id=?", (cook_id,))
     conn.execute("UPDATE cooks SET date = ?, meal = ? WHERE id = ?",
                  (date, meal, cook_id))
     # `IS` rather than `=` so a NULL old anchor matches nothing instead of
@@ -731,6 +735,52 @@ def placements_for_week(week: str) -> list[dict]:
         conn.close()
 
 
+def planned_meals_for_week(week: str) -> list[dict]:
+    """Read planned preparation plus every serving placed in this week's slots.
+
+    A cook anchor remains visible without a serving allocation (count zero).
+    Its matching slot placement contributes count to that same row; other slot
+    placements are leftovers, including those from cooks owned by another week.
+    Canonical recipe/member identity is retained for each distinct cook/slot.
+    """
+    from datetime import timedelta
+
+    year, week_num = int(week[:4]), int(week.split("-W")[1])
+    start = _date.fromisocalendar(year, week_num, 1)
+    first, after = start.isoformat(), (start + timedelta(days=7)).isoformat()
+    cooks = {cook["id"]: cook for cook in cooks_for_week(week) if cook is not None}
+    rows = {}
+
+    def entry(cook, date, meal, anchor):
+        return {"date": date, "meal": meal, "recipe": cook["recipe"],
+                "cook_id": cook["id"], "bundle_id": cook.get("bundle_id"),
+                "bundle_name": cook.get("bundle_name"), "anchor": anchor,
+                "count": 0.0}
+
+    for cook in cooks.values():
+        if (cook.get("date") and first <= cook["date"] < after
+                and cook.get("meal") in MEALS):
+            key = (cook["id"], cook["date"], cook["meal"])
+            rows[key] = entry(cook, cook["date"], cook["meal"], True)
+
+    for placement in placements_for_week(week):
+        cook_id = placement["cook_id"]
+        if cook_id not in cooks:
+            cooks[cook_id] = get_cook(cook_id)
+        cook = cooks[cook_id]
+        if cook is None:  # A concurrent deletion may win between these reads.
+            continue
+        date, meal = placement["date"], placement["meal"]
+        key = (cook_id, date, meal)
+        if key not in rows:
+            anchor = cook.get("date") == date and cook.get("meal") == meal
+            rows[key] = entry(cook, date, meal, anchor)
+        rows[key]["count"] += float(placement["count"])
+
+    return sorted(rows.values(), key=lambda row: (
+        row["date"], MEALS.index(row["meal"]), row["cook_id"]))
+
+
 COVERAGE_REVIEW_THRESHOLD = 0.8
 
 
@@ -834,6 +884,63 @@ def week_board(week: str, recipes_dir) -> dict:
     return {
         "week": week,
         "cooks": cooks_for_week(week),
+        "planned_meals": planned_meals_for_week(week),
         "freezer": freezer_contents(),
         "day_totals": day_totals(week, recipes_dir),
     }
+
+
+def schedules_for_week(week: str) -> list[dict]:
+    conn = inventory_db.connect()
+    try:
+        return [dict(r) for r in conn.execute(
+            'SELECT s.*, c.recipe, c.date, c.meal FROM cook_schedule s JOIN cooks c ON c.id=s.cook_id WHERE c.week=?', (week,))]
+    finally:
+        conn.close()
+
+
+def schedule_cook(cook_id: int, *, date: str, meal: str, start: str,
+                  timezone: str, duration_minutes: int, servings_to_eat: float) -> dict:
+    """Reserve preparation time and first serving atomically; retries never eat twice."""
+    import math
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    from lib.cooking_windows import valid_duration
+    from lib.planning_calendar import timestamp, iso_date
+    _validate_placement('slot', date, meal)
+    valid_duration(duration_minutes)
+    if type(servings_to_eat) not in (int, float) or not math.isfinite(servings_to_eat) or servings_to_eat <= 0:
+        raise ValueError('Servings must be a finite positive number')
+    try:
+        zone = ZoneInfo(timezone)
+    except (ValueError, TypeError, ZoneInfoNotFoundError):
+        raise ValueError('Choose a valid timezone') from None
+    instant = timestamp(start)
+    local = instant.astimezone(zone)
+    if instant.utcoffset() != local.utcoffset() or local.date() != iso_date(date):
+        raise ValueError('Cooking time must match the date and timezone')
+    if local.minute % 15 or local.second or local.microsecond:
+        raise ValueError('Choose a start in 15-minute steps')
+    end = local + timedelta(minutes=duration_minutes)
+    midnight = datetime.combine(local.date()+timedelta(days=1), datetime.min.time(), zone)
+    if end > midnight:
+        raise ValueError('Cooking must finish by midnight')
+    conn = inventory_db.connect()
+    try:
+        with _write_txn(conn):
+            row = conn.execute('SELECT * FROM cooks WHERE id=?', (cook_id,)).fetchone()
+            if row is None:
+                raise ValueError('Cook not found')
+            if row['bundle_id'] or row['cooked_at']:
+                raise ValueError('Choose an uncooked single recipe')
+            unscheduled = row['date'] is None or row['meal'] is None
+            _move_cook_in_txn(conn, cook_id, date, meal)
+            if unscheduled:
+                _check_capacity(conn, cook_id, float(servings_to_eat))
+                _merge_or_insert(conn, cook_id, 'slot', date, meal, float(servings_to_eat))
+            conn.execute('INSERT INTO cook_schedule(cook_id,start,timezone,duration_minutes) VALUES (?,?,?,?) '
+                         'ON CONFLICT(cook_id) DO UPDATE SET start=excluded.start,timezone=excluded.timezone,duration_minutes=excluded.duration_minutes',
+                         (cook_id,local.isoformat(),timezone,duration_minutes))
+    finally:
+        conn.close()
+    return {'cook':get_cook(cook_id), 'schedule':dict(cook_id=cook_id,start=local.isoformat(),timezone=timezone,duration_minutes=duration_minutes)}

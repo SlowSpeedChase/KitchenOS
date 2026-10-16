@@ -11,6 +11,7 @@ struct KitchenOSSiriApp: App {
             #if os(macOS)
             // Mac: the native sidebar app with the full feature surface.
             AppShell()
+                .task { await CookingCalendarSync.shared.run() }
             #else
             // iOS/iPadOS: the Siri/AI companion tabs.
             TabView {

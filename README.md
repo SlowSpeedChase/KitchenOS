@@ -192,6 +192,7 @@ when off the local network — and adds:
 
 - **Siri / App Intents** (`AppShortcutsProvider`) for finding recipes,
   checking the meal plan, getting nutrition info, and more, hands-free
+- **Open exact web pages with Siri** through Ask KitchenOS: “Show the recipe for Rice & Beans” or “Open Friday’s meal plan.” The default browser opens the saved recipe or the selected day’s meals with 15 minutes of viewing access. The native app supplies Siri integration; the destination is the web app. Rebuild/install the native app and update the API together.
 - **On-device AI** via Apple Foundation Models for an in-app chat assistant
   and recipe summarization, independent of Ollama/Claude
 - **CoreSpotlight search** so recipes are findable system-wide by meaning,

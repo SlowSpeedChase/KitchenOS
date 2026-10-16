@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Simple API server for iOS Shortcuts integration."""
 
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, g, has_request_context
 from markupsafe import escape
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from youtube_transcript_api import YouTubeTranscriptApi
 from googleapiclient.discovery import build
 import functools
 import ipaddress
+import hashlib
+import hmac
+import json
 import math
 import os
 import re
@@ -57,6 +60,8 @@ from lib.ingredient_cleaner import clean_ingredient_list
 from lib.seasonality import match_ingredients_to_seasonal, get_peak_months
 from lib.nutrition_engine import calculate_recipe_nutrition
 from lib import cook_sweep, meal_loader, pantry as pantry_module, paths, task_extractor
+from lib.browser_handoff import BrowserHandoffStore, CapacityExceeded, COOKIE_TTL
+from lib.web_origin import web_origin
 from lib.safe_paths import contained_markdown, parse_iso_week, shopping_list_path
 from lib.serving_ledger import MEALS as SLOT_VOCAB
 from recipe_sources import parse_recipe_from_text
@@ -90,24 +95,179 @@ def _local_client():
     return forwarded is None or _loopback(forwarded.rsplit(",", 1)[-1].strip())
 
 
-def require_token(view):
-    """Require a bearer token for non-localhost callers when KITCHENOS_API_TOKEN is set.
+browser_handoff_store = BrowserHandoffStore()
+_VIEW_DATA_ENDPOINTS = frozenset({
+    "api_recipe_detail", "api_recipes", "api_meal_plan_get", "api_week_board",
+    "api_meals_list", "api_macro_targets", "api_use_it_up",
+    "get_cooking_availability", "get_planning_calendar",
+})
+_VIEW_PAGE_ENDPOINTS = frozenset({"recipe_detail_page", "meal_planner"})
+_VIEW_BOOTSTRAP_ENDPOINTS = frozenset({"browser_open_page", "static"})
 
-    No-op when the env var is unset. Direct localhost (Mac app, local browser UI) is
-    exempt; Caddy-forwarded remote clients retain authentication and must send
-    Authorization: Bearer <token>.
+
+def _valid_explicit_bearer():
+    """One bearer rule shared by the existing decorator and viewing guard."""
+    token = os.environ.get("KITCHENOS_API_TOKEN")
+    supplied = request.headers.get("Authorization", "")
+    return bool(token and hmac.compare_digest(supplied.encode(), f"Bearer {token}".encode()))
+
+
+def _browser_origin():
+    """Recover HTTPS only through the existing, narrowly trusted local gateway.
+
+    Caddy preserves Host and supplies one external host/scheme pair. Require
+    both hosts and the scheme to exactly match the validated configured origin;
+    arbitrary LAN callers and forwarded header chains cannot assert HTTPS.
+    Direct HTTP(S) origins keep their existing behavior. This does not change
+    the separate nearest-hop client authorization rule in _local_client().
     """
+    direct_origin = request.host_url.rstrip('/')
+    if not _loopback(request.remote_addr or ""):
+        return direct_origin
+    try:
+        configured = web_origin()
+    except ValueError:
+        return direct_origin
+    origin = urlsplit(configured)
+    if (origin.scheme == 'https'
+            and request.headers.get('X-Forwarded-Proto') == 'https'
+            and request.headers.get('X-Forwarded-Host') == origin.netloc
+            and request.host == origin.netloc):
+        return configured
+    return direct_origin
+
+
+def _token_fingerprint():
+    return hashlib.sha256(os.environ.get("KITCHENOS_API_TOKEN", "").encode()).hexdigest()
+
+
+@app.before_request
+def restrict_browser_view():
+    """Apply the marker before loopback exemptions or legacy ungated handlers."""
+    if "kitchenos_view" not in request.cookies or _valid_explicit_bearer():
+        return None
+    g.browser_view_marked = True
+    g.browser_view_grant = browser_handoff_store.authorize(
+        request.cookies.get("kitchenos_view"), _browser_origin(), _token_fingerprint())
+    if request.endpoint == "exchange_browser_handoff":
+        return None  # Its one-use code and same-origin checks authorize renewal.
+    safe = request.method in ("GET", "HEAD")
+    if safe and request.endpoint in (_VIEW_BOOTSTRAP_ENDPOINTS | _VIEW_PAGE_ENDPOINTS):
+        return None
+    if g.browser_view_grant is None:
+        return jsonify(error="browser_session_expired"), 401
+    if safe and request.endpoint in (_VIEW_DATA_ENDPOINTS | {"serve_recipe_image"}):
+        return None
+    return jsonify(error="read_only_browser_session"), 403
+
+
+@app.after_request
+def protect_browser_response(response):
+    if (getattr(g, "browser_view_marked", False) or _valid_explicit_bearer()
+            or request.endpoint in (_VIEW_DATA_ENDPOINTS | _VIEW_PAGE_ENDPOINTS
+                | {"browser_open_page", "create_browser_handoff", "exchange_browser_handoff", "serve_recipe_image"})):
+        response.headers['Cache-Control'] = 'no-store'
+        response.vary.add('Cookie')
+        response.vary.add('Authorization')
+    if request.endpoint == 'browser_open_page':
+        response.headers['Referrer-Policy'] = 'no-referrer'
+    return response
+
+
+def require_token(view):
+    """Gate remote API callers; a marked browser is governed by the global guard."""
     @functools.wraps(view)
     def wrapper(*args, **kwargs):
-        token = os.environ.get("KITCHENOS_API_TOKEN")
-        if not token:
+        if getattr(g, "browser_view_grant", None) and request.endpoint in _VIEW_DATA_ENDPOINTS:
             return view(*args, **kwargs)
-        if _local_client():
+        if _valid_explicit_bearer():
             return view(*args, **kwargs)
-        if request.headers.get("Authorization", "") == f"Bearer {token}":
+        if not os.environ.get("KITCHENOS_API_TOKEN") or _local_client():
             return view(*args, **kwargs)
         return jsonify({"error": "Unauthorized"}), 401
     return wrapper
+
+
+def _browser_view_config():
+    grant = getattr(g, "browser_view_grant", None)
+    marked = getattr(g, "browser_view_marked", False)
+    return {"state": "expired" if marked and grant is None else "active",
+            "readOnly": marked, "expires_at": grant.expires_at if grant else None}
+
+
+def _inject_browser_view_config(html):
+    config = json.dumps(_browser_view_config()).replace('<', '\\u003c')
+    return html.replace('</head>', '<script type="application/json" id="browser-view-config">'
+                        + config + '</script>\n</head>', 1)
+
+
+def _handoff_destination(data):
+    if not isinstance(data, dict):
+        raise ValueError('Invalid destination')
+    if data.get('kind') == 'recipe' and set(data) == {'kind', 'name'}:
+        name = data['name']
+        if (not isinstance(name, str) or not name.strip() or name in ('.', '..')
+                or any(c in name for c in '/\\\x00') or any(ord(c) < 32 for c in name)):
+            raise ValueError('Invalid recipe name')
+        path = contained_markdown(_resolve_recipes_dir(), name + '.md')
+        if not path.is_file():
+            raise FileNotFoundError('Recipe not found')
+        return '/recipe/' + quote(name, safe='')
+    if data.get('kind') == 'meal_plan' and set(data) == {'kind', 'date'}:
+        value = data['date']
+        if not isinstance(value, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', value):
+            raise ValueError('Invalid date')
+        day = date.fromisoformat(value)
+        iso = day.isocalendar()
+        return f'/meal-planner?week={iso.year:04d}-W{iso.week:02d}&date={value}&view=calendar'
+    raise ValueError('Invalid destination')
+
+
+@app.route('/api/browser-handoffs', methods=['POST'])
+@require_token
+def create_browser_handoff():
+    try:
+        destination = _handoff_destination(request.get_json(silent=True))
+        issued = browser_handoff_store.issue(destination, _browser_origin(), _token_fingerprint())
+    except ValueError:
+        return jsonify(error='Invalid destination'), 400
+    except FileNotFoundError:
+        return jsonify(error='Recipe not found'), 404
+    except CapacityExceeded:
+        return jsonify(error='Browser handoff capacity reached'), 429
+    return jsonify(handoff_path='/browser/open#code=' + issued.code, expires_at=issued.expires_at)
+
+
+@app.route('/api/browser-handoffs/exchange', methods=['POST'])
+def exchange_browser_handoff():
+    if (request.headers.get('Origin') != _browser_origin() or not request.is_json
+            or request.headers.get('Sec-Fetch-Site') not in (None, 'same-origin')):
+        return jsonify(error='Same-origin JSON request required'), 403
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or set(data) != {'code'}:
+        return jsonify(error='Invalid browser handoff'), 401
+    try:
+        grant = browser_handoff_store.exchange(data['code'], _browser_origin(), _token_fingerprint())
+    except CapacityExceeded:
+        return jsonify(error='Browser handoff capacity reached'), 429
+    if grant is None:
+        return jsonify(error='Invalid browser handoff'), 401
+    response = jsonify(redirect_path=grant.redirect_path, expires_at=grant.expires_at)
+    response.set_cookie('kitchenos_view', grant.session_id, max_age=COOKIE_TTL,
+                        httponly=True, samesite='Strict', secure=_browser_origin().startswith('https://'), path='/')
+    return response
+
+
+@app.route('/browser/open', methods=['GET'])
+def browser_open_page():
+    # No shared chrome or third-party resources on the fragment-bearing page.
+    return Path(app.root_path, 'templates', 'browser_open.html').read_text(), 200, {'Content-Type': 'text/html'}
+
+
+from lib.cooking_availability import register_routes as register_calendar_routes
+register_calendar_routes(app, require_token)
+from lib.planning_calendar import register_routes as register_planning_calendar_routes
+register_planning_calendar_routes(app, require_token)
 
 
 _recipe_cache = {"data": None, "timestamp": 0}
@@ -277,12 +437,16 @@ def _serve_page(
         html = html.replace(old, new)
     if template_filename != 'home.html' and 'href="/"' not in html:
         html = _inject_after_body(html, _home_link_html())
+    if template_filename in ('recipe_detail.html', 'meal_planner.html') and has_request_context():
+        html = _inject_browser_view_config(html)
+        if _browser_view_config()['state'] == 'expired':
+            return html
     return _inject_after_body(html, _stale_banner_html())
 
 
 def success_page(message: str, filename: str) -> str:
     """Generate simple HTML success page."""
-    from urllib.parse import quote
+    from urllib.parse import quote, urlsplit
     encoded_filename = quote(filename, safe='')
     return _html_page("KitchenOS", f'''
 <div class="card ok"><strong>Success</strong><br>{message}</div>
@@ -722,6 +886,7 @@ def _annotate_stock(ingredients: list[dict]) -> list[dict]:
 @require_token
 def api_recipe_detail(name):
     """Return full recipe details as JSON."""
+    from lib.cooking_windows import recipe_duration
     recipes_dir = _resolve_recipes_dir()
     filepath = (recipes_dir / f"{name}.md").resolve()
     if not filepath.is_relative_to(recipes_dir.resolve()):
@@ -760,6 +925,7 @@ def api_recipe_detail(name):
             "dish_type": fm.get('dish_type'),
             "difficulty": fm.get('difficulty'),
             "servings": fm.get('servings'),
+            "cooking_duration": recipe_duration(fm),
             "prep_time": fm.get('prep_time'),
             "cook_time": fm.get('cook_time'),
             "total_time": fm.get('total_time'),
@@ -789,6 +955,8 @@ def api_recipe_detail(name):
 @app.route('/recipe/<name>', methods=['GET'])
 def recipe_detail_page(name):
     """Serve the interactive recipe detail page with live ingredient scaling."""
+    if _browser_view_config()["state"] == "expired":
+        return _serve_page('recipe_detail.html'), 200, {'Content-Type': 'text/html'}
     recipes_dir = _resolve_recipes_dir()
     filepath = (recipes_dir / f"{name}.md").resolve()
     if not filepath.is_relative_to(recipes_dir.resolve()) or not filepath.exists():
@@ -877,6 +1045,8 @@ def recipe_card_page(name):
     from lib import recipe_grid, serving_ledger
     from lib.recipe_parser import parse_recipe_file, parse_recipe_body
 
+    if _browser_view_config()["state"] == "expired":
+        return _serve_page('recipe_detail.html'), 200, {'Content-Type': 'text/html'}
     recipes_dir = _resolve_recipes_dir()
     filepath = (recipes_dir / f"{name}.md").resolve()
     if not filepath.is_relative_to(recipes_dir.resolve()) or not filepath.exists():
@@ -1333,10 +1503,30 @@ def api_meal_plan_get(week):
         # 06:00 agent), which is where `regenerate_index` now happens too.
         content = generate_meal_plan_markdown(year, week_num)
 
-    parsed = parse_meal_plan(content, year, week_num)
+    parsed = parse_meal_plan(content, year, week_num, all_entries=True)
 
     days = []
+    planned_meals = []
     macro_cache: dict = {}
+
+    def serialize_entry(entry):
+        # One serializer keeps the legacy day fields and complete viewing list
+        # consistent, including a plate's canonical member identities.
+        slot_json = {"name": entry.name, "servings": entry.servings, "kind": entry.kind}
+        if entry.kind == "meal":
+            meal_def = meal_loader.load_meal(entry.name)
+            if meal_def is not None:
+                slot_json["sub_recipes"] = [
+                    {"recipe": sub.recipe, "servings": sub.servings}
+                    for sub in meal_def.sub_recipes
+                ]
+                # The planner loads its meal index concurrently, so include
+                # the plate metadata here. Nutrition remains per 1x bundle.
+                slot_json["slot"] = meal_def.slot
+                slot_json["nutrition"] = meal_nutrition(
+                    meal_def, OBSIDIAN_RECIPES_PATH, macro_cache=macro_cache)
+        return slot_json
+
     for day_data in parsed:
         day_json = {
             "day": day_data["day"],
@@ -1344,29 +1534,14 @@ def api_meal_plan_get(week):
             "breakfast": None, "lunch": None, "snack": None, "dinner": None,
         }
         for meal in ("breakfast", "lunch", "snack", "dinner"):
-            entry = day_data[meal]
-            if entry is not None:
-                # servings is a float (fractional multipliers, e.g. 1.5); JSON numbers are JS-native
-                slot_json = {"name": entry.name, "servings": entry.servings, "kind": entry.kind}
-                if entry.kind == "meal":
-                    meal_def = meal_loader.load_meal(entry.name)
-                    if meal_def is not None:
-                        slot_json["sub_recipes"] = [
-                            {"recipe": s.recipe, "servings": s.servings}
-                            for s in meal_def.sub_recipes
-                        ]
-                        # Shipped here, not left to the client's /api/meals fetch:
-                        # the planner loads meals and the plan concurrently, so a
-                        # card built from the plan can't count on the meal index
-                        # being populated yet. `nutrition` is per 1x the bundle —
-                        # the card scales it by its own servings multiplier.
-                        slot_json["slot"] = meal_def.slot
-                        slot_json["nutrition"] = meal_nutrition(
-                            meal_def, OBSIDIAN_RECIPES_PATH, macro_cache=macro_cache)
-                day_json[meal] = slot_json
+            for entry in day_data[meal]:
+                slot_json = serialize_entry(entry)
+                if day_json[meal] is None:
+                    day_json[meal] = slot_json
+                planned_meals.append({"date": day_json["date"], "meal": meal, **slot_json})
         days.append(day_json)
 
-    return jsonify({"week": week, "days": days})
+    return jsonify({"week": week, "days": days, "planned_meals": planned_meals})
 
 
 @app.route('/api/meal-plan/<week>', methods=['PUT'])
@@ -1822,6 +1997,21 @@ def api_bundle_delete(bundle_id):
     return jsonify({"status": "deleted", "cooks": len(removed)})
 
 
+@app.post('/api/cooks/<int:cook_id>/schedule')
+@require_token
+@_ledger_error
+def api_cook_schedule(cook_id):
+    from lib import serving_ledger
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or set(data) != {'date','meal','start','timezone','duration_minutes','servings_to_eat'}:
+        return jsonify(error='Choose date, meal, time, timezone, duration and servings'), 400
+    if serving_ledger.get_cook(cook_id) is None:
+        return jsonify(error='Cook not found'), 404
+    saved = serving_ledger.schedule_cook(cook_id, **data)
+    _regen_weeks(saved['cook']['week'])
+    return jsonify(saved)
+
+
 @app.route('/api/cooks/<int:cook_id>/move', methods=['POST'])
 @require_token
 @_ledger_error
@@ -2253,7 +2443,7 @@ def _render_add_form(recipe_display: str, error: str | None = None) -> str:
 
 def _success_page_for_wikilink(wikilink_target: str, day: str, meal: str, week: str) -> str:
     """Green confirmation card after a slot insert. Works for [[Recipe]] or [[Meal: X]]."""
-    from urllib.parse import quote
+    from urllib.parse import quote, urlsplit
     encoded_file = quote(f"Meal Plans/{week}", safe='')
     return _html_page("KitchenOS", f'''
 <div class="card ok"><strong>Added!</strong><br>
@@ -2265,7 +2455,7 @@ def _success_page_for_wikilink(wikilink_target: str, day: str, meal: str, week: 
 
 def _render_schedule_prompt(recipe: str, meal_name: str, action: str, info: str | None = None) -> str:
     """Screen 2 — hybrid optional schedule prompt after meal save."""
-    from urllib.parse import quote
+    from urllib.parse import quote, urlsplit
     weeks = _generate_week_options()
     days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     meals = ['Breakfast', 'Lunch', 'Snack', 'Dinner']

@@ -35,6 +35,8 @@ REQUIRED_KEYS = frozenset({
 #: Written by a specific producer for a subset of recipes. All optional by
 #: design — see docs/OPERATIONS.md and CLAUDE.md for who writes each.
 OPTIONAL_KEYS = frozenset({
+    # .agents/skills/recipe-review — ISO date string and review verdict
+    "reviewed", "review_status",
     # backfill_fit.py — inference, always flagged
     "fit_buffer_candidate", "fit_craving_lane", "fit_dairy_load", "fit_effort",
     "fit_heart", "fit_needs_review", "fit_note", "fit_source", "fit_steady",

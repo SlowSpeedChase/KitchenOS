@@ -77,7 +77,9 @@ loopback HTTP. `lib/web_origin.py` resolves every generated public URL from
 origin. When `KITCHENOS_API_TOKEN` is set,
 remote (non-localhost) callers of the Siri-facing endpoints (`/api/recipes`,
 `/api/recipes/<name>`, `/api/meal-plan/<week>`, `/api/suggest-meal`) must
-send `Authorization: Bearer <token>`; localhost is always exempt.
+send `Authorization: Bearer <token>`. Existing localhost exemptions remain,
+except that the global browser-view guard applies first when a Siri handoff
+cookie is present.
 
 The iOS default is the canonical HTTPS origin. `KitchenOSConfig.resolved`
 persists an upgrade only for the exact retired defaults
@@ -366,3 +368,65 @@ in `docs/setup/`.
   (worst coverage/confidence first), live deterministic recompute with USDA
   candidates, and human match pinning that the engine's cache honors on the
   next recompute.
+
+### Calendar cooking opportunities
+
+`CookingCalendarSync` in the native app reads two explicitly selected EventKit calendars, classifies local noon-to-midnight windows with `KitchenOSKit.CookingOpportunity`, and uploads date/status summaries. `lib/cooking_availability.py` validates and reads the singleton `cooking_availability` SQLite table, expiring snapshots after six hours. The web planner and native meal-plan/board views read these summaries asynchronously. Event details remain on-device, no LLM is involved, and no page render waits for Calendar access.
+
+### Calendar meal planning
+
+The existing `/meal-planner?view=calendar` combines local EventKit occurrences
+with ledger cooks. `CookingCalendarSync` on the server Mac publishes a minimal
+versioned snapshot in addition to compatibility daily statuses. `planning_calendar`
+validates and transactionally stores the singleton snapshot and occurrence-level
+all-day choices. `cooking_windows` derives half-open cooking windows in the source
+IANA timezone. `cook_schedule` references a cook by ID; `serving_ledger.schedule_cook`
+reserves preparation time and, only for an unanchored cook, its first serving in
+one write transaction. Recipe names and scales retain their existing meaning.
+
+`static/planning-calendar.js` owns the timeline, stale-data handling, mobile day
+navigation and scheduling form. It never invokes legacy meal-plan saves. The
+native plan screens open that same route through `PlanningCalendarWebView`;
+`PlanningWebPolicy` builds token-free URLs and confines the credential bridge to
+same-origin `/api/` fetches with redirect refusal. Its bundled JS resource is also
+executed by browser tests. Event titles are text nodes, never HTML.
+
+### Siri navigation to the web
+
+The voice-only `OpenWebDestinationTool` records a typed `WebDestination` in
+invocation-local state. `RecipeNavigationResolver` preserves canonical recipe
+identity and rejects ambiguous matches; `WebDayResolver` resolves civil dates
+in the caller's local time zone. `AskKitchenOSIntent` consumes the selection
+once and hands it to `OpenKitchenOSWebIntent`, a foreground continuation.
+The authenticated `KitchenOSClient` mints a one-use code and `WebBrowserOpener`
+launches the configured origin in the device's default browser. Model output
+never supplies a URL or credential. Native chat and Spotlight's
+`OpenRecipeIntent` retain their existing navigation.
+
+`lib/browser_handoff.py` owns bounded, locked, process-local stores containing
+only hashed identifiers. `api_server.py` validates typed destinations, builds
+canonical redirect paths, and checks marked browser requests against an exact
+endpoint/method allowlist before route-specific or loopback exemptions.
+`browser_open.html` and `browser-handoff.js` remove/exchange the fragment;
+`browser-view.js` displays the server-derived viewing state and handles expiry.
+The 24-hour restriction marker deliberately outlives the 15-minute grant.
+The handoff introduces no persistent credential or domain-data table. The
+calendar prerequisite retains its existing local planning tables. Gateway
+origin recovery is restricted to the existing loopback proxy and configured
+canonical HTTPS authority.
+
+Planner URL state carries an authoritative civil `date`, with its ISO `week`
+derived from it. Calendar and Grid preserve that selection and bring the
+actual day's meal content into view once; background refresh does not steal
+focus. Browser handoffs authorize viewing, with write controls disabled in
+addition to server enforcement. This is a narrow continuation channel, not a
+replacement for authentication of every existing web route.
+
+The focused meal list reads `serving_ledger.planned_meals_for_week` through the
+existing board response and the meal-plan API's additive all-entry projection.
+This includes cook anchors, local/cross-week leftovers, and all legacy recipe
+or plate links without importing legacy notes during navigation. Calendar
+viewing places meals before the timeline; touch Grid sheets retain read-only
+recipe and plate-member links. Existing recipe-review metadata (`reviewed`,
+`review_status`) remains declared in the optional recipe schema so validation
+accepts already-reviewed notes without rewriting the vault.
