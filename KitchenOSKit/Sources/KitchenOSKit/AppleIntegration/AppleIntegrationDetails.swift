@@ -59,11 +59,16 @@ public struct AppleConflictDetail: Decodable, Sendable, Identifiable {
         }
         return "Accepting the generated item replaces the edited text and reopens this item. Keeping it as manual preserves its text and completion under a new identity."
     }
+    public var retiredUnavailableExplanation: String? {
+        guard field == "retired_unavailable" else { return nil }
+        return "The Apple item may still exist, but its identity could not be verified. Keep Apple item separate detaches this retired KitchenOS link without changing or deleting the Apple item."
+    }
     public struct ConflictSource: Decodable, Sendable { public let title: String; public let fields: [String: AppleDetailValue] }
     public struct ConflictObservation: Decodable, Sendable { public let title: String?; public let fields: [String: AppleDetailValue] }
     public var label: String {
         switch field {
         case "recovery": return "Previous sync values are unavailable"
+        case "retired_unavailable": return "Retired Apple item could not be verified"
         case "source_recovery": return "A KitchenOS source change could not be recovered safely"
         case "shopping_amount_changed": return "Shopping amount changed"
         case "shopping_identity_changed": return "Shopping item changed"
@@ -75,6 +80,9 @@ public struct AppleConflictDetail: Decodable, Sendable, Identifiable {
         }
     }
     public func value(apple useApple: Bool) -> String {
+        if field == "retired_unavailable" {
+            return useApple ? "Identity unavailable" : "Retired KitchenOS export"
+        }
         guard let fields = useApple ? apple?.fields : source.fields else { return "Unavailable" }
         if field.hasPrefix("shopping_") {
             if useApple { return apple?.title ?? "Unavailable" }

@@ -47,6 +47,16 @@ final class AppleConflictDetailTests: XCTestCase {
         XCTAssertEqual(conflict.value(apple: false), "Incomplete")
         XCTAssertEqual(conflict.value(apple: true), "Completed")
     }
+    func testRetiredUnavailableExplainsDetachmentWithoutClaimingAppleDeletion() throws {
+        let conflict = try detail("retired_unavailable", source: ["start": "2026-10-10T18:00:00-05:00"], apple: nil)
+        XCTAssertEqual(conflict.label, "Retired Apple item could not be verified")
+        XCTAssertEqual(conflict.choices, [.keepManual])
+        XCTAssertEqual(conflict.choiceLabel(.keepManual), "Keep Apple item separate")
+        XCTAssertEqual(conflict.value(apple: true), "Identity unavailable")
+        let explanation = try XCTUnwrap(conflict.retiredUnavailableExplanation)
+        XCTAssertTrue(explanation.contains("may still exist"))
+        XCTAssertTrue(explanation.contains("without changing or deleting"))
+    }
 
     private func shoppingDetail(removed: Bool) throws -> AppleConflictDetail {
         let payload: [String: Any] = [

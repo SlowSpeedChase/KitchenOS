@@ -362,6 +362,11 @@ def _resolved_export(item):
 def _apply_observation(observation, request_id, context):
     item=store.get_item(observation.token)
     if observation.availability=='unavailable' or (observation.availability=='missing' and not observation.absence_confirmed):
+        if item.state=='retired' and item.locator is not None:
+            # An uncertain read cannot prove this retired Apple object is gone.
+            # Keep its marker/locator until the user explicitly detaches it.
+            _conflict(item,'retired_unavailable',observation)
+            return
         with db.write_transaction() as conn:
             conn.execute('UPDATE apple_items SET last_observation=? WHERE token=?',(canonical_json(observation.to_dict()),item.token))
             store._supersede(conn,item.token)
@@ -370,6 +375,13 @@ def _apply_observation(observation, request_id, context):
         _conflict(item,observation.issue,observation); return
     if item.state in {'history','conflict','suppressed'}:
         return
+    if item.state=='retired':
+        with db.connect() as conn:
+            if conn.execute("SELECT 1 FROM apple_conflicts WHERE token=? AND field='retired_unavailable' "
+                            "AND status='open'", (item.token,)).fetchone():
+                # A later readable object is not permission to resume the
+                # retirement delete while separation review is unresolved.
+                return
     if observation.availability=='missing':
         if item.locator is None and item.common_fields is None:
             with db.write_transaction() as conn:
@@ -720,7 +732,7 @@ def conflict_detail(conflict_id):
             # Old conflict records may predate the generated-demand evidence.
             # Never offer acceptance of a target this detail cannot disclose.
             choices = ['keep_kitchenos', 'keep_manual'] if shopping_demand else ['keep_manual']
-        elif row['field'] not in {'retained_generation', 'retirement'}:
+        elif row['field'] not in {'retained_generation', 'retirement', 'retired_unavailable'}:
             item = store.get_item(row['token'], conn=conn)
             scope = conn.execute('SELECT status FROM apple_scopes WHERE domain=? AND week=?',
                                  (item.domain, item.week)).fetchone()
@@ -848,6 +860,13 @@ def resolve_conflict(conflict_id: str, choice: str, expected_revision: int, *, _
         source=json.loads(conflict['source']) if conflict['source'] else {}
         if conflict['field'] not in {'source_recovery','retained_generation'} and source.get('source_revision')!=item.source_revision:
             raise RevisionConflict('Source changed since conflict was presented')
+        if conflict['field'] in {'retirement', 'retired_unavailable'} and (
+                item.state!='retired' or item.locator is None
+                or source.get('token')!=item.token
+                or source.get('generation')!=item.generation
+                or source.get('revision')!=item.revision
+                or source.get('locator')!=item.locator.to_dict()):
+            raise RevisionConflict('Retired Apple link changed since review')
         evidence=json.loads(conflict['apple']) if conflict['apple'] else None
         observation=Observation.from_dict(evidence) if evidence else None
         operation_id=str(uuid5(NAMESPACE_URL,conflict_id+':'+str(expected_revision)+':'+choice))
@@ -874,7 +893,21 @@ def resolve_conflict(conflict_id: str, choice: str, expected_revision: int, *, _
                     raise RevisionConflict('Item changed during resolution')
                 conn.execute("UPDATE apple_items SET locator=NULL,common_payload=NULL,suppressed=1,state=CASE WHEN state IN ('retired','history') THEN 'history' ELSE 'suppressed' END,revision=revision+1 WHERE token=?",(item.token,))
                 store._supersede(conn,item.token)
-        elif field in {'retained_generation', 'retirement'}:
+                if field in {'retirement', 'retired_unavailable'}:
+                    # Either review detaches the same retired link. Its other
+                    # review is now obsolete and must not block completion.
+                    other = 'retirement' if field == 'retired_unavailable' else 'retired_unavailable'
+                    conn.execute("UPDATE apple_conflicts SET status='resolved',resolution='keep_manual',revision=revision+1 "
+                                 "WHERE token=? AND field=? AND status='open'", (item.token, other))
+                    updated=conn.execute("UPDATE apple_conflicts SET status='resolved',resolution='keep_manual' "
+                                         "WHERE conflict_id=? AND status='open' AND revision=?",
+                                         (conflict_id, expected_revision)).rowcount
+                    if updated!=1:
+                        raise RevisionConflict('Conflict changed during resolution')
+                    conn.execute("UPDATE apple_resolutions SET status='applied' WHERE conflict_id=?", (conflict_id,))
+            if field in {'retirement', 'retired_unavailable'}:
+                return _report()
+        elif field in {'retained_generation', 'retirement', 'retired_unavailable'}:
             raise RevisionConflict('Retired objects require keep_manual or explicit remove-owned')
         elif choice=='restore':
             restore(item.token,item.revision,_recover_first=False)

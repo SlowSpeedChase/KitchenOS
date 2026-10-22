@@ -472,6 +472,156 @@ def test_retired_completed_apple_object_is_frozen_and_reappearance_exports_new_g
     assert not bridge.conflicts()
 
 
+@pytest.mark.parametrize('availability', ['unavailable', 'missing'])
+def test_retired_cooking_uncertain_observation_requires_explicit_detach(bridge, availability):
+    """An uncertain EventKit read must leave a linked retired event reviewable, then unblock completion."""
+    retire = _retirement_source(bridge, 'cooking')
+    bridge.activate('cooking')
+    exported = bridge.sync()['items'][0]
+    apple_before = deepcopy(bridge.apple.objects)
+    retire()
+    ledger_before = domain_snapshot()
+    with db.write_transaction() as conn:
+        conn.execute("UPDATE apple_bridge SET last_success='2000-01-01T00:00:00+00:00'")
+
+    def observe_uncertain():
+        item = next(i for i in bridge.work()['items'] if i['token'] == exported['token'])
+        observation = dict(bridge.apple.observation(item), availability=availability,
+                           locator=None, title=None, fields={}, absence_confirmed=False)
+        request_id = str(uuid4())
+        bridge.ok('post', BASE + '/observations', json=dict(context=bridge.context,
+            request_id=request_id, complete=True, observations=[observation]))
+        return request_id
+
+    observe_uncertain()
+    conflict = next(c for c in bridge.conflicts() if c['token'] == exported['token'])
+    detail = bridge.ok('get', f"{BASE}/conflicts/{conflict['conflict_id']}")
+    assert detail['field'] == 'retired_unavailable'
+    assert detail['choices'] == ['keep_manual']
+    report = service.status()['report']
+    assert report['conflicts'] == 1 and report['unavailable'] == 0
+    assert store.get_item(exported['token']).locator is not None
+    assert bridge.work()['operations'] == []
+    assert bridge.apple.objects == apple_before
+    assert domain_snapshot() == ledger_before
+
+    second_request = observe_uncertain()
+    assert bridge.conflicts() == [conflict]
+    proof = dict(context=bridge.context, scopes=bridge.work()['scopes'], request_ids=[second_request])
+    assert bridge.client.post(BASE + '/sync/complete', json=proof).status_code == 409
+    assert service.status()['report']['last_success'] == '2000-01-01T00:00:00+00:00'
+    stale = bridge.client.post(f"{BASE}/conflicts/{conflict['conflict_id']}/resolve",
+        json=dict(choice='keep_manual', expected_revision=detail['revision'] + 1))
+    assert stale.status_code == 409
+    assert store.get_item(exported['token']).locator is not None
+
+    bridge.ok('post', f"{BASE}/conflicts/{conflict['conflict_id']}/resolve",
+              json=dict(choice='keep_manual', expected_revision=detail['revision']))
+    detached = store.get_item(exported['token'])
+    assert detached.state == 'history' and detached.locator is None
+    assert bridge.apple.objects == apple_before
+    assert domain_snapshot() == ledger_before
+    assert bridge.work()['items'] == []
+    result = bridge.ok('post', BASE + '/sync/complete', json=_pass_evidence(bridge))
+    assert result['report']['last_success'] > '2000-01-01T00:00:00+00:00'
+
+
+def test_retired_unavailable_conflict_rejects_changed_item_evidence(bridge):
+    """A review of one retired locator cannot detach a subsequently changed link."""
+    retire = _retirement_source(bridge, 'cooking')
+    bridge.activate('cooking')
+    exported = bridge.sync()['items'][0]
+    retire()
+    item = bridge.work()['items'][0]
+    observation = dict(bridge.apple.observation(item), availability='unavailable',
+                       locator=None, title=None, fields={}, absence_confirmed=False)
+    bridge.ok('post', BASE + '/observations', json=dict(context=bridge.context,
+        request_id=str(uuid4()), complete=True, observations=[observation]))
+    conflict = bridge.conflicts()[0]
+    changed_locator = dict(item['locator'], item_id='apple-relocated')
+    with db.write_transaction() as conn:
+        conn.execute('UPDATE apple_items SET locator=?,revision=revision+1 WHERE token=?',
+                     (json.dumps(changed_locator), item['token']))
+    before = store.get_item(item['token'])
+    response = bridge.client.post(f"{BASE}/conflicts/{conflict['conflict_id']}/resolve",
+        json=dict(choice='keep_manual', expected_revision=conflict['revision']))
+    assert response.status_code == 409
+    assert store.get_item(item['token']) == before
+    assert bridge.conflicts() == [conflict]
+
+
+def test_retired_unavailable_detach_closes_prior_retirement_review(bridge):
+    """An older retirement edit review must not keep a detached event blocking sync."""
+    retire = _retirement_source(bridge, 'cooking')
+    bridge.activate('cooking')
+    exported = bridge.sync()['items'][0]
+    retire()
+    bridge.apple.owned(exported['token'])[0]['title'] = 'Edited retired event'
+    bridge.sync()
+    assert [c['field'] for c in bridge.conflicts()] == ['retirement']
+    item = bridge.work()['items'][0]
+    observation = dict(bridge.apple.observation(item), availability='unavailable',
+                       locator=None, title=None, fields={}, absence_confirmed=False)
+    bridge.ok('post', BASE + '/observations', json=dict(context=bridge.context,
+        request_id=str(uuid4()), complete=True, observations=[observation]))
+    conflict = next(c for c in bridge.conflicts() if c['field'] == 'retired_unavailable')
+    bridge.ok('post', f"{BASE}/conflicts/{conflict['conflict_id']}/resolve",
+              json=dict(choice='keep_manual', expected_revision=conflict['revision']))
+    assert bridge.conflicts() == []
+    assert bridge.ok('post', BASE + '/sync/complete', json=_pass_evidence(bridge))['report']['last_success']
+
+
+def test_retired_unavailable_review_blocks_later_present_delete(bridge):
+    """A later readable EventKit object cannot bypass an unresolved separation choice."""
+    retire = _retirement_source(bridge, 'cooking')
+    bridge.activate('cooking')
+    exported = bridge.sync()['items'][0]
+    apple_before = deepcopy(bridge.apple.objects)
+    retire()
+    ledger_before = domain_snapshot()
+    item = bridge.work()['items'][0]
+    uncertain = dict(bridge.apple.observation(item), availability='unavailable',
+                     locator=None, title=None, fields={}, absence_confirmed=False)
+    bridge.ok('post', BASE + '/observations', json=dict(context=bridge.context,
+        request_id=str(uuid4()), complete=True, observations=[uncertain]))
+    conflict = bridge.conflicts()[0]
+
+    result = bridge.observe(bridge.work()['items'])
+    assert result['operations'] == []
+    assert bridge.work()['operations'] == []
+    assert bridge.conflicts() == [conflict]
+    assert store.get_item(item['token']).locator.to_dict() == item['locator']
+    assert bridge.apple.objects == apple_before
+    assert domain_snapshot() == ledger_before
+
+
+def test_older_retirement_choice_cannot_detach_changed_unavailable_link(bridge):
+    """Either review choice must fence the current retired export and locator."""
+    retire = _retirement_source(bridge, 'cooking')
+    bridge.activate('cooking')
+    exported = bridge.sync()['items'][0]
+    retire()
+    bridge.apple.owned(exported['token'])[0]['title'] = 'Edited retired event'
+    bridge.sync()
+    older = next(c for c in bridge.conflicts() if c['field'] == 'retirement')
+    item = bridge.work()['items'][0]
+    uncertain = dict(bridge.apple.observation(item), availability='unavailable',
+                     locator=None, title=None, fields={}, absence_confirmed=False)
+    bridge.ok('post', BASE + '/observations', json=dict(context=bridge.context,
+        request_id=str(uuid4()), complete=True, observations=[uncertain]))
+    assert {c['field'] for c in bridge.conflicts()} == {'retirement', 'retired_unavailable'}
+    changed_locator = dict(item['locator'], item_id='apple-relocated')
+    with db.write_transaction() as conn:
+        conn.execute('UPDATE apple_items SET locator=?,revision=revision+1 WHERE token=?',
+                     (json.dumps(changed_locator), item['token']))
+    before = store.get_item(item['token'])
+    response = bridge.client.post(f"{BASE}/conflicts/{older['conflict_id']}/resolve",
+        json=dict(choice='keep_manual', expected_revision=older['revision']))
+    assert response.status_code == 409
+    assert store.get_item(item['token']) == before
+    assert {c['field'] for c in bridge.conflicts()} == {'retirement', 'retired_unavailable'}
+
+
 @pytest.mark.parametrize('removed', [False, True])
 def test_shopping_conflict_detail_shows_generated_resolution_target(bridge, removed):
     """Catch edited row title hiding the generated quantity or removal to be accepted."""

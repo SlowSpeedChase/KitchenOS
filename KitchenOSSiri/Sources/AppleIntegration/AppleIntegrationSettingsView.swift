@@ -84,6 +84,9 @@ struct AppleIntegrationSettingsView: View {
                     if let explanation = conflict.shoppingExplanation {
                         Text(explanation).font(.caption)
                     }
+                    if let explanation = conflict.retiredUnavailableExplanation {
+                        Text(explanation).font(.caption)
+                    }
                     ForEach(conflict.choices, id: \.rawValue) { choice in
                         Button(conflict.choiceLabel(choice)) {
                             Task { await controls.resolve(conflict, choice: choice); await loadDetails() }

@@ -434,9 +434,11 @@ also counts unreadable source scopes from its refresh; a `/observations` respons
 also counts unavailable or uncertain-missing observations in its submitted
 batch. Each response shows the larger stored or transient unavailable count.
 Paused/archived scopes, retired items, and observations made before a source
-revision changed are excluded from the stored count. Source failures do not
-imply Apple deletion. Status reads only the bridge journal; it does not perform
-source inference or native IO.
+revision changed are excluded from the stored count. A linked retired item with
+an unavailable or uncertain-missing Apple observation opens
+`retired_unavailable` review and appears in `report.conflicts`; it stays in
+`/work` until resolved. Source failures do not imply Apple deletion. Status
+reads only the bridge journal; it does not perform source inference or native IO.
 `has_user_notes` is true when Apple notes contain user prose beyond exact
 ownership-marker lines; omitted means false for older replay payloads. Retirement
 opens review instead of deleting such an item, and EventKit rechecks notes just
@@ -584,6 +586,17 @@ untouched and report them unavailable until an explicit activation or normal sav
   after source retirement freezes that journal generation as history and cancels
   pending mutations. Later Apple reopening cannot resume deletion; reappearing
   source demand receives a new incomplete generation without a retained-item block.
+- `retired_unavailable`: a linked retired item cannot be verified in Apple, including
+  an uncertain-missing EventKit lookup. The marker and locator stay attached while
+  review is open; no Apple operation or cook-ledger mutation is inferred. The only
+  conflict choice is `keep_manual` (**Keep Apple item separate**), which requires
+  the presented conflict revision and unchanged item revision, generation, and
+  locator. It moves the link to history and clears the bridge locator. The Apple
+  object may still exist and is neither changed nor deleted. A fresh complete
+  pass can then advance `last_success`. If an earlier `retirement` edit review
+  exists for the same link, detachment closes that obsolete review too. A later
+  present observation cannot resume deletion while separation review is open;
+  choosing either retirement review checks the same current-link evidence.
 - `retained_generation`: `keep_manual` leaves the old Apple object as a manual copy,
   clears only its bridge locator and unblocks the new generation. Alternatively,
   invoke remove-owned with the retained item's token and **its own** expected
