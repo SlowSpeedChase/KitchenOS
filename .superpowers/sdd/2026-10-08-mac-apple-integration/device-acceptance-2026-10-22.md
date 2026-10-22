@@ -11,12 +11,12 @@ and four servings. Temporary inventory/purchases/trips have zero rows. Only the
 isolated port-5051 API was restarted from reviewed Python fix `4bb7260`, after a
 temporary SQLite backup; production port 5001 (PID 947) was unchanged. The separate
 Apple Development-signed bundle has `TeamIdentifier=XZJ6358HHF`, CDHash
-`b4d051116188412bb99242bf5e247ac3734ed3d3`. Final API status is connected/unpaused,
-**0 queued / 0 conflicts / 0 unavailable**, with
-`last_success=2026-10-22T19:58:26.468044Z` after the later EventKit read-back.
-Freshly refreshed Settings shows prep Active Export 2 and cooking Active Export 4, with zero conflicts. Bridge
-acknowledgements/observations support their locators; these current items have
-not been directly visually checked in Apple Reminders/Calendar.
+`b4d051116188412bb99242bf5e247ac3734ed3d3`. At the 14:58 EventKit read-back
+checkpoint, API status was connected/unpaused, **0 queued / 0 conflicts /
+0 unavailable**, with `last_success=2026-10-22T19:58:26.468044Z`.
+Freshly refreshed Settings showed prep Active Export 2 and cooking Active Export 4,
+with zero conflicts. Bridge acknowledgements/observations support their locators;
+these exports have not been directly visually checked in Apple Reminders/Calendar.
 
 Earlier sections below retain their checkpoint evidence. Unscheduled-cook,
 unrun-action and pending-Xcode-authorization statements describe earlier states
