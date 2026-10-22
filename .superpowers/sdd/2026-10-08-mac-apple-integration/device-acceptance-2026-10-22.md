@@ -2,7 +2,7 @@
 
 ## Scope and final state
 
-The separate `KitchenOS Apple Bridge Test 850e343.app` (`com.kitchenos.applebridge.acceptance`) used an isolated API on port 5051, a temporary vault and SQLite database under `/private/tmp/KitchenOS-AppleBridge-Mini-850e343-20261021`, and destinations named `KitchenOS Bridge 850e343 ... Test`. The installed production app and API on port 5001, the original checkout, personal Apple items, and production vault/database were not changed. The complete command and observation record is in that temporary root's `acceptance.md`.
+The separate `KitchenOS Apple Bridge Test 850e343.app` (`com.kitchenos.applebridge.acceptance`) used an isolated API on port 5051, a temporary vault and SQLite database under `/private/tmp/KitchenOS-AppleBridge-Mini-850e343-20261021`, and destinations named `KitchenOS Bridge 850e343 ... Test`. The installed production app and API on port 5001, the original checkout, personal Reminders/Calendar items, and production vault/database were not changed. A temporary test shortcut was later created for the App Intent execution attempt below. The complete command and observation record is in that temporary root's `acceptance.md`.
 
 At the end, the synthetic cook has **no reservation**, remains uncooked with scale 1 and four servings, and the temporary inventory/purchases/trips tables have zero rows. The bridge has zero open conflicts and zero current unavailable items. The dedicated test destinations remain. The journal has one active shopping reminder; prep and cooking exports are retired, and the owned cooking event was removed. The separately installed test app is the exact previously authorized ad-hoc binary with its original code hash, and the isolated API was stopped after verification.
 
@@ -28,5 +28,17 @@ At the end, the synthetic cook has **no reservation**, remains uncooked with sca
 
 ## Remaining device acceptance
 
-- Exercise the five now-discoverable Mac Shortcuts actions in the distinct test environment; this live action execution was not part of the read-only library check.
+- Run all five discoverable Mac Shortcuts actions against only the distinct test environment after installing a build signed with a valid Apple team identity. The ad-hoc test app cannot pass macOS App Intents client validation; the first action was attempted twice and failed before reaching KitchenOS.
 - Install and reauthorize a build with a stable signing identity, then confirm the reviewed Settings summary on-device immediately after sync and refresh. Until then, the working installed test app runs the older presentation code; repository source and both platform builds contain the fix.
+
+## App Intent execution attempt — 2026-10-22
+
+With the user's explicit isolated-action approval, the exact test app was connected to the temporary API on port 5051. Shopping and prep Reminders access was restored to full authorization in the separate app; Calendar was authorized. Fresh status showed all three dedicated test scopes connected, with zero queued writes, conflicts, or unavailable items. The synthetic cook remained uncooked and unscheduled, and the independent Cooking Calendar availability feature remained off.
+
+A temporary Shortcuts item named `KitchenOS Bridge 850e343 Intent Acceptance` was created with only `Send Shopping List to Reminders`, parameterized to October 22, 2026. Running it in Shortcuts and then via `shortcuts run` produced the same “Shortcuts couldn’t communicate with the app” error. Neither invocation reached the isolated API or changed the synthetic Apple or KitchenOS items. The other four actions were not run because the shared launch boundary had failed.
+
+Focused macOS `linkd` diagnostics at 12:22:59 and 12:24:07 reported `Unable to get teamId from com.kitchenos.applebridge.acceptance PID [9699]`, `Rejecting invalid client due to requiresValidatedBundle`, and `LNConnectionErrorDomain Code=1200 AppleEvents communication failed`. The installed bundle's code signature verifies on disk, but `codesign` reports `Signature=adhoc` and `TeamIdentifier=not set`; `security find-identity -v -p codesigning` found zero valid signing identities on the Mac mini. This is a signing barrier to live App Intent invocation, not evidence that the action's `perform` body failed. Merely rebuilding or ad-hoc signing again cannot verify execution.
+
+Afterward, the isolated SQLite database still had zero inventory, purchases, trips, cook reservations, or pending bridge operations; cook 1 remained at scale 1, four servings, and `cooked_at = NULL`. The separate test app and isolated API were stopped. Production port 5001 remained running and untouched. The temporary one-action shortcut remains in the personal Shortcuts library pending its own explicit all-iCloud-devices deletion approval; an automatic approval review rejected deletion without that exact authorization.
+
+**Ruling:** Require a valid Team ID-signed build before treating Shortcuts action execution as device-verified. Cost if wrong: discoverable metadata could be mistaken for working invocation, and repeated ad-hoc tests would obscure an OS-level rejection.
