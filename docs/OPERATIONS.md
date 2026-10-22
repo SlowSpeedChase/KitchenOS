@@ -989,16 +989,22 @@ Management → trust developer.
 
 ### Mac Apple integration
 
-**Delivery status:** implementation tests and both platform builds passed. An
-explicitly authorized, separate Mac mini test app exercised two-way Reminders and
-Calendar sync, pause/restart/background behavior, and exact owned-event deletion
-against an isolated API and clearly named test destinations. All five integration
-actions appeared in the live Shortcuts action library. App Intent execution remains
-unverified: the ad-hoc test signature has no Team ID, so macOS rejected the first
-action before it reached KitchenOS; this Mac has no valid code-signing identity.
-A Team ID-signed distinct test build is needed for those actions and the updated
-Settings display retest. Production deployment, production API restart, and tests on personal
-Reminders/Calendar items remain unperformed. See the [isolated Mac mini acceptance
+**Delivery status:** the reviewed implementation passed 4,599 Python tests,
+172 Swift tests, and unsigned macOS and iOS Simulator builds. A separate Mac mini
+test app exercised two-way Reminders and Calendar sync against an isolated API and
+named test destinations. Its current Apple Development signature reports the
+project's `XZJ6358HHF` TeamIdentifier; the certificate-name suffix is not the
+codesign TeamIdentifier. The current signed test package has metadata for all
+five Mac actions. All five appeared in the live Shortcuts library on the earlier ad-hoc test installation;
+that full-library check has not been repeated on the signed build. One shopping
+action ran through Shortcuts on the signed build and reached the isolated API;
+full Apple delivery and the other four actions have not been verified. A
+locked-down App Intents UI test harness has not entered a test method because Xcode's automation runner requires macOS
+authorization. The user has been asked to enter their own password in System
+Settings; authorization is not yet confirmed. The fresh test app showed zero
+queued writes, conflicts, and unavailable items after an explicit recovery choice.
+Production deployment, production API restart, and tests on personal Apple items
+remain unperformed. See the [isolated Mac mini acceptance
 report](../.superpowers/sdd/2026-10-08-mac-apple-integration/device-acceptance-2026-10-22.md)
 for evidence and remaining limits.
 
@@ -1090,8 +1096,11 @@ chosen week/domain; Sync KitchenOS touches already active scopes. Schedule Cooki
 uses an existing cook ID and saves its ledger schedule; first placement needs
 servings, while existing portions stay unchanged. It syncs only when that cooking
 week is already active. Setup needs continue in the foreground and require rerun.
-No automatic Mac phrases are registered. Generated action metadata is build
-validation; real library discovery and named-shortcut execution remain pending.
+No automatic Mac phrases are registered. All five actions appeared in the live
+Mac library on the earlier ad-hoc installation. The current signed package has
+all five metadata records, and a named shopping shortcut reached the isolated
+API on that build. Full Apple delivery and the other four actions still need
+device verification.
 
 **Recovery limits:** an interrupted first Apple save is recovered by marker when
 found. Calendar recovery scans finite windows plus known identifiers; an event
@@ -1118,10 +1127,10 @@ objects remain pending instead of being adopted. A crash after Apple deletion bu
 before acknowledgement can require manual review; the bridge will not invent
 deletion proof.
 
-**Dedicated acceptance and cleanup, still pending:** use separately named test
-shopping/prep lists and a test cooking calendar after authorizing live tests.
-Check all five named actions, repeat sends/restart recovery, completion/reopening,
-due clear/date handling, same-week move/resize and explicit unschedule, denied
+**Dedicated acceptance and cleanup, still pending:** continue only with the
+separately named test shopping/prep lists and test cooking calendar. Verify the
+four unrun actions and full shopping delivery, repeat sends/restart recovery,
+completion/reopening, due clear/date handling, same-week move/resize and explicit unschedule, denied
 permissions, missing destinations, foreign same-title items, identifier churn,
 provider persistence and preservation of alarms/user notes. Check real
 last-window, sleep/wake and quit behavior. Record results before using **Remove
