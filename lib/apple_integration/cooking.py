@@ -27,8 +27,10 @@ def _source(conn, cook_id, week, prior=None):
     row = conn.execute('SELECT * FROM cooks WHERE id=? AND week=?', (cook_id, week)).fetchone()
     schedule = conn.execute('SELECT * FROM cook_schedule WHERE cook_id=?', (cook_id,)).fetchone()
     placements = [dict(p) for p in conn.execute('SELECT * FROM placements WHERE cook_id=? ORDER BY id', (cook_id,))]
-    state = ('history' if row and row['cooked_at'] or prior and prior.state == 'history'
-             else 'active' if row and schedule and not row['bundle_id'] else 'retired')
+    # A new eligible schedule replaces detached history; cooked rows stay frozen.
+    state = ('history' if row and row['cooked_at']
+             else 'active' if row and schedule and not row['bundle_id']
+             else 'history' if prior and prior.state == 'history' else 'retired')
     fields = {k: schedule[k] for k in ('start', 'timezone', 'duration_minutes')} if schedule else {}
     if state != 'active' and prior:
         fields = dict(prior.fields)

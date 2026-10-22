@@ -526,6 +526,47 @@ def test_retired_cooking_uncertain_observation_requires_explicit_detach(bridge, 
     assert result['report']['last_success'] > '2000-01-01T00:00:00+00:00'
 
 
+def test_cooking_reschedule_after_keep_manual_exports_new_generation(bridge):
+    """Explicit scheduling must publish again without touching detached history."""
+    cook = ledger.create_cook(recipe='Soup', week=WEEK, servings_produced=4)
+    schedule = dict(date='2026-10-06', meal='dinner', start='2026-10-06T19:00:00-05:00',
+                    timezone='America/Chicago', duration_minutes=60, servings_to_eat=1)
+    route = f"/api/cooks/{cook['id']}/schedule"
+    bridge.ok('post', route, json=schedule)
+    bridge.activate('cooking')
+    exported = bridge.sync()['items'][0]
+    old_event = deepcopy(bridge.apple.owned(exported['token'])[0])
+
+    bridge.ok('delete', route)
+    retired = bridge.work()['items'][0]
+    observation = dict(bridge.apple.observation(retired), availability='unavailable',
+                       locator=None, title=None, fields={}, absence_confirmed=False)
+    bridge.ok('post', BASE + '/observations', json=dict(context=bridge.context,
+        request_id=str(uuid4()), complete=True, observations=[observation]))
+    conflict = bridge.conflicts()[0]
+    assert conflict['field'] == 'retired_unavailable'
+    bridge.ok('post', f"{BASE}/conflicts/{conflict['conflict_id']}/resolve",
+              json=dict(choice='keep_manual', expected_revision=conflict['revision']))
+    history = store.get_item(exported['token'])
+    assert history.state == 'history' and history.locator is None
+    assert bridge.work()['items'] == []
+
+    bridge.ok('post', route, json=dict(schedule, date='2026-10-08',
+                                     start='2026-10-08T18:00:00-05:00'))
+    batch = bridge.restart().sync()
+    assert len(batch['items']) == 1
+    replacement = batch['items'][0]
+    assert replacement['state'] == 'active'
+    assert replacement['generation'] == exported['generation'] + 1
+    assert replacement['token'] != exported['token']
+    assert bridge.apple.owned(replacement['token'])[0]['fields']['start'] == '2026-10-08T18:00:00-05:00'
+    bridge.restart().sync()
+    assert bridge.apple.creations == 2
+    assert bridge.apple.owned(exported['token']) == [old_event]
+    assert store.get_item(exported['token']) == history
+    assert not bridge.conflicts()
+
+
 def test_retired_unavailable_conflict_rejects_changed_item_evidence(bridge):
     """A review of one retired locator cannot detach a subsequently changed link."""
     retire = _retirement_source(bridge, 'cooking')

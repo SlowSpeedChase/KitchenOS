@@ -99,9 +99,30 @@ def test_collect_only_exports_scheduled_cooks_and_retains_history(active):
     sl.update_cook(active, cooked_at='2026-09-22')
     source = cooking.collect(WEEK)[0]
     assert source.state == 'history'
-    store.refresh_source(source)
+    history = store.refresh_source(source)
+    assert history.fields == item.fields
+    assert export() == history  # A cooked row still has its schedule, but stays frozen.
     sl.delete_cook(active)
     assert cooking.collect(WEEK)[0].state == 'history'
+    assert export() == history
+
+
+def test_reschedule_after_history_creates_new_active_generation(active):
+    """A detached prior generation must not hide a new eligible schedule."""
+    from lib.apple_integration import cooking
+    item = export()
+    sl.unschedule_cook(active)
+    history = store.refresh_source(replace(cooking.collect(WEEK)[0], state='history'))
+    assert cooking.collect(WEEK)[0].state == 'history'
+
+    sl.schedule_cook(active, **args(date='2026-09-24', start='2026-09-24T18:00:00-05:00'))
+    source = cooking.collect(WEEK)[0]
+    assert source.state == 'active'
+    assert source.fields['start'] == '2026-09-24T18:00:00-05:00'
+    replacement = store.refresh_source(source)
+    assert replacement.generation == item.generation + 1
+    assert replacement.token != item.token
+    assert store.get_item(item.token) == history
 
 
 def test_borrowed_write_rolls_back_ledger_and_sync_together(active):
