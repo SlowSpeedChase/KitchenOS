@@ -19,13 +19,16 @@ import Combine
     public init(coordinator: any AppleIntegrationControlling) { self.coordinator = coordinator }
     public func load() async {
         do {
-            let value = try await coordinator.readStatus(); status = value
-            for domain in AppleDomain.allCases {
-                permissions[domain] = value.permissions[domain.rawValue] ?? .unknown
-                destinations[domain] = value.destinations[domain.rawValue] ?? []
-            }
-            message = Self.summary(value.report, connected: value.connected, paused: value.paused)
+            applyStatus(try await coordinator.readStatus())
         } catch { message = "Couldn’t read integration status. Check your connection and try again." }
+    }
+    private func applyStatus(_ value: IntegrationStatus) {
+        status = value
+        for domain in AppleDomain.allCases {
+            permissions[domain] = value.permissions[domain.rawValue] ?? .unknown
+            destinations[domain] = value.destinations[domain.rawValue] ?? []
+        }
+        message = Self.summary(value.report, connected: value.connected, paused: value.paused)
     }
     public func requestPermission(_ domain: AppleDomain) async {
         guard !busy else { return }; busy = true; defer { busy = false }
@@ -54,8 +57,9 @@ import Combine
         guard !busy else { return }; busy = true; defer { busy = false }
         do {
             let report = try await coordinator.perform(command)
-            await load()
-            message = Self.summary(report, connected: status?.connected ?? false, paused: status?.paused ?? false)
+            let current = try await coordinator.readStatus()
+            applyStatus(current)
+            message = Self.commandSummary(report, current: current)
         } catch {
             await load()
             message = "The change wasn’t confirmed. Review the latest status and try again."
@@ -68,5 +72,17 @@ import Combine
     public static func summary(_ report: SyncReport, connected: Bool, paused: Bool) -> String {
         let state = !connected ? "Disconnected" : paused ? "Paused" : "Connected"
         return "\(state) · \(report.created) created · \(report.updated) updated · \(report.deleted) removed · \(report.queued) queued · \(report.conflicts) conflicts · \(report.unavailable) unavailable"
+    }
+    private static func commandSummary(_ action: SyncReport, current: IntegrationStatus) -> String {
+        let known = current.report
+        let displayed = SyncReport(created: action.created, updated: action.updated, deleted: action.deleted,
+                                   queued: known.queued, conflicts: known.conflicts, unavailable: known.unavailable,
+                                   lastSuccess: known.lastSuccess)
+        let primary = summary(displayed, connected: current.connected, paused: current.paused)
+        var transient: [String] = []
+        if action.queued > known.queued { transient.append("\(action.queued) queued") }
+        if action.conflicts > known.conflicts { transient.append("\(action.conflicts) conflicts") }
+        if action.unavailable > known.unavailable { transient.append("\(action.unavailable) unavailable") }
+        return transient.isEmpty ? primary : primary + " · This attempt: " + transient.joined(separator: ", ")
     }
 }

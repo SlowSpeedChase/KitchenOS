@@ -6,12 +6,13 @@ import XCTest
     var permissionRequests = 0
     var destinationReads = 0
     var permission: AppleAuthorization = .denied
-    let report = SyncReport(created: 0, updated: 0, deleted: 0, queued: 3, conflicts: 1, unavailable: 2, lastSuccess: nil)
+    var report = SyncReport(created: 0, updated: 0, deleted: 0, queued: 3, conflicts: 1, unavailable: 2, lastSuccess: nil)
+    var commandReport: SyncReport?
     func readStatus() async throws -> IntegrationStatus {
         IntegrationStatus(modelVersion: 1, configured: false, connected: false, paused: false, settingsRevision: 9,
             report: report, permissions: [:], destinations: [:], scopes: [], conflicts: [])
     }
-    func perform(_ command: AppleIntegrationCommand) async throws -> SyncReport { commands.append(command); return report }
+    func perform(_ command: AppleIntegrationCommand) async throws -> SyncReport { commands.append(command); return commandReport ?? report }
     func requestAccess(for domain: AppleDomain) async throws -> AppleAuthorization { permissionRequests += 1; return permission }
     func destinations(for domain: AppleDomain) async throws -> [AppleDestination] { destinationReads += 1; return [] }
     func createDestination(name: String, domain: AppleDomain) async throws -> AppleDestination { .init(id:"id",title:name) }
@@ -35,6 +36,23 @@ import XCTest
         XCTAssertEqual(coordinator.destinationReads, 0)
         XCTAssertTrue(coordinator.commands.isEmpty)
         XCTAssertTrue(controls.message.contains("System Settings"))
+    }
+    func testRunShowsCurrentStatusWhenCommandReportMissesUnavailableItem() async {
+        let coordinator = FakeControlsCoordinator(); let controls = AppleIntegrationControls(coordinator: coordinator)
+        coordinator.report = SyncReport(created: 0, updated: 0, deleted: 0, queued: 2, conflicts: 1, unavailable: 1, lastSuccess: nil)
+        coordinator.commandReport = SyncReport(created: 1, updated: 2, deleted: 0, queued: 0, conflicts: 0, unavailable: 0, lastSuccess: nil)
+        await controls.run(.sync)
+        XCTAssertTrue(controls.message.contains("1 created"))
+        XCTAssertTrue(controls.message.contains("2 updated"))
+        XCTAssertTrue(controls.message.contains("2 queued · 1 conflicts · 1 unavailable"))
+    }
+    func testRunDistinguishesCurrentStatusFromTransientUnavailable() async {
+        let coordinator = FakeControlsCoordinator(); let controls = AppleIntegrationControls(coordinator: coordinator)
+        coordinator.report = SyncReport(created: 0, updated: 0, deleted: 0, queued: 0, conflicts: 0, unavailable: 0, lastSuccess: nil)
+        coordinator.commandReport = SyncReport(created: 0, updated: 0, deleted: 0, queued: 2, conflicts: 1, unavailable: 1, lastSuccess: nil)
+        await controls.run(.sync)
+        XCTAssertTrue(controls.message.contains("0 queued · 0 conflicts · 0 unavailable"))
+        XCTAssertTrue(controls.message.contains("This attempt: 2 queued, 1 conflicts, 1 unavailable"))
     }
     func testConflictActionUsesPresentedConflictRevisionAndAllowedChoice() async throws {
         let id = UUID(); let token = UUID()
