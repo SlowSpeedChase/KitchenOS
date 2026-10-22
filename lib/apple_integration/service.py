@@ -215,7 +215,26 @@ def update_scope(request):
 def _report(**changes):
     with db.connect() as conn:
         owner=conn.execute('SELECT * FROM apple_bridge WHERE id=1').fetchone()
-        values={'queued':conn.execute("SELECT COUNT(*) FROM apple_operations WHERE status='pending'").fetchone()[0]+conn.execute("SELECT COUNT(*) FROM apple_source_patches WHERE status='pending'").fetchone()[0]+conn.execute('SELECT COUNT(*) FROM pending_schedule_views').fetchone()[0]+conn.execute('SELECT COUNT(*) FROM apple_requests WHERE result IS NULL').fetchone()[0]+conn.execute("SELECT COUNT(*) FROM apple_resolutions WHERE status='pending'").fetchone()[0], 'conflicts':conn.execute("SELECT COUNT(*) FROM apple_conflicts WHERE status='open'").fetchone()[0], 'last_success':owner['last_success'] if owner else None}
+        observations=conn.execute(
+            "SELECT item.revision,item.last_observation FROM apple_items AS item "
+            "JOIN apple_scopes AS scope ON scope.domain=item.domain AND scope.week=item.week "
+            "WHERE scope.status='active' AND item.state='active' AND item.last_observation IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM apple_items AS newer WHERE newer.domain=item.domain "
+            "AND newer.week=item.week AND newer.logical_id=item.logical_id "
+            "AND newer.generation>item.generation)"
+        )
+        unavailable=0
+        for row in observations:
+            observed=json.loads(row['last_observation'])
+            if observed.get('revision') != row['revision']:
+                continue
+            availability=observed.get('availability')
+            if (availability=='unavailable' or (availability=='missing' and not observed.get('absence_confirmed'))
+                    or observed.get('issue')):
+                unavailable+=1
+        values={'queued':conn.execute("SELECT COUNT(*) FROM apple_operations WHERE status='pending'").fetchone()[0]+conn.execute("SELECT COUNT(*) FROM apple_source_patches WHERE status='pending'").fetchone()[0]+conn.execute('SELECT COUNT(*) FROM pending_schedule_views').fetchone()[0]+conn.execute('SELECT COUNT(*) FROM apple_requests WHERE result IS NULL').fetchone()[0]+conn.execute("SELECT COUNT(*) FROM apple_resolutions WHERE status='pending'").fetchone()[0], 'conflicts':conn.execute("SELECT COUNT(*) FROM apple_conflicts WHERE status='open'").fetchone()[0], 'unavailable':unavailable, 'last_success':owner['last_success'] if owner else None}
+    if 'unavailable' in changes:
+        changes['unavailable']=max(values['unavailable'],changes['unavailable'])
     values.update(changes)
     return SyncReport(**values)
 

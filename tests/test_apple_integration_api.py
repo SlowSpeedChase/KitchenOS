@@ -173,6 +173,36 @@ def test_unavailable_does_not_suppress_or_advance_common(client):
     assert store.get_item(item['token']).state=='active'
     assert store.get_item(item['token']).common_fields=={'completed':False,'due':None}
 
+def test_status_retains_only_current_active_unavailability(client):
+    context=activate(client)
+    batch=work(client,context)
+    assert saved(client,context,batch['operations'][0]).status_code==200
+    item=work(client,context)['items'][0]
+    assert client.get(BASE+'/status').json['report']['unavailable']==0
+
+    response=observe(client,context,[observation(item,availability='unavailable',locator=None,title=None,fields={})])
+    assert response.status_code==200
+    assert response.json['report']['unavailable']==1
+    assert client.get(BASE+'/status').json['report']['unavailable']==1
+    assert work(client,context)['report']['unavailable']==1
+
+    save_shopping_note(WEEK,[{'item':'lime','needed':{'amount':3,'unit':'whole'},'to_buy':{'amount':3,'unit':'whole'}}],[])
+    refreshed=work(client,context)['items'][0]
+    assert refreshed['revision']>item['revision']
+    assert client.get(BASE+'/status').json['report']['unavailable']==0
+
+    assert observe(client,context,[observation(refreshed,availability='unavailable',locator=None,title=None,fields={})]).status_code==200
+    assert client.get(BASE+'/status').json['report']['unavailable']==1
+    paused=client.put(BASE+'/scopes/shopping/'+WEEK,json={'domain':'shopping','week':WEEK,'destination_id':'list','state':'paused','expected_revision':1})
+    assert paused.status_code==200
+    assert client.get(BASE+'/status').json['report']['unavailable']==0
+
+    save_shopping_note(WEEK,[],[])
+    resumed=client.put(BASE+'/scopes/shopping/'+WEEK,json={'domain':'shopping','week':WEEK,'destination_id':'list','state':'active','expected_revision':2})
+    assert resumed.status_code==200
+    assert work(client,context)['items'][0]['state']=='retired'
+    assert client.get(BASE+'/status').json['report']['unavailable']==0
+
 def test_retained_reappearance_blocks_duplicate_until_explicit_detach(client):
     context=activate(client);batch=work(client,context);saved(client,context,batch['operations'][0]);item=work(client,context)['items'][0]
     save_shopping_note(WEEK,[],[])

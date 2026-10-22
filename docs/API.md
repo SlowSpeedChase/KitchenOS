@@ -425,9 +425,14 @@ WorkBatch = {
 `report.conflicts` counts all open conflicts even when the summary list reaches
 100. `queued` counts durable pending operations/recovery work; it never means
 Apple delivery. Permission reports reflect the native owner's latest report.
-`unavailable` in a work/observation response includes unreadable source scopes or
-uncertain observations from that reconciliation. Source failures do not imply
-Apple deletion. Status does not perform source inference or native IO.
+`report.unavailable` includes active, latest-generation items whose stored
+observation is still current for the item revision and is unavailable, uncertain
+missing, or has an issue. A work/observation response also reports unreadable
+source scopes or uncertain observations from that reconciliation; the larger
+current or transient count is shown. Paused/archived scopes, retired items, and
+observations made before a source revision changed are excluded from the stored
+count. Source failures do not imply Apple deletion. Status reads only the bridge
+journal; it does not perform source inference or native IO.
 `has_user_notes` is true when Apple notes contain user prose beyond exact
 ownership-marker lines; omitted means false for older replay payloads. Retirement
 opens review instead of deleting such an item, and EventKit rechecks notes just
