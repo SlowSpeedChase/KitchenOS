@@ -11,6 +11,7 @@ from lib import web_dashboard as wd
 # not pages a human would ever bookmark. Every entry needs a reason; if you find
 # yourself adding a real page here, put it in SECTIONS instead.
 NOT_BOOKMARKABLE = {
+    "/browser/open": "requires an ephemeral one-use fragment",
     "/health": "JSON liveness probe, not a page",
     "/calendar.ics": "ICS feed — subscribed in Calendar, not bookmarked",
     "/transcript": "needs ?url=; a tool endpoint, not a destination",
@@ -22,9 +23,8 @@ NOT_BOOKMARKABLE = {
 
 
 class TestBaseUrl:
-    def test_default_is_tailnet_host(self, monkeypatch):
-        monkeypatch.delenv("KITCHENOS_API_BASE", raising=False)
-        assert wd.base_url() == wd.DEFAULT_API_BASE
+    def test_default_is_tailnet_host(self):
+        assert wd.base_url() == "https://chases-mac-mini.taila69703.ts.net"
         assert "ts.net" in wd.base_url()  # MagicDNS, not a raw 100.x IP
 
     def test_env_override_wins_and_strips_trailing_slash(self, monkeypatch):

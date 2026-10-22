@@ -167,20 +167,43 @@ content hash of `date + total + item names` on `trips.source_id` (source
 .venv/bin/python generate_price_dashboard.py --dry-run   # print markdown without saving
 ```
 
+### Shared home gateway
+
+The public origin is `https://chases-mac-mini.taila69703.ts.net`. DNS, TLS, Caddy, VPN On Demand,
+and recovery procedures live in the shared [gateway runbook](https://github.com/SlowSpeedChase/dotfiles/blob/main/docs/home-web-gateway.md).
+Keep local service/operator probes on `http://localhost:5001`; the Flask
+service remains the gateway's HTTP upstream.
+
+`KITCHENOS_WEB_BASE_URL` wins over deprecated `KITCHENOS_API_BASE`; when
+neither is set, generated links use the canonical origin. Remove a stale
+legacy override or set the new variable before regenerating views. Origins
+accept HTTP(S) and optional root slashes, but no credentials, path, query,
+or fragment. Invalid values fail validation.
+
+After gateway rollout, regenerate the web dashboard, inventory/nutrition
+views, and recipe action links using the existing commands in this runbook.
+`migrate_recipes.py` recognizes the retired localhost, raw Tailscale IP,
+MagicDNS HTTP, and `.local` action origins. Safari sync adds canonical
+bookmarks; its additive policy leaves existing bookmarks intact. These are
+operator rollout steps, not actions performed by the code migration.
+
+The iOS app upgrades only exact known legacy defaults when resolving config;
+custom settings and Keychain credentials survive. macOS keeps localhost.
+
 ### Generate web dashboard (tailnet launcher)
 
 Writes `Dashboards/KitchenOS Web.md` — a tap-anywhere launcher for the web app
 (Meal Planner, Nutrition Review, Inventory Review, System Health, Paste a
-Receipt, current plan/shopping list). Links point at `KITCHENOS_API_BASE`
-(default the Tailscale MagicDNS host
-`http://chases-mac-mini.taila69703.ts.net:5001`), so the note works from any
+Receipt, current plan/shopping list). Links point at `KITCHENOS_WEB_BASE_URL`
+(default the canonical HTTPS origin
+`https://chases-mac-mini.taila69703.ts.net`), so the note works from any
 device on the tailnet, not just localhost on the server. Re-run when the web
 base URL changes **or when `SECTIONS` in `lib/web_dashboard.py` changes**.
 
 ```bash
 .venv/bin/python scripts/generate_web_dashboard.py
 # point it at a different host first, if needed:
-KITCHENOS_API_BASE=http://other-host.taila69703.ts.net:5001 .venv/bin/python scripts/generate_web_dashboard.py
+KITCHENOS_WEB_BASE_URL=https://other-host.example .venv/bin/python scripts/generate_web_dashboard.py
 ```
 
 ### Sync Safari bookmarks
@@ -471,7 +494,9 @@ Two guards worth knowing before you widen its scope:
 
 ## 2. LaunchAgents (all 9)
 
-All 9 agents run as `~/Library/LaunchAgents/com.kitchenos.<name>.plist`, with
+All 9 agents use the labels below. The API can be deployed through the reviewed
+release procedure below; the other jobs follow this legacy installation pattern.
+Agents run as `~/Library/LaunchAgents/com.kitchenos.<name>.plist`, with
 `ops/com.kitchenos.<name>.plist` in the repo as the canonical source —
 **edit the repo copy, then re-copy it to `~/Library/LaunchAgents/` and
 reload**, don't hand-edit the installed copy. General pattern:
@@ -484,6 +509,90 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.<name>.plist
 launchctl unload ~/Library/LaunchAgents/com.kitchenos.<name>.plist
 launchctl load ~/Library/LaunchAgents/com.kitchenos.<name>.plist
 ```
+
+### Reviewed API releases for the shared gateway
+
+The gateway API deployment uses `scripts/deploy_api.py`, independently of the dirty
+primary checkout. **Do not copy feature source into that checkout or install its
+checked-in API plist after switching to this release path.** The other eight jobs
+retain their existing deployment process. This is API-only deployment, not a
+migration of every KitchenOS scheduled workflow.
+
+First complete the [gateway network prerequisites](https://github.com/SlowSpeedChase/dotfiles/blob/main/docs/home-web-gateway.md):
+verify the enabled router reservation, active interface, and split-DNS-only upstreams
+before configuring environments, merging, deploying or activating the gateway.
+Use the exact reviewed/merged commit SHA, from a clean feature or separate release
+checkout. The deployer uses `git archive`; dirty and untracked files are excluded.
+
+Prepare a private external environment file (mode `0600`) without printing it.
+Preserve the existing API token and all unrelated credentials/settings. It must set
+`KITCHENOS_API_TOKEN` to a nonempty value (retain it for native clients), and explicit absolute paths for
+`KITCHENOS_DB`, `KITCHENOS_VAULT`, `KITCHENOS_STORAGE_TABLE`, and
+`KITCHENOS_ITEM_ALIASES` to the existing data.
+These paths must exist outside the release runtime. Preserve the current storage
+table and learned `config/item_aliases.json` cache in external shared locations
+and configure these paths before staging; do not reset them from repository defaults.
+Ensure API and scheduled receipt jobs use the same shared data paths when migrating
+those files; otherwise keep their existing locations until a coordinated move. Set the canonical `KITCHENOS_WEB_BASE_URL`.
+No deployment step initializes, migrates, copies, or restores the DB or vault.
+
+Run from the reviewed checkout, substituting its full approved SHA and the private
+config path. `stage` creates a separate venv and installs the reviewed requirements;
+it does not start services. Existing requirements are version ranges, so retain the
+created venv with the release for reproducible rollback.
+
+```bash
+reviewed_sha='REPLACE_WITH_FULL_REVIEWED_SHA'
+private_env='/absolute/path/to/private.env'
+python3.11 scripts/deploy_api.py stage --sha "$reviewed_sha" \
+  --python "$(command -v python3.11)" --env-file "$private_env"
+release="$HOME/Library/Application Support/KitchenOS API/releases/$reviewed_sha"
+plutil -lint "$release/api.plist"
+~/Dev/dotfiles/dev/bin/check-agent-names "$release/api.plist"
+# Inspect the candidate's paths and named launcher; never display .env.
+python3.11 scripts/deploy_api.py activate --sha "$reviewed_sha"
+```
+
+Activation checks the release's private configuration, backs up the installed
+`com.kitchenos.api` plist and its load state, then stops only that job and installs
+the release-specific named `KitchenOS · API` shim. It requires `/health` to return
+HTTP 200 with the exact `X-KitchenOS-Release` SHA and a forwarded remote
+`GET /api/recipes` to return HTTP 401 without sending a token. When the owner explicitly sets `KITCHENOS_AUTH_MODE=open` in the private environment, the probe instead requires HTTP 200: ordinary browsers may read and change KitchenOS without a token or Siri session, including browsers carrying expired viewing cookies. Keep network reachability limited to the intended users. Restart the API after changing this setting. A stale process,
+missing token, or partial bootstrap fails acceptance and restores the previous
+plist/load state. After each stop, the deployer waits for launchd to report the job
+fully removed before loading either the reviewed or rollback plist. The journal and
+rollback data contain paths/SHAs, never secrets.
+The process binds `0.0.0.0:5001`, preserving direct private-network diagnostics.
+
+```bash
+python3.11 scripts/deploy_api.py rollback
+```
+
+Rollback restores the exact saved plist (including the initial dirty-checkout
+launcher), without changing any checkout files. It restores whether the old job
+was loaded. It does not undo application data mutations. If rollback reports an
+incomplete recovery, retain `activation-state.json` and retry after resolving the
+launchd/filesystem failure. Stage/activate/rollback commands serialize on a runtime
+lock. For a subsequent deployment, roll back the existing activation first; this
+first-release tool refuses to overwrite an active recovery baseline.
+
+The October 2026 recipe Obsidian-link repair uses a separate runtime root,
+`~/Library/Application Support/KitchenOS API/rollouts/recipe-obsidian-link`,
+so activation preserves the gateway's original recovery journal and backs up
+the currently running reviewed release as the repair's immediate rollback
+target. Use that same root for the repair's deployment status, logs and rollback:
+
+```bash
+.venv/bin/python scripts/deploy_api.py rollback \
+  --runtime-root "$HOME/Library/Application Support/KitchenOS API/rollouts/recipe-obsidian-link"
+```
+
+Changing the responsible executable can require TCC grants against the new shim.
+Check normal API functionality, background-agent names, and any required TCC access
+after approved deployment; a synthetic probe does not establish these. Keep the
+previous runtime, venv and backups through gateway/device/reboot acceptance.
+Run approved artifact generation from this release using the same external config
+only after both canonical gateway origins pass.
 
 ### Launchers (`ops/agents/` and `.venv/bin/`)
 
@@ -678,7 +787,7 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.calendar-sync.plist
 ```
 
 Output ICS file: `{Obsidian Vault}/meal_calendar.ics`, also served at
-`http://localhost:5001/calendar.ics`.
+`https://chases-mac-mini.taila69703.ts.net/calendar.ics`.
 
 ### com.kitchenos.cleanup-icloud-old
 
@@ -1240,3 +1349,89 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - [ ] Mark completed features as done in `docs/ROADMAP.md` (move to
       "Completed" or remove)
 - [ ] Add any new ideas discovered during implementation
+
+### Connect cooking opportunities to Apple Calendar
+
+On the Mac running the KitchenOS server (with its connection set to localhost), open **Settings → Cooking opportunities → Connect Calendar** and approve Apple's Calendar access prompt. Select the intended iCloud calendar under **Commitments** and **Time Blocking** under **Flexible**, then choose **Save calendars and refresh**. Select two distinct calendars; source names distinguish duplicate titles. Reading events requires Apple's full-access permission, but KitchenOS never writes calendar events.
+
+Keep that Mac's KitchenOS app open for automatic five-minute updates. It publishes the next 35 days as date/status summaries only. Calendar syncing is available only on macOS with a localhost connection; iPhones, iPads, and remote Macs display the server's results. The web and native planners refresh labels every minute while active. After six hours without a successful sync, availability becomes unknown. Missing calendars or revoked permission clear the summary on the next successful server contact; if offline, the six-hour expiry still applies. Disconnect clears the server snapshot and retries while the app stays open if offline.
+
+Noon to local midnight is the cooking window, using the syncing device's timezone. Morning-only events, free events, cancelled events, and declined invitations are ignored. Busy all-day events count. A commitment wins over a flexible block. These labels are suggestions; they do not prevent placing a meal or automatically reschedule cooks.
+
+### Using calendar meal planning
+
+Open Meal Planner and choose **Calendar**, or **Plan with calendar** in the native
+Meal Plan/Planner Board. Keep KitchenOS Native open on the server Mac for calendar
+sync every five minutes. The selected iCloud calendar contains commitments;
+Time Blocking is flexible. Names and times stay on the local KitchenOS server.
+All-day events start with **Needs your choice**: choose **Blocks cooking** or
+**Background information** for that occurrence. A new occurrence needs its own
+choice. Saving different calendars or disconnecting clears stored details and
+choices; failed clears retry on the next sync. After six hours, event details are
+hidden until refreshed. Meal scheduling still works manually while disconnected.
+
+Choose an unscheduled meal, review an opening, adjust date/time/duration/servings,
+and choose **Schedule meal**. Missing recipe timing uses an editable 90-minute
+planning estimate. Reservations stay within the displayed week. Existing meals
+can be selected to reserve or revise their cooking time; serving amounts and
+leftovers remain unchanged. Scheduled time is local KitchenOS data and is not
+written to Apple Calendar.
+
+Deploy Python/template/static changes together and restart `com.kitchenos.api`.
+Build and install the native target as `~/Applications/KitchenOS Native.app`;
+`~/Applications/KitchenOS.app` is a separate Safari web app. Back up the app and
+SQLite with SQLite's backup API before replacement. Native app and API must both
+be updated for detailed sync. The first install never chooses an all-day meaning
+or schedules an existing real meal automatically.
+
+### Siri opens a recipe or meal-plan day in the browser
+
+Update the API, templates, static files, and native app together. Run the Swift
+suite, Python suite, and explicit `tests/e2e/test_siri_web_navigation.py`,
+`test_planning_calendar.py`, and `test_planner_touch.py` browser tests before
+release. Build both macOS and iOS targets; builds alone do not verify Siri's
+foreground continuation or the device's default browser.
+
+Install the native Mac product at `~/Applications/KitchenOS Native.app` after
+backing it up. Preserve the separate Safari app at `~/Applications/KitchenOS.app`.
+Install the signed iOS product using the procedure above. Stage and activate
+the reviewed API commit using the separate-release procedure in section 2;
+activation restarts only `com.kitchenos.api`. Do not deploy from the dirty main
+checkout or replace the active release in place. Existing
+viewing grants end on restart or token rotation; ask Siri to open the page
+again to obtain a fresh grant.
+
+Use the Ask KitchenOS shortcut, for example:
+
+- “Show the recipe for Rice & Beans.”
+- “Find a chicken recipe and show it.”
+- “Open Friday's meal plan.”
+- “Show tomorrow's meals.”
+
+An ordinary question still receives a spoken answer. A bare weekday means
+that day in the current Monday–Sunday ISO week; “Friday next week” selects the
+following week. Ambiguous “next Friday” requires clarification. “Open that”
+in a new invocation has no remembered recipe and requires a named target.
+A combined add-and-show request opens only after the existing write
+confirmation succeeds.
+
+The resulting browser session is labeled for viewing and lasts 15 minutes.
+Local recipe scaling and navigation work; saved edits are disabled. The cookie
+remains for 24 hours to keep expired sessions restricted. Do not clear it as an
+expiry workaround. `/browser/open` needs a short-lived fragment and is not a
+bookmark; bookmark the ordinary recipe or planner URL instead. Such a bookmark
+does not renew expired viewing access.
+
+The configured API origin must be a root HTTP(S) URL without credentials,
+query, fragment, or proxy prefix. The existing canonical HTTPS gateway is preserved and uses Secure cookies.
+Direct private HTTP connections still work without Secure. Phones use the
+existing LAN/Tailscale gateway path and the configured native credential.
+If a handoff fails, check API reachability and native connection settings, then
+request a fresh handoff. Do not paste a bearer token into a browser URL.
+
+On physical devices verify a named recipe, a selected recipe from a search,
+a weekday, tomorrow across a week boundary, and an empty day. Confirm content
+is visible, default-browser dispatch works, and locked-device behavior is
+acceptable. Verify expired/replayed codes and ambiguous targets without
+creating or changing real meals. Record physical checks separately from
+unit/browser tests and build results.

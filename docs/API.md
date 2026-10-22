@@ -10,36 +10,53 @@ and why" (pipeline flow, AI stack, background services) see
 `docs/OPERATIONS.md`.
 
 The API server is a synchronous Flask app (`api_server.py`), run as the
-`com.kitchenos.api` LaunchAgent on port 5001, exposed over Tailscale at
-`chases-mac-mini.taila69703.ts.net:5001`.
+`com.kitchenos.api` LaunchAgent on port 5001, reached through the shared HTTPS gateway at
+`https://chases-mac-mini.taila69703.ts.net`.
 
-**Auth**: when `KITCHENOS_API_TOKEN` is set, remote (non-localhost) callers of
-the token-gated routes below must send `Authorization: Bearer <token>`.
-Localhost (the Mac app, local browser UI, MCP server, LaunchAgents) is always
-exempt. Gated routes are marked **🔒** in the table.
+Generated public URLs resolve through `lib.web_origin.web_origin()`:
+`KITCHENOS_WEB_BASE_URL` → deprecated `KITCHENOS_API_BASE` → the canonical
+origin above. Values must be HTTP(S) origins without credentials, a nonroot
+path, query, or fragment; trailing root slashes are removed. Internal MCP
+and operator health calls remain `http://localhost:5001`.
 
-Two things this does **not** currently amount to, both worth knowing before you
-rely on it:
+DNS, TLS, Caddy, VPN On Demand, and recovery are documented in the shared
+[home gateway runbook](https://github.com/SlowSpeedChase/dotfiles/blob/main/docs/home-web-gateway.md).
 
-- **Coverage is partial.** Some `/api/` routes remain ungated, including mutating
-  ones (`/api/inventory/*`, `/api/pantry` PUT,
-  `/api/recipes/save`). They are listed in `KNOWN_UNGATED` in
-  `tests/test_api_auth.py`, which fails if a *new* ungated route appears — so
-  the gap is pinned and visible, not closed.
-- **No browser page sends the header.** Every `fetch()` in `templates/` is
-  bare, so the moment `KITCHENOS_API_TOKEN` is set, every gated route 401s for a
-  remote browser and the planner, freezer and board stop working from any
-  machine but this one. `KitchenOSKit` does send it, so the native app is fine.
-  The token is currently unset, which is the only reason this isn't biting.
+**Direct browser access**: Set `KITCHENOS_AUTH_MODE=open` in the active server environment and restart the API to allow ordinary links and browser actions without credentials. This bypasses both bearer-token checks and Siri viewing-cookie restrictions, including expired cookies. Anyone who can reach the server can read and change KitchenOS. Keep the existing API token for native clients; omit this setting or use `required` to restore the existing token/session behavior.
+
+**Auth**: when `KITCHENOS_API_TOKEN` is set, remote callers of the
+routes marked **🔒** must send `Authorization: Bearer <token>`. Existing
+loopback exemptions still apply except to a browser carrying `kitchenos_view`.
+A valid explicit bearer takes precedence over that cookie. A remote caller
+forwarded by the loopback gateway remains remote under the existing nearest-hop
+client check.
+
+Siri web navigation exchanges a one-use code for **15 minutes of viewing
+access** to the recipe and planner pages and their approved read endpoints.
+The global guard applies to a marked browser before loopback exemptions,
+blocks all other routes (including legacy mutating GET actions), and retains
+the restrictive cookie for 24 hours after issuance. Expired, invalid, restarted,
+or token-rotated sessions cannot regain anonymous access while that marker is
+present. See the handoff contract below.
+
+This does not close the wider browser authentication gap: routes listed in
+`KNOWN_UNGATED` in `tests/test_api_auth.py` retain their existing behavior for
+clients without a handoff cookie. Ordinary remote pages do not attach the
+native bearer, so their gated fetches can still return 401. Do not infer the
+server's token configuration from this document. The recipe page retains its
+server-rendered **Open in Obsidian** link and specific access-failure message,
+so its fallback remains usable when recipe JSON is unavailable.
 
 ## 1. HTTP endpoints
 
-**Measured from current source:** 91 `@app.route` decorators register 82 unique
-literal paths. Path | Method | Purpose.
+HTTP routes and their request/response behavior:
 
 | Path | Method | Purpose |
 |------|--------|---------|
 | `/transcript` | GET, POST | Fetch a YouTube video's transcript + description as one text blob (`{url}` body or `?url=`). Used by ad-hoc tooling, not the main pipeline. |
+| `/api/browser-handoffs` 🔒 | POST | Native-authorized typed recipe/day destination → one-use browser bootstrap path. Viewing cookies alone cannot issue codes. |
+| `/api/browser-handoffs/exchange` | POST | Same-origin JSON code exchange → canonical destination and a viewing cookie. The code authenticates this endpoint. |
+| `/browser/open` | GET | Minimal first-party bootstrap; requires an ephemeral code fragment and is not bookmarkable. |
 | `/health` | GET | Liveness check — `{"status": "ok"}`. |
 | `/api/recipes` 🔒 | GET | Recipe metadata index for the meal-planner sidebar. `?ingredient=<term>` filters to recipes whose ingredient list contains the case-insensitive substring — backs the Siri "recipes with X" intent. Cached 5 min. |
 | `/api/recipes/by-ingredients` 🔒 | POST | Rank recipes by ingredient overlap. Body `{ingredients: [str], limit?: int}` → `{matches: [{name, score, shared_ingredients}]}` (zero-overlap excluded). Reuses `meal_suggester` scoring. |
@@ -255,6 +272,7 @@ not add a universal confirmation step to every mutation.
 | `GetRecipeNutritionIntent` | `recipe: RecipeEntity` | `GET /api/recipes/<name>` | "How many calories are in X" — reads `nutrition_calories`/`nutrition_protein`/etc. off the recipe detail response. |
 | `SummarizeRecipeIntent` | `recipe: RecipeEntity` | `GET /api/recipes/<name>`, then on-device `RecipeAI.summarize` | On-device summary of a recipe's steps/ingredients — no separate summarization endpoint. |
 | `AskKitchenOSIntent` | `request: String` (free-text, open-ended) | Indirect — delegates to `MealPlanAssistant`/`RecipeAI` (on-device LLM + tools), which itself calls into `KitchenOSClient`; any proposed write goes through the same read-modify-write `addRecipe`/`putMealPlan` path after a confirmation gate | Freeform natural-language entry point ("what should I make tonight", "add pasta to Friday"). |
+| `OpenKitchenOSWebIntent` | `kind: WebNavigationKind`, `recipeName: String?`, `date: String?` | `POST /api/browser-handoffs` | Non-discoverable foreground continuation from `AskKitchenOSIntent`; opens the resolved web destination in the default browser. |
 | `OpenRecipeIntent` | `target: RecipeEntity` | None — pure in-app navigation via `RecipeRouter`, no HTTP endpoint | Opens a recipe directly in the app (e.g. tapping the indexed entity in Spotlight). |
 
 `KitchenOSClient` also exposes `recipesByIngredients(_:limit:)` →
@@ -295,11 +313,12 @@ these five Mac actions.
 ## Native Apple integration (model version 1)
 
 `lib/apple_integration/routes.py` registers every route below under
-`/api/apple-integration`. All use the existing optional bearer policy: localhost
-is exempt; with `KITCHENOS_API_TOKEN` configured, remote callers need its bearer
-value. **Local writer** routes additionally require the actual remote address to
-be `127.0.0.1` or `::1`, even with a valid bearer or when the token is unset.
-Forwarding headers do not grant local authority. Settings/status may be used by
+`/api/apple-integration`. All use the shared authorization policy: explicit open access bypasses the
+bearer/session gate; otherwise localhost is exempt and remote callers need the
+configured `KITCHENOS_API_TOKEN` bearer value. **Local writer** routes additionally require the shared local-client check: the
+immediate socket must be loopback and any nearest `X-Forwarded-For` hop must also
+be loopback. Caddy-forwarded remote clients are rejected even with a valid bearer,
+an unset token or open access; direct remote clients cannot spoof local authority. Settings/status may be used by
 iOS; iOS never becomes a second EventKit writer.
 
 Errors are `{error: string}`: 400 malformed/unknown/missing fields, 401 bad remote
@@ -623,3 +642,127 @@ patches, resolutions and unfinished observation requests containing its tokens;
 already synchronized items contribute zero. Requests without item tokens cannot
 be attributed to a selected scope and remain visible in the global status.
 Sending an archived scope returns 409; reactivate it explicitly in the Mac app.
+
+### Gateway client identity
+
+Protected routes preserve bearer authentication through Caddy. Only an immediate
+loopback socket may supply `X-Forwarded-For`; the nearest forwarded hop determines
+the local exemption. Direct remote callers cannot spoof it. Local clients without
+forwarding remain exempt. `KITCHENOS_API_TOKEN` is still optional for standalone
+use, but shared-gateway activation requires a configured token and probes the
+selected auth mode: 401 when required, 200 when explicitly open. Reviewed API releases expose
+a non-secret `X-KitchenOS-Release` SHA on `/health` for deployment verification;
+the health JSON remains unchanged.
+
+### Cooking availability
+
+`POST /api/cooking-availability` accepts exactly `{days: {"YYYY-MM-DD": "good|possible|busy|unknown"}}` (up to 35 dates), replacing the singleton snapshot in `data/kitchenos.db`. An empty days object clears it. No event titles, notes, or calendar IDs are accepted. `GET /api/cooking-availability/<week>` returns all seven ISO dates, `fresh`, and `synced_at`; absent dates and snapshots six hours old return `unknown`. Both routes use the existing token gate. Availability uploads never create, delete, move, or mark meals cooked.
+
+### Detailed planning calendar
+
+The server Mac publishes `POST /api/planning-calendar/snapshot` with version 1,
+a SHA256 `selection_id`, offset-aware `generated_at`, IANA `timezone`, ISO
+`coverage_start`/exclusive `coverage_end` (up to 35 days), and `events`.
+Each event has only opaque `id`, `title` (300 characters), offset-aware `start`
+and exclusive `end`, boolean `all_day`, and `role` (`firm`/`flexible`).
+Snapshots are bounded to 5,000 occurrences and 2 MiB; invalid uploads are atomic.
+`{"version":1,"clear":true}` clears details and all occurrence choices.
+
+`GET /api/planning-calendar/<week>` returns freshness, sync time, revision,
+coverage, events, choices and per-day coverage. Titles and choices are omitted
+once either generation or receipt is six hours old. Legacy daily uploads never
+refresh this snapshot. `PUT /api/planning-calendar/occurrences/<id>` accepts
+`{"choice":"blocking"|"background","revision":"<current revision>"}`.
+Missing, stale or changed occurrences return 409. Every route uses the token gate.
+Calendar contents remain in local SQLite; they are not passed to model prompts,
+logs or generated vault notes.
+
+`GET /api/planning-calendar/<week>?duration_minutes=90` also returns `schedules`
+and per-day `windows`, `covered`, and `unresolved_all_day_ids`. Duration is an
+integer from 15 through 360, in 15-minute steps. Openings start between noon and
+midnight in the snapshot timezone. Firm commitments and cooking blocks exclude
+openings; flexible overlaps rank after clear openings. Unclassified all-day
+occurrences make openings conditional. Uncovered dates have no suggestions.
+
+`POST /api/cooks/<id>/schedule` takes `date`, `meal`, offset-aware `start`, IANA
+`timezone`, `duration_minutes`, and `servings_to_eat`, plus optional boolean
+`expected_unplaced`. Servings must be positive and finite for a first placement;
+null is accepted only with `expected_unplaced:false` for an already anchored cook.
+The placement precondition is checked in the ledger transaction. It returns
+`cook` and `schedule`. It rejects cross-week, already cooked and bundle rows.
+A first placement and cooking reservation commit atomically; retries preserve
+serving counts. Existing home servings move with the cook; leftovers stay put.
+Generic date/meal changes remove the reservation; deletion cascades. Scheduling
+never sets `cooked_at`, consumes inventory or changes recipe scale.
+
+The detailed endpoint accepts optional `exclude_cook_id` when suggesting a new
+time for an existing cook; its old reservation stays visible but does not block
+its own replacement. Responses include `duration_minutes` so the UI never shows
+openings calculated for a previous duration. Recipe details expose a derived
+`cooking_duration` (`minutes`, `source`); unambiguous numeric/unit strings are
+accepted, while arbitrary prose retains the planning estimate.
+
+Clearing preserves only a timestamp barrier (no titles or calendar IDs), rejecting
+delayed pre-clear uploads. Equal-generation uploads must be identical. The native
+publisher emits fractional-second generation times to distinguish rapid updates.
+
+## Siri browser handoff
+
+`POST /api/browser-handoffs` accepts exactly one descriptor:
+
+```json
+{"kind":"recipe","name":"Rice & Beans"}
+```
+
+or `{"kind":"meal_plan","date":"2026-10-16"}`. Recipe names are canonical
+saved identities, not display labels. A date is a real Gregorian civil date;
+the server derives its ISO week. No URL, origin, credential, or extra field is
+accepted from the caller. Success returns `handoff_path` in the exact shape
+`/browser/open#code=<opaque-code>` and `expires_at` as Unix seconds. Invalid
+input is 400, a missing recipe is 404, and exhausted capacity is 429.
+
+The bootstrap removes its fragment before making any request, then posts
+`{"code":"<opaque-code>"}` to `/api/browser-handoffs/exchange` as same-origin
+JSON. Success returns `redirect_path` and `expires_at` (Unix seconds). For the
+examples above the paths are `/recipe/Rice%20%26%20Beans` and
+`/meal-planner?week=2026-W42&date=2026-10-16&view=calendar`. Codes expire after
+60 seconds, are consumed atomically once, and invalid/expired/replayed codes
+receive a generic 401. A full session store returns 429 without consuming the
+code. Each process-local store is capped at 1,024 entries and retains only
+hashed code/session identifiers.
+
+The host-only `kitchenos_view` cookie is HttpOnly, SameSite=Strict, Path=/,
+Max-Age=86400; HTTPS adds Secure. The authorization lasts 900 seconds and is
+bound to the origin (including port) and current API-token fingerprint.
+Behind the existing gateway, forwarded HTTPS is accepted only from an immediate
+loopback peer at the configured canonical authority; arbitrary forwarded headers
+from remote clients cannot select the handoff origin.
+Restarting the API or rotating its token invalidates existing grants. The existing HTTPS gateway uses a Secure cookie. Direct private HTTP
+connections remain supported without Secure; no public hosting is introduced. A fresh Siri handoff can renew an expired session.
+Responses use private/no-store caching and vary by Cookie and Authorization;
+the bootstrap suppresses referrers and loads no third-party resources.
+
+Viewing sessions allow only GET/HEAD recipe/planner data, the two page shells,
+and their static/image resources. They cannot save servings, add meals, reorder
+cards, schedule cooks, classify Calendar events, or trigger legacy refresh and
+reprocessing actions. Local scaling, filtering, previews, and date/week
+navigation remain available. Expiry displays a new-handoff message and stops
+refreshes. Clients without a viewing cookie retain their existing auth rules.
+
+### Complete day content
+
+`GET /api/week-board/<week>` adds `planned_meals`: a read-only union of cook
+anchors and slot placements, including leftovers from other weeks. Rows carry
+`date`, `meal`, canonical `recipe`, `cook_id`, `bundle_id`, `bundle_name`,
+`anchor`, and `count`. A placement at its own cook's anchor is represented once;
+a cook anchor without allocated servings has count zero. Rendering these rows
+never creates a cook, placement, or plan file.
+
+`GET /api/meal-plan/<week>` retains the existing `days` fields for native clients
+and adds a flat `planned_meals` list with every legacy Markdown link in each
+meal slot. Each row carries `date`, `meal`, and the same serialized entry fields
+as `days`, including `name`, `kind`, `servings`, and plate member metadata where
+available. `parse_meal_plan(..., all_entries=True)` is an opt-in read mode; the
+default parser and mutation/import behavior still return the first entry.
+The calendar combines these projections by canonical identity and slot, keeping
+plate members visible without duplicating generated Markdown entries.

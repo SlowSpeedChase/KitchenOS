@@ -7,12 +7,12 @@ from .models import BridgeContext, BatchTooLarge, InvalidPayload, OwnershipConfl
 
 MAX_BYTES=2*1024*1024
 
-def register_routes(app, require_token):
+def register_routes(app, require_token, is_local_client):
     def endpoint(path, methods, *, local=False):
         def decorate(fn):
             @wraps(fn)
             def handle(**kwargs):
-                if local and request.remote_addr not in {'127.0.0.1','::1'}:
+                if local and not is_local_client():
                     return jsonify(error='Designated bridge requires localhost'),403
                 request.max_content_length=MAX_BYTES
                 try:

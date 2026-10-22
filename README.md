@@ -22,6 +22,15 @@ For deeper technical detail than this overview covers, see:
 - **[docs/OPERATIONS.md](docs/OPERATIONS.md)** — the full command reference, LaunchAgent install/restart, deploy, maintenance
 - **[docs/ROADMAP.md](docs/ROADMAP.md)** — what's shipped and what's genuinely still open
 
+Open KitchenOS at **[https://chases-mac-mini.taila69703.ts.net](https://chases-mac-mini.taila69703.ts.net)** on your phone or computer.
+Generated links use `KITCHENOS_WEB_BASE_URL`; deprecated `KITCHENOS_API_BASE`
+is a fallback, followed by this canonical HTTPS origin. The iOS app migrates
+only its three known old defaults and preserves custom endpoints. The Mac app
+and local services keep `http://localhost:5001`.
+
+For DNS, TLS, Caddy, VPN On Demand, and recovery, use the shared
+[home gateway runbook](https://github.com/SlowSpeedChase/dotfiles/blob/main/docs/home-web-gateway.md).
+
 ## What It Does
 
 - **Extracts recipes** from YouTube videos, Instagram Reels, and recipe web
@@ -183,6 +192,7 @@ when off the local network — and adds:
 
 - **Siri / App Intents** (`AppShortcutsProvider`) for finding recipes,
   checking the meal plan, getting nutrition info, and more, hands-free
+- **Open exact web pages with Siri** through Ask KitchenOS: “Show the recipe for Rice & Beans” or “Open Friday’s meal plan.” The default browser opens the saved recipe or the selected day’s meals with 15 minutes of viewing access. The native app supplies Siri integration; the destination is the web app. Rebuild/install the native app and update the API together.
 - **On-device AI** via Apple Foundation Models for an in-app chat assistant
   and recipe summarization, independent of Ollama/Claude
 - **CoreSpotlight search** so recipes are findable system-wide by meaning,

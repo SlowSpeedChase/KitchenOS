@@ -1,4 +1,7 @@
 import json
+import pytest
+
+pytestmark = pytest.mark.e2e
 import sqlite3
 from datetime import datetime, timezone
 from playwright.sync_api import expect

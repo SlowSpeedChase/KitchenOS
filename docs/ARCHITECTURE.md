@@ -69,12 +69,26 @@ it. It runs as the `com.kitchenos.api` LaunchAgent on port 5001.
 above) rather than running extraction in-process; most other routes read and
 write the vault and `data/kitchenos.db` directly.
 
-It is exposed off the Mac mini over **Tailscale**
-(`chases-mac-mini.taila69703.ts.net:5001`) for remote callers — the iOS
-Shortcut, MCP server, and the native app. When `KITCHENOS_API_TOKEN` is set,
+The shared **HTTPS home gateway** exposes the public origin
+(`https://chases-mac-mini.taila69703.ts.net`) for remote callers — the iOS
+Shortcut and native iOS app. The local MCP server and macOS app retain
+loopback HTTP. `lib/web_origin.py` resolves every generated public URL from
+`KITCHENOS_WEB_BASE_URL`, legacy `KITCHENOS_API_BASE`, then the canonical
+origin. When `KITCHENOS_API_TOKEN` is set,
 remote (non-localhost) callers of the Siri-facing endpoints (`/api/recipes`,
 `/api/recipes/<name>`, `/api/meal-plan/<week>`, `/api/suggest-meal`) must
-send `Authorization: Bearer <token>`; localhost is always exempt.
+send `Authorization: Bearer <token>`. Existing localhost exemptions remain,
+except that the global browser-view guard applies first when a Siri handoff
+cookie is present.
+
+The iOS default is the canonical HTTPS origin. `KitchenOSConfig.resolved`
+persists an upgrade only for the exact retired defaults
+`http://100.111.6.10:5001`, `http://chases-mac-mini.taila69703.ts.net:5001`,
+and `http://Chases-Mac-mini.local:5001`; custom endpoints and credentials
+remain unchanged. No multi-origin fallback is added.
+
+Gateway DNS, TLS, Caddy, VPN On Demand, and recovery live in the shared
+[home gateway runbook](https://github.com/SlowSpeedChase/dotfiles/blob/main/docs/home-web-gateway.md).
 
 The browsable pages are phone-first, reached over the tailnet from an iPhone.
 Two modules serve that:
@@ -385,6 +399,23 @@ in `docs/setup/`.
   next recompute.
 
 
+### Calendar availability and meal planning
+
+The Mac bridge coordinator uses one EventKit adapter to publish both daily
+cooking opportunities and a bounded detailed snapshot from two selected calendars.
+Only currently linked cooking tokens from a settled reconciliation are excluded
+from busy time. `cooking_availability` and `planning_calendar` retain their
+six-hour expiry; `cooking_windows` derives openings in the source IANA timezone.
+Detailed titles remain in local SQLite and never enter model prompts.
+
+`static/planning-calendar.js` combines the snapshot with ledger and legacy meal
+projections, and schedules only through the ledger API. The native plan screens
+open this route through `PlanningCalendarWebView`; `PlanningWebPolicy` confines
+credential injection to same-origin API fetches with redirect refusal. Native
+cook focus retains exact ledger identity; read-only browser sessions do not open
+the schedule editor. The coordinator owns refresh lifecycle, including after the
+last window closes, so a second window-bound calendar loop is not started.
+
 ### Calendar cooking writeback
 
 `lib/apple_integration/cooking.py` exposes `collect(week)`,
@@ -460,7 +491,7 @@ it does not claim to recover an unseen external edit in that interval.
 | Module | Public boundary |
 |---|---|
 | `lib/apple_integration/service.py` | `activate`, `update_scope`, `work`, `observe`, `acknowledge`, `recover_saved`, `complete_sync`, `resolve_conflict`, `restore`, `remove_owned`, `register_owner`, `disconnect`, `settings`, `status`, `item_details`, `conflict_detail`, `link`, `configured`, and `enqueue` compose source adapters with the shared merge/journal. Recovery precedes source refresh; no DB transaction spans file or native/network work. |
-| `lib/apple_integration/routes.py` | `register_routes(app, require_token)` installs the version-one API, strict envelopes, complete batch limits and localhost writer gate independently of optional bearer auth. Exact contracts and native retry order are in `docs/API.md`. |
+| `lib/apple_integration/routes.py` | `register_routes(app, require_token, is_local_client)` installs the version-one API, strict envelopes, complete batch limits and gateway-aware local writer gate independently of bearer/open-access auth. Exact contracts and native retry order are in `docs/API.md`. |
 | `lib/apple_integration/shopping.py` | `resolve(item, choice, operation_id)` performs amount/ingredient-identity conflict edits with exact note hashes and recoverable images. `keep_manual` assigns a new row identity; it never transfers an edited ingredient onto the old generated ID. |
 | `lib/apple_integration/store.py` | `reserve_cleanup` is the explicit bounded-removal path for retained generations. Ordinary callbacks reject replaced generations; cleanup acknowledgements can affect only their specifically reserved old row. Scope destination is a default for new items; archive/reactivation preserves existing identities. |
 
@@ -565,3 +596,43 @@ until a fresh pass.
 Legacy ICS and AppleScript exports are unowned representations and are never
 adopted by title; native scopes cannot fall back to another writer when
 paused/offline.
+
+### Siri navigation to the web
+
+The voice-only `OpenWebDestinationTool` records a typed `WebDestination` in
+invocation-local state. `RecipeNavigationResolver` preserves canonical recipe
+identity and rejects ambiguous matches; `WebDayResolver` resolves civil dates
+in the caller's local time zone. `AskKitchenOSIntent` consumes the selection
+once and hands it to `OpenKitchenOSWebIntent`, a foreground continuation.
+The authenticated `KitchenOSClient` mints a one-use code and `WebBrowserOpener`
+launches the configured origin in the device's default browser. Model output
+never supplies a URL or credential. Native chat and Spotlight's
+`OpenRecipeIntent` retain their existing navigation.
+
+`lib/browser_handoff.py` owns bounded, locked, process-local stores containing
+only hashed identifiers. `api_server.py` validates typed destinations, builds
+canonical redirect paths, and checks marked browser requests against an exact
+endpoint/method allowlist before route-specific or loopback exemptions.
+`browser_open.html` and `browser-handoff.js` remove/exchange the fragment;
+`browser-view.js` displays the server-derived viewing state and handles expiry.
+The 24-hour restriction marker deliberately outlives the 15-minute grant.
+The handoff introduces no persistent credential or domain-data table. The
+calendar prerequisite retains its existing local planning tables. Gateway
+origin recovery is restricted to the existing loopback proxy and configured
+canonical HTTPS authority.
+
+Planner URL state carries an authoritative civil `date`, with its ISO `week`
+derived from it. Calendar and Grid preserve that selection and bring the
+actual day's meal content into view once; background refresh does not steal
+focus. Browser handoffs authorize viewing, with write controls disabled in
+addition to server enforcement. This is a narrow continuation channel, not a
+replacement for authentication of every existing web route.
+
+The focused meal list reads `serving_ledger.planned_meals_for_week` through the
+existing board response and the meal-plan API's additive all-entry projection.
+This includes cook anchors, local/cross-week leftovers, and all legacy recipe
+or plate links without importing legacy notes during navigation. Calendar
+viewing places meals before the timeline; touch Grid sheets retain read-only
+recipe and plate-member links. Existing recipe-review metadata (`reviewed`,
+`review_status`) remains declared in the optional recipe schema so validation
+accepts already-reviewed notes without rewriting the vault.

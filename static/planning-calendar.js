@@ -22,12 +22,13 @@
     if (!response.ok) { const error = new Error(data.error || 'Unable to load. Try refreshing.'); error.status=response.status; throw error; }
     return data;
   }
-  function mount({root, week, onScheduled}) {
-    let currentWeek=week, generation=0, controller, snapshot, cooks=[], selected=null, dayIndex=0, expanded=false, destroyed=false, submitting=false;
+  function mount({root, week, date=null, readOnly=false, onSelection, onScheduled}) {
+    let requestedDate=date, focusPending=Boolean(date);
+    let currentWeek=week, generation=0, controller, snapshot, cooks=[], plannedMeals=[], selected=null, dayIndex=0, expanded=false, destroyed=false, submitting=false;
     root.classList.add('pc'); root.replaceChildren();
     const status=el('p','Loading calendar…','pc-status'); status.setAttribute('role','status');
-    const heading=el('h2','Make room to cook');
-    const intro=el('p','Choose a meal, then a cooking opening. Time Blocking stays flexible.','pc-intro');
+    const heading=el('h2',readOnly?'Planned meals':'Make room to cook');
+    const intro=el('p',readOnly?'Browse the meals planned for each day.':'Choose a meal, then a cooking opening. Time Blocking stays flexible.','pc-intro');
     const refresh=button('Refresh calendar',()=>load());
     const timeline=el('section',null,'pc-calendar'); timeline.setAttribute('aria-label','Calendar and planned meals');
     const tray=el('section',null,'pc-tray');
@@ -39,7 +40,34 @@
     const clock=value=>new Intl.DateTimeFormat(undefined,{timeZone:zone(),hour:'numeric',minute:'2-digit'}).format(new Date(value));
     const dates=()=>Object.keys(snapshot?.days || {}).sort();
     const dayTitle=d=>new Intl.DateTimeFormat(undefined,{weekday:'short',month:'short',day:'numeric',timeZone:'UTC'}).format(new Date(`${d}T12:00Z`));
+    // Ledger identities win over their generated Markdown links. Legacy-only
+    // entries remain visible without importing them or creating cook rows.
+    function projectMeals(board,plan) {
+      const rows=new Map();
+      const slots=['breakfast','lunch','snack','dinner'];
+      const owned=new Map((board.cooks||[]).map(c=>[c.id,c]));
+      if(!Array.isArray(board.planned_meals))throw new Error('Unable to load planned meals. Refresh the page.');
+      for(const entry of board.planned_meals){
+        if(!entry.date||!entry.meal)continue;
+        const identity=entry.bundle_id?`bundle:${entry.bundle_id}`:`cook:${entry.cook_id}`;
+        const key=JSON.stringify([identity,entry.date,entry.meal]);
+        let row=rows.get(key);
+        if(!row){row={identity,date:entry.date,meal:entry.meal,kind:entry.bundle_id?'meal':'recipe',name:entry.bundle_id?entry.bundle_name:entry.recipe,recipes:[],cook:null};rows.set(key,row);}
+        if(!row.recipes.includes(entry.recipe))row.recipes.push(entry.recipe);
+        if(entry.anchor&&!entry.bundle_id)row.cook=owned.get(entry.cook_id)||null;
+      }
+      const legacy=Array.isArray(plan.planned_meals)?plan.planned_meals:(plan.days||[]).flatMap(day=>slots.filter(meal=>day[meal]).map(meal=>({...day[meal],date:day.date,meal})));
+      for(const entry of legacy){
+        if(!entry.name)continue;
+        const covered=[...rows.values()].some(row=>row.date===entry.date&&row.meal===entry.meal&&(entry.kind==='meal' ? row.kind==='meal'&&row.name===entry.name : row.recipes.includes(entry.name)));
+        if(covered)continue;
+        const identity=`legacy:${entry.kind||'recipe'}:${entry.name}`;
+        rows.set(JSON.stringify([identity,entry.date,entry.meal]),{identity,date:entry.date,meal:entry.meal,kind:entry.kind||'recipe',name:entry.name,recipes:entry.kind==='meal'?(entry.sub_recipes||[]).map(sub=>sub.recipe):[entry.name],cook:null});
+      }
+      return [...rows.values()].sort((a,b)=>a.date.localeCompare(b.date)||slots.indexOf(a.meal)-slots.indexOf(b.meal));
+    }
     function renderTray() {
+      if(readOnly){tray.replaceChildren();tray.hidden=true;return;}
       tray.replaceChildren(el('h3','Meals to plan'));
       const available=cooks.filter(c=>!c.date && !c.bundle_id && !c.cooked_at);
       if (!available.length) tray.append(el('p','No unscheduled meals this week. Add a recipe in Grid, or choose a planned meal below.'));
@@ -51,14 +79,18 @@
     }
     function renderCalendar() {
       timeline.replaceChildren();
-      const ds=dates(), nav=el('div',null,'pc-day-nav');
-      const prev=button('Previous day',()=>{dayIndex=Math.max(0,dayIndex-1);renderCalendar();});prev.disabled=dayIndex===0;
-      const next=button('Next day',()=>{dayIndex=Math.min(ds.length-1,dayIndex+1);renderCalendar();});next.disabled=dayIndex===ds.length-1;
+      const ds=dates();
+      if(requestedDate && ds.includes(requestedDate)) dayIndex=ds.indexOf(requestedDate);
+      dayIndex=Math.min(dayIndex,Math.max(0,ds.length-1));
+      function selectDay(index){dayIndex=index;requestedDate=ds[index];focusPending=true;onSelection?.({week:currentWeek,date:requestedDate});renderCalendar();}
+      const nav=el('div',null,'pc-day-nav');
+      const prev=button('Previous day',()=>{selectDay(Math.max(0,dayIndex-1));});prev.disabled=dayIndex===0;
+      const next=button('Next day',()=>{selectDay(Math.min(ds.length-1,dayIndex+1));});next.disabled=dayIndex===ds.length-1;
       nav.append(prev,el('strong',ds[dayIndex]?dayTitle(ds[dayIndex]):''),next);timeline.append(nav);
       const expand=button(expanded?'Show until 10 pm':'Show until midnight',()=>{expanded=!expanded;renderCalendar();});expand.setAttribute('aria-pressed',String(expanded));timeline.append(expand);
       const lanes=el('div',null,'pc-lanes');
       ds.forEach((d,index)=>{
-        const lane=el('section',null,`pc-day${index===dayIndex?' pc-selected-day':''}`);lane.append(el('h3',dayTitle(d)));
+        const lane=el('section',null,`pc-day${index===dayIndex?' pc-selected-day':''}`);lane.dataset.date=d;lane.append(el('h3',dayTitle(d)));
         const allDay=el('div',null,'pc-all-day');
         const dayStart=Date.parse(offsetStamp(d,'00:00',zone()));
         const nextDate=new Date(`${d}T12:00Z`);nextDate.setUTCDate(nextDate.getUTCDate()+1);
@@ -72,7 +104,7 @@
               try { await json(`/api/planning-calendar/occurrences/${e.id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({choice,revision:snapshot.revision})});await load(); }
               catch(err){status.textContent=err.message;if(err.status===409)await load();}
               finally{b.disabled=false;}
-            });b.setAttribute('aria-pressed',String(snapshot.choices[e.id]===choice));item.append(b);
+            });b.setAttribute('aria-pressed',String(snapshot.choices[e.id]===choice));b.disabled=readOnly;item.append(b);
           });allDay.append(item);
         });
         if(!events.some(e=>e.all_day))allDay.append(el('small',snapshot.days[d].covered?'No all-day events':'Calendar availability unknown'));
@@ -94,11 +126,30 @@
           block.style.top=`${(e.a-12)*64}px`;block.style.height=`${Math.max(44,(e.b-e.a)*64-4)}px`;block.style.left=`calc(34px + (100% - 36px) * ${e.column/ends.length})`;block.style.width=`calc((100% - 36px) / ${ends.length} - 3px)`;track.append(block);
         });cluster=[];}
         visible.forEach(e=>{if(e.a>=clusterEnd)paint();cluster.push(e);clusterEnd=Math.max(clusterEnd,e.b);});paint();lane.append(track);
-        const mealList=el('div',null,'pc-day-meals');cooks.filter(c=>c.date===d).forEach(c=>{const title=`${c.recipe} · ${c.meal || 'Meal'}`;mealList.append(c.bundle_id||c.cooked_at?el('p',title):button(title,()=>choose(c)));});lane.append(mealList);lanes.append(lane);
+        const mealList=el('div',null,'pc-day-meals');
+        const mealHeading=el('h3',`${dayTitle(d)} meals`,'pc-meals-heading');mealHeading.dataset.date=d;mealHeading.tabIndex=-1;mealList.append(mealHeading);
+        const meals=plannedMeals.filter(row=>row.date===d);
+        meals.forEach(row=>{
+          const item=el('div',null,'pc-planned-meal');item.dataset.identity=row.identity;
+          const title=`${row.name} · ${row.meal}`;
+          const linkTo=recipe=>{const link=el('a',recipe);link.href=`/recipe/${encodeURIComponent(recipe)}`;return link;};
+          if(!readOnly&&row.cook&&!row.cook.cooked_at)item.append(button(title,()=>choose(row.cook)));
+          else if(row.kind!=='meal'&&row.recipes.length===1){const link=linkTo(row.recipes[0]);link.textContent=title;item.append(link);}
+          else {item.append(el('p',title));const members=el('ul');row.recipes.forEach(recipe=>{const member=el('li');member.append(linkTo(recipe));members.append(member);});item.append(members);}
+          mealList.append(item);
+        });
+        if(!meals.length)mealList.append(el('p','No meals planned for this day.'));
+        if(readOnly)lane.insertBefore(mealList,allDay);else lane.append(mealList);
+        lanes.append(lane);
       });
       timeline.append(lanes);const detail=el('p','Select an event for its full name and time.','pc-event-detail');detail.setAttribute('role','status');timeline.append(detail);
+      if(focusPending && requestedDate){
+        const heading=root.querySelector(`.pc-meals-heading[data-date="${requestedDate}"]`);
+        if(heading){focusPending=false;requestAnimationFrame(()=>{if(destroyed||!heading.isConnected)return;heading.focus({preventScroll:true});heading.scrollIntoView({block:'start',inline:'nearest'});});}
+      }
     }
     async function choose(cook) {
+      if(readOnly)return;
       selected=cook;editor.hidden=false;editor.replaceChildren();
       const selectionWeek=currentWeek; let durationEdited=false;
       const existing=(snapshot.schedules||[]).find(s=>s.cook_id===cook.id);
@@ -156,7 +207,7 @@
       }catch(err){warnings.textContent=err.message;}
     }
     async function schedule(event){
-      event.preventDefault();if(submitting||!selected)return;
+      event.preventDefault();if(readOnly||submitting||!selected)return;
       const target=selected,weekAtStart=currentWeek;submitting=true;submit.disabled=true;
       try{
         const start=offsetStamp(dateInput.value,timeInput.value,zoneInput.value);
@@ -166,11 +217,13 @@
       finally{submitting=false;if(submit)submit.disabled=false;}
     }
     async function load(){
+      if(destroyed||window.KitchenBrowserView?.expired)return;
       const gen=++generation;controller?.abort();controller=new AbortController();
       const duration=selected?Number(durationInput.value):90;
       try{
-        const [data,board]=await Promise.all([json(`/api/planning-calendar/${currentWeek}?duration_minutes=${duration}${selected?'&exclude_cook_id='+selected.id:''}`,{signal:controller.signal}),json(`/api/week-board/${currentWeek}`,{signal:controller.signal})]);
-        if(destroyed||gen!==generation)return;snapshot=data;cooks=board.cooks;
+        const [data,board,plan]=await Promise.all([json(`/api/planning-calendar/${currentWeek}?duration_minutes=${duration}${selected?'&exclude_cook_id='+selected.id:''}`,{signal:controller.signal}),json(`/api/week-board/${currentWeek}`,{signal:controller.signal}),json(`/api/meal-plan/${currentWeek}`,{signal:controller.signal})]);
+        if(destroyed||gen!==generation)return;
+        const meals=projectMeals(board,plan);snapshot=data;cooks=board.cooks;plannedMeals=meals;
         status.textContent=data.fresh?`Calendar updated · ${new Date(data.synced_at).toLocaleString()} · ${zone()}`:'Calendar needs refresh';
         renderTray();renderCalendar();if(selected){renderOpenings();warn();}focusLinkedCook();
       }catch(err){if(err.name!=='AbortError'&&gen===generation){
@@ -181,7 +234,7 @@
     let pendingFocus = new URLSearchParams(window.location.search).get('focusCookID');
     if (pendingFocus && !/^[1-9][0-9]*$/.test(pendingFocus)) pendingFocus = null;
     function focusLinkedCook() {
-      if (!pendingFocus) return;
+      if (readOnly || !pendingFocus) return;
       const id = Number(pendingFocus); pendingFocus = null;
       const cook = Number.isSafeInteger(id) ? cooks.find(c => c.id === id) : null;
       if (!cook || cook.bundle_id || cook.cooked_at) {
@@ -189,8 +242,16 @@
       }
       choose(cook); editor.scrollIntoView({block: 'nearest'}); dateInput.focus();
     }
-    const timer=setInterval(()=>{if(!document.hidden&&!submitting)load();},60000);load();
-    return {setWeek(value){if(value===currentWeek)return;currentWeek=value;selected=null;dayIndex=0;editor.hidden=true;snapshot=null;timeline.replaceChildren();tray.replaceChildren();load();},destroy(){destroyed=true;generation++;controller?.abort();clearInterval(timer);root.replaceChildren();}};
+    const timer=setInterval(()=>{if(!document.hidden&&!submitting&&!window.KitchenBrowserView?.expired)load();},60000);load();
+    const expire=()=>{controller?.abort();clearInterval(timer);};
+    window.addEventListener('kitchenos:view-expired',expire);
+    function setSelection({week:nextWeek,date:nextDate}){
+      if(nextWeek===currentWeek && nextDate===requestedDate)return;
+      if(nextDate!==requestedDate){requestedDate=nextDate;focusPending=Boolean(nextDate);}
+      if(nextWeek===currentWeek){if(snapshot)renderCalendar();return;}
+      currentWeek=nextWeek;selected=null;dayIndex=0;editor.hidden=true;snapshot=null;timeline.replaceChildren();tray.replaceChildren();load();
+    }
+    return {setSelection,setWeek(value){setSelection({week:value,date:null});},destroy(){destroyed=true;generation++;controller?.abort();clearInterval(timer);window.removeEventListener('kitchenos:view-expired',expire);root.replaceChildren();}};
   }
   window.KitchenPlanningCalendar={mount};
 })();

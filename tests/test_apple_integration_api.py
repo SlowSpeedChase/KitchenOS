@@ -591,3 +591,39 @@ def test_completed_observation_replay_rechecks_scope_availability(client):
     response=client.post(BASE+'/observations',json=payload)
     assert response.status_code==200
     assert response.json['operations']==[]
+
+
+@pytest.mark.parametrize('method,path', [
+    ('POST', '/owner'), ('DELETE', '/owner'), ('GET', '/work'),
+    ('POST', '/observations'), ('POST', '/operations/' + OWNER + '/ack'),
+    ('POST', '/operations/' + OWNER + '/recover-saved'),
+    ('POST', '/sync/complete'), ('POST', '/items/remove-owned'),
+])
+@pytest.mark.parametrize('auth_mode', ['required', 'open'])
+@pytest.mark.parametrize('forwarded', ['198.51.100.9', '127.0.0.1, 198.51.100.9', 'invalid'])
+def test_forwarded_clients_cannot_use_local_bridge_routes(client, monkeypatch, method, path, auth_mode, forwarded):
+    monkeypatch.setenv('KITCHENOS_AUTH_MODE', auth_mode)
+    headers = {'X-Forwarded-For': forwarded}
+    if auth_mode == 'required':
+        headers.update(AUTH)
+    response = client.open(BASE + path, method=method, json={}, headers=headers,
+                           environ_base={'REMOTE_ADDR': '127.0.0.1'})
+    assert response.status_code == 403
+    assert response.json == {'error': 'Designated bridge requires localhost'}
+    assert not client.get(BASE + '/status').json['connected']
+
+
+@pytest.mark.parametrize('address', ['127.0.0.1', '::1', '::ffff:127.0.0.1'])
+def test_direct_loopback_bridge_owner_remains_usable(client, address):
+    response = client.post(BASE + '/owner', json={'owner_id': OWNER},
+                           environ_base={'REMOTE_ADDR': address})
+    assert response.status_code == 200
+    assert response.json['status']['connected'] is True
+
+
+def test_remote_socket_cannot_spoof_loopback_bridge_owner(client, monkeypatch):
+    monkeypatch.setenv('KITCHENOS_AUTH_MODE', 'open')
+    response = client.post(BASE + '/owner', json={'owner_id': OWNER},
+                           headers={'X-Forwarded-For': '127.0.0.1'}, **REMOTE)
+    assert response.status_code == 403
+    assert not client.get(BASE + '/status').json['connected']

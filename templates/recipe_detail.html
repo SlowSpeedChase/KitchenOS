@@ -228,16 +228,17 @@
         <header>
             <div>
                 <h1 id="recipe-title">Loading…</h1>
-                <div class="subtitle" id="recipe-subtitle"></div>
+                <div class="subtitle" id="recipe-subtitle" role="status"></div>
             </div>
             <div class="header-actions">
-                <a class="button" id="obsidian-link" href="#">Open in Obsidian</a>
-                <button class="primary" id="add-week-btn">Add to this week</button>
+                <a class="button" id="obsidian-link" href="<!--OBSIDIAN_URL-->">Open in Obsidian</a>
+                <button class="primary" id="add-week-btn" disabled>Add to this week</button>
             </div>
         </header>
 
         <div id="add-week-status"></div>
 
+        <div id="recipe-content" hidden>
         <div class="card">
             <h2>Ingredients</h2>
             <div class="scale-row">
@@ -308,8 +309,10 @@
             <h2>Full Recipe</h2>
             <div class="body-markdown" id="body-markdown"></div>
         </div>
+        </div>
     </div>
 
+    <script src="/static/browser-view.js"></script>
     <script>
         function escapeHtml(s) {
             return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
@@ -460,6 +463,7 @@
         // totals into real per-serving macros — the server rewrites the
         // frontmatter and recomputes, so the numbers and the label change together.
         function wireServingsForm() {
+            if (window.KitchenBrowserView.readOnly) return;
             const form = document.getElementById('servings-form');
             if (!form) return;
             form.addEventListener('submit', async (e) => {
@@ -604,6 +608,7 @@
         }
 
         async function addToThisWeek() {
+            if (window.KitchenBrowserView.readOnly) return;
             const btn = document.getElementById('add-week-btn');
             const status = document.getElementById('add-week-status');
             btn.disabled = true;
@@ -635,11 +640,26 @@
             }
         }
 
+        function showLoadError(status) {
+            const needsAccess = status === 401 || status === 403;
+            document.getElementById('recipe-title').textContent = needsAccess
+                ? 'Browser access required'
+                : status === 404 ? 'Recipe not found' : 'Could not load recipe';
+            document.getElementById('recipe-subtitle').textContent = needsAccess
+                ? 'This browser is not authorized to view recipes. Open this recipe in Obsidian to continue.'
+                : status === 404
+                    ? 'This recipe may have moved. Check for it in Obsidian.'
+                    : 'Try reloading the page, or open this recipe in Obsidian.';
+            document.getElementById('recipe-content').hidden = true;
+            document.getElementById('add-week-btn').disabled = true;
+        }
+
         async function loadRecipe() {
+            if (window.KitchenBrowserView.expired) return;
             try {
                 const resp = await fetch(`/api/recipes/${encodeURIComponent(recipeName)}`);
                 if (!resp.ok) {
-                    document.getElementById('recipe-title').textContent = 'Recipe not found';
+                    showLoadError(resp.status);
                     return;
                 }
                 recipeData = await resp.json();
@@ -653,16 +673,15 @@
                 if (recipeData.total_time) subtitleParts.push(recipeData.total_time);
                 document.getElementById('recipe-subtitle').textContent = subtitleParts.join(' · ');
 
-                const obsidianUrl = `obsidian://open?vault=KitchenOS&file=${encodeURIComponent('Recipes/' + recipeName)}`;
-                document.getElementById('obsidian-link').setAttribute('href', obsidianUrl);
-
                 renderIngredients();
                 renderInstructions();
                 renderNutrition();
                 wireServingsForm();
                 renderBodyMarkdown();
+                document.getElementById('recipe-content').hidden = false;
+                document.getElementById('add-week-btn').disabled = false;
             } catch (err) {
-                document.getElementById('recipe-title').textContent = 'Failed to load recipe';
+                showLoadError();
             }
         }
 
