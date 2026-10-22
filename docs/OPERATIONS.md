@@ -1352,9 +1352,9 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ### Connect cooking opportunities to Apple Calendar
 
-On the Mac running the KitchenOS server (with its connection set to localhost), open **Settings → Cooking opportunities → Connect Calendar** and approve Apple's Calendar access prompt. Select the intended iCloud calendar under **Commitments** and **Time Blocking** under **Flexible**, then choose **Save calendars and refresh**. Select two distinct calendars; source names distinguish duplicate titles. Reading events requires Apple's full-access permission, but KitchenOS never writes calendar events.
+On the Mac running the KitchenOS server (with its connection set to localhost), open **Settings → Cooking opportunities → Connect Calendar** and approve Apple's Calendar access prompt. Select the intended iCloud calendar under **Commitments** and **Time Blocking** under **Flexible**, then choose **Save calendars and refresh**. Select two distinct calendars; source names distinguish duplicate titles. Reading events requires Apple's full-access permission. The availability reader does not modify events in the selected source calendars. Separately, an explicitly activated native cooking scope publishes owned cooking events to its chosen destination calendar, as described under **Mac Apple integration**.
 
-Keep that Mac's KitchenOS app open for automatic five-minute updates. It publishes the next 35 days as date/status summaries only. Calendar syncing is available only on macOS with a localhost connection; iPhones, iPads, and remote Macs display the server's results. The web and native planners refresh labels every minute while active. After six hours without a successful sync, availability becomes unknown. Missing calendars or revoked permission clear the summary on the next successful server contact; if offline, the six-hour expiry still applies. Disconnect clears the server snapshot and retries while the app stays open if offline.
+Keep that Mac's KitchenOS app open for automatic five-minute updates. It publishes date/status summaries for the next 35 days alongside a detailed planning snapshot containing event titles and times, stored locally on the KitchenOS server. Calendar syncing is available only on macOS with a localhost connection; iPhones, iPads, and remote Macs display the server's results. The web and native planners refresh labels every minute while active. After six hours without a successful sync, availability becomes unknown. Missing calendars or revoked permission clear the summary on the next successful server contact; if offline, the six-hour expiry still applies. Disconnect clears the server snapshot and retries while the app stays open if offline.
 
 Noon to local midnight is the cooking window, using the syncing device's timezone. Morning-only events, free events, cancelled events, and declined invitations are ignored. Busy all-day events count. A commitment wins over a flexible block. These labels are suggestions; they do not prevent placing a meal or automatically reschedule cooks.
 
@@ -1374,15 +1374,20 @@ Choose an unscheduled meal, review an opening, adjust date/time/duration/serving
 and choose **Schedule meal**. Missing recipe timing uses an editable 90-minute
 planning estimate. Reservations stay within the displayed week. Existing meals
 can be selected to reserve or revise their cooking time; serving amounts and
-leftovers remain unchanged. Scheduled time is local KitchenOS data and is not
-written to Apple Calendar.
+leftovers remain unchanged. Scheduled time is stored in the KitchenOS ledger.
+When that week’s native cooking scope is explicitly active and the bridge can
+sync, eligible uncooked single-recipe schedules export as owned events to its
+chosen Apple Calendar destination. Without an active scope, saving a reservation
+does not publish an Apple event.
 
 Deploy Python/template/static changes together and restart `com.kitchenos.api`.
 Build and install the native target as `~/Applications/KitchenOS Native.app`;
 `~/Applications/KitchenOS.app` is a separate Safari web app. Back up the app and
 SQLite with SQLite's backup API before replacement. Native app and API must both
-be updated for detailed sync. The first install never chooses an all-day meaning
-or schedules an existing real meal automatically.
+be updated for detailed sync. The first install never chooses an all-day meaning,
+schedules an existing real meal, or activates publication automatically. Choose
+the destination and explicitly activate a cooking week through **Sync Cooking
+Calendar** when you want its eligible schedules exported.
 
 ### Siri opens a recipe or meal-plan day in the browser
 
