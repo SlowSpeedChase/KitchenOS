@@ -989,12 +989,18 @@ Management → trust developer.
 
 ### Mac Apple integration
 
-**Delivery status:** implementation tests and build checks are separate from
-installation and live acceptance. This feature's current delivery boundary excludes
-publishing, deployment, installation, API production restart and personal Apple
-store tests. Signing, installed Shortcuts discovery, provider persistence and live
-lifecycle acceptance remain pending. The instructions here describe operation of a
-subsequently authorized installation; they do not record those steps as performed.
+**Delivery status:** implementation tests and both platform builds passed. An
+explicitly authorized, separate Mac mini test app exercised two-way Reminders and
+Calendar sync, pause/restart/background behavior, and exact owned-event deletion
+against an isolated API and clearly named test destinations. All five integration
+actions appeared in the live Shortcuts action library. App Intent execution remains
+unverified: the ad-hoc test signature has no Team ID, so macOS rejected the first
+action before it reached KitchenOS; this Mac has no valid code-signing identity.
+A Team ID-signed distinct test build is needed for those actions and the updated
+Settings display retest. Production deployment, production API restart, and tests on personal
+Reminders/Calendar items remain unperformed. See the [isolated Mac mini acceptance
+report](../.superpowers/sdd/2026-10-08-mac-apple-integration/device-acceptance-2026-10-22.md)
+for evidence and remaining limits.
 
 **Set up one owner and explicit weeks:**
 
