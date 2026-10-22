@@ -4,7 +4,23 @@
 
 The separate `KitchenOS Apple Bridge Test 850e343.app` (`com.kitchenos.applebridge.acceptance`) used an isolated API on port 5051, a temporary vault and SQLite database under `/private/tmp/KitchenOS-AppleBridge-Mini-850e343-20261021`, and destinations named `KitchenOS Bridge 850e343 ... Test`. The installed production app and API on port 5001, the original checkout, personal Reminders/Calendar items, and production vault/database were not changed. A temporary test shortcut was later created for the App Intent execution attempt below. The complete command and observation record is in that temporary root's `acceptance.md`.
 
-At the latest verified checkpoint, the synthetic cook has **no reservation**, remains uncooked with scale 1 and four servings, and temporary inventory/purchases/trips have zero rows. The isolated API on port 5051 is running from reviewed source; production port 5001 is untouched. The test app is separately installed with an Apple Development signature (`TeamIdentifier=XZJ6358HHF`, CDHash `b4d051116188412bb99242bf5e247ac3734ed3d3`). Its fresh Settings display and API status showed zero queued writes, conflicts, and unavailable items after the explicit test-only recovery choice. The dedicated test destinations remain.
+**Latest checkpoint:** all five signed-app action methods passed separate Xcode 27
+`AppIntentsTesting` runs. The synthetic cook is scheduled for October 22 at 18:00
+America/Chicago for 60 minutes, dinner, placement 1; it remains uncooked at scale 1
+and four servings. Temporary inventory/purchases/trips have zero rows. Only the
+isolated port-5051 API was restarted from reviewed Python fix `4bb7260`, after a
+temporary SQLite backup; production port 5001 (PID 947) was unchanged. The separate
+Apple Development-signed bundle has `TeamIdentifier=XZJ6358HHF`, CDHash
+`b4d051116188412bb99242bf5e247ac3734ed3d3`. Final API status is connected/unpaused,
+**0 queued / 0 conflicts / 0 unavailable**, with
+`last_success=2026-10-22T19:55:51.180063Z`. Freshly refreshed Settings shows prep
+Active Export 2 and cooking Active Export 4, with zero conflicts. Bridge
+acknowledgements/observations support their locators; these current items have
+not been directly visually checked in Apple Reminders/Calendar.
+
+Earlier sections below retain their checkpoint evidence. Unscheduled-cook,
+unrun-action and pending-Xcode-authorization statements describe earlier states
+and are superseded by the final execution section.
 
 ## Live checks
 
@@ -28,9 +44,9 @@ At the latest verified checkpoint, the synthetic cook has **no reservation**, re
 
 ## Remaining device acceptance
 
-- Verify full shopping delivery and run the other four Mac actions only in the distinct test environment. The signed test bundle passes the earlier Team ID barrier, and shopping `perform` reached the isolated API, but action completion is not established.
-- Allow the user to finish the pending System Settings password step for the exact Xcode Helper, then retry the locked-down UI harness. Both CLI attempts stopped before test methods because `testmanagerd` required authentication for automation mode. A separate Xcode GUI run also stopped before a method because debugger attach was denied; none of these failures proves an App Intent failure.
-- The exact temporary `KitchenOS Bridge 850e343 Intent Acceptance` shortcut is still present. Do not retry its deletion through the unreliable Shortcuts selection path; the user declined further recovery of the unrelated personal shortcut.
+- Directly visually verify current prep generation 2 and cooking generation 4 in the dedicated Apple destinations. The final bridge evidence below establishes acknowledged exports, not a fresh Apple-app visual check.
+- Repeat all-five live Shortcuts library discovery on the current signed build; earlier discovery used the ad-hoc installation. Siri, iPhone/personal-device acceptance and remaining provider/lifecycle cases in `docs/OPERATIONS.md` are pending.
+- The exact temporary `KitchenOS Bridge 850e343 Intent Acceptance` shortcut is still present. Do not retry deletion through the unreliable selection path; the user declined further recovery of the unrelated personal shortcut. No cleanup is claimed.
 
 ## App Intent execution attempt — 2026-10-22
 
@@ -60,15 +76,15 @@ Apple's documented iCloud recovery categories do not include Shortcuts, and this
 
 ## Signed test app, recovery fix, and action boundary — 2026-10-22
 
-A fresh unsandboxed signing check found the existing Apple Development identity with SHA prefix `CD9543BAF3A4C7DD7E06F96C6A4FC20677EE8CA5`. Although its certificate name ends in `83C595AYFY`, the separately installed `~/Applications/KitchenOS Apple Bridge Test 850e343.app` reports the project's `TeamIdentifier=XZJ6358HHF` and CDHash `b4d051116188412bb99242bf5e247ac3734ed3d3`. `codesign --verify --deep --strict` passed. No certificate was created or revoked. A Debug build initially lacked packaged App Intent metadata because of Xcode's debug dylib; rebuilding with `ENABLE_DEBUG_DYLIB=NO` yielded all five discoverable action records. This is metadata evidence for the current signed package. The live Shortcuts library displayed all five actions on the earlier ad-hoc installation; that all-five library check has not been repeated after signing. The signed build has one shopping Shortcut invocation verified below, not five successful invocations.
+A fresh unsandboxed signing check found the existing Apple Development identity with SHA prefix `CD9543BAF3A4C7DD7E06F96C6A4FC20677EE8CA5`. Although its certificate name ends in `83C595AYFY`, the separately installed `~/Applications/KitchenOS Apple Bridge Test 850e343.app` reports the project's `TeamIdentifier=XZJ6358HHF` and CDHash `b4d051116188412bb99242bf5e247ac3734ed3d3`. `codesign --verify --deep --strict` passed. No certificate was created or revoked. A Debug build initially lacked packaged App Intent metadata because of Xcode's debug dylib; rebuilding with `ENABLE_DEBUG_DYLIB=NO` yielded all five discoverable action records. This is metadata evidence for the current signed package. The live Shortcuts library displayed all five actions on the earlier ad-hoc installation; that all-five library check has not been repeated after signing. At this checkpoint the signed build had one shopping Shortcut invocation verified below; later harness execution is recorded in the final section.
 
-The exact one-action shopping Shortcut subsequently exited 0 through `shortcuts run`, and the isolated API recorded shopping PUT, owner, observations, and work requests. This proves the shopping `perform` path reached the test API. It does not prove full delivery to Apple; the other four actions have not been executed. The one-action test shortcut remains in the personal Shortcuts library because the earlier deletion path was unreliable.
+The exact one-action shopping Shortcut subsequently exited 0 through `shortcuts run`, and the isolated API recorded shopping PUT, owner, observations, and work requests. This proves the shopping `perform` path reached the test API. At this checkpoint it did not prove full delivery to Apple and the other four actions had not been executed; the final section supersedes that execution status. The one-action test shortcut remains in the personal Shortcuts library because the earlier deletion path was unreliable.
 
 Local fix `c234c32` passed fresh independent scoped **spec PASS / quality PASS** review. When a retired linked Apple object becomes unavailable or uncertain-missing, the server opens a `retired_unavailable` conflict with only `keep_manual`; it does not infer absence or mutate Apple or the cook. A later present observation cannot schedule deletion while review is open. The resolution checks the retirement generation, source revision, and locator before detaching the bridge link into history. The Apple object may still exist. After restarting only the isolated API with this reviewed source, the test app displayed the named synthetic soup's `Keep Apple item separate` choice. Selecting it cleared the sole test conflict without a cook or Apple mutation. The latest fresh pass advanced `last_success` to `2026-10-22T19:11:32.209618+00:00`; API and newly opened Settings both showed **0 queued / 0 conflicts / 0 unavailable**. The cook remains unscheduled and uncooked; inventory, purchases, and trips remain empty.
 
 Post-fix verification: full Python **4,599 passed, 1 skipped, 137 deselected**, with nine unchanged XMLParsedAsHTMLWarning warnings; Swift package **172 passed**; unsigned macOS and iOS Simulator builds passed; import and `git diff --check` checks passed. Detailed logs are in `/private/tmp/KitchenOS-AppleBridge-Mini-850e343-20261021/logs/retired-unavailable-*`.
 
-An independently reviewed temporary `AppIntentsTesting` UI harness is locked to the signed test app path, bundle ID, CDHash, port 5051, and the three test-only `2026-W43` scopes. Two CLI attempts stopped before any test method or API call. Focused `testmanagerd` diagnostic: `Writer daemon requires authentication to enable automation mode.` Xcode GUI's first run lacked its runner build; a normal build then failed debugger attach before a method. The user approved enabling UI testing for the exact Xcode Helper. System Settings currently shows a password sheet for that authorization; the user must enter the password locally. **Permission is not yet confirmed and no harness action test has passed.**
+An independently reviewed temporary `AppIntentsTesting` UI harness is locked to the signed test app path, bundle ID, CDHash, port 5051, and the three test-only `2026-W43` scopes. Two CLI attempts stopped before any test method or API call. Focused `testmanagerd` diagnostic: `Writer daemon requires authentication to enable automation mode.` Xcode GUI's first run lacked its runner build; a normal build then failed debugger attach before a method. The user approved enabling UI testing for the exact Xcode Helper. At this checkpoint System Settings showed a password sheet for local entry. **Authorization and harness execution were pending then; the final section below supersedes this block.**
 
 **Rulings and cost if wrong:**
 
@@ -76,3 +92,86 @@ An independently reviewed temporary `AppIntentsTesting` UI harness is locked to 
 - Keep retired unlocatable events in explicit, revision-fenced review. Cost if wrong: uncertain visibility or a stale choice could delete an Apple event or mutate a cook, while `last_success` stalls or falsely advances.
 - Treat the shopping Shortcut's API requests as invocation evidence only. Cost if wrong: a queued or incomplete Apple export could be reported as delivered.
 - Treat UI runner authentication as a macOS test prerequisite, and require user approval for its broad automation permission. Cost if wrong: a harness failure is misdiagnosed as an App Intent failure or device control is expanded without authorization.
+
+## Final signed App Intent execution — 2026-10-22
+
+The user completed the previously approved password prompt locally. Device Control
+and Data Access then showed only Apple-signed `com.apple.dt.Xcode-Helper` enabled
+at `/Applications/Xcode-beta.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Xcode/Agents/Xcode Helper.app`.
+The harness retained its exact signed test-app path/bundle/CDHash, port 5051,
+permission, dedicated-destination and active `2026-W43` scope preconditions.
+
+Each row is a separate one-method run (Chicago local time); each completed with
+zero test failures:
+
+| Harness method | Result | Time | Evidence under temporary `IntentHarness/` |
+| --- | --- | --- | --- |
+| test01 Send Shopping List to Reminders | PASS | 14:40:14 | `test01-after-helper.log` |
+| test02 Send Prep Tasks to Reminders | PASS | 14:41:00 | `test02-after-helper.log` |
+| test03 Sync Cooking Calendar | PASS | 14:41:39 | `test03-after-helper.log` |
+| test04 typed Schedule Cooking | PASS | 14:42:27 | `test04-after-helper.log` |
+| test02 Send Prep Tasks, settled rerun | PASS | 14:55:37 | `test02-after-settled.log` |
+| test05 Sync KitchenOS | PASS | 14:55:51 | `test05-after-helper.log` |
+
+The corresponding `results-after-helper-test01` through `test05.xcresult` and
+`results-after-settled-test02.xcresult` bundles retain runner evidence. API logs
+`api-after-recovery.log` and `api-after-history-fix.log` record shopping/prep/cooking
+scope PUTs, exact cook lookup and schedule POST 200, and generic sync completion.
+Typed Schedule Cooking addressed only synthetic cook 1. It saved the reservation,
+but the original export was blocked by the source history bug; method PASS alone
+did not prove Calendar delivery.
+
+The initial prep action encountered an empty saved task set because the temporary
+vault lacked the synthetic recipe instructions. A test-only recipe note for
+`KitchenOS Bridge Test Soup 850e343` was added to the temporary vault; off-request
+task extraction saved one prep task, `66ac08cddec3`. No production fixture or
+source note was changed. Reviewed fix `4bb7260` orders cooking source state as
+cooked → history; eligible uncooked scheduled single-recipe cook → active;
+otherwise inherited history → history. It preserves historical fields while
+allowing explicit rescheduling to create a replacement export generation.
+
+After the backed-up temporary DB and isolated API restart, background sync at
+14:53 created/acknowledged prep generation 2 and cooking generation 4. A prep
+rerun at 14:53:04 stopped with `unsafeEnvironment` in preflight, before test-app
+activation or `intent.run()`, because two transient background upserts were
+queued. They settled; the 14:55 prep rerun and generic sync passed. This was a
+preflight race, not an App Intent product failure. Neither the original prep nor
+schedule method created these replacement exports inside its invocation.
+
+Final active records each have a bridge locator in the exact dedicated destination:
+
+| Domain | Destination ID | Active generation |
+| --- | --- | --- |
+| Shopping | `662183AE-35C9-454F-8B8F-835772411418` | 1 |
+| Prep | `400F6CBD-537A-462E-A657-424502B5971C` | 2 |
+| Cooking | `92C8C385-1392-47D4-A654-D7CF9B9D0737` | 4 |
+
+Prep generation 1 is retired; cooking generation 1 is retired and generations
+2–3 are history, all without current locators. Fresh Settings and API state agree
+as recorded at the top of this report. Current exports are supported by EventKit
+acknowledgements and observations, without a current direct Apple-app visual check.
+
+A subsequent EventKit observation cycle at 14:58:25–26 independently read back
+shopping generation 1, prep generation 2 and cooking generation 4 as
+`availability: present`, `issue: null`, with the same exact locators, destinations
+and expected synthetic fields. Journal rows 270–272 match each item's
+`last_observation`; no operations were needed. Acknowledgement alone does not
+write `last_observation`, so this later provider read-back is additional evidence
+beyond the export acknowledgements. It still does not replace a direct Apple UI
+visual check.
+
+Fix verification recorded RED regression failures, focused **123 passed**, full
+Python **4,601 passed / 1 skipped / 137 deselected / nine unchanged warnings**;
+fresh independent review returned **spec PASS / quality PASS**, with **148 tests
+passed** independently. The preceding **172 Swift tests** and unsigned macOS/iOS
+Simulator builds remain valid checkpoints because no Swift changed; they were not
+rerun after this Python-only fix. No production install, deployment, push,
+production restart or personal Apple-item change occurred in this continuation.
+The distinct test shortcut remains.
+
+**Rulings and cost if wrong:**
+
+- **Separate method PASS from actual export.** Verify ledger, generation, acknowledgement and current observation independently. Cost if wrong: a no-op action or later background export is misreported as delivery inside the action.
+- **Keep the preflight queue guard.** Wait for background work to settle before rerunning. Cost if wrong: a transient queue race is called a product failure, or the harness writes during unsettled work.
+- **Reactivate only eligible uncooked scheduled cooks ahead of history.** Cooked/deleted/ineligible historical records remain frozen. Cost if wrong: valid schedules never publish, or completed history is republished.
+- **Regenerate temporary prep fixtures off-request.** Save task evidence before action acceptance. Cost if wrong: empty fixtures pass invocation while hiding missing delivery, or page rendering invokes extraction unnecessarily.

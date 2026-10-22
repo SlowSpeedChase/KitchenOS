@@ -989,24 +989,35 @@ Management → trust developer.
 
 ### Mac Apple integration
 
-**Delivery status:** the reviewed implementation passed 4,599 Python tests,
-172 Swift tests, and unsigned macOS and iOS Simulator builds. A separate Mac mini
-test app exercised two-way Reminders and Calendar sync against an isolated API and
-named test destinations. Its current Apple Development signature reports the
-project's `XZJ6358HHF` TeamIdentifier; the certificate-name suffix is not the
-codesign TeamIdentifier. The current signed test package has metadata for all
-five Mac actions. All five appeared in the live Shortcuts library on the earlier ad-hoc test installation;
-that full-library check has not been repeated on the signed build. One shopping
-action ran through Shortcuts on the signed build and reached the isolated API;
-full Apple delivery and the other four actions have not been verified. A
-locked-down App Intents UI test harness has not entered a test method because Xcode's automation runner requires macOS
-authorization. The user has been asked to enter their own password in System
-Settings; authorization is not yet confirmed. The fresh test app showed zero
-queued writes, conflicts, and unavailable items after an explicit recovery choice.
-Production deployment, production API restart, and tests on personal Apple items
-remain unperformed. See the [isolated Mac mini acceptance
+**Delivery status:** all five Mac actions passed separate Xcode 27
+`AppIntentsTesting` runs against the signed, distinct test app and isolated
+port-5051 API. The user completed the password prompt locally; only Apple-signed
+`com.apple.dt.Xcode-Helper` was enabled in Device Control and Data Access. The
+signed test bundle reports `TeamIdentifier=XZJ6358HHF` and contains all five
+discoverable action records. All five appeared in the live Shortcuts library on
+the earlier ad-hoc installation; that library search has not been repeated on the
+current signed build. One shopping action also reached the API through Shortcuts.
+
+The isolated test exposed a cooking history/reschedule bug, fixed in reviewed
+`4bb7260`: an eligible uncooked scheduled cook starts a new active export ahead
+of inherited history; cooked history stays frozen. Recorded verification is
+4,601 Python tests passed (1 skipped, 137 deselected, nine unchanged warnings).
+The preceding 172 Swift tests and unsigned macOS/iOS Simulator builds remain the
+native checkpoint; they were not rerun for this Python-only fix.
+
+Action-method passes prove invocation. After adding the missing temporary prep
+fixture and restarting only the isolated API from the reviewed fix, background
+sync created and acknowledged prep generation 2 and cooking generation 4 in the
+exact dedicated destinations. These exports were not created inside the original
+action methods. Bridge locators/observations and freshly refreshed native Settings
+confirm active exports and zero queued/conflict/unavailable counts. A later
+EventKit read-back independently observed all three current exports as present,
+without issues, in their exact destinations. The current prep/calendar items
+were not visually rechecked in Apple apps. Production port
+5001, production deployment, Siri, iPhone and personal-device acceptance remain
+outside this run. See the [isolated Mac mini acceptance
 report](../.superpowers/sdd/2026-10-08-mac-apple-integration/device-acceptance-2026-10-22.md)
-for evidence and remaining limits.
+for exact evidence, historical checkpoints and remaining limits.
 
 **Set up one owner and explicit weeks:**
 
@@ -1127,13 +1138,17 @@ objects remain pending instead of being adopted. A crash after Apple deletion bu
 before acknowledgement can require manual review; the bridge will not invent
 deletion proof.
 
-**Dedicated acceptance and cleanup, still pending:** continue only with the
-separately named test shopping/prep lists and test cooking calendar. Verify the
-four unrun actions and full shopping delivery, repeat sends/restart recovery,
-completion/reopening, due clear/date handling, same-week move/resize and explicit unschedule, denied
-permissions, missing destinations, foreign same-title items, identifier churn,
-provider persistence and preservation of alarms/user notes. Check real
-last-window, sleep/wake and quit behavior. Record results before using **Remove
+**Remaining dedicated acceptance and cleanup:** continue only with the
+separately named test shopping/prep lists and test cooking calendar. The isolated
+run covered all five action invocations, completion/reopening, prep due clear/date
+handling, same-week Calendar move/resize, explicit unschedule, restart replay and
+last-window sync. Current prep generation 2 and cooking generation 4 still need
+direct Apple-app visual verification. Signed-build live library search, Siri,
+iPhone/personal-device acceptance, denied permissions, missing destinations,
+foreign same-title items, identifier churn, provider persistence, preservation of
+alarms/user notes, and sleep/wake/quit behavior remain acceptance work. The distinct
+test shortcut remains; cleanup has not been claimed.
+Record results before using **Remove
 owned Apple item** on individually selected test exports. Cleanup rechecks exact
 ownership/revision/hash; never clear a whole list/calendar or delete foreign items.
 A changed object needs fresh review/selection. Archive alone does not remove it.
