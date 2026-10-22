@@ -13,8 +13,8 @@ temporary SQLite backup; production port 5001 (PID 947) was unchanged. The separ
 Apple Development-signed bundle has `TeamIdentifier=XZJ6358HHF`, CDHash
 `b4d051116188412bb99242bf5e247ac3734ed3d3`. Final API status is connected/unpaused,
 **0 queued / 0 conflicts / 0 unavailable**, with
-`last_success=2026-10-22T19:55:51.180063Z`. Freshly refreshed Settings shows prep
-Active Export 2 and cooking Active Export 4, with zero conflicts. Bridge
+`last_success=2026-10-22T19:58:26.468044Z` after the later EventKit read-back.
+Freshly refreshed Settings shows prep Active Export 2 and cooking Active Export 4, with zero conflicts. Bridge
 acknowledgements/observations support their locators; these current items have
 not been directly visually checked in Apple Reminders/Calendar.
 

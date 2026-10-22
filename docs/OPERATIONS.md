@@ -1110,8 +1110,12 @@ week is already active. Setup needs continue in the foreground and require rerun
 No automatic Mac phrases are registered. All five actions appeared in the live
 Mac library on the earlier ad-hoc installation. The current signed package has
 all five metadata records, and a named shopping shortcut reached the isolated
-API on that build. Full Apple delivery and the other four actions still need
-device verification.
+API on that build. All five signed-app `AppIntentsTesting` methods subsequently
+passed; later EventKit read-back found the three current exports present without
+issues in their exact test destinations. The other four actions have not been run
+as named shortcuts inside the Shortcuts app. All-five live action-library search
+on the current signed build and direct Apple UI verification of the current prep
+and cooking exports remain pending.
 
 **Recovery limits:** an interrupted first Apple save is recovered by marker when
 found. Calendar recovery scans finite windows plus known identifiers; an event
