@@ -12,7 +12,7 @@ At the end, the synthetic cook has **no reservation**, remains uncooked with sca
 - The generation-1 cooking event was verified by title, dedicated calendar, exact ownership URL token, generation, and locator. Moving and resizing it in Calendar from Oct 22, 18:00–19:00 to 19:00–20:30 imported `2026-10-22T19:00:00-05:00`, `America/Chicago`, and 90 minutes into `cook_schedule` without changing its cook or other domains.
 - `DELETE /api/cooks/1/schedule` on the isolated API removed only that reservation. The bridge acknowledged an exact owned-event deletion; the event disappeared from Calendar, while the cook, dinner placement, scale, servings, and uncooked state remained.
 - A newly exported generation-2 event was deleted in Calendar after checking its exact test calendar and ownership token. The adapter submitted `availability: unavailable` with `absence_confirmed: false`; the cook reservation remained. Public EventKit cannot establish global Calendar absence from an unlocatable event. An explicit `Keep Apple item separate` review cleared the resulting retained-generation conflict before a fresh generation-3 export. Repeating that exact test produced a current active unavailable observation; the corrected isolated API reported `unavailable: 1`, and a fresh Settings load displayed 1. Explicitly unscheduling the synthetic cook retired the item and returned API and fresh Settings status to 0.
-- The separate app package contains all five Mac integration actions as discoverable App Intent metadata. Actual action-library discovery inside Shortcuts remains pending.
+- The separate app package contains all five Mac integration actions as discoverable App Intent metadata. In macOS Shortcuts, searching the action library for the exact separate app name `KitchenOS Apple Bridge Test 850e343` displayed `Send Shopping List to Reminders`, `Send Prep Tasks to Reminders`, `Sync Cooking Calendar`, `Schedule Cooking`, and `Sync KitchenOS` alongside existing recipe actions. This confirms live action-library discovery for the distinct test app; no action was run. An empty `New Shortcut 2` (zero actions) created during navigation was removed after explicit user confirmation of Shortcuts’ iCloud deletion warning. `All Shortcuts` returned from 201 to 200, and the blank item was absent.
 
 ## Follow-up fixes and verification
 
@@ -28,5 +28,5 @@ At the end, the synthetic cook has **no reservation**, remains uncooked with sca
 
 ## Remaining device acceptance
 
-- Verify the five named actions in the Mac Shortcuts action library and exercise them in the distinct test environment.
+- Exercise the five now-discoverable Mac Shortcuts actions in the distinct test environment; this live action execution was not part of the read-only library check.
 - Install and reauthorize a build with a stable signing identity, then confirm the reviewed Settings summary on-device immediately after sync and refresh. Until then, the working installed test app runs the older presentation code; repository source and both platform builds contain the fix.
