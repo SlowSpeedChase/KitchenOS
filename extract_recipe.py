@@ -223,8 +223,39 @@ def save_recipe_to_obsidian(recipe_data, video_url, video_title, channel, video_
     filepath.write_text(markdown, encoding='utf-8')
 
     _tag_fit(filepath)
+    _tag_dislikes(filepath)
 
     return filepath
+
+
+def _tag_dislikes(filepath):
+    """Record disliked ingredients as ``dislike_hits`` frontmatter.
+
+    A plain string match (``lib/dislike_guard.py``) — no model, no tokens — so
+    it runs on every extraction. Holds the matching ingredient rows; the key is
+    removed when there are none, so a clean recipe carries no stale flag. Like
+    ``_tag_fit`` it is best-effort: it must never lose a saved extraction.
+    """
+    try:
+        from lib import dislike_guard, frontmatter
+        dislikes = dislike_guard.current_dislikes()
+        if not dislikes:
+            return
+        content = filepath.read_text(encoding='utf-8')
+        hits = dislike_guard.scan_recipe(content, dislikes)
+        items = [h["item"] for h in hits]
+        if items:
+            updated = frontmatter.apply(
+                content, {"dislike_hits": frontmatter.scalar(items)}, {"dislike_hits"})
+        else:
+            updated = frontmatter.apply(content, {}, {"dislike_hits"},
+                                        remove={"dislike_hits"})
+        if updated and updated != content:
+            filepath.write_text(updated, encoding='utf-8')
+        for item in items:
+            print(f"⚠️  Disliked ingredient: {item}", file=sys.stderr)
+    except Exception as e:
+        print(f"Warning: dislike check failed for {filepath.name}: {e}", file=sys.stderr)
 
 
 def _tag_fit(filepath):
