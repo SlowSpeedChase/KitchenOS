@@ -205,9 +205,30 @@
             margin-top: 10px;
         }
 
+        .add-plan-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 4px;
+            font-size: 0.85rem;
+        }
+
+        .add-plan-row label { font-weight: 600; color: var(--text-muted); }
+
+        .add-plan-row select {
+            font-family: inherit;
+            font-size: 0.85rem;
+            padding: 8px 10px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--card-bg);
+            color: var(--text);
+        }
+
         #add-week-status {
             font-size: 0.85rem;
-            margin-top: 10px;
+            margin: 6px 0 16px;
         }
 
         #add-week-status a { color: var(--accent); font-weight: 600; }
@@ -232,9 +253,23 @@
             </div>
             <div class="header-actions">
                 <a class="button" id="obsidian-link" href="<!--OBSIDIAN_URL-->">Open in Obsidian</a>
-                <button class="primary" id="add-week-btn" disabled>Add to this week</button>
             </div>
         </header>
+
+        <!-- A cook needs a day AND a meal to show on the planner grid. This
+             button used to send neither, so the recipe landed in a tray hidden
+             inside the Freezer tab and looked like it was never added. -->
+        <div class="add-plan-row">
+            <label for="add-day">Add to</label>
+            <select id="add-day"></select>
+            <select id="add-meal" aria-label="Meal">
+                <option value="breakfast">Breakfast</option>
+                <option value="lunch">Lunch</option>
+                <option value="snack">Snack</option>
+                <option value="dinner" selected>Dinner</option>
+            </select>
+            <button class="primary" id="add-week-btn" disabled>Add to meal plan</button>
+        </div>
 
         <div id="add-week-status"></div>
 
@@ -603,20 +638,43 @@
             return `${date.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
         }
 
-        function getCurrentISOWeek() {
-            return dateToISOWeek(new Date());
+        // Local-date ISO string — toISOString() is UTC and would roll an
+        // evening "today" over to tomorrow.
+        function localISODate(d) {
+            const pad = n => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+        }
+
+        // Today plus the next 13 days: this week and next, whatever weekday it is.
+        function populateDayPicker() {
+            const select = document.getElementById('add-day');
+            const fmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+            const today = new Date();
+            for (let i = 0; i < 14; i++) {
+                const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
+                const opt = document.createElement('option');
+                opt.value = localISODate(d);
+                const label = fmt.format(d);
+                opt.textContent = i === 0 ? `Today · ${label}` : i === 1 ? `Tomorrow · ${label}` : label;
+                select.appendChild(opt);
+            }
         }
 
         async function addToThisWeek() {
             if (window.KitchenBrowserView.readOnly) return;
             const btn = document.getElementById('add-week-btn');
             const status = document.getElementById('add-week-status');
+            const daySelect = document.getElementById('add-day');
+            const mealSelect = document.getElementById('add-meal');
             btn.disabled = true;
             status.textContent = '';
             try {
                 const scale = currentScale();
                 const baseServings = parseFloat(recipeData.servings) || 4;
-                const week = getCurrentISOWeek();
+                const date = daySelect.value;
+                const meal = mealSelect.value;
+                const [y, m, d] = date.split('-').map(Number);
+                const week = dateToISOWeek(new Date(y, m - 1, d));
                 const resp = await fetch('/api/cooks', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -625,16 +683,30 @@
                         week: week,
                         scale: scale,
                         servings_produced: Math.round(baseServings * scale * 100) / 100,
+                        date: date,
+                        meal: meal,
+                        initial_placement_count: 1,
                     }),
                 });
                 if (!resp.ok) {
                     const err = await resp.json().catch(() => ({}));
-                    status.textContent = err.error || 'Failed to add recipe to this week.';
+                    status.textContent = err.error || 'Couldn’t add this recipe to the meal plan.';
                     return;
                 }
-                status.innerHTML = `Added — <a href="/meal-planner?week=${encodeURIComponent(week)}">view in Meal Planner</a>`;
+                const dayLabel = daySelect.options[daySelect.selectedIndex].textContent;
+                const mealLabel = mealSelect.options[mealSelect.selectedIndex].textContent.toLowerCase();
+                const wk = encodeURIComponent(week);
+                status.innerHTML = '';
+                status.append(`Added to ${dayLabel}, ${mealLabel} — `);
+                const planner = document.createElement('a');
+                planner.href = `/meal-planner?week=${wk}`;
+                planner.textContent = 'open planner';
+                const cal = document.createElement('a');
+                cal.href = `/meal-calendar?week=${wk}`;
+                cal.textContent = 'meal calendar';
+                status.append(planner, ' · ', cal);
             } catch (err) {
-                status.textContent = 'Failed to add recipe to this week.';
+                status.textContent = 'Couldn’t add this recipe to the meal plan.';
             } finally {
                 btn.disabled = false;
             }
@@ -653,6 +725,8 @@
             document.getElementById('recipe-content').hidden = true;
             document.getElementById('add-week-btn').disabled = true;
         }
+
+        populateDayPicker();
 
         async function loadRecipe() {
             if (window.KitchenBrowserView.expired) return;
