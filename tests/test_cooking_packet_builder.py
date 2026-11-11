@@ -168,7 +168,8 @@ def test_building_draft_changes_no_database_or_vault_sources(tmp_db, tmp_vault):
     conn.close()
     before_files = {p: p.read_bytes() for p in tmp_vault.rglob("*") if p.is_file()}
     packet = build_week_draft(WEEK, recipes, now=NOW)
-    assert sum(float(p["amount"]) for p in packet["pull_list"]) == 2
+    assert packet["pull_list"] == []
+    assert sum(float(p["amount"]) for p in packet["cook_day_pull"]) == 2
     assert any(row["item"] == "beans" for row in packet["shopping_list"])
     assert inventory_db.fetch_inventory_rows_with_ids() == rows
     conn = inventory_db.connect()
@@ -245,8 +246,9 @@ def test_full_build_preserves_uncertain_provenance_and_database_bytes(tmp_db, tm
         before_rows = list(conn.iterdump())
     before_bytes = tmp_db.read_bytes()
     packet = build_week_draft(WEEK, recipes, now=NOW)
-    assert packet["pull_list"][0]["location_uncertain"] is True
-    assert packet["pull_list"][0]["location_source"] == "default"
+    assert packet["pull_list"] == []
+    assert packet["cook_day_pull"][0]["location_uncertain"] is True
+    assert packet["cook_day_pull"][0]["location_source"] == "default"
     assert next(row for row in packet["production_schedule"] if row["source"] == "cook_schedule")["cook_id"] == cook["id"]
     assert tmp_db.read_bytes() == before_bytes
     with sqlite3.connect(tmp_db) as conn:
@@ -265,8 +267,9 @@ def test_build_credits_full_need_across_inventory_units(tmp_db, tmp_vault, rever
     line = next(line for line in packet["shopping_list"] if line["item"] == "beans")
     assert line["from_pantry"] == {"amount": 1, "unit": "lb"}
     assert line["to_buy"] is None
-    assert [pull["inventory_amount"] for pull in packet["pull_list"]] == [8, 0.5]
-    assert [pull["inventory_row_id"] for pull in packet["pull_list"]] == [1, 2]
+    assert packet["pull_list"] == []
+    assert [pull["inventory_amount"] for pull in packet["cook_day_pull"]] == [8, 0.5]
+    assert [pull["inventory_row_id"] for pull in packet["cook_day_pull"]] == [1, 2]
 
 
 def test_insufficient_mixed_units_leave_only_exact_gap_to_buy(tmp_db, tmp_vault):
@@ -302,7 +305,8 @@ def test_compatible_stock_is_used_after_an_uncertain_first_match(tmp_db, tmp_vau
     line = next(line for line in packet["shopping_list"] if line["item"] == "corn")
     assert line["from_pantry"] == {"amount": 2, "unit": "can"}
     assert line["to_buy"] is None
-    assert [pull["inventory_row_id"] for pull in packet["pull_list"]] == [2]
+    assert packet["pull_list"] == []
+    assert [pull["inventory_row_id"] for pull in packet["cook_day_pull"]] == [2]
 
 
 def test_empty_build_does_not_create_an_absent_database(tmp_db, tmp_vault):
@@ -321,8 +325,10 @@ def test_legacy_packet_derives_reviewable_phases_without_mutating_flat_steps(tmp
     assert list(card["instruction_phases"]) == ["prep_or_flavor_base", "cook", "instructions"]
     assert all("phase" not in row for row in card["instructions"])
     assert card["instruction_phases"]["instructions"][0]["needs_review"] is True
-    assert len(packet["shared_prep"]) == 1
-    assert packet["production_schedule"][0]["date"] is None
+    # Unassociated onions cannot become freezer prep while both source
+    # ingredients still have unresolved destinations.
+    assert packet["shared_prep"] == []
+    assert packet["production_schedule"] == []
     assert (recipes / "Soup.md").read_text() == text
     _validate_generated(WEEK, packet)
 
@@ -343,7 +349,7 @@ def test_native_unmolding_is_scheduled_after_source_freezing(tmp_db, tmp_vault):
 @pytest.mark.parametrize("same_recipe", [False, True])
 def test_immediate_prep_stays_with_each_cook_session_and_quantity(tmp_db, tmp_vault, same_recipe):
     recipes = recipe_dir(tmp_vault)
-    source = RECIPE.split("## Instructions")[0] + "## Instructions\n\n### Cook\n\n1. Pressure cook 1 lb black-eyed peas for 10 minutes with a 3:1 water-to-bean ratio; natural release; use immediately.\n"
+    source = RECIPE.split("## Instructions")[0].replace("| 1 | cup | beans |", "| 1 | lb | black-eyed peas |") + "## Instructions\n\n### Cook\n\n1. Pressure cook 1 lb black-eyed peas for 10 minutes with a 3:1 water-to-bean ratio; natural release; use immediately.\n2. Put black-eyed peas in the freezer bag.\n"
     (recipes / "Soup.md").write_text(source)
     (recipes / "Other.md").write_text(source)
     cooks = []
@@ -364,7 +370,7 @@ def test_immediate_prep_stays_with_each_cook_session_and_quantity(tmp_db, tmp_va
 
 def test_immediate_prep_can_merge_two_recipes_in_one_authoritative_session(tmp_db, tmp_vault):
     recipes = recipe_dir(tmp_vault)
-    source = RECIPE.split("## Instructions")[0] + "## Instructions\n\n### Cook\n\n1. Pressure cook 1 lb black-eyed peas for 10 minutes with a 3:1 water-to-bean ratio; natural release; use immediately.\n"
+    source = RECIPE.split("## Instructions")[0].replace("| 1 | cup | beans |", "| 1 | lb | black-eyed peas |") + "## Instructions\n\n### Cook\n\n1. Pressure cook 1 lb black-eyed peas for 10 minutes with a 3:1 water-to-bean ratio; natural release; use immediately.\n2. Put black-eyed peas in the freezer bag.\n"
     for name in ("Soup", "Other"):
         (recipes / f"{name}.md").write_text(source)
         row = serving_ledger.create_cook(name, WEEK, servings_produced=4)
@@ -374,4 +380,172 @@ def test_immediate_prep_can_merge_two_recipes_in_one_authoritative_session(tmp_d
     assert len(packet["shared_prep"]) == 1
     assert packet["shared_prep"][0]["amount"] == 2
     assert len(packet["shared_prep"][0]["dependent_cook_ids"]) == 2
+    _validate_generated(WEEK, packet)
+
+
+def test_packet_stages_every_ingredient_keeps_shopping_and_excludes_cook_day_prep(tmp_db, tmp_vault):
+    recipes = recipe_dir(tmp_vault)
+    source = '''---
+title: Soup
+servings: 4
+---
+## Ingredients
+
+| Amount | Unit | Ingredient |
+| --- | --- | --- |
+| 1 | cup | carrots |
+| 1 | cup | cream |
+| 1 | cup | rice |
+| 1 | cup | cilantro |
+| 1 | cup | stock |
+| 1 | cup | salt |
+| 1 | cup | onion |
+
+## Instructions
+
+1. Chop carrots, then add them to the freezer bag.
+2. Add cream after pressure release.
+3. Freeze rice separately.
+4. Serve with cilantro.
+5. Add stock when cooking.
+6. Put onion in the freezer bag.
+7. Chop cilantro finely.
+8. Mix cream and stock.
+9. Wash and chop cilantro.
+10. Wash rice.
+11. Measure salt.
+12. Chop carrots.
+'''
+    (recipes / 'Soup.md').write_text(source)
+    serving_ledger.create_cook('Soup', WEEK, scale=2, servings_produced=8)
+    packet = build_week_draft(WEEK, recipes, inventory_rows=[], now=NOW)
+    card = packet['recipe_cards'][0]
+    assert [row['prep_stage'] for row in card['ingredients']] == [
+        'prep_then_bag', 'finish_after_cooking', 'freeze_separately', 'serve_separately',
+        'add_at_cook_time', 'needs_review', 'bag_now']
+    assert {row['item'] for row in packet['shopping_list']} == {
+        'carrots', 'cream', 'rice', 'cilantro', 'stock', 'salt', 'onion'}
+    assert {row['item_id'] for row in card['ingredients']} == {
+        source_id for row in packet['shopping_list'] for source_id in row['source_ingredient_ids']}
+    assert all(float(row['needed']['amount']) == 2 for row in packet['shopping_list'])
+    assert [row['text'] for row in packet['shared_prep']] == ['Chop carrots.']
+    assert not any(row.get('text') in ('Chop cilantro finely.', 'Mix cream and stock.',
+                   'Wash and chop cilantro.', 'Wash rice.', 'Measure salt.',
+                   'Chop carrots, then add them to the freezer bag.') for row in packet['production_schedule'])
+    assert all('prep_stage' not in row for row in card['instructions'])
+    assert (recipes / 'Soup.md').read_text() == source
+    _validate_generated(WEEK, packet)
+    again = build_week_draft(WEEK, recipes, inventory_rows=[], now=NOW)
+    assert again == packet
+
+
+def staged_pair(tmp_vault, first=(1, 'cup'), second=(1, 'cup')):
+    recipes = tmp_vault / 'Recipes'
+    recipes.mkdir(parents=True, exist_ok=True)
+    for name, (amount, unit), instruction in [
+        ('Bag carrots', first, 'Put carrots in the freezer bag.'),
+        ('Finish carrots', second, 'Add carrots after pressure release.'),
+    ]:
+        (recipes / f'{name}.md').write_text(f'''---
+title: {name}
+servings: 4
+---
+## Ingredients
+
+| Amount | Unit | Ingredient |
+| --- | --- | --- |
+| {amount} | {unit} | carrots |
+
+## Instructions
+
+1. {instruction}
+''')
+        serving_ledger.create_cook(name, WEEK, servings_produced=4)
+    return recipes
+
+
+@pytest.mark.parametrize('available, now_amount, later_amount, buy', [
+    (0.5, 0.5, 0, 1.5), (1.5, 1, 0.5, 0.5), (3, 1, 1, 0),
+])
+def test_staged_inventory_pulls_prioritize_freezer_demand_without_recrediting(tmp_db, tmp_vault,
+                                                                          available, now_amount, later_amount, buy):
+    recipes = staged_pair(tmp_vault)
+    packet = build_week_draft(WEEK, recipes, inventory_rows=[stock(7, 'carrots', available, 'cup')], now=NOW)
+    assert sum(row['amount'] for row in packet['pull_list']) == pytest.approx(now_amount)
+    assert sum(row['amount'] for row in packet['cook_day_pull']) == pytest.approx(later_amount)
+    pulls = packet['pull_list'] + packet['cook_day_pull']
+    line = packet['shopping_list'][0]
+    assert line['needed'] == {'amount': '2', 'unit': 'cup'}
+    assert sum(row['amount'] for row in pulls) == pytest.approx(line['from_pantry']['amount'])
+    assert line['from_pantry']['amount'] == pytest.approx(min(2, available))
+    assert sum(row['inventory_amount'] for row in pulls) == pytest.approx(min(2, available))
+    assert (line['to_buy']['amount'] if line['to_buy'] else 0) == pytest.approx(buy)
+    assert {row['inventory_row_id'] for row in pulls} == {7}
+    assert {row['line_id'] for row in pulls} == {line['item_id']}
+    assert all(row['prep_stage_group'] == 'freezer_session' and row['prep_stage'] == 'bag_now' for row in packet['pull_list'])
+    assert all(row['prep_stage_group'] == 'cook_day' and row['prep_stage'] == 'finish_after_cooking' for row in packet['cook_day_pull'])
+    assert len({row['item_id'] for row in pulls}) == len(pulls)
+    _validate_generated(WEEK, packet)
+    again = build_week_draft(WEEK, recipes, inventory_rows=[stock(7, 'carrots', available, 'cup')], now=NOW)
+    assert again == packet
+
+
+def test_staged_mixed_unit_subpulls_keep_expiry_order_locations_and_exact_container_credit(tmp_db, tmp_vault):
+    recipes = staged_pair(tmp_vault, (1, 'lb'), (8, 'oz'))
+    rows = [stock(3, 'carrots', 1, 'lb', location='garage', expires='2026-10-02', location_source=None),
+            stock(1, 'carrots', 12, 'oz', location='fridge', expires='2026-10-01')]
+    before = deepcopy(rows)
+    packet = build_week_draft(WEEK, recipes, inventory_rows=rows, now=NOW)
+    assert [row['inventory_row_id'] for row in packet['pull_list']] == [1, 3]
+    assert [row['inventory_amount'] for row in packet['pull_list']] == [12, 0.25]
+    assert [row['inventory_amount'] for row in packet['cook_day_pull']] == [0.5]
+    assert [row['location'] for row in packet['pull_list']] == ['fridge', 'garage']
+    assert packet['pull_list'][1]['location_source'] == 'default' and packet['pull_list'][1]['location_uncertain']
+    assert packet['cook_day_pull'][0]['expires'] == '2026-10-02'
+    assert packet['cook_day_pull'][0]['location_source'] == 'default' and packet['cook_day_pull'][0]['location_uncertain']
+    assert sum(row['inventory_amount'] for row in packet['pull_list'] + packet['cook_day_pull']
+               if row['inventory_row_id'] == 3) == 0.75
+    assert packet['shopping_list'][0]['from_pantry'] == {'amount': 1.5, 'unit': 'lb'}
+    assert packet['shopping_list'][0]['to_buy'] is None
+    assert rows == before
+    _validate_generated(WEEK, packet)
+
+
+def partition_fixture(stage='bag_now', review=False):
+    return {'version': 1, 'week': WEEK,
+            'recipe_cards': [{'item_id': 'recipe:test', 'ingredients': [
+                {'item_id': 'ingredient:test', 'item': 'carrots', 'amount': 1, 'unit': 'cup',
+                 'prep_stage': stage, 'stage_source': 'model' if review else 'recipe',
+                 'stage_reason': 'Source destination', 'needs_review': review}]}],
+            'shopping_list': [{'item_id': 'shopping:test', 'item': 'carrots',
+                               'needed': {'amount': 1, 'unit': 'cup'},
+                               'from_pantry': {'amount': 1, 'unit': 'cup'}, 'to_buy': None,
+                               'source_ingredient_ids': ['ingredient:test']}],
+            'pull_list': [{'item_id': 'pull:test', 'line_id': 'shopping:test', 'item': 'carrots',
+                           'amount': 1, 'unit': 'cup', 'inventory_amount': 1, 'inventory_unit': 'cup',
+                           'inventory_row_id': 9, 'location': 'pantry', 'location_source': 'manual',
+                           'location_uncertain': False, 'expires': None, 'done': False}]}
+
+
+@pytest.mark.parametrize('stage, review, expected', [
+    ('bag_now', False, 'pull_list'), ('prep_then_bag', False, 'pull_list'),
+    ('freeze_separately', False, 'pull_list'), ('add_at_cook_time', False, 'cook_day_pull'),
+    ('finish_after_cooking', False, 'cook_day_pull'), ('serve_separately', False, 'cook_day_pull'),
+    ('needs_review', False, 'cook_day_pull'), ('bag_now', True, 'cook_day_pull'),
+    ('freeze_separately', True, 'cook_day_pull'), ('', False, 'cook_day_pull'),
+    (None, False, 'cook_day_pull'), ('unknown', False, 'cook_day_pull'),
+])
+def test_pull_partition_uses_confirmed_stages_and_keeps_unknowns_later(stage, review, expected):
+    from lib import cooking_packet_builder as builder
+    source = partition_fixture(stage, review)
+    before = deepcopy(source)
+    packet = builder.repartition_packet_pulls(source)
+    other = 'cook_day_pull' if expected == 'pull_list' else 'pull_list'
+    assert len(packet[expected]) == 1 and packet[other] == []
+    assert packet['shopping_list'] == source['shopping_list']
+    assert source == before
+    assert builder.repartition_packet_pulls(packet) == packet
+    if review or stage not in {'bag_now', 'prep_then_bag', 'freeze_separately', 'add_at_cook_time',
+                              'finish_after_cooking', 'serve_separately'}:
+        assert packet[expected][0]['needs_review'] and packet[expected][0]['stage_reason']
     _validate_generated(WEEK, packet)

@@ -438,3 +438,454 @@ def test_unsupported_operator_cannot_truncate_duration_candidate(phrase):
 def test_duration_comma_before_instruction_conjunction_is_ordinary_punctuation():
     row = phases.classify_legacy_steps("A", [step("Cook for 20 minutes, and serve.", phase="cook")])["instructions"][0]
     assert row["duration_minutes"] == 20 and row["duration_source"] == "recipe"
+
+
+def stage_ingredients(*names):
+    return [{"item_id": f"ingredient:{i}", "item": name, "amount": "1", "unit": "cup"}
+            for i, name in enumerate(names, 1)]
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("Put carrots in the freezer bag.", "bag_now"),
+    ("Add carrots to a labeled freezer bag.", "bag_now"),
+    ("Chop carrots, then add them to the freezer bag.", "prep_then_bag"),
+    ("Cook carrots before bagging them.", "prep_then_bag"),
+    ("Freeze carrots separately.", "freeze_separately"),
+    ("Freeze carrots in a separate container.", "freeze_separately"),
+    ("Add carrots when cooking.", "add_at_cook_time"),
+    ("At Instant Pot start, add carrots.", "add_at_cook_time"),
+    ("Add carrots after pressure release.", "finish_after_cooking"),
+    ("After cooking, stir in carrots.", "finish_after_cooking"),
+    ("Serve carrots separately.", "serve_separately"),
+    ("Serve with carrots.", "serve_separately"),
+    ("Garnish with carrots.", "serve_separately"),
+    ("Reserve carrots for serving.", "serve_separately"),
+    ("Reserve carrots.", "needs_review"),
+    ("Carrots are nutritious.", "needs_review"),
+    ("Do not put carrots in the freezer bag.", "needs_review"),
+])
+def test_ingredient_stages_require_explicit_source_destination(text, expected):
+    result = phases.assign_ingredient_stages("Soup", stage_ingredients("carrots"), [step(text)])
+    assert result[0]["prep_stage"] == expected
+    assert result[0]["needs_review"] is (expected == "needs_review")
+    assert result[0]["stage_reason"]
+    if expected != "needs_review":
+        assert result[0]["stage_source"] == "recipe"
+
+
+def test_staging_preserves_every_row_identity_order_and_content_without_mutation():
+    ingredients = stage_ingredients("carrots", "cream", "rice", "lime juice", "stock", "salt", "cilantro")
+    instructions = [step("Put carrots in the freezer bag."), step("Add cream after pressure release."),
+                    step("Freeze rice separately."), step("Add lime juice when cooking."),
+                    step("Cook stock before bagging it."), step("Serve with cilantro.")]
+    before = deepcopy((ingredients, instructions))
+    result = phases.assign_ingredient_stages("Soup", ingredients, instructions)
+    assert [row["prep_stage"] for row in result] == ["bag_now", "finish_after_cooking", "freeze_separately",
+                                                   "add_at_cook_time", "prep_then_bag", "needs_review", "serve_separately"]
+    assert [row["item_id"] for row in result] == [row["item_id"] for row in ingredients]
+    assert len({row["item_id"] for row in result}) == len(ingredients)
+    for original, row in zip(ingredients, result):
+        assert all(row[key] == value for key, value in original.items())
+    assert (ingredients, instructions) == before
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("Put all ingredients except cream in the freezer bag.", ["bag_now", "needs_review", "bag_now"]),
+    ("Put all ingredients in the freezer bag except cream.", ["bag_now", "needs_review", "bag_now"]),
+    ("Put all ingredients except cream and the toppings in the freezer bag.", ["needs_review"] * 3),
+    ("Put all remaining ingredients in the freezer bag.", ["needs_review"] * 3),
+])
+def test_global_bagging_honors_exceptions_or_declines_incomplete_scope(text, expected):
+    rows = phases.assign_ingredient_stages("Soup", stage_ingredients("carrots", "cream", "rice"), [step(text)])
+    assert [row["prep_stage"] for row in rows] == expected
+
+
+def test_global_exception_and_later_destination_do_not_conflict():
+    rows = phases.assign_ingredient_stages("Soup", stage_ingredients("carrots", "cream"), [
+        step("Put all ingredients except cream in the freezer bag."), step("Add cream after pressure release.")])
+    assert [row["prep_stage"] for row in rows] == ["bag_now", "finish_after_cooking"]
+
+
+@pytest.mark.parametrize("texts", [
+    ["Put cream in the freezer bag.", "Add cream after pressure release."],
+    ["Put all ingredients in the freezer bag.", "Reserve cream for serving."],
+    ["Put cream in the freezer bag; serve cream separately."],
+])
+def test_conflicting_destinations_stay_out_of_bag(texts):
+    row = phases.assign_ingredient_stages("Soup", stage_ingredients("cream"), [step(t) for t in texts])[0]
+    assert row["prep_stage"] == "needs_review" and row["needs_review"]
+    assert "conflict" in row["stage_reason"].lower()
+
+
+@pytest.mark.parametrize("names, text, expected", [
+    (("lime", "lime juice"), "Put lime juice in the freezer bag.", ["needs_review", "bag_now"]),
+    (("stock", "stock cube"), "Put stock cube in the freezer bag.", ["needs_review", "bag_now"]),
+    (("lime",), "Put lime juice in the freezer bag.", ["needs_review"]),
+    (("stock",), "Put stock cube in the freezer bag.", ["needs_review"]),
+    (("carrots, diced",), "Put carrots in the freezer bag.", ["bag_now"]),
+])
+def test_stage_matching_uses_complete_normalized_ingredient_identity(names, text, expected):
+    rows = phases.assign_ingredient_stages("Soup", stage_ingredients(*names), [step(text)])
+    assert [row["prep_stage"] for row in rows] == expected
+
+
+@pytest.mark.parametrize("phase", ["finish_and_taste", "reheat"])
+def test_native_finish_phase_needs_an_exact_ingredient_mention(phase):
+    rows = phases.assign_ingredient_stages("Soup", stage_ingredients("cream", "stock"), [
+        step("Stir in cream.", phase=phase)])
+    assert [row["prep_stage"] for row in rows] == ["finish_after_cooking", "needs_review"]
+
+
+def test_inferred_phase_or_generic_food_rule_cannot_establish_stage():
+    rows = phases.assign_ingredient_stages("Soup", stage_ingredients("cream", "milk"), [
+        step("Stir in cream.", phase="finish_and_taste", source="heuristic"),
+        step("Dairy should be added later.")])
+    assert all(row["prep_stage"] == "needs_review" for row in rows)
+
+
+@pytest.mark.parametrize("blocked", ["no_refresh", "request", "disabled", "zero_budget"])
+def test_stage_proposals_respect_refresh_request_and_budget_gates(monkeypatch, blocked):
+    monkeypatch.setattr(phases.llm_gate, "allowed", lambda: blocked != "disabled")
+    monkeypatch.setattr(phases.llm_gate, "budget_s", lambda default: 0 if blocked == "zero_budget" else default)
+    def forbidden(*args, **kwargs):
+        pytest.fail("stage model called through closed gate")
+    args = ("Soup", stage_ingredients("cream"), [step("Stir as usual.")])
+    if blocked == "no_refresh":
+        rows = phases.assign_ingredient_stages(*args, proposer=forbidden)
+    elif blocked == "request":
+        with Flask(__name__).test_request_context(), phases.classification_refresh(proposer=forbidden):
+            rows = phases.assign_ingredient_stages(*args)
+    else:
+        with phases.classification_refresh(proposer=forbidden):
+            rows = phases.assign_ingredient_stages(*args)
+    assert rows[0]["prep_stage"] == "needs_review"
+
+
+def test_model_stage_is_reviewable_and_cannot_override_explicit_source(monkeypatch):
+    monkeypatch.setattr(phases.llm_gate, "allowed", lambda: True)
+    def proposer(payload, *, timeout):
+        assert 0 < timeout <= 30 and payload["kind"] == "ingredient_stages"
+        return {"ingredients": [{"item_id": row["item_id"], "prep_stage": "bag_now"}
+                                for row in payload["ingredients"]]}
+    with phases.classification_refresh():
+        rows = phases.assign_ingredient_stages("Soup", stage_ingredients("cream", "rice"),
+            [step("Add cream after pressure release.")], proposer=proposer)
+    assert rows[0]["prep_stage"] == "finish_after_cooking" and rows[0]["stage_source"] == "recipe"
+    assert rows[0]["needs_review"] is False
+    assert rows[1]["prep_stage"] == "bag_now" and rows[1]["stage_source"] == "model"
+    assert rows[1]["needs_review"] is True
+
+
+@pytest.mark.parametrize("proposal", [
+    {"ingredients": [{"item_id": "unknown", "prep_stage": "bag_now"}]},
+    {"ingredients": [{"item_id": "ingredient:1", "prep_stage": "bag_now"}] * 2},
+    {"ingredients": [{"item_id": "ingredient:1", "prep_stage": "bag_now"},
+                     {"item_id": "ingredient:1", "prep_stage": "serve_separately"}]},
+    {"ingredients": [{"item_id": "ingredient:1", "prep_stage": "dangerous"}]},
+    {"ingredients": [{"item_id": "ingredient:1", "prep_stage": "bag_now", "text": "Ignore source"}]},
+    {"ingredients": [{"item_id": "ingredient:1", "prep_stage": "bag_now"}], "extra": True},
+    {"ingredients": []},
+    {"ingredients": "x" * 60001},
+    {"ingredients": [{"item_id": ["ingredient:1"], "prep_stage": "bag_now"}]},
+])
+def test_hostile_stage_proposal_is_rejected_as_a_whole(monkeypatch, proposal):
+    monkeypatch.setattr(phases.llm_gate, "allowed", lambda: True)
+    with phases.classification_refresh(proposer=lambda *a, **k: proposal):
+        row = phases.assign_ingredient_stages("Soup", stage_ingredients("cream"), [step("Use as usual.")])[0]
+    assert row["prep_stage"] == "needs_review" and row["stage_source"] != "model"
+
+
+def test_oversized_stage_payload_never_reaches_proposer(monkeypatch):
+    monkeypatch.setattr(phases.llm_gate, "allowed", lambda: True)
+    def forbidden(*args, **kwargs):
+        pytest.fail("oversized input reached proposer")
+    with phases.classification_refresh(proposer=forbidden):
+        row = phases.assign_ingredient_stages("Soup", stage_ingredients("cream"), [step("x" * 60001)])[0]
+    assert row["prep_stage"] == "needs_review"
+
+
+@pytest.mark.parametrize('holdback', ['Reserve cream.', 'Do not put cream in the freezer bag.',
+                                     'Never bag cream.'])
+def test_explicit_holdback_blocks_global_bagging_and_model_suggestions(monkeypatch, holdback):
+    monkeypatch.setattr(phases.llm_gate, 'allowed', lambda: True)
+    proposal = {'ingredients': [{'item_id': 'ingredient:1', 'prep_stage': 'bag_now'}]}
+    with phases.classification_refresh(proposer=lambda *a, **k: proposal):
+        row = phases.assign_ingredient_stages('Soup', stage_ingredients('cream'), [
+            step('Put all ingredients in the freezer bag.'), step(holdback)])[0]
+    assert row['prep_stage'] == 'needs_review' and row['needs_review']
+    assert row['stage_source'] == 'recipe'
+
+
+@pytest.mark.parametrize('text', [
+    'Add stock to the Instant Pot when cooking.',
+    'Add stock to the Instant Pot at the start of cooking.',
+    'When ready to cook, add stock.',
+])
+def test_explicit_instant_pot_start_addition_is_cook_day(text):
+    row = phases.assign_ingredient_stages('Soup', stage_ingredients('stock'), [step(text)])[0]
+    assert row['prep_stage'] == 'add_at_cook_time' and not row['needs_review']
+
+
+def test_ambiguous_duplicate_source_ingredient_names_are_not_assigned_together():
+    rows = phases.assign_ingredient_stages('Soup', stage_ingredients('cream', 'cream'), [
+        step('Put cream in the freezer bag.')])
+    assert [r['item_id'] for r in rows] == ['ingredient:1', 'ingredient:2']
+    assert all(r['prep_stage'] == 'needs_review' for r in rows)
+
+
+def test_conflicting_source_evidence_cannot_be_resolved_by_model(monkeypatch):
+    monkeypatch.setattr(phases.llm_gate, 'allowed', lambda: True)
+    proposal = {'ingredients': [{'item_id': 'ingredient:1', 'prep_stage': 'bag_now'}]}
+    with phases.classification_refresh(proposer=lambda *a, **k: proposal):
+        row = phases.assign_ingredient_stages('Soup', stage_ingredients('cream'), [
+            step('Put cream in the freezer bag.'), step('Add cream after pressure release.')])[0]
+    assert row['prep_stage'] == 'needs_review' and row['stage_source'] == 'recipe'
+
+
+@pytest.mark.parametrize('later', ['Put cream in the freezer bag.', 'Chop cream, then add it to the freezer bag.'])
+def test_global_exception_conflicts_with_later_bag_placement(later):
+    row = phases.assign_ingredient_stages('Soup', stage_ingredients('cream'), [
+        step('Put all ingredients except cream in the freezer bag.'), step(later)])[0]
+    assert row['prep_stage'] == 'needs_review' and row['needs_review']
+
+
+def test_global_exception_cannot_be_bagged_by_model(monkeypatch):
+    monkeypatch.setattr(phases.llm_gate, 'allowed', lambda: True)
+    proposal = {'ingredients': [{'item_id': 'ingredient:1', 'prep_stage': 'bag_now'}]}
+    with phases.classification_refresh(proposer=lambda *a, **k: proposal):
+        row = phases.assign_ingredient_stages('Soup', stage_ingredients('cream'), [
+            step('Put all ingredients except cream in the freezer bag.')])[0]
+    assert row['prep_stage'] == 'needs_review' and row['stage_source'] != 'model'
+
+
+def test_reservation_can_be_resolved_by_later_explicit_finish_instruction():
+    row = phases.assign_ingredient_stages('Soup', stage_ingredients('cream'), [
+        step('Reserve cream.'), step('Add cream after pressure release.')])[0]
+    assert row['prep_stage'] == 'finish_after_cooking' and row['needs_review'] is False
+
+
+@pytest.mark.parametrize('text, expected', [
+    ('Chop carrots and put them in the freezer bag.', 'prep_then_bag'),
+    ('Serve over carrots.', 'serve_separately'),
+    ('Serve carrots as a side.', 'serve_separately'),
+])
+def test_common_explicit_prep_and_side_phrasing(text, expected):
+    row = phases.assign_ingredient_stages('Soup', stage_ingredients('carrots'), [step(text)])[0]
+    assert row['prep_stage'] == expected and row['needs_review'] is False
+
+
+def test_native_prep_adverb_cannot_schedule_a_cook_day_ingredient():
+    recipe = {'recipe': 'Soup', 'ingredients': [{**stage_ingredients('cilantro')[0],
+              'prep_stage': 'serve_separately'}],
+              'instructions': [step('Finely chop cilantro just before serving.', phase='prep_or_flavor_base')]}
+    assert phases.build_shared_prep([recipe]) == []
+
+
+@pytest.mark.parametrize('incomplete', [
+    'Put all ingredients in the freezer bag but reserve cream.',
+    'Add cream once cooking is finished.',
+    'Put cream into either the bag or a separate container.',
+])
+def test_incomplete_destination_wording_cannot_leave_an_earlier_bag_assignment_confirmed(incomplete):
+    row = phases.assign_ingredient_stages('Soup', stage_ingredients('cream'), [
+        step('Put cream in the freezer bag.'), step(incomplete)])[0]
+    assert row['prep_stage'] == 'needs_review' and row['needs_review']
+
+
+@pytest.mark.parametrize('holdback', [
+    'Reserve half the cream.',
+    'Do not bag the cream until cooking.',
+    'Serve with the remaining cream.',
+    'Reserve cream and the rest for serving.',
+    'Serve the rest on the side.',
+])
+def test_partially_resolved_holdback_never_leaves_global_bagging_confirmed(holdback):
+    rows = phases.assign_ingredient_stages('Soup', stage_ingredients('cream', 'carrots'), [
+        step('Put all ingredients in the freezer bag.'), step(holdback)])
+    assert all(row['prep_stage'] == 'needs_review' and row['needs_review'] for row in rows)
+
+
+@pytest.mark.parametrize('phase', ['finish_and_taste', 'reheat'])
+def test_native_phase_cannot_expand_unnamed_global_addition(phase):
+    rows = phases.assign_ingredient_stages('Soup', stage_ingredients('cream', 'carrots'), [
+        step('Stir in all ingredients.', phase=phase)])
+    assert all(row['prep_stage'] == 'needs_review' and row['needs_review'] for row in rows)
+    named = phases.assign_ingredient_stages('Soup', stage_ingredients('cream', 'carrots'), [
+        step('Stir in cream.', phase=phase)])
+    assert [row['prep_stage'] for row in named] == ['finish_after_cooking', 'needs_review']
+
+
+@pytest.mark.parametrize('text', ['Chop cilantro finely.', 'Wash and chop cilantro.'])
+@pytest.mark.parametrize('stage', ['add_at_cook_time', 'finish_after_cooking', 'serve_separately',
+                                   'freeze_separately', 'needs_review'])
+def test_kept_out_ingredient_in_ordinary_prep_wording_is_never_shared(text, stage):
+    ingredients = stage_ingredients('cilantro', 'carrots')
+    ingredients[0].update(prep_stage=stage, needs_review=stage == 'needs_review')
+    ingredients[1].update(prep_stage='bag_now', needs_review=False)
+    recipe = {'recipe': 'Soup', 'ingredients': ingredients,
+              'instructions': [step(text, phase='prep_or_flavor_base')]}
+    assert phases.build_shared_prep([recipe]) == []
+
+
+@pytest.mark.parametrize('text', ['Chop them finely.', 'Wash and chop the vegetables.',
+                                  'Mix carrots and the remaining topping.'])
+def test_unresolved_prep_association_is_withheld_when_recipe_has_kept_out_ingredients(text):
+    ingredients = stage_ingredients('cream', 'carrots')
+    ingredients[0].update(prep_stage='finish_after_cooking')
+    ingredients[1].update(prep_stage='bag_now', needs_review=False)
+    recipe = {'recipe': 'Soup', 'ingredients': ingredients,
+              'instructions': [step(text, phase='prep_or_flavor_base')]}
+    assert phases.build_shared_prep([recipe]) == []
+
+
+@pytest.mark.parametrize('text', ['Chop carrots finely.', 'Wash and chop carrots.'])
+def test_exact_bag_ingredient_prep_survives_other_kept_out_ingredients(text):
+    ingredients = stage_ingredients('cream', 'carrots')
+    ingredients[0].update(prep_stage='finish_after_cooking')
+    ingredients[1].update(prep_stage='prep_then_bag', needs_review=False)
+    recipe = {'recipe': 'Soup', 'ingredients': ingredients,
+              'instructions': [step(text, phase='prep_or_flavor_base')]}
+    result = phases.build_shared_prep([recipe])
+    assert len(result) == 1 and result[0]['text'] == text
+
+
+def test_shared_prep_matches_longest_complete_ingredient_and_word_boundaries():
+    ingredients = stage_ingredients('lime', 'lime juice', 'stock', 'stock cube', 'rice')
+    for ingredient in ingredients:
+        ingredient.update(prep_stage='bag_now', needs_review=False)
+    ingredients[0]['prep_stage'] = 'serve_separately'
+    ingredients[2]['prep_stage'] = 'add_at_cook_time'
+    recipe = {'recipe': 'Soup', 'ingredients': ingredients, 'instructions': [
+        step('Measure lime juice.', phase='prep_or_flavor_base'),
+        step('Measure stock cube.', phase='prep_or_flavor_base'),
+        step('Chop licorice.', phase='prep_or_flavor_base')]}
+    assert [r['text'] for r in phases.build_shared_prep([recipe])] == ['Measure lime juice.', 'Measure stock cube.']
+
+
+def test_unconfirmed_bag_proposal_is_not_shared_prep():
+    ingredients = [{**stage_ingredients('carrots')[0], 'prep_stage': 'bag_now',
+                    'stage_source': 'model', 'needs_review': True}]
+    recipe = {'recipe': 'Soup', 'ingredients': ingredients,
+              'instructions': [step('Chop carrots.', phase='prep_or_flavor_base')]}
+    assert phases.build_shared_prep([recipe]) == []
+
+
+@pytest.mark.parametrize('holdback', [
+    'Keep the cream out of the freezer bag.',
+    'Hold the cream back until cooking.',
+    'Set aside the cream for serving.',
+    'Set the cream aside for serving.',
+    'Leave the cream out.',
+    'Do not include the cream.',
+    'Never add the cream.',
+    'Keep half the cream out of the bag.',
+    'Hold the remaining topping back.',
+    'Set aside the rest.',
+])
+def test_object_between_holdback_grammar_invalidates_global_bag_certainty(holdback):
+    rows = phases.assign_ingredient_stages('Soup', stage_ingredients('cream', 'carrots'), [
+        step('Put all ingredients in the freezer bag.'), step(holdback)])
+    assert rows[0]['prep_stage'] == 'needs_review' and rows[0]['needs_review']
+
+
+@pytest.mark.parametrize('text', ['Mix carrots and the remaining topping.', 'Chop cilantro finely.',
+                                  'Wash and chop cilantro.', 'Mix the vegetables.'])
+def test_all_bag_staged_recipe_still_requires_complete_listed_prep_association(text):
+    ingredients = [{**stage_ingredients('carrots')[0], 'prep_stage': 'bag_now', 'needs_review': False}]
+    recipe = {'recipe': 'Soup', 'ingredients': ingredients,
+              'instructions': [step(text, phase='prep_or_flavor_base')]}
+    assert phases.build_shared_prep([recipe]) == []
+
+
+@pytest.mark.parametrize('text', ['Chop cilantro finely.', 'Wash and chop cilantro.'])
+def test_all_bag_staged_recipe_accepts_complete_named_prep(text):
+    ingredients = [{**stage_ingredients('cilantro')[0], 'prep_stage': 'prep_then_bag', 'needs_review': False}]
+    recipe = {'recipe': 'Soup', 'ingredients': ingredients,
+              'instructions': [step(text, phase='prep_or_flavor_base')]}
+    result = phases.build_shared_prep([recipe])
+    assert len(result) == 1 and result[0]['text'] == text
+
+
+def test_legacy_unstaged_recipe_retains_direct_shared_prep_behavior():
+    recipe = {'recipe': 'Soup', 'ingredients': stage_ingredients('carrots'),
+              'instructions': [step('Mix carrots and the remaining topping.', phase='prep_or_flavor_base')]}
+    assert len(phases.build_shared_prep([recipe])) == 1
+
+
+def test_staged_prep_without_explicit_confirmation_flag_is_withheld():
+    recipe = {'recipe': 'Soup', 'ingredients': [{**stage_ingredients('carrots')[0], 'prep_stage': 'bag_now'}],
+              'instructions': [step('Chop carrots.', phase='prep_or_flavor_base')]}
+    assert phases.build_shared_prep([recipe]) == []
+
+
+@pytest.mark.parametrize('instruction', ['Do not overcook.', 'Set aside a large bowl.',
+                                       'Reserve a large bowl.', 'Do not leave the kitchen unattended.'])
+def test_noningredient_cautions_and_equipment_do_not_invalidate_bag_evidence(instruction):
+    rows = phases.assign_ingredient_stages('Soup', stage_ingredients('cream', 'carrots'), [
+        step('Put all ingredients in the freezer bag.'), step(instruction)])
+    assert all(row['prep_stage'] == 'bag_now' and row['needs_review'] is False for row in rows)
+
+
+@pytest.mark.parametrize('metadata', ['cream', '', None, 'carrots and cream'])
+def test_staged_prep_metadata_must_identify_a_listed_confirmed_ingredient(metadata):
+    recipe = {'recipe': 'Soup', 'ingredients': [{**stage_ingredients('carrots')[0],
+              'prep_stage': 'bag_now', 'needs_review': False}],
+              'instructions': [step('Chop carrots.', phase='prep_or_flavor_base', prep={'ingredient': metadata})]}
+    assert phases.build_shared_prep([recipe]) == []
+
+
+def test_staged_prep_metadata_and_named_text_cannot_disagree_even_if_both_are_bagged():
+    ingredients = [{**row, 'prep_stage': 'bag_now', 'needs_review': False}
+                   for row in stage_ingredients('carrots', 'cream')]
+    recipe = {'recipe': 'Soup', 'ingredients': ingredients,
+              'instructions': [step('Chop carrots.', phase='prep_or_flavor_base', prep={'ingredient': 'cream'})]}
+    assert phases.build_shared_prep([recipe]) == []
+
+
+@pytest.mark.parametrize('text', ['Mix carrots and them.', 'Mix carrots and it.', 'Chop them.',
+                                  'Chop carrots, then add them to the freezer bag.'])
+def test_staged_prep_unresolved_pronouns_without_metadata_are_withheld(text):
+    recipe = {'recipe': 'Soup', 'ingredients': [{**stage_ingredients('carrots')[0],
+              'prep_stage': 'bag_now', 'needs_review': False}],
+              'instructions': [step(text, phase='prep_or_flavor_base')]}
+    assert phases.build_shared_prep([recipe]) == []
+
+
+def test_staged_prep_valid_metadata_can_resolve_a_pronoun():
+    recipe = {'recipe': 'Soup', 'ingredients': [{**stage_ingredients('carrots')[0],
+              'prep_stage': 'prep_then_bag', 'needs_review': False}],
+              'instructions': [step('Chop them finely.', phase='prep_or_flavor_base', prep={'ingredient': 'carrots'})]}
+    result = phases.build_shared_prep([recipe])
+    assert len(result) == 1 and result[0]['ingredient'] == 'carrots'
+
+
+@pytest.mark.parametrize('metadata', ['carrots, cream', 'carrots (and cream)',
+                                     'carrots, the remaining topping', 'carrots (and topping)',
+                                     'carrots and cream', 'carrots, stock cube'])
+def test_complete_raw_prep_metadata_cannot_hide_composite_association(metadata):
+    ingredients = [{**row, 'prep_stage': stage, 'needs_review': False}
+                   for row, stage in zip(stage_ingredients('carrots', 'cream'),
+                                         ['bag_now', 'finish_after_cooking'])]
+    recipe = {'recipe': 'Soup', 'ingredients': ingredients,
+              'instructions': [step('Chop carrots.', phase='prep_or_flavor_base', prep={'ingredient': metadata})]}
+    assert phases.build_shared_prep([recipe]) == []
+
+
+@pytest.mark.parametrize('metadata', ['carrots, chopped', 'carrots (finely chopped)',
+                                     'carrots, peeled and chopped'])
+def test_raw_prep_metadata_allows_only_resolved_single_ingredient_descriptors(metadata):
+    ingredients = [{**row, 'prep_stage': stage, 'needs_review': False}
+                   for row, stage in zip(stage_ingredients('carrots', 'cream'),
+                                         ['bag_now', 'finish_after_cooking'])]
+    recipe = {'recipe': 'Soup', 'ingredients': ingredients,
+              'instructions': [step('Chop carrots.', phase='prep_or_flavor_base', prep={'ingredient': metadata})]}
+    result = phases.build_shared_prep([recipe])
+    assert len(result) == 1 and result[0]['ingredient'] == metadata
+
+
+@pytest.mark.parametrize('metadata', ['carrots and', 'carrots &', 'carrots +', 'carrots/'])
+def test_raw_prep_metadata_rejects_unfinished_composite_operators(metadata):
+    recipe = {'recipe': 'Soup', 'ingredients': [{**stage_ingredients('carrots')[0],
+              'prep_stage': 'bag_now', 'needs_review': False}],
+              'instructions': [step('Chop carrots.', phase='prep_or_flavor_base', prep={'ingredient': metadata})]}
+    assert phases.build_shared_prep([recipe]) == []

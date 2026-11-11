@@ -307,6 +307,44 @@ git add lib/recipe_phases.py prompts/cooking_packet.py lib/cooking_packet_builde
 git commit -m "feat: derive shared cooking prep and schedule"
 ```
 
+### Task 4B: Separate freezer-bag ingredients from cook-day ingredients
+
+**Files:**
+- Modify: `lib/recipe_phases.py`
+- Modify: `lib/cooking_packet_builder.py`
+- Modify: `lib/cooking_packet_store.py`
+- Modify: `tests/test_recipe_phases.py`
+- Modify: `tests/test_cooking_packet_builder.py`
+- Modify: `tests/test_cooking_packet_store.py`
+
+**Interfaces:**
+- Produces: `assign_ingredient_stages(recipe: str, ingredients: list[dict], instructions: list[dict], proposer: Callable | None = None) -> list[dict]`.
+- Every returned ingredient retains its stable `item_id` and has exactly one `prep_stage`, `stage_source`, `stage_reason`, and `needs_review` value.
+- `prep_stage` is editable through Task 1's exact sparse change shape.
+
+- [ ] **Step 1: Write failing freezer-bag separation tests**
+
+Cover explicit bag ingredients, add-at-cook-time liquid, post-release finish ingredients, serving garnishes/sides, prep-then-bag, separate freezing, contradictory evidence, unknown ingredients, stable IDs, model proposal validation, and one-stage-only output.
+
+- [ ] **Step 2: Implement conservative stage assignment**
+
+Use only the closed stages `bag_now`, `prep_then_bag`, `freeze_separately`, `add_at_cook_time`, `finish_after_cooking`, `serve_separately`, and `needs_review`. Explicit source wording can establish a stage. Bounded proposals may run only inside `classification_refresh()` and still pass deterministic validation. Unknown or conflicting evidence becomes `needs_review`, which is always kept out of the bag. Do not infer general food rules as recipe facts.
+
+- [ ] **Step 3: Integrate the packet draft and edit store**
+
+Stage every recipe-card ingredient exactly once. Preserve shopping requirements for every stage. Do not turn cook-time-only rows into freezer-session prep tasks. Add `prep_stage` to the packet edit allowlist without changing the exact `{item_id, field, value}` shape.
+
+- [ ] **Step 4: Run focused regressions**
+
+Run: `.venv/bin/python -m pytest tests/test_recipe_phases.py tests/test_cooking_packet_builder.py tests/test_cooking_packet_store.py -v`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add lib/recipe_phases.py lib/cooking_packet_builder.py lib/cooking_packet_store.py tests/test_recipe_phases.py tests/test_cooking_packet_builder.py tests/test_cooking_packet_store.py
+git commit -m "feat: separate freezer bag and cook day ingredients"
+```
+
 ### Task 5: Mobile and print rendering
 
 **Files:**
@@ -320,6 +358,8 @@ git commit -m "feat: derive shared cooking prep and schedule"
 **Interfaces:**
 - Consumes: Task 1 merged packet document.
 - Produces: `render_print_packet(packet: dict) -> str`; screen JavaScript consumes `GET /api/cooking-packets/<week>`, sends Task 1 patch shapes for packet-only edits, and sends cook timing changes to existing `POST /api/cooks/<id>/schedule`.
+
+**Freezer-prep amendment:** Before rendering, the builder assigns every ingredient exactly one closed `prep_stage`: `bag_now`, `prep_then_bag`, `freeze_separately`, `add_at_cook_time`, `finish_after_cooking`, `serve_separately`, or `needs_review`. Uncertain rows stay out of the bag. Ingredient stage edits use the existing exact sparse edit shape with field `prep_stage`.
 
 - [ ] **Step 1: Write failing render-contract tests**
 
@@ -340,7 +380,7 @@ Run: `.venv/bin/python -m pytest tests/test_cooking_packet_render.py -v`
 
 - [ ] **Step 3: Implement responsive and print presentation**
 
-Mirror the reference PDF's navy/teal/gold hierarchy, Letter margins, schedule table, location columns, stage labels, phase cards, guidance boxes, repeated footer, and page counters. The mobile shell uses semantic collapsible sections, labeled controls, 44px touch targets, `aria-live`, visible focus, reduced motion, `textContent`, per-card Save, and persisted checkboxes. Reuse `static/print-action.js`.
+Mirror the reference PDF's navy/teal/gold hierarchy, Letter margins, schedule table, location columns, stage labels, phase cards, guidance boxes, repeated footer, and page counters. Lead every recipe with **Freezer prep**: **Put in the freezer bag now**, optional **Prep before bagging**, and a prominent **Keep out of the freezer bag** group split into cook-time, finish, serve, separate-freeze, and needs-review destinations. Do not show a generic ingredient list that implies everything is bagged. Each ingredient appears in exactly one destination. The mobile shell uses semantic collapsible sections, labeled controls, 44px touch targets, `aria-live`, visible focus, reduced motion, `textContent`, per-card Save, and persisted checkboxes. Reuse `static/print-action.js`.
 
 - [ ] **Step 4: Run render tests and static accessibility contract checks**
 

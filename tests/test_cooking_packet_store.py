@@ -318,3 +318,214 @@ def test_retailer_preferences_expose_explicit_policy(store):
     assert prefs["heb"]["policy"]["reason"] == "cashback"
     assert prefs["costco"]["policy"]["require_bulk_suitability"] is True
     assert prefs["heb"]["preference_rank"] < prefs["costco"]["preference_rank"]
+
+
+@pytest.mark.parametrize('stage', ['bag_now', 'prep_then_bag', 'freeze_separately', 'add_at_cook_time',
+                                  'finish_after_cooking', 'serve_separately', 'needs_review'])
+def test_ingredient_stage_override_uses_exact_sparse_edit_and_null_delete(store, stage):
+    generated = draft()
+    generated['recipe_cards'][0]['ingredients'] = [{'item_id': 'ingredient:1', 'item': 'cream',
+                                                  'prep_stage': 'needs_review', 'needs_review': True}]
+    first = store.replace_generated('2026-W40', generated)
+    edit = change(item_id='ingredient:1', field='prep_stage', value=stage)
+    saved = store.patch_packet('2026-W40', first['revision'], [edit])
+    assert saved['recipe_cards'][0]['ingredients'][0]['prep_stage'] == stage
+    assert saved['edits'] == [edit] and saved['revision'] == first['revision'] + 1
+    with pytest.raises(store.RevisionConflict):
+        store.patch_packet('2026-W40', first['revision'], [{**edit, 'value': None}])
+    assert store.get_packet('2026-W40') == saved
+    deleted = store.patch_packet('2026-W40', saved['revision'], [{**edit, 'value': None}])
+    assert deleted['edits'] == [] and deleted['revision'] == saved['revision'] + 1
+    assert deleted['recipe_cards'][0]['ingredients'][0]['prep_stage'] == 'needs_review'
+
+
+@pytest.mark.parametrize('invalid', ['unknown', '', 1, True, [], {}])
+def test_invalid_ingredient_stage_rolls_back_entire_patch(store, invalid):
+    saved = store.replace_generated('2026-W40', draft())
+    with pytest.raises(ValueError):
+        store.patch_packet('2026-W40', saved['revision'], [change(), change(field='prep_stage', value=invalid)])
+    assert store.get_packet('2026-W40') == saved
+
+
+def test_reviewing_model_stage_confirms_only_merged_row_and_null_restores_generation(store):
+    generated = draft()
+    ingredient = {'item_id': 'ingredient:1', 'item': 'cream', 'prep_stage': 'bag_now',
+                  'stage_source': 'model', 'stage_reason': 'Model proposal; confirm first.', 'needs_review': True}
+    generated['recipe_cards'][0]['ingredients'] = [deepcopy(ingredient)]
+    first = store.replace_generated('2026-W40', generated)
+    assert first['recipe_cards'][0]['ingredients'][0] == ingredient
+    edit = change(item_id='ingredient:1', field='prep_stage', value='bag_now')
+    confirmed = store.patch_packet('2026-W40', first['revision'], [edit])
+    row = confirmed['recipe_cards'][0]['ingredients'][0]
+    assert row['prep_stage'] == 'bag_now' and row['stage_source'] == 'user'
+    assert row['needs_review'] is False and 'review' in row['stage_reason'].lower()
+    assert confirmed['edits'] == [edit]
+    with inventory_db.connect() as conn:
+        stored = conn.execute('SELECT generated_json, edits_json FROM cooking_packets').fetchone()
+        assert json.loads(stored[0])['recipe_cards'][0]['ingredients'][0] == ingredient
+        assert json.loads(stored[1]) == [edit]
+    restored = store.patch_packet('2026-W40', confirmed['revision'], [{**edit, 'value': None}])
+    assert restored['recipe_cards'][0]['ingredients'][0] == ingredient
+    assert restored['edits'] == [] and restored['revision'] == confirmed['revision'] + 1
+    assert generated['recipe_cards'][0]['ingredients'][0] == ingredient
+
+
+def test_stage_confirmation_repartitions_existing_credit_and_null_restores_it(store):
+    from tests.test_cooking_packet_builder import partition_fixture
+    generated = partition_fixture('bag_now', True)
+    generated_before = deepcopy(generated)
+    first = store.replace_generated('2026-W40', generated)
+    assert first['pull_list'] == [] and len(first['cook_day_pull']) == 1
+    original_subpull_id = first['cook_day_pull'][0]['item_id']
+    edit = change(item_id='ingredient:test', field='prep_stage', value='bag_now')
+    saved = store.patch_packet('2026-W40', first['revision'], [edit])
+    assert saved['revision'] == first['revision'] + 1
+    assert saved['cook_day_pull'] == [] and len(saved['pull_list']) == 1
+    assert saved['pull_list'][0]['item_id'] == original_subpull_id
+    assert saved['pull_list'][0]['stage_source'] == 'user' and not saved['pull_list'][0]['needs_review']
+    assert saved['pull_list'][0]['amount'] == saved['pull_list'][0]['inventory_amount'] == 1
+    assert store.get_packet('2026-W40') == saved
+    assert saved['shopping_list'] == first['shopping_list']
+    restored = store.patch_packet('2026-W40', saved['revision'], [{**edit, 'value': None}])
+    assert restored['revision'] == saved['revision'] + 1
+    assert restored['pull_list'] == [] and restored['cook_day_pull'] == first['cook_day_pull']
+    assert restored['edits'] == [] and restored['shopping_list'] == first['shopping_list']
+    assert store.get_packet('2026-W40') == restored
+    with inventory_db.connect() as conn:
+        raw = conn.execute('SELECT generated_json FROM cooking_packets').fetchone()[0]
+        assert json.loads(raw) == generated_before
+        assert conn.execute('SELECT COUNT(*) FROM inventory').fetchone()[0] == 0
+    assert generated == generated_before
+
+
+def test_derived_subpull_checkbox_is_editable_without_rewriting_generated_credit(store):
+    from tests.test_cooking_packet_builder import partition_fixture
+    generated = partition_fixture('bag_now', False)
+    first = store.replace_generated('2026-W40', generated)
+    subpull_id = first['pull_list'][0]['item_id']
+    edited = store.patch_packet('2026-W40', first['revision'], [change(item_id=subpull_id, field='done', value=True)])
+    assert edited['pull_list'][0]['done'] is True
+    assert store.get_packet('2026-W40') == edited
+    restored = store.patch_packet('2026-W40', edited['revision'], [change(item_id=subpull_id, field='done', value=None)])
+    assert restored['pull_list'][0]['done'] is False
+    assert restored['needs_review'] == []
+    with inventory_db.connect() as conn:
+        assert json.loads(conn.execute('SELECT generated_json FROM cooking_packets').fetchone()[0]) == generated
+
+
+def test_derived_subpull_expansion_revalidates_merged_item_bound(store):
+    from tests.test_cooking_packet_builder import partition_fixture
+    generated = partition_fixture()
+    prototype = generated['recipe_cards'][0]['ingredients'][0]
+    generated['recipe_cards'][0]['ingredients'] = [{**prototype, 'item_id': f'ingredient:{i}'} for i in range(1001)]
+    generated['shopping_list'][0]['source_ingredient_ids'] = [f'ingredient:{i}' for i in range(1001)]
+    generated['shopping_list'][0]['needed']['amount'] = 1001
+    generated['shopping_list'][0]['from_pantry']['amount'] = 1001
+    generated['pull_list'][0].update(amount=1001, inventory_amount=1001)
+    with pytest.raises(ValueError, match='2,000 items'):
+        store.replace_generated('2026-W40', generated)
+    assert store.get_packet('2026-W40') is None
+
+
+def test_subpull_quantity_string_edit_preserves_sparse_field_semantics(store):
+    from tests.test_cooking_packet_builder import partition_fixture
+    from lib.cooking_packet_builder import repartition_packet_pulls
+    generated = repartition_packet_pulls(partition_fixture())
+    first = store.replace_generated('2026-W40', generated)
+    subpull_id = first['pull_list'][0]['item_id']
+    edit = change(item_id=subpull_id, field='amount', value='1/2')
+    saved = store.patch_packet('2026-W40', first['revision'], [edit])
+    assert saved['pull_list'][0]['amount'] == '1/2'
+    assert saved['edits'] == [edit] and store.get_packet('2026-W40') == saved
+    restored = store.patch_packet('2026-W40', saved['revision'], [{**edit, 'value': None}])
+    assert restored['pull_list'][0]['amount'] == 1
+
+
+def test_confirmation_reprioritizes_limited_credit_and_new_subpull_remains_editable(store):
+    from tests.test_cooking_packet_builder import partition_fixture
+    from lib.cooking_packet_builder import repartition_packet_pulls
+    source = partition_fixture()
+    prototype = source['recipe_cards'][0]['ingredients'][0]
+    source['recipe_cards'][0]['ingredients'] = [
+        {**prototype, 'item_id': 'ingredient:a', 'stage_source': 'model', 'needs_review': True},
+        {**prototype, 'item_id': 'ingredient:b'}]
+    source['shopping_list'][0]['source_ingredient_ids'] = ['ingredient:a', 'ingredient:b']
+    source['shopping_list'][0]['needed']['amount'] = 2
+    source['shopping_list'][0]['to_buy'] = {'amount': 1, 'unit': 'cup'}
+    generated = repartition_packet_pulls(source)
+    first = store.replace_generated('2026-W40', generated)
+    assert first['pull_list'][0]['source_ingredient_ids'] == ['ingredient:b']
+    saved = store.patch_packet('2026-W40', first['revision'], [change(item_id='ingredient:a', field='prep_stage', value='bag_now')])
+    assert saved['pull_list'][0]['source_ingredient_ids'] == ['ingredient:a']
+    assert len(saved['pull_list']) == 1 and saved['cook_day_pull'] == []
+    assert saved['pull_list'][0]['amount'] == saved['pull_list'][0]['inventory_amount'] == 1
+    assert saved['shopping_list'] == first['shopping_list']
+    checked = store.patch_packet('2026-W40', saved['revision'], [change(item_id=saved['pull_list'][0]['item_id'], field='done', value=True)])
+    assert checked['pull_list'][0]['done'] is True
+    assert store.get_packet('2026-W40') == checked
+
+
+def test_stage_edit_rejects_derived_pull_target_and_only_source_ingredient_can_move_it(store):
+    from tests.test_cooking_packet_builder import partition_fixture
+    from lib.cooking_packet_builder import repartition_packet_pulls
+    generated = repartition_packet_pulls(partition_fixture())
+    first = store.replace_generated('2026-W40', generated)
+    subpull_id = first['pull_list'][0]['item_id']
+    with inventory_db.connect() as conn:
+        before_row = tuple(conn.execute('SELECT generated_json, edits_json, revision FROM cooking_packets').fetchone())
+    with pytest.raises(ValueError, match='ingredient'):
+        store.patch_packet('2026-W40', first['revision'], [
+            change(item_id='ingredient:test', field='notes', value='must roll back'),
+            change(item_id=subpull_id, field='prep_stage', value='finish_after_cooking')])
+    assert store.get_packet('2026-W40') == first
+    with inventory_db.connect() as conn:
+        assert tuple(conn.execute('SELECT generated_json, edits_json, revision FROM cooking_packets').fetchone()) == before_row
+    moved = store.patch_packet('2026-W40', first['revision'], [
+        change(item_id='ingredient:test', field='prep_stage', value='finish_after_cooking')])
+    assert moved['revision'] == first['revision'] + 1
+    assert moved['pull_list'] == [] and len(moved['cook_day_pull']) == 1
+    assert moved['cook_day_pull'][0]['item_id'] == subpull_id
+    assert moved['cook_day_pull'][0]['prep_stage'] == 'finish_after_cooking'
+    assert moved['cook_day_pull'][0]['prep_stage_group'] == 'cook_day'
+    with pytest.raises(ValueError, match='ingredient'):
+        store.patch_packet('2026-W40', moved['revision'], [
+            change(item_id=subpull_id, field='prep_stage', value='bag_now')])
+    assert store.get_packet('2026-W40') == moved
+
+
+@pytest.mark.parametrize('target', ['cook:58', 'recipe:Soup'])
+@pytest.mark.parametrize('value', ['bag_now', None])
+def test_stage_edits_reject_non_ingredient_targets_even_for_null(store, target, value):
+    first = store.replace_generated('2026-W40', draft())
+    with pytest.raises(ValueError, match='ingredient'):
+        store.patch_packet('2026-W40', first['revision'], [change(item_id=target, field='prep_stage', value=value)])
+    assert store.get_packet('2026-W40') == first
+
+
+def test_old_invalid_pull_stage_override_cannot_override_source_stage_on_read(store):
+    from tests.test_cooking_packet_builder import partition_fixture
+    from lib.cooking_packet_builder import repartition_packet_pulls
+    generated = repartition_packet_pulls(partition_fixture())
+    first = store.replace_generated('2026-W40', generated)
+    legacy_edit = change(item_id=first['pull_list'][0]['item_id'], field='prep_stage', value='finish_after_cooking')
+    with inventory_db.write_transaction() as conn:
+        conn.execute('UPDATE cooking_packets SET edits_json = ?', (json.dumps([legacy_edit]),))
+    packet = store.get_packet('2026-W40')
+    assert packet['pull_list'][0]['prep_stage'] == 'bag_now'
+    assert packet['pull_list'][0]['prep_stage_group'] == 'freezer_session'
+    assert packet['cook_day_pull'] == []
+    assert packet['revision'] == first['revision']
+    assert 'ingredient' in packet['needs_review'][0]['reason']
+
+
+def test_null_can_still_delete_a_previously_valid_orphan_ingredient_stage_override(store):
+    from tests.test_cooking_packet_builder import partition_fixture
+    generated = partition_fixture()
+    first = store.replace_generated('2026-W40', generated)
+    edit = change(item_id='ingredient:test', field='prep_stage', value='finish_after_cooking')
+    saved = store.patch_packet('2026-W40', first['revision'], [edit])
+    vanished = store.replace_generated('2026-W40', draft())
+    assert vanished['needs_review'][0]['item_id'] == 'ingredient:test'
+    cleared = store.patch_packet('2026-W40', vanished['revision'], [{**edit, 'value': None}])
+    assert cleared['edits'] == [] and cleared['needs_review'] == []
+    assert cleared['revision'] == vanished['revision'] + 1

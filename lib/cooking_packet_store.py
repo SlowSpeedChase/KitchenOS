@@ -16,13 +16,14 @@ import math
 import re
 
 from lib import inventory_db
+from lib.recipe_phases import PREP_STAGES
 
 MAX_DOCUMENT_BYTES = 2 * 1024 * 1024
 MAX_GENERATED_ITEMS = 2000
 MAX_STRING_LENGTH = 10000
 EDITABLE_FIELDS = frozenset({
     "text", "notes", "amount", "quantity", "unit", "date", "start", "time",
-    "duration_minutes", "phase", "done",
+    "duration_minutes", "phase", "prep_stage", "done",
 })
 _PHASES = {"prep_or_flavor_base", "cook", "finish_and_taste", "freeze_and_store", "reheat", "instructions"}
 _RESERVED = {"revision", "edits", "store_snapshot", "generated_at", "store_refreshed_at", "reviewed_at", "updated_at"}
@@ -154,14 +155,43 @@ def _read(conn, week: str, expected_revision: int | None = None) -> dict | None:
 def _merged(packet: dict) -> dict:
     document = deepcopy(packet["generated"])
     items = _items(document)
-    needs_review = document.setdefault("needs_review", [])
+    ingredient_ids = _ingredient_ids(document)
+
+    def apply(item, edit):
+        if edit["field"] == "prep_stage" and edit["item_id"] not in ingredient_ids:
+            return
+        item[edit["field"]] = deepcopy(edit["value"])
+        if edit["field"] == "prep_stage":
+            item.update(stage_source="user", stage_reason="Ingredient destination reviewed by user.",
+                        needs_review=False)
+
+    # Ingredient overrides determine placement before existing credits split.
+    # Pull display edits (including quantity strings) apply afterward so they
+    # cannot change or invalidate the underlying inventory allocation.
+    pull_ids = {row["item_id"] for row in document.get("pull_list", []) + document.get("cook_day_pull", [])}
     for edit in packet["edits"]:
-        item = items.get(edit["item_id"])
+        if edit["item_id"] in items and edit["item_id"] not in pull_ids:
+            apply(items[edit["item_id"]], edit)
+    from lib.cooking_packet_builder import repartition_packet_pulls
+    document = repartition_packet_pulls(document)
+    merged_items = _items(document)
+    orphans = []
+    for edit in packet["edits"]:
+        item = merged_items.get(edit["item_id"])
         if item is None:
-            needs_review.append({**deepcopy(edit), "reason": "Source item no longer exists"})
+            orphans.append({**deepcopy(edit), "reason": "Source item no longer exists"})
+        elif edit["field"] == "prep_stage" and edit["item_id"] not in ingredient_ids:
+            orphans.append({**deepcopy(edit), "reason": "Stage overrides require a canonical recipe ingredient"})
         else:
-            item[edit["field"]] = deepcopy(edit["value"])
+            # Newly derived subpulls also accept sparse checkbox/text edits.
+            apply(item, edit)
+    _validate_document(document)
+    _items(document)
+    # Orphan edit references may repeat one source ID across several fields;
+    # they are metadata, not duplicate generated rows.
+    document.setdefault("needs_review", []).extend(orphans)
     document.update({key: deepcopy(value) for key, value in packet.items() if key not in {"generated", "request_ids"}})
+    _json(document)
     return document
 
 
@@ -224,7 +254,14 @@ def replace_generated(week: str, generated: dict, request_id: str | None = None)
     return get_packet(week)
 
 
-def _validate_changes(changes: list[dict], items: dict[str, dict], overrides: set[tuple[str, str]]) -> None:
+
+def _ingredient_ids(document: dict) -> set[str]:
+    """Only source rows on recipe cards own ingredient preparation stages."""
+    return {row["item_id"] for card in document.get("recipe_cards", [])
+            for row in card.get("ingredients", []) if "item_id" in row}
+
+def _validate_changes(changes: list[dict], items: dict[str, dict], overrides: set[tuple[str, str]],
+                      ingredient_ids: set[str]) -> None:
     if not isinstance(changes, list):
         raise ValueError("changes must be a list")
     _json(changes)
@@ -238,6 +275,13 @@ def _validate_changes(changes: list[dict], items: dict[str, dict], overrides: se
             item_id not in items and (value is not None or (item_id, field) not in overrides)
         ):
             raise ValueError("change item_id is not in the generated document or a saved override")
+        if field == "prep_stage" and item_id not in ingredient_ids:
+            # A previously valid source ingredient override may outlive its
+            # recipe. Preserve Task 1's null deletion for that orphan only.
+            orphan_deletion = (value is None and item_id not in items and
+                               item_id.startswith("ingredient:") and (item_id, field) in overrides)
+            if not orphan_deletion:
+                raise ValueError("prep_stage edits require a canonical recipe ingredient")
         if value is None:
             continue
         if field == "done" and type(value) is not bool:
@@ -254,6 +298,8 @@ def _validate_changes(changes: list[dict], items: dict[str, dict], overrides: se
             raise ValueError("duration_minutes must be an integer from 1 to 1440")
         if field in {"amount", "quantity"} and (type(value) not in (int, float, str) or (type(value) in (int, float) and value < 0)):
             raise ValueError(f"{field} must be a nonnegative number or quantity string")
+        if field == "prep_stage" and (not isinstance(value, str) or value not in PREP_STAGES):
+            raise ValueError("prep_stage must be a canonical ingredient stage")
         if field == "phase" and (not isinstance(value, str) or value not in _PHASES):
             raise ValueError("phase must be a canonical phase")
 
@@ -267,7 +313,11 @@ def patch_packet(week: str, expected_revision: int, changes: list[dict], status:
     with inventory_db.write_transaction() as conn:
         packet = _read(conn, week, expected_revision)
         edits = {(edit["item_id"], edit["field"]): edit for edit in packet["edits"]}
-        _validate_changes(changes, _items(packet["generated"]), set(edits))
+        editable_items = _items(packet["generated"])
+        current = _merged(packet)
+        editable_items.update({row["item_id"]: row for row in
+                               current.get("pull_list", []) + current.get("cook_day_pull", [])})
+        _validate_changes(changes, editable_items, set(edits), _ingredient_ids(packet["generated"]))
         for change in changes:
             key = (change["item_id"], change["field"])
             if change["value"] is None:
