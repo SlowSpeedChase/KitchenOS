@@ -19,6 +19,29 @@ RECEIPT_SCHEMA = """{
 }"""
 
 
+def _strict_object(properties: dict) -> dict:
+    return {"type": "object", "properties": properties,
+            "required": list(properties), "additionalProperties": False}
+
+
+# Mirrors the shared email/photo shape above; null preserves unknown values.
+RECEIPT_JSON_SCHEMA = _strict_object({
+    "store": {"type": ["string", "null"]},
+    "date": {"type": ["string", "null"]},
+    "order_type": {"type": ["string", "null"]},
+    "total": {"type": ["number", "null"]},
+    "items": {"type": "array", "items": _strict_object({
+        "raw_name": {"type": ["string", "null"]},
+        "canonical_name": {"type": ["string", "null"]},
+        "quantity": {"type": ["number", "null"]},
+        "unit": {"type": ["string", "null"]},
+        "unit_price": {"type": ["number", "null"]},
+        "line_total": {"type": ["number", "null"]},
+        "category": {"type": ["string", "null"]},
+    })},
+})
+
+
 def build_receipt_prompt(text: str) -> str:
     return f"""You are a grocery receipt parser. Below is the plain text of an
 email from HEB — either an in-store e-receipt or a curbside/delivery order

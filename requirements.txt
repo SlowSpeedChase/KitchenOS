@@ -9,7 +9,7 @@ python-dotenv>=1.0.0
 
 # Audio processing (for Whisper fallback)
 yt-dlp>=2023.0.0
-openai>=1.0.0
+openai>=2.43.0
 
 # HTTP and networking
 requests>=2.28.0

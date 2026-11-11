@@ -93,6 +93,7 @@ def test_extract_json_object_strips_fences_and_prose():
 
 
 def test_default_llm_call_prefers_claude_when_key_set(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     assert rp._default_llm_call() is rp._call_claude
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
