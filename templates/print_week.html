@@ -19,7 +19,16 @@
             -webkit-print-color-adjust: exact; print-color-adjust: exact;
         }
         .wrap { max-width: 900px; margin: 0 auto; }
-        .toolbar { text-align: right; margin-bottom: 12px; }
+        .toolbar { display: flex; justify-content: flex-end; align-items: center; gap: 14px;
+                   flex-wrap: wrap; margin-bottom: 12px; }
+        .toolbar .toggle { font-size: 14px; display: inline-flex; align-items: center; gap: 6px;
+                           cursor: pointer; min-height: 40px; }
+        .toolbar .toggle input { width: 18px; height: 18px; accent-color: var(--rule); }
+        h3 { font-size: 14px; margin: 12px 0 6px; }
+        .recipe-meta { color: var(--muted); font-size: 13px; margin: 0 0 8px; }
+        ol.steps { margin: 0; padding-left: 22px; font-size: 14px; line-height: 1.5; }
+        ol.steps li { margin: 0 0 6px; }
+        .recipe-page ul.checklist { columns: 2; }
         .toolbar button {
             font: inherit; font-size: 14px; padding: 8px 16px; cursor: pointer;
             border: 1px solid var(--rule); background: var(--bg); color: var(--rule); border-radius: 8px;
@@ -49,14 +58,33 @@
             .toolbar { display: none !important; }
             .pagebreak { break-before: page; }
             section, ul.checklist li, table.week-grid tr { break-inside: avoid; }
+            /* A long recipe may run past one page; let it, rather than clip. */
+            section.recipe-page { break-inside: auto; }
+            ol.steps li { break-inside: avoid; }
             @page { margin: 12mm; }
         }
     </style>
 </head>
 <body>
     <div class="wrap">
-        <div class="toolbar"><button type="button" data-print-action>🖨️ Print this week</button></div>
+        <div class="toolbar">
+            <label class="toggle"><input type="checkbox" id="include-recipes"> Include full recipes</label>
+            <button type="button" data-print-action>🖨️ Print this week</button>
+        </div>
         <!--PACKET-->
     </div>
+    <script>
+        // On/off lives in the URL (?recipes=1) so a bookmark or a reload keeps it.
+        (function () {
+            const box = document.getElementById('include-recipes');
+            const url = new URL(location.href);
+            box.checked = ['1', 'true', 'yes'].includes(url.searchParams.get('recipes'));
+            box.addEventListener('change', () => {
+                if (box.checked) url.searchParams.set('recipes', '1');
+                else url.searchParams.delete('recipes');
+                location.href = url.toString();
+            });
+        })();
+    </script>
 </body>
 </html>
