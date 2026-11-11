@@ -3377,7 +3377,9 @@
                     })
                 });
                 if (!resp.ok) { showToast((await resp.json()).error || 'Failed to add recipe', 'error'); return; }
+                const created = await resp.json().catch(() => ({}));
                 await loadWeekBoard(currentWeek);
+                warnDislikes(created);
             } catch (err) { showToast('Failed to create cook', 'error'); }
             finally { ledgerBusy = false; }
         }
@@ -3685,7 +3687,9 @@
                     showToast(err.error || 'Failed to add the plate', 'error');
                     return;
                 }
+                const placed = await resp.json().catch(() => ({}));
                 await loadWeekBoard(currentWeek);
+                warnDislikes(placed);
             } catch (err) { showToast('Failed to add the plate', 'error'); }
             finally { ledgerBusy = false; }
         }
@@ -4944,6 +4948,17 @@
         }
 
         // --- Toast ---
+
+        // Placement responses carry `dislike_hits` when a recipe contains
+        // something My Meal System.md dislikes. Warn, don't block — the cook
+        // is already on the board. Shown after loadWeekBoard so a re-render
+        // can't swallow it.
+        function warnDislikes(payload) {
+            const hits = (payload && payload.dislike_hits) || [];
+            if (!hits.length) return;
+            const foods = [...new Set(hits.map(h => h.dislike))].join(', ');
+            showToast(`Heads up: contains ${foods} — swap it?`, 'error');
+        }
 
         function showToast(message, type = 'success') {
             const toast = document.getElementById('toast');
