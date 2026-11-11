@@ -712,6 +712,13 @@
                 cal.href = `/meal-calendar?week=${wk}`;
                 cal.textContent = 'meal calendar';
                 status.append(planner, ' · ', cal);
+                // `dislike_hits`: warn, don't block (see docs/API.md).
+                const created = await resp.json().catch(() => ({}));
+                const hits = created.dislike_hits || [];
+                if (hits.length) {
+                    const foods = [...new Set(hits.map(h => h.dislike))].join(', ');
+                    status.append(` · Heads up: contains ${foods}.`);
+                }
             } catch (err) {
                 status.textContent = 'Couldn’t add this recipe to the meal plan.';
             } finally {

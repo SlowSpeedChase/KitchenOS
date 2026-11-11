@@ -1632,7 +1632,39 @@ def api_cook_create():
         notes=data.get('notes'))
     _regen_weeks(cook["week"], _iso_week_of(data["date"]) if data.get("date") else None)
     _sync_cook_history(cook["recipe"])
-    return jsonify(cook), 201
+    return jsonify(_with_dislike_hits(cook, [cook["recipe"]])), 201
+
+
+def _with_dislike_hits(payload: dict, recipes) -> dict:
+    """Attach `dislike_hits` to a placement response when any recipe has one.
+
+    Warn, never block: the row is already committed, and the user may have
+    swapped the ingredient by hand. A deterministic string match against
+    `My Meal System.md` (lib/dislike_guard.py) — no model, so it is safe on a
+    request path. The key is absent when there is nothing to say, so existing
+    clients see an unchanged payload.
+    """
+    from lib import dislike_guard
+    try:
+        hits = dislike_guard.warning_for(recipes)
+    except Exception:
+        hits = []
+    return {**payload, "dislike_hits": hits} if hits else payload
+
+
+def _dislike_banner(recipes) -> str:
+    """HTML warning card for the Obsidian add-to-meal-plan pages; '' if clean."""
+    from html import escape
+    from lib import dislike_guard
+    try:
+        hits = dislike_guard.warning_for(recipes)
+    except Exception:
+        hits = []
+    if not hits:
+        return ''
+    rows = ''.join(f'<li>{escape(h["recipe"])}: {escape(h["item"])}</li>' for h in hits)
+    return (f'<div class="card warn" style="margin:1rem 0"><strong>Heads up — contains something you '
+            f'dislike</strong><ul>{rows}</ul></div>')
 
 
 def _apply_cook_patch(cook_id, data) -> tuple:
@@ -1749,7 +1781,7 @@ def api_bundle_create():
     # the first is the omission the legacy-import path already had reported
     # against it as "I don't see this on the recipe page anywhere".
     _sync_cook_history(*[c["recipe"] for c in bundle["cooks"]])
-    return jsonify(bundle), 201
+    return jsonify(_with_dislike_hits(bundle, [c["recipe"] for c in bundle["cooks"]])), 201
 
 
 @app.route('/api/bundles/<bundle_id>/move', methods=['POST'])
@@ -2177,6 +2209,7 @@ def _render_add_form(recipe_display: str, error: str | None = None) -> str:
 <h2>Add to Meal Plan</h2>
 <div class="recipe-name">{recipe_display}</div>
 {error_html}
+{_dislike_banner([recipe_display])}
 <form method="POST" action="/add-to-meal-plan">
     <input type="hidden" name="recipe" value="{recipe_display}">
 
@@ -2256,13 +2289,15 @@ def _render_add_form(recipe_display: str, error: str | None = None) -> str:
 ''')
 
 
-def _success_page_for_wikilink(wikilink_target: str, day: str, meal: str, week: str) -> str:
+def _success_page_for_wikilink(wikilink_target: str, day: str, meal: str, week: str,
+                               warning: str = '') -> str:
     """Green confirmation card after a slot insert. Works for [[Recipe]] or [[Meal: X]]."""
     from urllib.parse import quote
     encoded_file = quote(f"Meal Plans/{week}", safe='')
     return _html_page("KitchenOS", f'''
 <div class="card ok"><strong>Added!</strong><br>
 [[{wikilink_target}]] &rarr; {day} {meal} ({week})</div>
+{warning}
 <p><a href="obsidian://open?vault={VAULT_NAME}&file={encoded_file}">View Meal Plan</a></p>
 <p><a href="obsidian://open?vault={VAULT_NAME}">Back to Obsidian</a></p>
 ''')
@@ -2371,7 +2406,9 @@ def _schedule_meal_bundle(meal_name: str, week: str, day: str, meal: str):
     _sync_cook_history(*[c["recipe"] for c in bundle["cooks"]])
     # Unchanged confirmation copy: from the user's side this is still "the plate
     # is on Tuesday dinner".
-    return _success_page_for_wikilink(f"Meal: {meal_name}", day, meal, week)
+    return _success_page_for_wikilink(
+        f"Meal: {meal_name}", day, meal, week,
+        warning=_dislike_banner(dict.fromkeys(c["recipe"] for c in bundle["cooks"])))
 
 
 #: Monday-first, matching ISO weekday numbering and the planner's grid.
@@ -2427,7 +2464,8 @@ def _schedule_recipe_directly(recipe: str, week: str, day: str, meal: str):
         date=cook_date, meal=slot, initial_placement_count=1.0)
     _regen_weeks(cook["week"], _iso_week_of(cook_date))
     _sync_cook_history(cook["recipe"])
-    return _success_page_for_wikilink(recipe, day, meal, week)
+    return _success_page_for_wikilink(recipe, day, meal, week,
+                                      warning=_dislike_banner([recipe_name]))
 
 
 @app.route('/add-to-meal-plan', methods=['GET'])

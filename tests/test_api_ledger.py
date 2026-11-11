@@ -1162,3 +1162,40 @@ def test_default_slot_starts_today_and_falls_back_when_full(tmp_db):
     assert serving_ledger.default_slot("2026-W28", "dinner", today) == "2026-07-09"
     # A future week starts on its Monday.
     assert serving_ledger.default_slot("2026-W30", "dinner", today) == "2026-07-20"
+
+# --- dislike guard: warn, don't block ---------------------------------------
+
+_DISLIKE_PROFILE = ("## Vegetables built into meals\n\n"
+                    "- **Dislike:** Bell pepper, pepperoncini. Do not infer other peppers.\n")
+_RECIPE_ROWS = ("---\ntitle: \"{name}\"\n---\n\n## Ingredients\n\n"
+                "| Amount | Unit | Ingredient |\n|---|---|---|\n{rows}")
+
+
+def _write_recipe(vault, name, items):
+    d = vault / "Recipes"
+    d.mkdir(exist_ok=True)
+    rows = "".join(f"| 1 | whole | {i} |\n" for i in items)
+    (d / f"{name}.md").write_text(_RECIPE_ROWS.format(name=name, rows=rows))
+
+
+def test_create_cook_warns_on_a_disliked_ingredient(client, tmp_db, tmp_vault):
+    (tmp_vault / "My Meal System.md").write_text(_DISLIKE_PROFILE)
+    _write_recipe(tmp_vault, "Pepper Salad", ["black beans", "red bell pepper, diced"])
+    resp = _create_cook(client, recipe="Pepper Salad")
+    assert resp.status_code == 201          # warned, not blocked
+    assert resp.get_json()["dislike_hits"] == [
+        {"recipe": "Pepper Salad", "item": "red bell pepper, diced",
+         "dislike": "bell pepper"}]
+
+
+def test_create_cook_payload_unchanged_when_clean(client, tmp_db, tmp_vault):
+    (tmp_vault / "My Meal System.md").write_text(_DISLIKE_PROFILE)
+    _write_recipe(tmp_vault, "Chili", ["beef", "red pepper flakes"])
+    assert "dislike_hits" not in _create_cook(client).get_json()
+
+
+def test_add_to_meal_plan_form_shows_the_warning(client, tmp_db, tmp_vault):
+    (tmp_vault / "My Meal System.md").write_text(_DISLIKE_PROFILE)
+    _write_recipe(tmp_vault, "Dilly Salad", ["olives", "pepperoncini"])
+    html = client.get("/add-to-meal-plan?recipe=Dilly%20Salad.md").get_data(as_text=True)
+    assert "contains something you dislike" in html and "pepperoncini" in html
