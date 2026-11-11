@@ -1601,11 +1601,20 @@ def api_cook_create():
     # why the window is seconds rather than a uniqueness constraint — cooking
     # the same dish twice in a week is legitimate; doing it twice in three
     # seconds is a button that didn't look like it worked.
+    unslotted = not data.get('date') or not data.get('meal')
     existing = serving_ledger.find_recent_duplicate(
         data.get('recipe'), data.get('week'), data.get('date'), data.get('meal'),
-        COOK_DEDUPE_WINDOW_S)
+        COOK_DEDUPE_WINDOW_S, any_slot=unslotted)
     if existing is not None:
         return jsonify(existing), 200
+
+    # Never create an unplaced cook: it would show only in the planner's
+    # Unscheduled tray. A missing meal means dinner; a missing date means the
+    # first free night of that meal in the week (serving_ledger.default_slot).
+    if unslotted and re.match(r'^\d{4}-W\d{2}$', data.get('week') or ''):
+        data['meal'] = data.get('meal') or 'dinner'
+        data['date'] = data.get('date') or serving_ledger.default_slot(
+            data['week'], data['meal'])
 
     # C1: a hand-edited legacy week must be converted (import + backup)
     # BEFORE its first ledger row lands, or the regen below clobbers it.
@@ -3733,6 +3742,17 @@ def cook_now_page():
 def receipt_paste_page():
     """Paste a photographed-receipt JSON (from the Claude app), preview, ingest."""
     return _serve_page('receipt_paste.html')
+
+
+@app.route('/meal-calendar', methods=['GET'])
+def meal_calendar_page():
+    """Read-only agenda of a week's plan: day by day, meal by meal.
+
+    The planner is an editor; this is the glanceable list. It renders client-side
+    from /api/week-board/<week> (``planned_meals``), so it can never disagree
+    with the planner about what is on a day.
+    """
+    return _serve_page('meal_calendar.html'), 200, {'Content-Type': 'text/html'}
 
 
 @app.route('/recent', methods=['GET'])
