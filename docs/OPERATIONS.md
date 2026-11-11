@@ -1047,3 +1047,37 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - [ ] Mark completed features as done in `docs/ROADMAP.md` (move to
       "Completed" or remove)
 - [ ] Add any new ideas discovered during implementation
+
+### Connect cooking opportunities to Apple Calendar
+
+On the Mac running the KitchenOS server (with its connection set to localhost), open **Settings → Cooking opportunities → Connect Calendar** and approve Apple's Calendar access prompt. Select the intended iCloud calendar under **Commitments** and **Time Blocking** under **Flexible**, then choose **Save calendars and refresh**. Select two distinct calendars; source names distinguish duplicate titles. Reading events requires Apple's full-access permission, but KitchenOS never writes calendar events.
+
+Keep that Mac's KitchenOS app open for automatic five-minute updates. It publishes the next 35 days as date/status summaries only. Calendar syncing is available only on macOS with a localhost connection; iPhones, iPads, and remote Macs display the server's results. The web and native planners refresh labels every minute while active. After six hours without a successful sync, availability becomes unknown. Missing calendars or revoked permission clear the summary on the next successful server contact; if offline, the six-hour expiry still applies. Disconnect clears the server snapshot and retries while the app stays open if offline.
+
+Noon to local midnight is the cooking window, using the syncing device's timezone. Morning-only events, free events, cancelled events, and declined invitations are ignored. Busy all-day events count. A commitment wins over a flexible block. These labels are suggestions; they do not prevent placing a meal or automatically reschedule cooks.
+
+### Using calendar meal planning
+
+Open Meal Planner and choose **Calendar**, or **Plan with calendar** in the native
+Meal Plan/Planner Board. Keep KitchenOS Native open on the server Mac for calendar
+sync every five minutes. The selected iCloud calendar contains commitments;
+Time Blocking is flexible. Names and times stay on the local KitchenOS server.
+All-day events start with **Needs your choice**: choose **Blocks cooking** or
+**Background information** for that occurrence. A new occurrence needs its own
+choice. Saving different calendars or disconnecting clears stored details and
+choices; failed clears retry on the next sync. After six hours, event details are
+hidden until refreshed. Meal scheduling still works manually while disconnected.
+
+Choose an unscheduled meal, review an opening, adjust date/time/duration/servings,
+and choose **Schedule meal**. Missing recipe timing uses an editable 90-minute
+planning estimate. Reservations stay within the displayed week. Existing meals
+can be selected to reserve or revise their cooking time; serving amounts and
+leftovers remain unchanged. Scheduled time is local KitchenOS data and is not
+written to Apple Calendar.
+
+Deploy Python/template/static changes together and restart `com.kitchenos.api`.
+Build and install the native target as `~/Applications/KitchenOS Native.app`;
+`~/Applications/KitchenOS.app` is a separate Safari web app. Back up the app and
+SQLite with SQLite's backup API before replacement. Native app and API must both
+be updated for detailed sync. The first install never chooses an all-day meaning
+or schedules an existing real meal automatically.

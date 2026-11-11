@@ -32,6 +32,13 @@ _BLOCKED_PATTERNS = [
     "was blocked",
     "request was blocked",
 ]
+_API_BILLING_PATTERNS = [
+    "credit balance is too low",
+    "purchase credits",
+    "billing",
+    "exceeded your current quota",
+    "rate_limit_error",
+]
 _OLLAMA_PATTERNS = ["localhost:11434", "ollama", "model", "11434"]
 _YOUTUBE_PATTERNS = ["video unavailable", "private", "transcript", "video is", "no captions", "subtitles"]
 _NETWORK_PATTERNS = ["connection refused", "timed out", "timeout", "dns", "unreachable", "connection error"]
@@ -54,7 +61,7 @@ _EXCEPTION_CATEGORIES = {
 def classify_error(error_message: str, exception_type: type = Exception) -> str:
     """Classify an error into a category for the analysis agent.
 
-    Categories: network, ollama, youtube, instagram, blocked, parsing, io, unknown
+    Categories: network, ollama, youtube, instagram, blocked, api_billing, parsing, io, unknown
 
     Args:
         error_message: The error message string
@@ -73,6 +80,8 @@ def classify_error(error_message: str, exception_type: type = Exception) -> str:
         return "instagram"
     if any(p in msg_lower for p in _BLOCKED_PATTERNS):
         return "blocked"
+    if any(p in msg_lower for p in _API_BILLING_PATTERNS):
+        return "api_billing"
 
     # Ollama errors (check before network since Ollama connection errors are specific)
     if any(p in msg_lower for p in _OLLAMA_PATTERNS):

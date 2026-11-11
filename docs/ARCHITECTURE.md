@@ -177,9 +177,13 @@ Items enter inventory via five paths, condensed from `CLAUDE.md`'s
 "Receipt → Inventory Workflow":
 
 1. **Email (automatic)** — hourly `receipt-ingest` LaunchAgent fetches HEB
-   receipt emails over IMAP, parses with the Claude API
-   (`lib/receipt_parser.py`, Opus when `ANTHROPIC_API_KEY` is set else
-   Ollama fallback), validates line totals, then commits a valid receipt's ledger
+   receipt emails over IMAP, parses with the OpenAI Responses API
+   (`lib/receipt_parser.py`, `gpt-5.4`, overridable with
+   `KITCHENOS_RECEIPT_MODEL`). Provider selection is OpenAI when
+   `OPENAI_API_KEY` is set, otherwise Claude when `ANTHROPIC_API_KEY` is set,
+   otherwise Ollama. API failures propagate; they do not switch providers.
+   Structured Outputs enforce the receipt shape; validation checks line totals,
+   then commits a valid receipt's ledger
    and inventory together. A needs-review receipt intentionally stores its ledger
    without stock. Dedup by Gmail Message-ID is a successful no-op.
 2. **CSA newsletter (automatic)** — `ingest_csa.py` (run at the tail of the
@@ -354,3 +358,25 @@ in `docs/setup/`.
   (worst coverage/confidence first), live deterministic recompute with USDA
   candidates, and human match pinning that the engine's cache honors on the
   next recompute.
+
+### Calendar cooking opportunities
+
+`CookingCalendarSync` in the native app reads two explicitly selected EventKit calendars, classifies local noon-to-midnight windows with `KitchenOSKit.CookingOpportunity`, and uploads date/status summaries. `lib/cooking_availability.py` validates and reads the singleton `cooking_availability` SQLite table, expiring snapshots after six hours. The web planner and native meal-plan/board views read these summaries asynchronously. Event details remain on-device, no LLM is involved, and no page render waits for Calendar access.
+
+### Calendar meal planning
+
+The existing `/meal-planner?view=calendar` combines local EventKit occurrences
+with ledger cooks. `CookingCalendarSync` on the server Mac publishes a minimal
+versioned snapshot in addition to compatibility daily statuses. `planning_calendar`
+validates and transactionally stores the singleton snapshot and occurrence-level
+all-day choices. `cooking_windows` derives half-open cooking windows in the source
+IANA timezone. `cook_schedule` references a cook by ID; `serving_ledger.schedule_cook`
+reserves preparation time and, only for an unanchored cook, its first serving in
+one write transaction. Recipe names and scales retain their existing meaning.
+
+`static/planning-calendar.js` owns the timeline, stale-data handling, mobile day
+navigation and scheduling form. It never invokes legacy meal-plan saves. The
+native plan screens open that same route through `PlanningCalendarWebView`;
+`PlanningWebPolicy` builds token-free URLs and confines the credential bridge to
+same-origin `/api/` fetches with redirect refusal. Its bundled JS resource is also
+executed by browser tests. Event titles are text nodes, never HTML.

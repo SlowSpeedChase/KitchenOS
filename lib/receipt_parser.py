@@ -4,9 +4,9 @@ Pipeline: HTML email body → plain text (BeautifulSoup) → LLM structured
 extraction → validation (line totals must sum to the receipt total within
 tolerance) → purchase dicts ready for inventory_db.record_trip().
 
-Extraction uses the Claude API (Opus) when ANTHROPIC_API_KEY is set, else
-falls back to local Ollama (mistral:7b). Claude reconciles complex multi-item
-receipts that the local model miscounts (line totals off → needs_review).
+Extraction prefers OpenAI when OPENAI_API_KEY is set, then Claude when
+ANTHROPIC_API_KEY is set, else local Ollama (mistral:7b). Provider failures
+propagate to the ingest error handler rather than silently changing providers.
 """
 from __future__ import annotations
 
@@ -18,16 +18,16 @@ from typing import Callable, Optional
 import requests
 from bs4 import BeautifulSoup
 
+from lib import llm_gate
 from lib.inventory import normalize_category
 from lib.item_aliases import canonicalize
-from prompts.receipt_extraction import build_receipt_prompt
+from prompts.receipt_extraction import build_receipt_prompt, RECEIPT_JSON_SCHEMA
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "mistral:7b"
 
-# Receipt extraction defaults to the Claude API when ANTHROPIC_API_KEY is set —
-# the local mistral:7b miscounts line items on larger receipts (line totals
-# don't reconcile → needs_review). Opus parses them accurately.
+OPENAI_MODEL = "gpt-5.4"
+# Retained for installations without an OpenAI key.
 CLAUDE_MODEL = "claude-opus-4-8"
 
 PURCHASE_CATEGORIES = (
@@ -88,8 +88,36 @@ def _call_claude(prompt: str) -> str:
     return _extract_json_object(text)
 
 
+def _call_openai(prompt: str) -> str:
+    """Extract a receipt through Responses with a strict, nullable schema."""
+    if not llm_gate.allowed():
+        raise RuntimeError("Receipt inference is disabled")
+    timeout = llm_gate.budget_s(120)
+    if timeout <= 0:
+        raise RuntimeError("Receipt inference budget exhausted")
+
+    import openai
+
+    client = openai.OpenAI(timeout=timeout, max_retries=0)
+    response = client.responses.create(
+        model=os.getenv("KITCHENOS_RECEIPT_MODEL") or OPENAI_MODEL,
+        input=prompt,
+        max_output_tokens=12000,
+        store=False,
+        text={"format": {
+            "type": "json_schema", "name": "receipt", "strict": True,
+            "schema": RECEIPT_JSON_SCHEMA,
+        }},
+    )
+    if response.status != "completed" or not response.output_text.strip():
+        raise ValueError("OpenAI did not return a complete receipt")
+    return response.output_text
+
+
 def _default_llm_call() -> Callable[[str], str]:
-    """Prefer Claude when configured; fall back to local Ollama."""
+    """Select by configured keys: OpenAI, Claude, then local Ollama."""
+    if os.getenv("OPENAI_API_KEY"):
+        return _call_openai
     return _call_claude if os.getenv("ANTHROPIC_API_KEY") else _call_ollama
 
 
@@ -98,7 +126,7 @@ def parse_receipt_text(
 ) -> dict:
     """Extract structured receipt data. Raises on LLM/JSON failure.
 
-    Uses the Claude API by default when ANTHROPIC_API_KEY is set, else Ollama.
+    Prefers OpenAI, then Claude, then Ollama according to configured keys.
     Pass ``llm_call`` to inject a parser (used by tests).
     """
     raw = (llm_call or _default_llm_call())(build_receipt_prompt(text))

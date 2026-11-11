@@ -259,3 +259,52 @@ used by in-app UI (not currently wired to a dedicated Siri intent).
 
 See `docs/superpowers/specs/2026-06-21-siri-app-intents-voice-design.md` for
 the original design rationale and phrase catalogue.
+
+### Cooking availability
+
+`POST /api/cooking-availability` accepts exactly `{days: {"YYYY-MM-DD": "good|possible|busy|unknown"}}` (up to 35 dates), replacing the singleton snapshot in `data/kitchenos.db`. An empty days object clears it. No event titles, notes, or calendar IDs are accepted. `GET /api/cooking-availability/<week>` returns all seven ISO dates, `fresh`, and `synced_at`; absent dates and snapshots six hours old return `unknown`. Both routes use the existing token gate. Calendar sync never creates, deletes, moves, or marks meals cooked.
+
+### Detailed planning calendar
+
+The server Mac publishes `POST /api/planning-calendar/snapshot` with version 1,
+a SHA256 `selection_id`, offset-aware `generated_at`, IANA `timezone`, ISO
+`coverage_start`/exclusive `coverage_end` (up to 35 days), and `events`.
+Each event has only opaque `id`, `title` (300 characters), offset-aware `start`
+and exclusive `end`, boolean `all_day`, and `role` (`firm`/`flexible`).
+Snapshots are bounded to 5,000 occurrences and 2 MiB; invalid uploads are atomic.
+`{"version":1,"clear":true}` clears details and all occurrence choices.
+
+`GET /api/planning-calendar/<week>` returns freshness, sync time, revision,
+coverage, events, choices and per-day coverage. Titles and choices are omitted
+once either generation or receipt is six hours old. Legacy daily uploads never
+refresh this snapshot. `PUT /api/planning-calendar/occurrences/<id>` accepts
+`{"choice":"blocking"|"background","revision":"<current revision>"}`.
+Missing, stale or changed occurrences return 409. Every route uses the token gate.
+Calendar contents remain in local SQLite; they are not passed to model prompts,
+logs or generated vault notes.
+
+`GET /api/planning-calendar/<week>?duration_minutes=90` also returns `schedules`
+and per-day `windows`, `covered`, and `unresolved_all_day_ids`. Duration is an
+integer from 15 through 360, in 15-minute steps. Openings start between noon and
+midnight in the snapshot timezone. Firm commitments and cooking blocks exclude
+openings; flexible overlaps rank after clear openings. Unclassified all-day
+occurrences make openings conditional. Uncovered dates have no suggestions.
+
+`POST /api/cooks/<id>/schedule` takes `date`, `meal`, offset-aware `start`, IANA
+`timezone`, `duration_minutes`, and positive finite `servings_to_eat`. It returns
+`cook` and `schedule`. It rejects cross-week, already cooked and bundle rows.
+A first placement and cooking reservation commit atomically; retries preserve
+serving counts. Existing home servings move with the cook; leftovers stay put.
+Generic date/meal changes remove the reservation; deletion cascades. Scheduling
+never sets `cooked_at`, consumes inventory or changes recipe scale.
+
+The detailed endpoint accepts optional `exclude_cook_id` when suggesting a new
+time for an existing cook; its old reservation stays visible but does not block
+its own replacement. Responses include `duration_minutes` so the UI never shows
+openings calculated for a previous duration. Recipe details expose a derived
+`cooking_duration` (`minutes`, `source`); unambiguous numeric/unit strings are
+accepted, while arbitrary prose retains the planning estimate.
+
+Clearing preserves only a timestamp barrier (no titles or calendar IDs), rejecting
+delayed pre-clear uploads. Equal-generation uploads must be identical. The native
+publisher emits fractional-second generation times to distinguish rapid updates.
