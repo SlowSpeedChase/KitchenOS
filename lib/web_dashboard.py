@@ -47,6 +47,9 @@ SECTIONS = [
             ("🍳", "Meal Planner", "/meal-planner",
              "drag recipes onto the week, set cook scale, place servings in "
              "slots / freezer / trash, and read the daily macro totals row"),
+            ("📆", "Meal calendar", "/meal-calendar",
+             "the week as a list — each day's breakfast, lunch, snack and "
+             "dinner, cook days vs leftovers, tap a recipe to open it"),
             ("🥘", "Cook Now", "/cook-now",
              "what you could cook right now, ranked by how much you already "
              "have; filter by meal type to drop desserts"),

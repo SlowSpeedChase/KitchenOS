@@ -3735,6 +3735,17 @@ def receipt_paste_page():
     return _serve_page('receipt_paste.html')
 
 
+@app.route('/meal-calendar', methods=['GET'])
+def meal_calendar_page():
+    """Read-only agenda of a week's plan: day by day, meal by meal.
+
+    The planner is an editor; this is the glanceable list. It renders client-side
+    from /api/week-board/<week> (``planned_meals``), so it can never disagree
+    with the planner about what is on a day.
+    """
+    return _serve_page('meal_calendar.html'), 200, {'Content-Type': 'text/html'}
+
+
 @app.route('/recent', methods=['GET'])
 def recent_page():
     """Recipes newest-first by when they arrived — the extraction pipeline's out-tray.

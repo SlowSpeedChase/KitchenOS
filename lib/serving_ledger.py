@@ -731,6 +731,52 @@ def placements_for_week(week: str) -> list[dict]:
         conn.close()
 
 
+def planned_meals_for_week(week: str) -> list[dict]:
+    """Read planned preparation plus every serving placed in this week's slots.
+
+    A cook anchor remains visible without a serving allocation (count zero).
+    Its matching slot placement contributes count to that same row; other slot
+    placements are leftovers, including those from cooks owned by another week.
+    Canonical recipe/member identity is retained for each distinct cook/slot.
+    """
+    from datetime import timedelta
+
+    year, week_num = int(week[:4]), int(week.split("-W")[1])
+    start = _date.fromisocalendar(year, week_num, 1)
+    first, after = start.isoformat(), (start + timedelta(days=7)).isoformat()
+    cooks = {cook["id"]: cook for cook in cooks_for_week(week) if cook is not None}
+    rows = {}
+
+    def entry(cook, date, meal, anchor):
+        return {"date": date, "meal": meal, "recipe": cook["recipe"],
+                "cook_id": cook["id"], "bundle_id": cook.get("bundle_id"),
+                "bundle_name": cook.get("bundle_name"), "anchor": anchor,
+                "count": 0.0}
+
+    for cook in cooks.values():
+        if (cook.get("date") and first <= cook["date"] < after
+                and cook.get("meal") in MEALS):
+            key = (cook["id"], cook["date"], cook["meal"])
+            rows[key] = entry(cook, cook["date"], cook["meal"], True)
+
+    for placement in placements_for_week(week):
+        cook_id = placement["cook_id"]
+        if cook_id not in cooks:
+            cooks[cook_id] = get_cook(cook_id)
+        cook = cooks[cook_id]
+        if cook is None:  # A concurrent deletion may win between these reads.
+            continue
+        date, meal = placement["date"], placement["meal"]
+        key = (cook_id, date, meal)
+        if key not in rows:
+            anchor = cook.get("date") == date and cook.get("meal") == meal
+            rows[key] = entry(cook, date, meal, anchor)
+        rows[key]["count"] += float(placement["count"])
+
+    return sorted(rows.values(), key=lambda row: (
+        row["date"], MEALS.index(row["meal"]), row["cook_id"]))
+
+
 COVERAGE_REVIEW_THRESHOLD = 0.8
 
 
@@ -834,6 +880,7 @@ def week_board(week: str, recipes_dir) -> dict:
     return {
         "week": week,
         "cooks": cooks_for_week(week),
+        "planned_meals": planned_meals_for_week(week),
         "freezer": freezer_contents(),
         "day_totals": day_totals(week, recipes_dir),
     }
