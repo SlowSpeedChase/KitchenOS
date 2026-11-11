@@ -1017,7 +1017,8 @@ def plan_week_page():
 def print_week_page():
     """Printable one-page 'week packet': plan grid + macros vs targets +
     shopping list + do-ahead prep. Defaults to the current ISO week; ?week=
-    overrides, ?tasks=1 regenerates prep (an LLM call) instead of read-only cache.
+    overrides, ?tasks=1 regenerates prep (an LLM call) instead of read-only cache,
+    ?recipes=1 appends every planned recipe in full (one page each).
     """
     from lib import print_week
 
@@ -1029,10 +1030,11 @@ def print_week_page():
         return error_page(f"Invalid week format: {week} (expected YYYY-WNN)"), 400
 
     include_tasks = request.args.get('tasks') in ('1', 'true', 'yes')
+    include_recipes = request.args.get('recipes') in ('1', 'true', 'yes')
     try:
         packet = print_week.build_week_packet(
             week, paths.vault_root(), _resolve_recipes_dir(),
-            include_tasks=include_tasks)
+            include_tasks=include_tasks, include_recipes=include_recipes)
     except FileNotFoundError:
         return error_page(f"No meal plan for {week} yet — plan a week first."), 404
 
