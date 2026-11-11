@@ -115,3 +115,18 @@ def _no_background_precompute(monkeypatch):
     """
     import api_server
     monkeypatch.setattr(api_server, "_precompute_tasks_async", lambda week: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_background_packet_jobs(request, monkeypatch):
+    """Keep packet workers from outliving unrelated tests and their temp data."""
+    if request.node.path.name in {"test_cooking_packet_jobs.py", "test_cooking_packet_api.py"}:
+        yield
+        return
+    from lib import cooking_packet_jobs
+    def disabled(target):
+        raise RuntimeError("Packet workers disabled outside focused tests")
+    monkeypatch.setattr(cooking_packet_jobs, "_launch", disabled)
+    cooking_packet_jobs.clear_operations()
+    yield
+    cooking_packet_jobs.clear_operations()

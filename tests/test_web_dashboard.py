@@ -11,6 +11,8 @@ from lib import web_dashboard as wd
 # not pages a human would ever bookmark. Every entry needs a reason; if you find
 # yourself adding a real page here, put it in SECTIONS instead.
 NOT_BOOKMARKABLE = {
+    "/cooking-packet": "requires ?week=; opened from a selected week",
+    "/print/cooking-packet": "requires ?week=; prints the selected saved packet",
     "/health": "JSON liveness probe, not a page",
     "/calendar.ics": "ICS feed — subscribed in Calendar, not bookmarked",
     "/transcript": "needs ?url=; a tool endpoint, not a destination",

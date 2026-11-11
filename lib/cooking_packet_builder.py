@@ -24,7 +24,8 @@ from lib.ingredient_normalizer import normalize_name
 from lib.inventory import normalize_location_source
 from lib.pantry import split_against_pantry
 from lib.recipe_parser import parse_recipe_body, parse_recipe_file
-from lib.recipe_phases import classify_legacy_steps, build_shared_prep, build_production_schedule
+from lib.recipe_phases import (assign_ingredient_stages, classify_legacy_steps,
+                               build_shared_prep, build_production_schedule)
 from lib.safe_paths import contained_markdown, parse_iso_week
 
 
@@ -123,6 +124,101 @@ def allocate_pull_sources(lines: list[dict], inventory_rows: list[dict]) -> list
     return pulls
 
 
+_FREEZER_PULL_STAGES = frozenset({"bag_now", "prep_then_bag", "freeze_separately"})
+_KNOWN_PULL_STAGES = _FREEZER_PULL_STAGES | {"add_at_cook_time", "finish_after_cooking", "serve_separately"}
+
+
+def _pull_stage(ingredient):
+    stage = ingredient.get("prep_stage")
+    known = isinstance(stage, str) and stage in _KNOWN_PULL_STAGES
+    review = not known or ingredient.get("needs_review") is not False
+    return ("freezer_session" if known and stage in _FREEZER_PULL_STAGES and not review else "cook_day",
+            stage if known else "needs_review", review)
+
+
+def repartition_packet_pulls(packet: dict) -> dict:
+    """Partition already credited stock; never read or allocate inventory again.
+
+    Reassemble each original credit from its subpulls, then spend that credit
+    against source demands with confirmed freezer demand first. Stable IDs
+    depend on credit + source ingredient, not stage, so confirmation can move a
+    row without changing its identity. Shopping requirements and credits stay
+    unchanged. The input packet is never mutated.
+    """
+    if "pull_list" not in packet and "cook_day_pull" not in packet:
+        return packet
+    ingredients = {row["item_id"]: row for card in packet.get("recipe_cards", [])
+                   for row in card.get("ingredients", [])}
+    lines = {row["item_id"]: row for row in packet.get("shopping_list", [])}
+    line_order = {key: ordinal for ordinal, key in enumerate(lines)}
+    grouped, previous = defaultdict(list), {}
+    for row in packet.get("pull_list", []) + packet.get("cook_day_pull", []):
+        credit_id = row.get("credit_id", row["item_id"])
+        grouped[credit_id].append(row)
+        sources = row.get("source_ingredient_ids", [])
+        if len(sources) == 1:
+            previous[credit_id, sources[0]] = row
+    credits = []
+    for credit_id, parts in grouped.items():
+        credit = {**parts[0], "item_id": credit_id, "credit_id": credit_id,
+                  "amount": math.fsum(row["amount"] for row in parts),
+                  "inventory_amount": math.fsum(row["inventory_amount"] for row in parts), "done": False}
+        credits.append(credit)
+    credits.sort(key=lambda row: (line_order.get(row.get("line_id"), len(lines)),
+                                 _expiry(row), row.get("inventory_row_id", 0), row["credit_id"]))
+    demands = {}
+    for line_id, line in lines.items():
+        needed_unit = line.get("needed", {}).get("unit", "")
+        demand = []
+        for source_id in sorted(set(line.get("source_ingredient_ids", []))):
+            ingredient = ingredients.get(source_id)
+            if ingredient is None:
+                continue
+            try:
+                amount = _convert(_quantity(ingredient.get("amount")), ingredient.get("unit", ""), needed_unit)
+            except ValueError:
+                continue
+            if amount > 0:
+                group, _, _ = _pull_stage(ingredient)
+                demand.append({"source_id": source_id, "amount": amount, "unit": needed_unit, "group": group})
+        demands[line_id] = sorted(demand, key=lambda row: (row["group"] != "freezer_session", row["source_id"]))
+    output = {"pull_list": [], "cook_day_pull": []}
+
+    def emit(credit, amount, inventory_amount, source_id=None):
+        ingredient = ingredients.get(source_id, {})
+        group, stage, review = _pull_stage(ingredient)
+        prior = previous.get((credit["credit_id"], source_id), {})
+        row = {**credit, **prior, "item_id": _id("subpull", credit["credit_id"], source_id or "unresolved"),
+               "credit_id": credit["credit_id"], "amount": amount, "inventory_amount": inventory_amount,
+               "source_ingredient_ids": [source_id] if source_id else [],
+               "prep_stage_group": group, "prep_stage": stage,
+               "stage_source": ingredient.get("stage_source", "unknown"),
+               "stage_reason": ("Ingredient destination needs review; keep this pull for cook day." if review else
+                                ingredient.get("stage_reason") or "Confirmed ingredient destination."),
+               "needs_review": review}
+        output["pull_list" if group == "freezer_session" else "cook_day_pull"].append(row)
+
+    for credit in credits:
+        remaining, inventory_remaining = credit["amount"], credit["inventory_amount"]
+        for demand in demands.get(credit.get("line_id"), []):
+            if remaining <= 0:
+                break
+            amount = min(remaining, _convert(demand["amount"], demand["unit"], credit["unit"]))
+            if amount <= 0:
+                continue
+            inventory_amount = (inventory_remaining if amount == remaining else
+                                credit["inventory_amount"] * amount / credit["amount"])
+            emit(credit, amount, inventory_amount, demand["source_id"])
+            demand["amount"] = max(0.0, demand["amount"] - _convert(amount, credit["unit"], demand["unit"]))
+            remaining -= amount
+            inventory_remaining -= inventory_amount
+        # Missing sources or rounded aggregate excess remain visible, reviewed,
+        # and credited exactly once rather than silently losing stock credit.
+        if remaining > 0:
+            emit(credit, remaining, inventory_remaining)
+    return {**packet, **output}
+
+
 def _warning(recipe: str, code: str, text: str, source=None) -> dict:
     return {"item_id": _id("warning", recipe, code, source), "recipe": recipe,
             "code": code, "text": text, "source": "recipe"}
@@ -175,7 +271,7 @@ def build_week_draft(week: str, recipes_dir: Path, *, inventory_rows: list[dict]
     rows = _usable_rows(inventory_rows, today)
     packet = {"version": 1, "week": week, "status": "draft",
               "date_range": {"start": monday.isoformat(), "end": sunday.isoformat()},
-              "cooks": [], "production_schedule": [], "recipe_cards": [], "pull_list": [],
+              "cooks": [], "production_schedule": [], "recipe_cards": [], "pull_list": [], "cook_day_pull": [],
               "shopping_list": [], "equipment": [], "freeze_reheat": [], "warnings": [],
               "shared_prep": [], "needs_review": []}
     by_recipe = defaultdict(list)
@@ -212,13 +308,14 @@ def build_week_draft(week: str, recipes_dir: Path, *, inventory_rows: list[dict]
             row = {**ingredient, "item_id": _id("ingredient", recipe_id, ordinal),
                    "recipe": recipe, "source_ordinal": ordinal}
             card["ingredients"].append(row)
-            all_ingredients.append(row)
         if not content["ingredients"]:
             packet["warnings"].append(_warning(recipe, "missing_ingredients", f"No ingredients table in: {recipe}"))
         for ordinal, equipment in enumerate(card["equipment"], 1):
             packet["equipment"].append({"item_id": _id("equipment", recipe_id, ordinal),
                                         "recipe": recipe, "text": equipment, "source": "recipe"})
         classified = classify_legacy_steps(recipe, content["instructions"])
+        card["ingredients"] = assign_ingredient_stages(recipe, card["ingredients"], classified["instructions"])
+        all_ingredients.extend(card["ingredients"])
         for phase, instructions in classified["instruction_phases"].items():
             card["instruction_phases"][phase] = []
             for instruction in instructions:
@@ -244,6 +341,7 @@ def build_week_draft(week: str, recipes_dir: Path, *, inventory_rows: list[dict]
                           for row in instructions}
             schedule = schedules_by_cook.get(cook["id"], {})
             prep_recipes.append({"recipe": card["recipe"], "scale": cook["scale"],
+                "ingredients": card["ingredients"],
                 "dependent_cooks": [{"cook_id": cook["id"], **{
                     key: schedule.get(key) for key in ("date", "start", "timezone")}}],
                 "classified_instructions": [{**row,
@@ -298,4 +396,4 @@ def build_week_draft(week: str, recipes_dir: Path, *, inventory_rows: list[dict]
             packet["warnings"].append({"item_id": _id("warning", line["item_id"], "inventory_match"),
                                        "text": line["warning"], "source": "inventory", "line_id": line["item_id"]})
     packet["shopping_list"] = lines
-    return packet
+    return repartition_packet_pulls(packet)
