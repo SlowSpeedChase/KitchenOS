@@ -1777,11 +1777,20 @@ def api_cook_create():
     # why the window is seconds rather than a uniqueness constraint — cooking
     # the same dish twice in a week is legitimate; doing it twice in three
     # seconds is a button that didn't look like it worked.
+    unslotted = not data.get('date') or not data.get('meal')
     existing = serving_ledger.find_recent_duplicate(
         data.get('recipe'), data.get('week'), data.get('date'), data.get('meal'),
-        COOK_DEDUPE_WINDOW_S)
+        COOK_DEDUPE_WINDOW_S, any_slot=unslotted)
     if existing is not None:
         return jsonify(existing), 200
+
+    # Never create an unplaced cook: it would show only in the planner's
+    # Unscheduled tray. A missing meal means dinner; a missing date means the
+    # first free night of that meal in the week (serving_ledger.default_slot).
+    if unslotted and re.match(r'^\d{4}-W\d{2}$', data.get('week') or ''):
+        data['meal'] = data.get('meal') or 'dinner'
+        data['date'] = data.get('date') or serving_ledger.default_slot(
+            data['week'], data['meal'])
 
     # C1: a hand-edited legacy week must be converted (import + backup)
     # BEFORE its first ledger row lands, or the regen below clobbers it.

@@ -59,12 +59,19 @@ def test_add_from_recipe_page_places_the_cook(live_server, page, page_errors):
 
 
 def test_unscheduled_cook_is_visible_on_the_default_tab(live_server, page, page_errors):
+    """The API no longer creates unplaced cooks (see the dinner default), but
+    legacy rows exist; force one in the DB and check the tray still shows it."""
+    import sqlite3
     week, _wed = unique_week(17)
     name = _a_recipe(live_server)
     resp = requests.post(live_server.url("/api/cooks"), json={
         "recipe": name, "week": week, "scale": 1, "servings_produced": 4,
     }, timeout=30)
     assert resp.status_code in (200, 201), resp.text
+    cook_id = resp.json()["id"]
+    with sqlite3.connect(live_server.db) as conn:
+        conn.execute("DELETE FROM placements WHERE cook_id = ?", (cook_id,))
+        conn.execute("UPDATE cooks SET date = NULL, meal = NULL WHERE id = ?", (cook_id,))
 
     page.goto(live_server.url(f"/meal-planner?week={week}"), wait_until="networkidle")
     section = page.locator("#unscheduled-section")
@@ -95,4 +102,20 @@ def test_meal_calendar_lists_the_week(live_server, page, page_errors):
 def test_home_links_to_meal_calendar(live_server, page, page_errors):
     page.goto(live_server.url("/"), wait_until="networkidle")
     assert page.locator('a[href="/meal-calendar"]').count() >= 1
+    assert page_errors == []
+
+
+def test_a_cook_posted_without_a_slot_lands_on_a_dinner(live_server, page, page_errors):
+    week, _wed = unique_week(19)
+    name = _a_recipe(live_server)
+    cook = requests.post(live_server.url("/api/cooks"), json={
+        "recipe": name, "week": week, "scale": 1, "servings_produced": 4,
+    }, timeout=30).json()
+    assert cook["meal"] == "dinner" and cook["date"], cook
+
+    page.goto(live_server.url(f"/meal-calendar?week={week}"), wait_until="networkidle")
+    day = page.locator('.day[data-date="%s"]' % cook["date"])
+    day.wait_for(timeout=10_000)
+    assert name in day.inner_text()
+    assert page.locator("#unscheduled").inner_text().strip() == ""
     assert page_errors == []

@@ -433,7 +433,7 @@
             }
             renderStockLegend(ingredients);
 
-            const baseServings = parseFloat(recipeData.servings) || 4;
+            const baseServings = parseServings(recipeData.servings) || 4;
             const produced = Math.round(baseServings * scale * 100) / 100;
             document.getElementById('servings-produced-label').textContent =
                 `→ ${produced} serving${produced === 1 ? '' : 's'}`;
@@ -638,6 +638,18 @@
             return `${date.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
         }
 
+        // Same rule as meal_planner.html parseServings: frontmatter servings is
+        // raw text ("(estimated) 6", "6-8"), and parseFloat() turned those into
+        // NaN, silently falling back to 4 servings. Low end of a range.
+        function parseServings(value) {
+            if (typeof value === 'number') return value >= 1 ? Math.floor(value) : 0;
+            if (typeof value !== 'string') return 0;
+            const range = value.match(/(\d+)\s*(?:-|–|—|to)\s*(\d+)/);
+            if (range) return parseInt(range[1], 10) || 0;
+            const single = value.match(/\d+/);
+            return single ? (parseInt(single[0], 10) || 0) : 0;
+        }
+
         // Local-date ISO string — toISOString() is UTC and would roll an
         // evening "today" over to tomorrow.
         function localISODate(d) {
@@ -670,7 +682,7 @@
             status.textContent = '';
             try {
                 const scale = currentScale();
-                const baseServings = parseFloat(recipeData.servings) || 4;
+                const baseServings = parseServings(recipeData.servings) || 4;
                 const date = daySelect.value;
                 const meal = mealSelect.value;
                 const [y, m, d] = date.split('-').map(Number);
