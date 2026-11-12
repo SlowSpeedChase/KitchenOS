@@ -1,4 +1,7 @@
+import pytest
 from playwright.sync_api import expect
+
+pytestmark = pytest.mark.e2e
 
 
 def test_planner_shows_calendar_statuses_and_unknown(page, live_server):
