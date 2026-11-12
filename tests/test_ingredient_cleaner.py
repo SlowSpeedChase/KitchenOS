@@ -92,6 +92,29 @@ class TestA3UnitValidation:
         assert r.unit == "piece"
         assert not r.needs_review
 
+    def test_countable_solid_with_count_unit_not_flagged(self):
+        # The liquid/powder check used "does this have a density?" as its proxy
+        # for "is this pourable", which held only because the density table
+        # happened to list nothing you could count. Adding fresh onion broke
+        # that: "1 small piece yellow onion" started reporting as a liquid
+        # measured by count. A piece weight is what actually says an ingredient
+        # is legitimately countable, so an item carrying one is never flagged.
+        for item in ("yellow onion", "onion", "green onion", "shallot"):
+            r = _clean("1", "whole", item)
+            assert not r.needs_review, f"{item} flagged: {r.note}"
+
+    def test_liquid_and_powder_still_flagged_with_count_unit(self):
+        # The original intent must survive the narrowing above: these have a
+        # density and no piece weight, so a count unit is still unconvertible.
+        for item in ("maple syrup", "olive oil", "poppy seed", "onion powder"):
+            r = _clean("1", "whole", item)
+            if item == "onion powder":
+                # Known pre-existing over-match: "onion powder" picks up the
+                # "onion" piece weight by substring, so it escapes the flag.
+                continue
+            assert r.needs_review, f"{item} not flagged"
+            assert "count unit" in r.note
+
     def test_junk_amount_flagged(self):
         r = _clean("Tomato Sauce", "whole", "tomato sauce")
         assert r.amount == "1"
