@@ -30,6 +30,7 @@ import os
 import shutil
 from datetime import date, datetime
 from pathlib import Path
+from typing import Optional
 
 OK = "ok"
 FAILING = "failing"
@@ -108,13 +109,7 @@ def check_share_sheet_capture(log_path: Path | None = None) -> dict:
 
 
 def check_capture_queue(run_logs: list) -> dict:
-    """Is the extraction queue draining, or retrying the same items forever?
-
-    ``batch_extract`` leaves a failed or unparseable reminder unchecked so the
-    next run retries it, and keeps no attempt counter — so a permanently dead
-    item is indistinguishable from a transient one and is reprocessed every
-    hour indefinitely.
-    """
+    """Is the extraction queue draining, or retrying the same items forever?"""
     if not run_logs:
         return _check("capture_queue", "Extraction queue is draining",
                       UNKNOWN, "no run logs found",
@@ -122,7 +117,9 @@ def check_capture_queue(run_logs: list) -> dict:
 
     recent = run_logs[:JAMMED_RUN_THRESHOLD]
     stuck = [r for r in recent
-             if (r.get("succeeded") or 0) == 0 and (r.get("total") or 0) > 0]
+             if (r.get("succeeded") or 0) == 0
+             and (r.get("dead_lettered") or 0) == 0
+             and (r.get("total") or 0) > 0]
     if len(stuck) >= min(JAMMED_RUN_THRESHOLD, len(recent)) and stuck:
         worked = sum(r.get("total") or 0 for r in stuck)
         return _check(
@@ -240,31 +237,44 @@ def check_inventory_consumption() -> dict:
     )
 
 
-def check_expiry_pruning() -> dict:
-    """Is auto-age-out running? The project's own principle depends on it."""
+def check_expiry_pruning(today: Optional[date] = None) -> dict:
+    """Is auto-age-out running? The project's own principle depends on it.
+
+    Measures what ``inventory.prune_expired`` actually promises: nothing more
+    than ``PRUNE_GRACE_DAYS`` past its date. A row that expired yesterday is
+    *supposed* to still be here (the grace exists so a one-day-late ingest does
+    not erase real food), so counting every ``expires < today`` row made this
+    check FAILING on a kitchen whose prune was working — and unable to
+    distinguish that from a prune that never ran.
+    """
+    from datetime import timedelta
+    from lib.inventory import PRUNE_GRACE_DAYS
+    today = today or date.today()
+    cutoff = (today - timedelta(days=PRUNE_GRACE_DAYS)).isoformat()
     try:
         from lib import inventory_db
         conn = inventory_db.read_conn()
-        expired = conn.execute(
+        overdue = conn.execute(
             "SELECT COUNT(*) FROM inventory "
             "WHERE expires IS NOT NULL AND expires < ?",
-            (date.today().isoformat(),),
+            (cutoff,),
         ).fetchone()[0]
     except Exception as e:
         return _check("expiry_pruning", "Expired stock is pruned",
                       UNKNOWN, f"probe failed: {e}",
                       "Unknown whether inventory self-cleans.")
 
-    if expired == 0:
+    if overdue == 0:
         return _check("expiry_pruning", "Expired stock is pruned", OK,
-                      "no expired rows present", "", "")
+                      f"no rows more than {PRUNE_GRACE_DAYS} days past expiry", "", "")
     return _check(
         "expiry_pruning", "Expired stock is pruned", FAILING,
-        f"{expired} expired row(s) still in inventory",
+        f"{overdue} row(s) more than {PRUNE_GRACE_DAYS} days past expiry",
         "Expired food is credited against shopping lists, so the list omits "
         "things you need to buy.",
-        "prune_expired() is called from generate_meal_plan.py after its "
-        "'file already exists' early return, so it rarely runs. Move it.",
+        "The daily self-clean is generate_meal_plan.refresh_inventory_views(), "
+        "run by com.kitchenos.mealplan at 06:00 — check "
+        "logs/meal_plan_generator.log for 'Aged out' / 'self-clean failed'.",
     )
 
 
@@ -327,6 +337,94 @@ def check_prep_sidecar(meal_plans_dir: Path, week: str) -> dict:
     )
 
 
+#: What the server actually executes: its entrypoint, the library it holds in
+#: memory, and the templates it reads per request. Deliberately not the vault or
+#: `config/` — those are data, re-read on demand, and a recipe edit is not a
+#: reason to restart anything.
+_CODE_GLOBS = ("api_server.py", "lib/*.py", "templates/*.html")
+
+#: Only enough to absorb jitter, not to forgive a real edit. Any file written
+#: after the process started is code the process does not have, so the honest
+#: threshold is ~0; this exists solely for filesystem/clock skew and for a
+#: multi-file `git checkout` that began before boot and finished just after it.
+#: It was 30s and that was wrong — it hid an edit made seconds after a restart,
+#: which is precisely the window in which someone is actively changing code.
+_FRESHNESS_GRACE_S = 5
+
+
+def check_server_freshness(boot_time: float | None = None,
+                           code_root: Path | None = None) -> dict:
+    """Is the running API executing the code that is currently on disk?
+
+    The LaunchAgent imports ``lib/*`` once and holds it, so every edit, branch
+    switch and rebase silently widens the gap between what the server runs and
+    what the repo says. This is the check the 2026-08-02 audit's premise demands
+    and did not have: it asks whether the server is *working from current code*,
+    not whether it is running.
+
+    Staleness is not merely a stale read. On 2026-08-22 a three-day-old server
+    placed a plate and wrote ``scale=1.0`` for a sub-recipe whose
+    ``plan_bundle`` share is ``0.5`` — a corrupt ledger row, written confidently,
+    with no error anywhere. That is why this reports ``failing`` rather than a
+    note: the damage lands in the database, not in a log.
+
+    Compares source mtimes against ``lib.boot.BOOT_TIME`` (process start), not
+    against git — a dirty working tree is exactly as stale as a committed one,
+    and the fix is the same either way.
+    """
+    from lib import boot
+
+    boot_time = boot.BOOT_TIME if boot_time is None else boot_time
+    root = Path(code_root) if code_root else Path(__file__).resolve().parent.parent
+
+    newest_path, newest_mtime = None, 0.0
+    for pattern in _CODE_GLOBS:
+        for f in root.glob(pattern):
+            try:
+                m = f.stat().st_mtime
+            except OSError:
+                continue
+            if m > newest_mtime:
+                newest_path, newest_mtime = f, m
+
+    if newest_path is None:
+        return _check(
+            "server_freshness", "Server running current code", UNKNOWN,
+            f"no source files found under {root}",
+            "Cannot tell whether the API is serving stale code.",
+            "Check that the server's working directory is the repo root.")
+
+    lag = newest_mtime - boot_time
+    if lag <= _FRESHNESS_GRACE_S:
+        return _check(
+            "server_freshness", "Server running current code", OK,
+            f"process started {_ago(boot_time)}; newest source "
+            f"{newest_path.name} is older than that",
+            "")
+
+    return _check(
+        "server_freshness", "Server running current code", FAILING,
+        f"{newest_path.name} changed {_ago(newest_mtime)}, but this process "
+        f"started {_ago(boot_time)} — it is running code from before that edit",
+        "The API is executing modules it loaded at startup. Writes go through "
+        "the OLD rules while every surface looks normal: a plate placed now can "
+        "store a wrong scale, and click handlers added since can be dead. "
+        "Nothing errors, so nothing tells you.",
+        "launchctl kickstart -k gui/$(id -u)/com.kitchenos.api")
+
+
+def _ago(ts: float) -> str:
+    """Human lag, because "1755631119.4" is not a fact anyone can act on."""
+    secs = max(0, int(datetime.now().timestamp() - ts))
+    if secs < 90:
+        return f"{secs}s ago"
+    if secs < 5400:
+        return f"{secs // 60}m ago"
+    if secs < 172800:
+        return f"{secs // 3600}h ago"
+    return f"{secs // 86400}d ago"
+
+
 def run_all(recipes_dir=None, meal_plans_dir=None, week=None,
             run_logs=None, failure_logs=None) -> dict:
     """Every assertion, plus a rollup. Never raises."""
@@ -346,6 +444,7 @@ def run_all(recipes_dir=None, meal_plans_dir=None, week=None,
         lambda: check_expiry_pruning(),
         lambda: check_failure_analysis_agent(),
         lambda: check_prep_sidecar(meal_plans_dir, week),
+        lambda: check_server_freshness(),
     ):
         try:
             checks.append(fn())

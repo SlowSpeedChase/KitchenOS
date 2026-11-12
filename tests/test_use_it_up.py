@@ -620,3 +620,50 @@ class TestStaplesMustNotSwallowPerishables:
         from lib.use_it_up import _covers, _phrase
         assert _covers(_phrase("lime juice"), _phrase("Lime"))
         assert _covers(_phrase("lemon juice"), _phrase("Lemon"))
+
+
+class TestRecipeCoverage:
+    """Direct contract tests for the shared coverage authority.
+
+    The 5-tuple's fifth element, ``staple_count``, is what lets ``cook_now``
+    demote recipes made entirely of staples. The first four elements are the
+    pre-existing contract and must not move for the same inputs.
+    """
+
+    STAPLES = {"salt", "olive oil", "flour"}
+
+    def _coverage(self, ingredients, on_hand):
+        inv = [_phrase(name) for name in on_hand]
+        staples = use_it_up._staple_phrases(self.STAPLES)
+        return use_it_up.recipe_coverage(ingredients, inv, staples)
+
+    def test_mixed_list_counts_only_the_staples(self):
+        have, total, missing, at_risk, staples = self._coverage(
+            ["chicken", "salt", "olive oil"], on_hand=["Chicken"])
+        assert (have, total) == (3, 3)
+        assert missing == []
+        assert staples == 2
+
+    def test_no_staples_counts_zero(self):
+        *_, staples = self._coverage(
+            ["chicken", "broccoli"], on_hand=["Chicken"])
+        assert staples == 0
+
+    def test_all_staples_equals_total_even_with_empty_inventory(self):
+        have, total, missing, at_risk, staples = self._coverage(
+            ["flour", "salt", "olive oil"], on_hand=[])
+        assert staples == total == 3
+        assert have == 3 and missing == []
+
+    def test_a_staple_also_in_inventory_still_counts_as_a_staple(self):
+        # The count means "credited by the staple rule", not "absent from
+        # stock" — staples are real inventory rows now, so most are both.
+        *_, staples = self._coverage(["salt"], on_hand=["Salt"])
+        assert staples == 1
+
+    def test_existing_fields_unchanged(self):
+        have, total, missing, at_risk, _ = self._coverage(
+            ["chicken", "broccoli", "salt"], on_hand=["Chicken"])
+        assert (have, total) == (2, 3)
+        assert missing == ["broccoli"]
+        assert at_risk is False

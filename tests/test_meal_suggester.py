@@ -869,3 +869,38 @@ class TestQualifiedStapleOnEitherSide:
 
     def test_the_bare_staple_still_matches(self):
         assert self._is("garlic")
+
+
+class TestDislikeExclusion:
+    """Dislikes are a hard filter on the pool, not prose in a prompt."""
+
+    def test_exclude_disliked_drops_hits_and_keeps_pepper_flakes(self):
+        from lib.meal_suggester import exclude_disliked
+        recipes = [
+            {"name": "Bean Salad", "ingredient_items": ["black beans", "red bell pepper"]},
+            {"name": "Dilly Salad", "ingredient_items": ["olives", "pepperoncini"]},
+            {"name": "Chili Oil Noodles", "ingredient_items": ["noodles", "red pepper flakes"]},
+        ]
+        kept = exclude_disliked(recipes, ["bell pepper", "pepperoncini"])
+        assert [r["name"] for r in kept] == ["Chili Oil Noodles"]
+
+    def test_no_dislikes_filters_nothing(self):
+        from lib.meal_suggester import exclude_disliked
+        recipes = [{"name": "A", "ingredient_items": ["bell pepper"]}]
+        assert exclude_disliked(recipes, []) == recipes
+
+    @patch("lib.meal_suggester.anthropic_client", None)
+    def test_suggest_meal_never_returns_a_disliked_recipe(self, tmp_vault):
+        from lib.meal_suggester import suggest_meal
+        (tmp_vault / "My Meal System.md").write_text(
+            "## Vegetables built into meals\n\n- **Dislike:** Bell pepper.\n")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recipes_dir = TestSuggestMeal()._make_recipes_dir(tmpdir, {
+                "Pepper Chicken": ["chicken", "yogurt", "pita", "bell pepper"],
+                "Chicken Gyros": ["chicken", "yogurt", "cucumber", "rice"],
+            })
+            planned = [{"day": "Monday", "meal": "dinner", "name": "Shawarma",
+                        "ingredients": ["chicken", "yogurt", "pita"]}]
+            result = suggest_meal(recipes_dir=recipes_dir, planned_meals=planned,
+                                  day="Tuesday", meal="dinner", at_risk=[])
+            assert result is not None and result["name"] == "Chicken Gyros"

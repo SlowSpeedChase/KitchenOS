@@ -10,8 +10,10 @@ urgency*). The coverage calculation itself lives in ``use_it_up`` as
 ``recipe_coverage`` — both modules rank by it, this one across the whole library
 and that one within each at-risk item, so it is written once rather than twice.
 
-Staples are assumed always on hand: never "missing", never penalizing coverage.
-Matching is presence-only, not quantity-aware.
+Staples are assumed always on hand: never "missing", never penalizing
+coverage. A recipe made *entirely* of staples is demoted hard rather than
+hidden — see ``_ALL_STAPLES_WEIGHT``. Matching is presence-only, not
+quantity-aware.
 """
 from __future__ import annotations
 
@@ -167,6 +169,19 @@ def _yield_factor(servings) -> float:
 # should I make", which is the question this page is asked.
 _BANKED_WEIGHT = 0.5
 
+# A recipe made entirely of staples — pasta dough, spice blends, plain
+# pancakes — is perpetually "ready": staples never age out, so its coverage
+# never moves and it squats at the top of a list being asked "what should I
+# make". Demoted rather than hidden, same philosophy as _BANKED_WEIGHT
+# (fresh-pasta night is real, so it stays findable by scrolling), but harder:
+# a banked demotion expires when the freezer empties, an all-staples recipe
+# never stops being all-staples. One real ingredient is enough to escape —
+# then the recipe only ranks high when that ingredient is actually on hand,
+# which is a legitimate claim on the top of the list. An unparseable
+# ingredient counts as a non-staple, so a data gap escapes the demotion
+# rather than triggering it.
+_ALL_STAPLES_WEIGHT = 0.25
+
 
 # Cook time, deliberately the weakest of the three factors: at most a 15% swing.
 # Given two meals you can equally make and that will equally feed you, the faster
@@ -241,22 +256,35 @@ def group_for(dish_type: Optional[str]) -> str:
 def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
              today: Optional[date] = None, limit: int = 30,
              banked: Optional[set] = None,
-             protein_target: Optional[float] = None) -> dict:
+             protein_target: Optional[float] = None,
+             per_group: bool = False) -> dict:
     """Rank recipes by what you should actually make right now.
 
-    Six factors, multiplied: **coverage** (can you make it) × **meal tier** (is
-    it a meal) × **nutrition** (will it feed you) × **speed** (how long until
-    it's on the table) × **yield** (how many meals one session buys) ×
-    **banked** (is it already cooked and in the freezer). Coverage alone
-    answered a different question than the one the page is asked — on a pantry
-    of dry goods it returned muffins, brownies, cookies and frosting, all
-    correctly and none of them dinner.
+    Seven factors, multiplied: **coverage** (can you make it) × **meal tier**
+    (is it a meal) × **nutrition** (will it feed you) × **speed** (how long
+    until it's on the table) × **yield** (how many meals one session buys) ×
+    **banked** (is it already cooked and in the freezer) × **all-staples**
+    (is its readiness anything more than the staple assumption). Coverage
+    alone answered a different question than the one the page is asked — on a
+    pantry of dry goods it returned muffins, brownies, cookies and frosting,
+    all correctly and none of them dinner.
 
     Returns ``{"recipes": [...]}``, each entry ``{recipe, image, dish_type,
-    group, have, total, coverage, missing, at_risk, meal_tier, protein, minutes,
-    servings, banked, score}``, sorted by ``score`` descending and capped at
-    ``limit``. Every non-coverage factor is reported alongside it so a surface
-    can explain the order rather than presenting it as given.
+    group, have, total, coverage, missing, at_risk, meal_tier, protein,
+    minutes, servings, banked, freezes_well, all_staples, score}``, sorted by
+    ``score`` descending and capped at ``limit``. Every non-coverage factor is
+    reported alongside it so a surface can explain the order rather than
+    presenting it as given.
+
+    ``per_group=True`` applies ``limit`` *within each chip group* instead of to
+    the whole list. This is what the ``/cook-now`` page needs: it filters
+    client-side from one payload, and a single global cap taken *after* the
+    meal-tier weighting silently emptied three of its six chips — on the real
+    pantry the best dessert ranked 264th of 409 (0.35 tier weight), so a
+    ``limit=60`` payload never carried one, and tapping Desserts revealed
+    nothing. The chip is a *filter*; the tier weight is an *ordering*. A cap
+    that lets the ordering act as a filter makes the chip a dead control. The
+    flat ``Cook Now.md`` note keeps the global cap — it has no chips.
 
     Staples count as always-on-hand: they raise coverage but never
     appear in ``missing``. ``at_risk`` is True when the recipe uses an item in
@@ -294,7 +322,7 @@ def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
 
         # Shared with use_it_up.suggest, which ranks each at-risk item's recipes
         # by the same coverage — one calculation, not two that can drift.
-        have, total, missing, at_risk = recipe_coverage(
+        have, total, missing, at_risk, staple_count = recipe_coverage(
             ingredients, inv_phrases, staple_sets, at_risk_sets)
 
         coverage = have / total
@@ -303,6 +331,8 @@ def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
         protein = _trustworthy_protein(recipe)
         servings = recipe.get("servings")
         is_banked = recipe["name"] in banked
+        # total >= 1 is guaranteed: empty ingredient lists are skipped above.
+        all_staples = staple_count == total
 
         recipes.append({
             "recipe": recipe["name"],
@@ -321,6 +351,7 @@ def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
             "minutes": minutes,
             "servings": servings,
             "banked": is_banked,
+            "all_staples": all_staples,
             # Reported, never scored on: too sparse across the corpus to rank by.
             # A surface can label a batch "freezes well"; it must not reorder on
             # a field almost every recipe answers `null` to.
@@ -331,13 +362,13 @@ def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
                 * _nutrition_factor(protein, protein_target)
                 * _speed_factor(minutes)
                 * _yield_factor(servings)
-                * (_BANKED_WEIGHT if is_banked else 1.0),
+                * (_BANKED_WEIGHT if is_banked else 1.0)
+                * (_ALL_STAPLES_WEIGHT if all_staples else 1.0),
                 4,
             ),
         })
 
-    # Four factors, multiplied: can you make it, is it a meal, will it feed you,
-    # and how long until it's on the table. Protein and time sit inside the
+    # Seven factors, multiplied — see the docstring. Protein and time sit inside the
     # score rather than acting as tiebreaks because coverage almost never ties,
     # so a tiebreak would never actually fire — which is how a 10 g muffin sat
     # second on a real pantry. `have` remains the final tiebreak so the order is
@@ -346,7 +377,19 @@ def generate(items: Optional[list] = None, recipe_index: Optional[list] = None,
         key=lambda r: (r["score"], r["protein"] or 0.0, r["have"]),
         reverse=True,
     )
-    return {"recipes": recipes[:limit]}
+    if not per_group:
+        return {"recipes": recipes[:limit]}
+    # Order is preserved — the list stays one score-sorted ranking — and each
+    # group contributes at most `limit` entries, so every chip has depth even
+    # when one group's scores all sit below another's.
+    taken: dict[str, int] = {}
+    kept = []
+    for r in recipes:
+        n = taken.get(r["group"], 0)
+        if n < limit:
+            taken[r["group"]] = n + 1
+            kept.append(r)
+    return {"recipes": kept}
 
 
 def render_markdown(result: dict, today: Optional[date] = None) -> str:

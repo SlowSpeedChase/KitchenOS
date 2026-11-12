@@ -14,9 +14,22 @@ tier that shipped since and corrects two stale statuses.
 
 ## Done / Shipped
 
+**2026-09-26 — Canonical HTTPS home gateway (implementation branch).** Generated
+web, recipe, inventory, nutrition, plan/print, and bookmark links share
+`lib/web_origin.py` and `KITCHENOS_WEB_BASE_URL` (legacy `KITCHENOS_API_BASE`
+remains compatible). iOS upgrades only exact retired defaults; custom
+endpoints and macOS loopback are preserved. Deployment and artifact
+regeneration remain rollout work. See the [shared gateway runbook](https://github.com/SlowSpeedChase/dotfiles/blob/main/docs/home-web-gateway.md).
+
+**2026-08-23 — iOS print/share fallback.** Printable week packets and recipe
+cards now use the system share sheet on iPhone and iPad, where people can choose
+**Print**, Save to Files, or AirDrop. Desktop browsers retain their normal print
+dialog. The shared action is deliberately attached to both printable surfaces so
+one cannot silently regress back to a no-op on iOS.
+
 **2026-07-08 — Web dashboard tailnet launcher** (PR #32). `lib/web_dashboard.py`
 + `scripts/generate_web_dashboard.py` regenerate `Dashboards/KitchenOS Web.md` — a
-tap-anywhere generated note whose links point at `KITCHENOS_API_BASE` (Tailscale
+tap-anywhere generated note whose links point at `KITCHENOS_WEB_BASE_URL` (Tailscale
 MagicDNS host by default), so the web app (Meal Planner, current plan/shopping
 list, Nutrition Review, System Health) opens from any device on the tailnet, not
 just localhost on the server. Follows the generated-read-only-view pattern
@@ -130,14 +143,14 @@ in the kitchen. The MCP `generate_shopping_list` tool inherited it, since
 listed it as a second independent caller — it isn't; fixing the endpoint fixed
 both surfaces).
 
-Resolved as **annotate, never decrement**: the endpoint now reads the pantry to
-keep owned items off the buy list, and records what it credited under an
-"Already have" section. Those notes are plain bullets, deliberately *not*
-checkboxes — `parse_shopping_list_file` collects every `- [ ]` line in the file
-regardless of section, so a checkbox there would be sent to Reminders as
-something to buy and would return as a phantom "manual item" on the next
-regeneration. `POST /api/shopping-list/preview` → `/confirm` remains the only path
-that actually spends stock. `use_pantry: false` restores raw-demand behaviour.
+Resolved as **compare, never decrement**: the endpoint now reads the pantry and
+splits demand into **Need to purchase** checkboxes and plain-bullet **Inventory
+matches — verify** notes. Every match note is excluded from Reminders and names
+the requested item, matched inventory row, and reason. `parse_shopping_list_file`
+collects every `- [ ]` line regardless of section, so keeping matches as plain
+bullets also prevents phantom manual items on regeneration. `POST
+/api/shopping-list/preview` → `/confirm` remains the only path that actually
+spends stock. `use_pantry: false` restores raw-demand behaviour.
 
 ### ~~P1 — Grouped ingredient sections are silently dropped~~ FIXED
 
@@ -260,10 +273,20 @@ structured. Most likely it should show only what has no card of its own — "My
 Notes" and the extraction footer — rather than a second copy of the recipe. That
 is a design decision, not a bug fix, so it needs a call before any code.
 
-### P3 — Meal planner rendering on this Mac
+### P2 — Dense meal-planner board overflow and scrolling
 
-Reported as "weird" with a screenshot that the triaging session could not read.
-Needs the image (or a viewport width + what looks wrong) before it can be acted on.
+On a populated iPad planner board, long recipe names and multi-recipe plates can
+run outside their day/meal cells or below the fixed viewport. The current
+"whole-week at a glance" constraint is useful for an empty week, but it must
+not make planned food unreachable.
+
+Make the board itself vertically scrollable when its slots grow, keep the
+planner chrome and recipe shelf stable, and constrain card/bundle text to its
+own column so it cannot overlap the next day. Preserve the seven-day overview
+and the existing ledger-only card mutations; this is a presentation change,
+not a change to cook or serving semantics. Cover a dense plate in
+`tests/e2e/test_planner_touch.py`: its cards must remain contained and the
+board must expose any excess height through scrolling.
 
 ### P3 — Three-finger drag for planner UI elements on macOS
 

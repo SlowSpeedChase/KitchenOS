@@ -1,5 +1,7 @@
 """Tests for the /plan-week command center."""
 
+import pytest
+
 from datetime import date
 
 from lib import plan_week
@@ -43,14 +45,15 @@ class TestRenderPlanCenter:
             ],
         }
 
-    def test_planned_week_shows_status_and_actions(self):
+    @pytest.mark.parametrize("base", ["https://ko.example", "https://chases-mac-mini.taila69703.ts.net"])
+    def test_planned_week_shows_status_and_actions(self, base):
         html = plan_week.render_plan_center_html(
-            "2026-W32", self._packet(), T, "https://ko.example", "2026-W31", "2026-W33")
+            "2026-W32", self._packet(), T, base, "2026-W31", "2026-W33")
         assert "Plan your week" in html
         # three actions, each linking to the right surface for the week
-        assert "https://ko.example/meal-planner?week=2026-W32" in html
-        assert "https://ko.example/nutrition-review" in html
-        assert "https://ko.example/print/week?week=2026-W32" in html
+        assert f"{base}/meal-planner?week=2026-W32" in html
+        assert f"{base}/nutrition-review" in html
+        assert f"{base}/print/week?week=2026-W32" in html
         # per-day status: protein vs target + prev/next nav
         assert "184/190g protein" in html
         assert "plan-week?week=2026-W31" in html and "plan-week?week=2026-W33" in html

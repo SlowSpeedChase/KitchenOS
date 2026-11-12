@@ -56,6 +56,9 @@ OPTIONAL_KEYS = frozenset({
     # answer for most of the corpus and must stay distinct from `false`, since
     # "nobody has said" is not "it doesn't freeze".
     "freezes_well",
+    # extract_recipe._tag_dislikes — ingredient rows matching a dislike in
+    # My Meal System.md (lib/dislike_guard.py, deterministic, no model)
+    "dislike_hits",
 })
 
 KNOWN_KEYS = REQUIRED_KEYS | OPTIONAL_KEYS

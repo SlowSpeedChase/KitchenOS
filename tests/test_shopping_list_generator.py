@@ -195,6 +195,34 @@ def test_generate_shopping_list_with_pantry_splits_lines(tmp_path, monkeypatch):
     assert not any("flour" in s for s in result["items"])
 
 
+def test_generated_items_contract_excludes_every_inventory_match(tmp_path, monkeypatch):
+    """Every consumer of `items` gets the Reminders-safe purchase list."""
+    from lib import shopping_list_generator as slg
+
+    plan = tmp_path / "Meal Plans"
+    plan.mkdir()
+    meal_plan = plan / "2026-W04.md"
+    meal_plan.write_text("## Monday\n### Dinner\n[[Test Pasta]]\n")
+    monkeypatch.setattr(slg, "MEAL_PLANS_PATH", plan)
+    monkeypatch.setattr(slg, "load_recipe_ingredients", lambda name: ([
+        {"amount": "1", "unit": "cup", "item": "flour"},
+        {"amount": "0.33", "unit": "cup", "item": "shelled pistachios"},
+    ], None))
+
+    result = slg.generate_shopping_list(
+        "2026-W04",
+        pantry=[{"item": "Pistachios", "amount": "1", "unit": "ct"}],
+    )
+
+    assert result["items"] == ["1 cup flour"]
+    assert result["purchase_items"] == result["items"]
+    pistachio = next(line for line in result["lines"]
+                     if line["item"] == "shelled pistachios")
+    assert pistachio["needed_display"] == "0.33 cup shelled pistachios"
+    assert pistachio["to_buy_display"] == "0.33 cup shelled pistachios"
+    assert "Pistachios (1 ct)" in pistachio["inventory_match_note"]
+
+
 def test_generate_shopping_list_no_recipes(tmp_path, monkeypatch):
     """Returns error when meal plan has no recipes."""
     from lib import shopping_list_generator as slg
@@ -243,6 +271,34 @@ def test_multiply_ingredients_handles_no_amount():
     result = multiply_ingredients(ingredients, 2)
     assert result[0]["amount"] == ""
     assert result[0]["item"] == "salt"
+
+
+def test_multiply_ingredients_repairs_embedded_one_scoop_quantity():
+    ingredients = [
+        {"amount": "1", "unit": "whole", "item": "one scoop protein powder"},
+    ]
+
+    result = multiply_ingredients(ingredients, 5)
+
+    assert result == [
+        {"amount": "5", "unit": "scoop", "item": "protein powder"},
+    ]
+
+
+def test_compute_lines_excludes_water_and_ice_from_purchase_demand():
+    from lib.shopping_list_generator import compute_lines
+
+    lines = compute_lines([
+        {"amount": "2", "unit": "cup", "item": "water"},
+        {"amount": "1", "unit": "cup", "item": "ice"},
+        {"amount": "3", "unit": "cloves", "item": "garlic"},
+    ])
+
+    assert [(line["item"], line["status"], line["to_buy"]) for line in lines] == [
+        ("water", "excluded", None),
+        ("ice", "excluded", None),
+        ("garlic", "buy", {"amount": "3", "unit": "cloves"}),
+    ]
 
 
 # Tests for find_recipe_file
@@ -369,6 +425,23 @@ def test_parse_shopping_list_not_found():
     assert "Shopping list not found" in result['error']
 
 
+@pytest.mark.parametrize("week", ["../outside", "2026-W54"])
+def test_parse_shopping_list_rejects_invalid_week_before_reading(week, tmp_path):
+    """Removing the shared path authority would allow a non-Flask caller to escape."""
+    import lib.shopping_list_generator as generator
+
+    outside = tmp_path / "outside.md"
+    original = "outside sentinel\n"
+    outside.write_text(original, encoding="utf-8")
+
+    with patch.object(generator, "SHOPPING_LISTS_PATH", tmp_path):
+        result = generator.parse_shopping_list_file(week)
+
+    assert result["success"] is False
+    assert "week required" in result["error"]
+    assert outside.read_text(encoding="utf-8") == original
+
+
 def test_parse_shopping_list_case_insensitive_check():
     """Handles uppercase X in checked items."""
     content = """# Shopping List
@@ -454,6 +527,49 @@ class TestExtractManualItems:
         assert result == ["item1", "item2"]
 
 
+def test_legacy_manual_detection_rejects_old_generated_variants():
+    from lib.shopping_list_generator import extract_legacy_manual_items
+
+    existing = [
+        "1 ct onion",
+        "1 red",
+        "2 cts eggs",
+        "3 cloves garlic",
+        "4 cts banana",
+        "4 cts chia seeds",
+        "5 one scoop creatine monohydrate",
+        "5 one scoop protein powder",
+        "aluminum foil",
+    ]
+    current_lines = [
+        {"item": "onion"},
+        {"item": "red, orange, or yellow bell pepper"},
+        {"item": "eggs"},
+        {"item": "garlic", "needed": {"amount": "3", "unit": "cloves"},
+         "to_buy": {"amount": "3", "unit": "cloves"}},
+        {"item": "banana"},
+        {"item": "chia seeds"},
+        {"item": "creatine monohydrate"},
+        {"item": "protein powder"},
+    ]
+
+    assert extract_legacy_manual_items(existing, current_lines) == ["aluminum foil"]
+
+
+def test_legacy_manual_detection_preserves_same_food_with_different_quantity():
+    """Unknown provenance must not erase a plausible manual quantity variant."""
+    from lib.shopping_list_generator import extract_legacy_manual_items
+
+    current_lines = [
+        {"item": "flour", "needed": {"amount": "4", "unit": "cup"},
+         "to_buy": {"amount": "4", "unit": "cup"}},
+    ]
+
+    assert extract_legacy_manual_items(
+        ["4 cups flour", "1 cup flour"], current_lines
+    ) == ["1 cup flour"]
+
+
 def test_extract_recipe_links_keeps_fractional_sub_servings(tmp_path, monkeypatch):
     """A 1.5-serving sub-recipe must buy 1.5x, not round down to 1x.
 
@@ -494,7 +610,82 @@ def test_extract_recipe_links_fractional_stacks_with_outer_multiplier(tmp_path, 
     assert ("Turkey Chili", 3.0) in extract_recipe_links(plan_path)
 
 
-# ---- on_hand_notes: annotate what the pantry covered, never decrement ----
+# ---- inventory notes: distinguish credited stock from review candidates ----
+
+def test_compute_lines_preserves_review_disposition(monkeypatch):
+    from lib import pantry as pantry_module
+    from lib.shopping_list_generator import compute_lines
+
+    matched = {"item": "garlic powder", "amount": "1", "unit": "ct"}
+    monkeypatch.setattr(pantry_module, "split_against_pantry", lambda *args: {
+        "from_pantry": None,
+        "to_buy": {"amount": "2", "unit": "cloves"},
+        "warning": "inventory has garlic powder, a related item; not credited",
+        "status": "review",
+        "matched_inventory": matched,
+    })
+
+    line = compute_lines(
+        [{"item": "garlic", "amount": "2", "unit": "cloves"}], pantry=[])[0]
+    assert line["status"] == "review"
+    assert line["matched_inventory"] == matched
+
+
+def test_inventory_notes_separates_credits_from_review_candidates():
+    from lib.shopping_list_generator import inventory_notes
+
+    notes = inventory_notes([
+        {"item": "brown sugar", "needed": {"amount": "1", "unit": "cup"},
+         "from_pantry": {"amount": "1", "unit": "cup"}, "to_buy": None,
+         "warning": None, "status": "credited"},
+        {"item": "garlic", "needed": {"amount": "3", "unit": "cloves"},
+         "from_pantry": None, "to_buy": {"amount": "3", "unit": "cloves"},
+         "warning": "inventory has garlic powder (1 ct), a related item; not credited",
+         "status": "review"},
+    ])
+
+    assert notes == {
+        "credited": ["brown sugar — in stock, 1 cup needed"],
+        "review": ["garlic — inventory has garlic powder (1 ct), a related item; "
+                   "not credited; still on the list"],
+    }
+
+
+def test_shopping_sections_separates_purchase_from_inventory_matches():
+    from lib.shopping_list_generator import shopping_sections
+
+    sections = shopping_sections([
+        {"item": "flour", "needed": {"amount": "1", "unit": "cup"},
+         "from_pantry": None, "to_buy": {"amount": "1", "unit": "cup"},
+         "warning": None, "status": "buy", "matched_inventory": None},
+        {"item": "shelled pistachios",
+         "needed": {"amount": "0.33", "unit": "cup"},
+         "from_pantry": None, "to_buy": {"amount": "0.33", "unit": "cup"},
+         "warning": "inventory has Pistachios (1 ct), a related item; not credited",
+         "status": "review",
+         "matched_inventory": {"item": "Pistachios", "amount": "1", "unit": "ct"}},
+        {"item": "brown sugar", "needed": {"amount": "1", "unit": "cup"},
+         "from_pantry": {"amount": "1", "unit": "cup"}, "to_buy": None,
+         "warning": None, "status": "credited",
+         "matched_inventory": {"item": "Brown sugar", "amount": "2", "unit": "cup"}},
+        {"item": "flaxseed", "needed": {"amount": "2", "unit": "cup"},
+         "from_pantry": {"amount": "0.5", "unit": "cup"},
+         "to_buy": {"amount": "1.5", "unit": "cup"},
+         "warning": None, "status": "credited",
+         "matched_inventory": {"item": "Flaxseed", "amount": "0.5", "unit": "cup"}},
+        {"item": "water", "needed": {"amount": "2", "unit": "cup"},
+         "from_pantry": None, "to_buy": None, "warning": None,
+         "status": "excluded", "matched_inventory": None},
+    ])
+
+    assert sections == {
+        "purchase": ["1 cup flour"],
+        "inventory_matches": [
+            "0.33 cup shelled pistachios → Pistachios (1 ct) — related item; verify amount and form",
+            "1 cup brown sugar → Brown sugar (2 cup) — exact match; enough recorded",
+            "2 cups flaxseed → Flaxseed (0.5 cup) — exact match; 1.5 cup still needed",
+        ],
+    }
 
 def test_on_hand_notes_names_a_fully_covered_line():
     """A covered line drops out of `items`, so something has to say why."""
@@ -527,17 +718,19 @@ def test_on_hand_notes_skips_lines_the_pantry_did_not_touch():
     ]) == []
 
 
-def test_on_hand_notes_surfaces_a_unit_mismatch_warning():
-    """A cross-family mismatch isn't subtracted, so say so rather than go quiet."""
-    from lib.shopping_list_generator import on_hand_notes
+def test_inventory_notes_surfaces_a_unit_mismatch_as_review():
+    """A cross-family mismatch isn't subtracted, so label it as a review."""
+    from lib.shopping_list_generator import inventory_notes
 
-    notes = on_hand_notes([
+    notes = inventory_notes([
         {"item": "milk", "needed": {"amount": "1", "unit": "cup"},
          "from_pantry": None, "to_buy": {"amount": "1", "unit": "cup"},
-         "warning": "pantry has 500 g, recipe asks 1 cup (different units)"},
+         "warning": "pantry has 500 g, recipe asks 1 cup (different units)",
+         "status": "review"},
     ])
-    assert notes == ["milk — pantry has 500 g, recipe asks 1 cup "
-                     "(different units); still on the list"]
+    assert notes["credited"] == []
+    assert notes["review"] == ["milk — pantry has 500 g, recipe asks 1 cup "
+                               "(different units); still on the list"]
 
 
 def test_format_qty_drops_the_whole_pseudo_unit():

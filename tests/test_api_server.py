@@ -50,6 +50,29 @@ def test_reprocess_endpoint_no_source_url(client):
             assert b'no source url' in response.data.lower()
 
 
+@pytest.mark.parametrize(
+    ("path", "expected_error"),
+    [
+        ("/refresh?file=../outside.md", b"escapes its configured directory"),
+        ("/reprocess?file=..%2Foutside.md", b"escapes its configured directory"),
+    ],
+)
+def test_recipe_path_escape_is_rejected_without_mutating_outside_file(client, tmp_path, path, expected_error):
+    """Removing path containment would let these routes access the sibling sentinel."""
+    recipes = tmp_path / "Recipes"
+    recipes.mkdir()
+    outside = tmp_path / "outside.md"
+    original = "outside sentinel\n"
+    outside.write_text(original, encoding="utf-8")
+
+    with patch("api_server.OBSIDIAN_RECIPES_PATH", recipes):
+        response = client.get(path)
+
+    assert response.status_code == 400
+    assert expected_error in response.data
+    assert outside.read_text(encoding="utf-8") == original
+
+
 class TestGenerateShoppingListMerge:
     """Tests for shopping list regeneration with manual item preservation."""
 
@@ -61,9 +84,9 @@ class TestGenerateShoppingListMerge:
         # Create test shopping list with a manual item
         test_shopping_list = tmp_path / "Shopping Lists"
         test_shopping_list.mkdir()
-        existing_file = test_shopping_list / "2026-W99.md"
+        existing_file = test_shopping_list / "2026-W35.md"
         existing_file.write_text(
-            "# Shopping List - Week 99\n\n"
+            "# Shopping List - Week 35\n\n"
             "## Items\n\n"
             "- [ ] 2 cups flour\n"
             "- [ ] 1 tsp salt\n"
@@ -88,7 +111,7 @@ class TestGenerateShoppingListMerge:
                 # Call the endpoint
                 with api_server.app.test_client() as client:
                     response = client.post('/generate-shopping-list',
-                                           json={'week': '2026-W99'})
+                                           json={'week': '2026-W35'})
 
                 # Verify manual item is preserved
                 result_content = existing_file.read_text()
@@ -103,9 +126,9 @@ class TestGenerateShoppingListMerge:
         # Create test shopping list with manual items
         test_shopping_list = tmp_path / "Shopping Lists"
         test_shopping_list.mkdir()
-        existing_file = test_shopping_list / "2026-W98.md"
+        existing_file = test_shopping_list / "2026-W36.md"
         existing_file.write_text(
-            "# Shopping List - Week 98\n\n"
+            "# Shopping List - Week 36\n\n"
             "## Items\n\n"
             "- [ ] 2 cups flour\n"
             "- [ ] manual item 1\n"
@@ -127,7 +150,7 @@ class TestGenerateShoppingListMerge:
             with patch.object(api_server, 'generate_shopping_list', mock_generate):
                 with api_server.app.test_client() as client:
                     response = client.post('/generate-shopping-list',
-                                           json={'week': '2026-W98'})
+                                           json={'week': '2026-W36'})
 
                 data = response.get_json()
                 assert data['success'] is True
@@ -158,7 +181,7 @@ class TestGenerateShoppingListMerge:
             with patch.object(api_server, 'generate_shopping_list', mock_generate):
                 with api_server.app.test_client() as client:
                     response = client.post('/generate-shopping-list',
-                                           json={'week': '2026-W97'})
+                                           json={'week': '2026-W37'})
 
                 data = response.get_json()
                 assert data['success'] is True
@@ -914,6 +937,109 @@ def test_inventory_add_with_trip_records_purchases(client, tmp_vault, tmp_db):
     assert row[1] == 1098
 
 
+def test_inventory_add_with_trip_replay_is_a_no_op(
+    client, tmp_vault, tmp_db, monkeypatch
+):
+    from lib import inventory
+    from lib import inventory_db as idb
+
+    refreshes = []
+    monkeypatch.setattr(
+        inventory, "refresh_inventory_views", lambda: refreshes.append("refresh")
+    )
+    payload = {
+        "items": [
+            {
+                "name": "chicken breast",
+                "quantity": 2,
+                "unit": "lb",
+                "category": "meat",
+                "location": "fridge",
+                "purchased": "2026-06-09",
+                "source": "receipt",
+                "unit_price": 5.49,
+                "line_total": 10.98,
+            },
+        ],
+        "trip": {
+            "date": "2026-06-09",
+            "store": "HEB",
+            "total": 10.98,
+            "source_id": "photo-replay",
+        },
+    }
+
+    first = client.post("/api/inventory/add", json=payload)
+    second = client.post("/api/inventory/add", json=payload)
+
+    assert first.status_code == 200
+    assert first.get_json()["added"] == 1
+    assert second.status_code == 200
+    assert second.get_json()["added"] == 0
+    assert second.get_json()["merged"] == 0
+    conn = idb.connect()
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM trips").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM purchases").fetchone()[0] == 1
+        quantity = conn.execute(
+            "SELECT quantity FROM inventory WHERE name = 'chicken breast'"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert quantity == 2.0
+    assert refreshes == ["refresh"]
+
+
+def test_inventory_add_rejects_invalid_trip_replays_without_writes(
+    client, tmp_vault, tmp_db, monkeypatch
+):
+    from lib import inventory
+    from lib import inventory_db as idb
+
+    refreshes = []
+    monkeypatch.setattr(
+        inventory, "refresh_inventory_views", lambda: refreshes.append("refresh")
+    )
+    invalid_trips = [
+        {},
+        {"source_id": ""},
+        {"source_id": "   "},
+        {"source_id": None},
+        {"source_id": 123},
+        [],
+        "not-an-object",
+        None,
+    ]
+
+    for trip in invalid_trips:
+        payload = {
+            "items": [
+                {
+                    "name": "chicken breast",
+                    "quantity": 2,
+                    "unit": "lb",
+                    "category": "meat",
+                    "location": "fridge",
+                }
+            ],
+            "trip": trip,
+        }
+        responses = [
+            client.post("/api/inventory/add", json=payload),
+            client.post("/api/inventory/add", json=payload),
+        ]
+        assert [response.status_code for response in responses] == [400, 400]
+
+    conn = idb.connect()
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM trips").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM purchases").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM inventory").fetchone()[0] == 0
+    finally:
+        conn.close()
+    assert refreshes == []
+
+
 def test_inventory_add_fee_items_skip_inventory(client, tmp_vault, tmp_db):
     payload = {
         "items": [
@@ -941,6 +1067,97 @@ def test_inventory_add_fee_items_skip_inventory(client, tmp_vault, tmp_db):
     conn.close()
     assert len(rows) == 2
     assert ("sales tax", "fee") in [(r[0], r[1]) for r in rows]
+
+
+def test_inventory_add_all_fee_trip_preserves_zero_stock_response(
+    client, tmp_vault, tmp_db, monkeypatch
+):
+    from lib import inventory
+    from lib import inventory_db as idb
+
+    idb.merge_inventory_rows([
+        {
+            "name": "rice",
+            "quantity": 2,
+            "unit": "lb",
+            "category": "pantry",
+            "location": "pantry",
+        }
+    ])
+    refreshes = []
+    monkeypatch.setattr(
+        inventory, "refresh_inventory_views", lambda: refreshes.append("refresh")
+    )
+
+    response = client.post("/api/inventory/add", json={
+        "items": [
+            {
+                "name": "sales tax",
+                "quantity": 1,
+                "unit": "ct",
+                "category": "fee",
+                "line_total": 0.91,
+            }
+        ],
+        "trip": {
+            "date": "2026-06-09",
+            "store": "HEB",
+            "total": 0.91,
+            "source_id": "photo-fee-only",
+        },
+    })
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "status": "ok",
+        "added": 0,
+        "merged": 0,
+        "total": 0,
+    }
+    conn = idb.connect()
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM trips").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM purchases").fetchone()[0] == 1
+        rows = conn.execute(
+            "SELECT name, quantity FROM inventory ORDER BY name"
+        ).fetchall()
+    finally:
+        conn.close()
+    assert [(row["name"], row["quantity"]) for row in rows] == [("rice", 2.0)]
+    assert refreshes == ["refresh"]
+
+
+def test_inventory_add_survives_non_oserror_view_refresh_failure(
+    client, tmp_vault, tmp_db, monkeypatch, capsys
+):
+    from lib import inventory
+    from lib import inventory_db as idb
+
+    def fail_post_commit_reread():
+        raise ValueError("derived reread failed")
+
+    monkeypatch.setattr(inventory, "read_inventory", fail_post_commit_reread)
+
+    response = client.post("/api/inventory/add", json={
+        "items": [{"name": "rice", "quantity": 2, "unit": "lb"}],
+    })
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "status": "ok",
+        "added": 1,
+        "merged": 0,
+        "total": 1,
+    }
+    conn = idb.connect()
+    try:
+        rows = conn.execute(
+            "SELECT name, quantity FROM inventory ORDER BY name"
+        ).fetchall()
+    finally:
+        conn.close()
+    assert [(row["name"], row["quantity"]) for row in rows] == [("rice", 2.0)]
+    assert "derived reread failed" in capsys.readouterr().err
 
 
 def test_inventory_add_without_trip_unchanged(client, tmp_vault, tmp_db):

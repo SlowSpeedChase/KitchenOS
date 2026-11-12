@@ -18,6 +18,8 @@ from datetime import date
 import pytest
 import requests
 
+from tests.e2e._weeks import unique_week  # noqa: F401  (re-exported: grep `unique_week(`)
+
 pytestmark = pytest.mark.e2e
 
 SURFACES = ["/", "/meal-planner", "/nutrition-review", "/system-health", "/review"]
@@ -26,17 +28,6 @@ SURFACES = ["/", "/meal-planner", "/nutrition-review", "/system-health", "/revie
 def current_week() -> str:
     iso = date.today().isocalendar()
     return f"{iso[0]}-W{iso[1]:02d}"
-
-
-def unique_week(offset: int) -> tuple[str, str]:
-    """A far-future week no real plan occupies, so a test owns its own state.
-
-    Returns `(week, date_inside_it)`. Derive the date rather than hardcoding
-    one: a cook whose `date` falls outside its `week` is filed correctly but
-    never rendered on that week's board, which reads as an app bug and is not.
-    """
-    week_no = offset + 1
-    return f"2099-W{week_no:02d}", date.fromisocalendar(2099, week_no, 3).isoformat()
 
 
 def _log_cook(server, *, week, recipe, produced, meal="dinner", when=None, initial=1):
@@ -164,15 +155,34 @@ def test_verdict_can_be_recorded_from_the_planner(live_server, page, page_errors
     assert page_errors == [], f"planner raised: {page_errors}"
 
 
+def _mark_cooked(server, cook_id):
+    """The 🍳 tap: the NULL -> set `cooked_at` transition on a ledger row."""
+    resp = requests.patch(
+        server.url(f"/api/cooks/{cook_id}"),
+        json={"cooked_at": f"{date.today().isoformat()}T18:30:00"},
+        timeout=30,
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
 def test_cook_verdict_reaches_the_recipe_note(live_server):
     """Cooking must backfill the recipe's yield without anyone being asked.
 
     This is the mechanism that closes the 46%-missing-`servings` gap through
     use rather than through a chore.
+
+    A `cooks` row is *intent* until `cooked_at` is set (or a verdict lands):
+    dropping a recipe on the board is planning, and a batch that was never made
+    has no yield to observe — see `cook_history._is_cooked`. So the test has to
+    actually cook, not just plan; before that correction, planning alone wrote
+    `observed_servings`, which is the bug it fixed. `test_shopping_list_…` also
+    plans this recipe, but never cooks it, so it cannot move this median.
     """
     week, when = unique_week(5)
     recipe = "Creamy Garlic Tofu"  # a real note in the vault copy
-    _log_cook(live_server, week=week, recipe=recipe, produced=5, when=when)
+    cook = _log_cook(live_server, week=week, recipe=recipe, produced=5, when=when)
+    _mark_cooked(live_server, cook["id"])
 
     note = live_server.vault / "Recipes" / f"{recipe}.md"
     assert note.exists(), "fixture recipe missing from the vault copy"
@@ -226,9 +236,10 @@ def test_cold_planner_load_is_quick_enough_to_keep_a_habit(live_server, page):
     page.goto(live_server.url(f"/meal-planner?week={week}"),
               wait_until="domcontentloaded")
     page.wait_for_selector("#grid", timeout=30_000)
-    page.wait_for_function("() => !document.getElementById('loading') "
-                           "|| document.getElementById('loading').offsetParent === null",
-                           timeout=30_000)
+    # `.hidden` is what hideLoading() sets. Not `offsetParent === null`: the
+    # overlay is position:fixed, for which offsetParent is *always* null, so
+    # that wait returned before the page was usable and timed nothing.
+    page.wait_for_selector("#loading.hidden", state="attached", timeout=30_000)
     elapsed = time.monotonic() - start
     assert elapsed < 4.0, f"planner took {elapsed:.1f}s to become usable"
 
@@ -268,11 +279,23 @@ def test_marking_a_plan_card_cooked_creates_a_ledger_row(live_server, page, page
               wait_until="domcontentloaded")
     page.wait_for_selector("#grid", timeout=15_000)
 
+    # Wait for a *card*, not for #grid: the grid ships in the static HTML and the
+    # cards land only after /api/meal-plan answers, so counting right after #grid
+    # appears reads 0 on a busy machine. A timeout here still means "no legacy
+    # card rendered", which is the thing being guarded.
     legacy = page.locator(".grid-card:not(.cook-card)")
+    legacy.first.wait_for(timeout=15_000)
     assert legacy.count() > 0, "authored plan rendered no legacy cards"
 
     page.once("dialog", lambda d: d.accept())          # the "subtract ingredients?" confirm
-    legacy.first.locator(".cooked-btn").click(force=True)
+    # A plain click, never `force=True`: on a cold server the full-screen
+    # #loading overlay is still up when #grid appears, and a forced click lands
+    # on the overlay — no confirm, no request, no row — while a warm server
+    # (any earlier test in the session) clears it in time. That is exactly the
+    # order-dependence this test used to have. Playwright's actionability wait
+    # is the same wait a person makes: the button has to be the thing under
+    # the pointer.
+    legacy.first.locator(".cooked-btn").click()
     page.wait_for_timeout(4000)
 
     conn = sqlite3.connect(live_server.db)

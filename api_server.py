@@ -7,6 +7,7 @@ from urllib.parse import quote
 from youtube_transcript_api import YouTubeTranscriptApi
 from googleapiclient.discovery import build
 import functools
+import ipaddress
 import math
 import os
 import re
@@ -23,11 +24,12 @@ from dotenv import load_dotenv
 from lib.shopping_list_generator import (
     format_qty as shopping_list_format_qty,
     generate_shopping_list,
-    on_hand_notes,
     parse_shopping_list_file,
     extract_manual_items,
+    extract_legacy_manual_items,
     SHOPPING_LISTS_PATH,
 )
+from lib.web_origin import web_origin
 from lib.backup import create_backup
 from lib.recipe_index import get_recipe_index
 from lib.meal_plan_parser import (
@@ -38,7 +40,11 @@ from lib.meal_plan_parser import (
 from lib.meal_nutrition import meal_nutrition
 from lib.recipe_parser import parse_recipe_file, extract_my_notes, parse_recipe_body
 from lib import recipe_refresh, nutrition_quality
-from templates.shopping_list_template import generate_shopping_list_markdown, generate_filename as shopping_list_filename
+# Imported at module scope on purpose: lib.boot.BOOT_TIME is captured on first
+# import, so importing it lazily inside a route would record the time of that
+# request and report every stale server as fresh. See lib/boot.py.
+from lib import boot  # noqa: F401  (imported for its import-time side effect)
+from templates.shopping_list_template import generate_shopping_list_markdown
 from templates.recipe_template import format_recipe_markdown
 from templates.meal_plan_template import (
     format_week_heading,
@@ -51,6 +57,7 @@ from lib.ingredient_cleaner import clean_ingredient_list
 from lib.seasonality import match_ingredients_to_seasonal, get_peak_months
 from lib.nutrition_engine import calculate_recipe_nutrition
 from lib import cook_sweep, meal_loader, pantry as pantry_module, paths, task_extractor
+from lib.safe_paths import contained_markdown, parse_iso_week, shopping_list_path
 from lib.serving_ledger import MEALS as SLOT_VOCAB
 from recipe_sources import parse_recipe_from_text
 
@@ -66,18 +73,36 @@ VAULT_NAME = paths.vault_root().name
 app = Flask(__name__)
 
 
+def _loopback(address):
+    try:
+        ip = ipaddress.ip_address(address)
+        return (getattr(ip, "ipv4_mapped", None) or ip).is_loopback
+    except ValueError:
+        return False
+
+
+def _local_client():
+    # Only Caddy's immediate loopback socket can assert a forwarded client.
+    # Use the nearest hop; never a client-supplied leftmost address in a chain.
+    if not _loopback(request.remote_addr or ""):
+        return False
+    forwarded = request.headers.get("X-Forwarded-For")
+    return forwarded is None or _loopback(forwarded.rsplit(",", 1)[-1].strip())
+
+
 def require_token(view):
     """Require a bearer token for non-localhost callers when KITCHENOS_API_TOKEN is set.
 
-    No-op when the env var is unset. Localhost (Mac app, local browser UI) is always
-    exempt; remote callers (iPad over Tailscale) must send Authorization: Bearer <token>.
+    No-op when the env var is unset. Direct localhost (Mac app, local browser UI) is
+    exempt; Caddy-forwarded remote clients retain authentication and must send
+    Authorization: Bearer <token>.
     """
     @functools.wraps(view)
     def wrapper(*args, **kwargs):
         token = os.environ.get("KITCHENOS_API_TOKEN")
         if not token:
             return view(*args, **kwargs)
-        if request.remote_addr in ("127.0.0.1", "::1"):
+        if _local_client():
             return view(*args, **kwargs)
         if request.headers.get("Authorization", "") == f"Bearer {token}":
             return view(*args, **kwargs)
@@ -88,6 +113,27 @@ def require_token(view):
 _recipe_cache = {"data": None, "timestamp": 0}
 _recipe_ingredient_cache = {"data": None, "timestamp": 0}
 RECIPE_CACHE_TTL = 300  # 5 minutes
+
+
+def _home_link_html() -> str:
+    """Return the shared, accessible route back to the web app home page."""
+    return '''
+<style>
+  .ko-home-nav { display: flex; align-items: center; min-height: 44px;
+                 box-sizing: border-box; padding: 0 1rem;
+                 background: var(--surface); border-bottom: 1px solid var(--line); }
+  .ko-home-link { display: inline-flex; align-items: center; min-height: 44px;
+                  color: var(--app-kitchenos); font-weight: 650;
+                  text-decoration: none; }
+  .ko-home-link:hover { text-decoration: underline; text-underline-offset: .2em; }
+  .ko-home-link:focus-visible { outline: 2px solid; outline-offset: 2px;
+                                border-radius: .25rem; }
+  @media print { .ko-home-nav { display: none !important; } }
+</style>
+<nav class="ko-home-nav" aria-label="Primary">
+  <a class="ko-home-link" href="/"><span aria-hidden="true">&#8592;&nbsp;</span>KitchenOS Home</a>
+</nav>
+'''
 
 
 def _html_page(title: str, body: str, extra_css: str = "") -> str:
@@ -131,6 +177,7 @@ def _html_page(title: str, body: str, extra_css: str = "") -> str:
 {style}
 </head>
 <body>
+{_home_link_html()}
 {body}
 </body>
 </html>'''
@@ -148,84 +195,6 @@ def error_page(message: str) -> str:
 ''')
 
 
-# ---- Claude launch bar (injected into every web page at serve time) ----
-
-_CLAUDE_BAR_TEMPLATE = """
-<div id="ko-claude-bar" style="position:sticky;top:0;left:0;right:0;z-index:2147483000;background:var(--raised);color:var(--ink);border-bottom:1px solid var(--line);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;box-shadow:var(--shadow);">
-  <div style="display:flex;align-items:center;gap:12px;padding:8px 14px;">
-    <a id="ko-home-link" href="/" title="KitchenOS home" aria-label="KitchenOS home" style="color:var(--ink);text-decoration:none;padding:0 12px;border:1px solid var(--line);border-radius:8px;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;box-sizing:border-box;">&#127968;</a>
-    <a id="ko-claude-launch" href="ssh://__SSH_TARGET__" style="background:var(--insight);color:var(--text-on-accent);text-decoration:none;padding:0 16px;border-radius:8px;font-weight:600;white-space:nowrap;display:inline-flex;align-items:center;min-height:44px;box-sizing:border-box;">&#129302; Launch Claude</a>
-    <button id="ko-claude-toggle" type="button" style="background:transparent;color:var(--muted);border:1px solid var(--line);border-radius:8px;padding:0 14px;cursor:pointer;font-size:14px;display:inline-flex;align-items:center;min-height:44px;box-sizing:border-box;">&#128221; Notes</button>
-    <span id="ko-claude-status" style="color:var(--muted);font-size:12px;margin-left:auto;"></span>
-  </div>
-  <div id="ko-claude-notes-wrap" style="display:none;padding:0 14px 12px;">
-    <textarea id="ko-claude-notes" placeholder="Notes to yourself &amp; Claude — saved to Claude Notes.md, seeds the next Launch." style="width:100%;box-sizing:border-box;min-height:120px;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;resize:vertical;"></textarea>
-    <div style="display:flex;gap:10px;align-items:center;margin-top:8px;">
-      <button id="ko-claude-send" type="button" style="background:var(--insight);color:var(--text-on-accent);border:none;border-radius:8px;padding:8px 16px;font-weight:700;cursor:pointer;min-height:44px;">&#9654;&#65039; Send to Claude</button>
-      <button id="ko-claude-save" type="button" style="background:var(--done);color:var(--text-on-accent);border:none;border-radius:8px;padding:8px 16px;font-weight:700;cursor:pointer;min-height:44px;">Save</button>
-      <span id="ko-claude-save-status" style="color:var(--muted);font-size:12px;"></span>
-    </div>
-  </div>
-</div>
-<script>
-(function(){
-  var toggle=document.getElementById('ko-claude-toggle');
-  var wrap=document.getElementById('ko-claude-notes-wrap');
-  var ta=document.getElementById('ko-claude-notes');
-  var saveBtn=document.getElementById('ko-claude-save');
-  var saveStatus=document.getElementById('ko-claude-save-status');
-  var loaded=false;
-  function loadNotes(){
-    fetch('/api/claude-notes').then(function(r){return r.json();}).then(function(d){
-      ta.value=(d&&d.notes)||''; loaded=true;
-    }).catch(function(){ saveStatus.textContent='(offline)'; });
-  }
-  toggle.addEventListener('click',function(){
-    var open=wrap.style.display==='none';
-    wrap.style.display=open?'block':'none';
-    if(open&&!loaded){loadNotes();}
-  });
-  saveBtn.addEventListener('click',function(){
-    saveStatus.textContent='Saving…';
-    fetch('/api/claude-notes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({notes:ta.value})})
-      .then(function(r){return r.json();}).then(function(d){
-        if(d&&d.status==='saved'){ta.value=d.notes;saveStatus.textContent='Saved ✓';}
-        else{saveStatus.textContent='Error';}
-      }).catch(function(){saveStatus.textContent='Save failed';});
-  });
-  var sendBtn=document.getElementById('ko-claude-send');
-  sendBtn.addEventListener('click',function(){
-    var text=ta.value;
-    if(!text.trim()){saveStatus.textContent='Nothing to send';return;}
-    saveStatus.textContent='Sending…';
-    // Carry the page, so "fix this" still has a "this" by the time Claude reads it.
-    var payload={text:text,page:location.pathname+location.search,title:document.title};
-    fetch('/api/claude-send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
-      .then(function(r){return r.json();}).then(function(d){
-        if(d&&d.status==='sent'){
-          // It landed in the live session, so the box has done its job — clearing
-          // it prevents the same request being sent twice on a double tap.
-          ta.value='';saveStatus.textContent='Sent to Claude ✓';
-        } else if(d&&d.status==='queued'){
-          // Cleared rather than refilled: the stored copy carries a context
-          // header, and echoing that back would re-send it prefixed twice.
-          ta.value='';saveStatus.textContent='No session — queued for next Launch ✓';
-        } else {saveStatus.textContent=(d&&d.error)||'Error';}
-      }).catch(function(){saveStatus.textContent='Send failed';});
-  });
-})();
-</script>
-"""
-
-
-def _claude_bar_html() -> str:
-    """The launch-bar widget with the current SSH target spliced in."""
-    target = os.environ.get(
-        'KITCHENOS_SSH_TARGET', 'chaseeasterling@chases-mac-mini.taila69703.ts.net'
-    )
-    return _CLAUDE_BAR_TEMPLATE.replace('__SSH_TARGET__', target)
-
-
 def _inject_after_body(html: str, snippet: str) -> str:
     """Splice snippet in immediately after the opening <body ...> tag.
 
@@ -233,11 +202,10 @@ def _inject_after_body(html: str, snippet: str) -> str:
     metacharacters. Falls back to prepending if there is no <body> tag.
 
     The search starts after ``</head>`` because a template may *write about*
-    the tag before opening it: meal_planner.html explains the chrome bar in a
+    the tag before opening it: meal_planner.html explains the safety chrome in a
     CSS comment naming the literal ``<body>``, and matching that comment
-    spliced the bar into the stylesheet, where the browser dropped it. The page
-    then contained the markup and rendered no bar — so the planner, the one
-    page you reach mid-task, was the only one with no way back home.
+    spliced the injected safety chrome into the stylesheet, where the browser
+    dropped it. The planner then rendered without its stale-code warning.
     """
     lower = html.lower()
     head_end = lower.find('</head>')
@@ -251,12 +219,65 @@ def _inject_after_body(html: str, snippet: str) -> str:
     return html[:close + 1] + snippet + html[close + 1:]
 
 
-def _serve_page_with_claude_bar(template_filename: str, extra_replacements=None) -> str:
-    """Read a template, apply page-specific replacements, inject the Claude bar."""
+
+#: Re-stat the source tree at most this often. A page load should not walk ~70
+#: files; staleness is measured in hours, so a few seconds of lag costs nothing.
+_STALE_CHECK_TTL_S = 15
+_stale_cache = {"checked_at": 0.0, "html": ""}
+
+
+def _stale_banner_html() -> str:
+    """A loud strip on every page when the server is running superseded code.
+
+    This lives in the page chrome rather than only on `/system-health` because
+    of how the failure actually presents: on 2026-08-22 a stale server wrote a
+    corrupt plate scale from the *planner*, and every surface looked normal. A
+    warning you have to navigate to is a warning you read after the damage. The
+    banner is injected by `_serve_page`, so registering a new
+    page (which that function is already mandatory for) opts it in for free.
+
+    Never raises: a health probe that 500s the page it is warning about is the
+    same class of bug it exists to catch.
+    """
+    now = time.time()
+    if now - _stale_cache["checked_at"] < _STALE_CHECK_TTL_S:
+        return _stale_cache["html"]
+    html = ""
+    try:
+        from lib import health_assertions
+        check = health_assertions.check_server_freshness()
+        if check["status"] == health_assertions.FAILING:
+            html = (
+                '<div role="alert" style="position:sticky;top:0;z-index:2147483001;'
+                'background:var(--alert);color:var(--text-on-accent);font:600 13px/1.4 '
+                "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+                'padding:10px 14px;">'
+                # str(): escape() returns Markup, and `str + Markup` dispatches to
+                # Markup.__radd__, which escapes the LEFT operand. Without this the
+                # banner escapes itself, then — via _inject_after_body — the entire
+                # page, which is served as 260KB of visible HTML source. Verified live.
+                '&#9888;&#65039; Serving stale code &mdash; ' + str(escape(check["detail"])) +
+                '. Writes may be wrong. Restart: '
+                '<code style="background:rgba(255,255,255,.2);padding:1px 5px;'
+                'border-radius:4px;">launchctl kickstart -k gui/$(id -u)/com.kitchenos.api</code>'
+                '</div>')
+    except Exception:
+        pass
+    _stale_cache.update(checked_at=now, html=html)
+    return html
+
+
+def _serve_page(
+    template_filename: str,
+    extra_replacements: list[tuple[str, str]] | None = None,
+) -> str:
+    """Read a template, apply replacements, and inject global safety chrome."""
     html = open(f'templates/{template_filename}').read()
     for old, new in (extra_replacements or []):
         html = html.replace(old, new)
-    return _inject_after_body(html, _claude_bar_html())
+    if template_filename != 'home.html' and 'href="/"' not in html:
+        html = _inject_after_body(html, _home_link_html())
+    return _inject_after_body(html, _stale_banner_html())
 
 
 def success_page(message: str, filename: str) -> str:
@@ -402,7 +423,11 @@ def get_video_info():
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint."""
-    return jsonify({'status': 'ok'})
+    response = jsonify({'status': 'ok'})
+    release = os.environ.get('KITCHENOS_RELEASE_SHA', '')
+    if re.fullmatch(r'[0-9a-f]{40}', release):
+        response.headers['X-KitchenOS-Release'] = release
+    return response
 
 
 @app.route('/api/recipes', methods=['GET'])
@@ -781,7 +806,13 @@ def recipe_detail_page(name):
         # so the outer escape would re-escape the entities).
         return error_page(f"Recipe not found: {name}"), 404
 
-    html = _serve_page_with_claude_bar('recipe_detail.html', [('vault=KitchenOS', f'vault={VAULT_NAME}')])
+    # This escape hatch must work before (or without) the gated JSON request.
+    # Build it from the validated filename, not the recipe's display title.
+    obsidian_url = (f"obsidian://open?vault={quote(paths.vault_root().name, safe='')}"
+                    f"&file={quote('Recipes/' + name, safe='')}")
+    html = _serve_page('recipe_detail.html', [
+        ('<!--OBSIDIAN_URL-->', str(escape(obsidian_url))),
+    ])
     return html, 200, {'Content-Type': 'text/html'}
 
 
@@ -807,11 +838,11 @@ def plan_week_page():
         from lib.print_week import _targets_dict
         targets, _ = _targets_dict(paths.vault_root())
 
-    base = os.environ.get("KITCHENOS_API_BASE", "").rstrip("/")
+    base = web_origin()
     body = plan_week.render_plan_center_html(
         week, packet, targets, base,
         plan_week.shift_week(week, -1), plan_week.shift_week(week, 1))
-    html = _serve_page_with_claude_bar('plan_week.html', [('<!--CENTER-->', body)])
+    html = _serve_page('plan_week.html', [('<!--CENTER-->', body)])
     return html, 200, {'Content-Type': 'text/html'}
 
 
@@ -819,7 +850,8 @@ def plan_week_page():
 def print_week_page():
     """Printable one-page 'week packet': plan grid + macros vs targets +
     shopping list + do-ahead prep. Defaults to the current ISO week; ?week=
-    overrides, ?tasks=1 regenerates prep (an LLM call) instead of read-only cache.
+    overrides, ?tasks=1 regenerates prep (an LLM call) instead of read-only cache,
+    ?recipes=1 appends every planned recipe in full (one page each).
     """
     from lib import print_week
 
@@ -831,16 +863,17 @@ def print_week_page():
         return error_page(f"Invalid week format: {week} (expected YYYY-WNN)"), 400
 
     include_tasks = request.args.get('tasks') in ('1', 'true', 'yes')
+    include_recipes = request.args.get('recipes') in ('1', 'true', 'yes')
     try:
         packet = print_week.build_week_packet(
             week, paths.vault_root(), _resolve_recipes_dir(),
-            include_tasks=include_tasks)
+            include_tasks=include_tasks, include_recipes=include_recipes)
     except FileNotFoundError:
         return error_page(f"No meal plan for {week} yet — plan a week first."), 404
 
-    base = os.environ.get("KITCHENOS_API_BASE", "").rstrip("/")
+    base = web_origin()
     body = print_week.render_packet_html(packet, base_url=base)
-    html = _serve_page_with_claude_bar('print_week.html', [('<!--PACKET-->', body)])
+    html = _serve_page('print_week.html', [('<!--PACKET-->', body)])
     return html, 200, {'Content-Type': 'text/html'}
 
 
@@ -887,7 +920,7 @@ def recipe_card_page(name):
                   f"AI-suggested ({src}) — sanity-check it against the recipe. "
                   "Your recipe's own steps are unchanged.</div>")
 
-    html = _serve_page_with_claude_bar('recipe_card.html', [
+    html = _serve_page('recipe_card.html', [
         ('__CARD_TITLE__', title),
         ('__CARD_META__', meta),
         ('__REVIEW_NOTE__', review),
@@ -946,13 +979,14 @@ def extract_recipe():
 
 @app.route('/generate-shopping-list', methods=['POST'])
 def generate_shopping_list_endpoint():
-    """Generate shopping list markdown from meal plan, crediting what's in stock.
+    """Generate shopping list markdown split by current inventory matches.
 
     **Annotates, never decrements.** This is the one-shot trigger — the button on
     `/current/shopping-list`, the only one reachable from the phone you shop with
     — so there's no confirmation step to approve inventory writes against. It
-    reads the pantry to keep what you already own off the buy list and records
-    what it credited under "Already have"; the preview/confirm pair
+    reads the pantry to keep every inventory match out of the Reminders-bound
+    checklist and records those matches under "Inventory matches — verify";
+    the preview/confirm pair
     (`/api/shopping-list/preview` → `/confirm`) remains the only path that
     actually decrements stock.
 
@@ -966,6 +1000,12 @@ def generate_shopping_list_endpoint():
     if not week:
         return jsonify({'success': False, 'error': 'No week provided'}), 400
 
+    try:
+        week = parse_iso_week(week)
+        filepath = shopping_list_path(SHOPPING_LISTS_PATH, week)
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
     use_pantry = data.get('use_pantry', True)
     pantry = pantry_module.load_pantry() if use_pantry else None
     result = generate_shopping_list(week, pantry=pantry)
@@ -973,25 +1013,40 @@ def generate_shopping_list_endpoint():
     if not result['success']:
         return jsonify(result), 400
 
+    generated_purchase_items = result.get('purchase_items', result['items'])
+
     # Check for existing manual items before overwriting
     manual_items = []
-    filename = shopping_list_filename(week)
-    filepath = SHOPPING_LISTS_PATH / filename
+    filename = filepath.name
     if filepath.exists():
         existing_result = parse_shopping_list_file(week)
         if existing_result['success']:
-            manual_items = extract_manual_items(
-                existing_result['items'],
-                result['items']
-            )
+            previous_generated = existing_result.get('generated_items')
+            if previous_generated is None:
+                legacy_candidates = extract_manual_items(
+                    existing_result['items'], generated_purchase_items)
+                manual_items = extract_legacy_manual_items(
+                    legacy_candidates, result.get('lines') or [])
+            else:
+                manual_candidates = extract_manual_items(
+                    existing_result['items'], previous_generated)
+                if (existing_result.get('generated_items_version') or 1) < 2:
+                    manual_items = extract_legacy_manual_items(
+                        manual_candidates, result.get('lines') or [])
+                else:
+                    manual_items = manual_candidates
 
     # Combine generated items with manual items
-    all_items = result['items'] + manual_items
+    all_items = generated_purchase_items + manual_items
 
-    # Create markdown content. on_hand notes are informational only — they carry
-    # no checkbox, so they never reach Reminders or come back as manual items.
-    on_hand = on_hand_notes(result.get('lines') or []) if use_pantry else []
-    markdown = generate_shopping_list_markdown(week, all_items, on_hand=on_hand)
+    # Inventory matches are informational only — they carry no checkbox, so they
+    # never reach Reminders or come back as manual items. Generation is read-only;
+    # the user verifies each matched product and amount before shopping.
+    lines = result.get('lines') or []
+    inventory_matches = result.get('inventory_matches', []) if use_pantry else []
+    markdown = generate_shopping_list_markdown(
+        week, all_items, inventory_matches=inventory_matches,
+        generated_items=generated_purchase_items)
 
     # Ensure Shopping Lists folder exists
     SHOPPING_LISTS_PATH.mkdir(parents=True, exist_ok=True)
@@ -1003,8 +1058,13 @@ def generate_shopping_list_endpoint():
         'success': True,
         'file': f"Shopping Lists/{filename}",
         'item_count': len(all_items),
-        'generated_count': len(result['items']),
+        'generated_count': len(generated_purchase_items),
         'manual_count': len(manual_items),
+        'inventory_match_count': len(inventory_matches),
+        'inventory_credited_count': sum(
+            1 for line in lines if line.get('status') == 'credited'),
+        'inventory_review_count': sum(
+            1 for line in lines if line.get('status') == 'review'),
         'recipes': result['recipes'],
         'warnings': result.get('warnings', [])
     })
@@ -1025,6 +1085,11 @@ def send_to_reminders_endpoint():
 
     if not week:
         return jsonify({'success': False, 'error': 'No week provided'}), 400
+
+    try:
+        week = parse_iso_week(week)
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
 
     # Parse shopping list
     result = parse_shopping_list_file(week)
@@ -1114,16 +1179,16 @@ def refresh_nutrition():
 @app.route('/refresh', methods=['GET'])
 def refresh_template():
     """Regenerate recipe file with current template, preserving data and notes."""
-    from urllib.parse import unquote
-
     filename = request.args.get('file')
 
     if not filename:
         return error_page("Error: file parameter required"), 400
 
-    # URL-decode the filename
-    filename = unquote(filename)
-    filepath = OBSIDIAN_RECIPES_PATH / filename
+    try:
+        filepath = contained_markdown(OBSIDIAN_RECIPES_PATH, filename)
+    except ValueError as exc:
+        return error_page(f"Error: {exc}"), 400
+    filename = filepath.name
 
     if not filepath.exists():
         return error_page(f"Error: Recipe not found: {filename}"), 404
@@ -1185,16 +1250,16 @@ def refresh_template():
 @app.route('/reprocess', methods=['GET'])
 def reprocess_recipe():
     """Full re-extraction: fetch from YouTube, run through Ollama, regenerate."""
-    from urllib.parse import unquote
-
     filename = request.args.get('file')
 
     if not filename:
         return error_page("Error: file parameter required"), 400
 
-    # URL-decode the filename
-    filename = unquote(filename)
-    filepath = OBSIDIAN_RECIPES_PATH / filename
+    try:
+        filepath = contained_markdown(OBSIDIAN_RECIPES_PATH, filename)
+    except ValueError as exc:
+        return error_page(f"Error: {exc}"), 400
+    filename = filepath.name
 
     if not filepath.exists():
         return error_page(f"Error: Recipe not found: {filename}"), 404
@@ -1553,11 +1618,20 @@ def api_cook_create():
     # why the window is seconds rather than a uniqueness constraint — cooking
     # the same dish twice in a week is legitimate; doing it twice in three
     # seconds is a button that didn't look like it worked.
+    unslotted = not data.get('date') or not data.get('meal')
     existing = serving_ledger.find_recent_duplicate(
         data.get('recipe'), data.get('week'), data.get('date'), data.get('meal'),
-        COOK_DEDUPE_WINDOW_S)
+        COOK_DEDUPE_WINDOW_S, any_slot=unslotted)
     if existing is not None:
         return jsonify(existing), 200
+
+    # Never create an unplaced cook: it would show only in the planner's
+    # Unscheduled tray. A missing meal means dinner; a missing date means the
+    # first free night of that meal in the week (serving_ledger.default_slot).
+    if unslotted and re.match(r'^\d{4}-W\d{2}$', data.get('week') or ''):
+        data['meal'] = data.get('meal') or 'dinner'
+        data['date'] = data.get('date') or serving_ledger.default_slot(
+            data['week'], data['meal'])
 
     # C1: a hand-edited legacy week must be converted (import + backup)
     # BEFORE its first ledger row lands, or the regen below clobbers it.
@@ -1573,7 +1647,39 @@ def api_cook_create():
         notes=data.get('notes'))
     _regen_weeks(cook["week"], _iso_week_of(data["date"]) if data.get("date") else None)
     _sync_cook_history(cook["recipe"])
-    return jsonify(cook), 201
+    return jsonify(_with_dislike_hits(cook, [cook["recipe"]])), 201
+
+
+def _with_dislike_hits(payload: dict, recipes) -> dict:
+    """Attach `dislike_hits` to a placement response when any recipe has one.
+
+    Warn, never block: the row is already committed, and the user may have
+    swapped the ingredient by hand. A deterministic string match against
+    `My Meal System.md` (lib/dislike_guard.py) — no model, so it is safe on a
+    request path. The key is absent when there is nothing to say, so existing
+    clients see an unchanged payload.
+    """
+    from lib import dislike_guard
+    try:
+        hits = dislike_guard.warning_for(recipes)
+    except Exception:
+        hits = []
+    return {**payload, "dislike_hits": hits} if hits else payload
+
+
+def _dislike_banner(recipes) -> str:
+    """HTML warning card for the Obsidian add-to-meal-plan pages; '' if clean."""
+    from html import escape
+    from lib import dislike_guard
+    try:
+        hits = dislike_guard.warning_for(recipes)
+    except Exception:
+        hits = []
+    if not hits:
+        return ''
+    rows = ''.join(f'<li>{escape(h["recipe"])}: {escape(h["item"])}</li>' for h in hits)
+    return (f'<div class="card warn" style="margin:1rem 0"><strong>Heads up — contains something you '
+            f'dislike</strong><ul>{rows}</ul></div>')
 
 
 def _apply_cook_patch(cook_id, data) -> tuple:
@@ -1690,7 +1796,7 @@ def api_bundle_create():
     # the first is the omission the legacy-import path already had reported
     # against it as "I don't see this on the recipe page anywhere".
     _sync_cook_history(*[c["recipe"] for c in bundle["cooks"]])
-    return jsonify(bundle), 201
+    return jsonify(_with_dislike_hits(bundle, [c["recipe"] for c in bundle["cooks"]])), 201
 
 
 @app.route('/api/bundles/<bundle_id>/move', methods=['POST'])
@@ -2118,6 +2224,7 @@ def _render_add_form(recipe_display: str, error: str | None = None) -> str:
 <h2>Add to Meal Plan</h2>
 <div class="recipe-name">{recipe_display}</div>
 {error_html}
+{_dislike_banner([recipe_display])}
 <form method="POST" action="/add-to-meal-plan">
     <input type="hidden" name="recipe" value="{recipe_display}">
 
@@ -2197,13 +2304,15 @@ def _render_add_form(recipe_display: str, error: str | None = None) -> str:
 ''')
 
 
-def _success_page_for_wikilink(wikilink_target: str, day: str, meal: str, week: str) -> str:
+def _success_page_for_wikilink(wikilink_target: str, day: str, meal: str, week: str,
+                               warning: str = '') -> str:
     """Green confirmation card after a slot insert. Works for [[Recipe]] or [[Meal: X]]."""
     from urllib.parse import quote
     encoded_file = quote(f"Meal Plans/{week}", safe='')
     return _html_page("KitchenOS", f'''
 <div class="card ok"><strong>Added!</strong><br>
 [[{wikilink_target}]] &rarr; {day} {meal} ({week})</div>
+{warning}
 <p><a href="obsidian://open?vault={VAULT_NAME}&file={encoded_file}">View Meal Plan</a></p>
 <p><a href="obsidian://open?vault={VAULT_NAME}">Back to Obsidian</a></p>
 ''')
@@ -2312,7 +2421,9 @@ def _schedule_meal_bundle(meal_name: str, week: str, day: str, meal: str):
     _sync_cook_history(*[c["recipe"] for c in bundle["cooks"]])
     # Unchanged confirmation copy: from the user's side this is still "the plate
     # is on Tuesday dinner".
-    return _success_page_for_wikilink(f"Meal: {meal_name}", day, meal, week)
+    return _success_page_for_wikilink(
+        f"Meal: {meal_name}", day, meal, week,
+        warning=_dislike_banner(dict.fromkeys(c["recipe"] for c in bundle["cooks"])))
 
 
 #: Monday-first, matching ISO weekday numbering and the planner's grid.
@@ -2368,7 +2479,8 @@ def _schedule_recipe_directly(recipe: str, week: str, day: str, meal: str):
         date=cook_date, meal=slot, initial_placement_count=1.0)
     _regen_weeks(cook["week"], _iso_week_of(cook_date))
     _sync_cook_history(cook["recipe"])
-    return _success_page_for_wikilink(recipe, day, meal, week)
+    return _success_page_for_wikilink(recipe, day, meal, week,
+                                      warning=_dislike_banner([recipe_name]))
 
 
 @app.route('/add-to-meal-plan', methods=['GET'])
@@ -2447,7 +2559,7 @@ def add_to_meal_plan():
 @app.route('/meal-planner', methods=['GET'])
 def meal_planner():
     """Serve the interactive meal planner board."""
-    html = _serve_page_with_claude_bar('meal_planner.html', [('vault=KitchenOS', f'vault={VAULT_NAME}')])
+    html = _serve_page('meal_planner.html', [('vault=KitchenOS', f'vault={VAULT_NAME}')])
     return html, 200, {'Content-Type': 'text/html'}
 
 
@@ -2476,7 +2588,7 @@ def _render_note_page(subdir: str, week: str, title: str, empty_html: str) -> st
     encoded = quote(f"{subdir}/{week}", safe='')
     obsidian = (f'<a href="obsidian://open?vault={paths.vault_root().name}'
                 f'&file={encoded}">Open in Obsidian ›</a>')
-    return _serve_page_with_claude_bar('note_view.html', [
+    return _serve_page('note_view.html', [
         ('<!--TITLE-->', title),
         ('<!--SUB-->', format_week_heading(week)),
         ('<!--BODY-->', body),
@@ -2724,8 +2836,10 @@ def api_pantry_put():
 def api_shopping_list_preview():
     data = request.get_json(force=True, silent=True) or {}
     week = data.get("week")
-    if not week or not re.match(r'^\d{4}-W\d{2}$', week):
-        return jsonify({"error": "week required (YYYY-WNN)"}), 400
+    try:
+        week = parse_iso_week(week)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     pantry = pantry_module.load_pantry()
     result = generate_shopping_list(week, pantry=pantry if data.get("use_pantry", True) else None)
     return jsonify(result)
@@ -2736,14 +2850,23 @@ def api_shopping_list_confirm():
     data = request.get_json(force=True, silent=True) or {}
     week = data.get("week")
     items = data.get("items_to_buy")
+    inventory_matches = data.get("inventory_matches") or []
     decisions = data.get("decisions") or []
-    if not week or not isinstance(items, list):
+    if not isinstance(items, list):
         return jsonify({"error": "week and items_to_buy required"}), 400
+    if not isinstance(inventory_matches, list):
+        return jsonify({"error": "inventory_matches must be a list"}), 400
+
+    try:
+        week = parse_iso_week(week)
+        out_path = shopping_list_path(SHOPPING_LISTS_PATH, week)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
     SHOPPING_LISTS_PATH.mkdir(parents=True, exist_ok=True)
-    markdown = generate_shopping_list_markdown(week, items)
-    filename = shopping_list_filename(week)
-    out_path = SHOPPING_LISTS_PATH / filename
+    markdown = generate_shopping_list_markdown(
+        week, items, inventory_matches=inventory_matches)
+    filename = out_path.name
     out_path.write_text(markdown, encoding="utf-8")
 
     if decisions:
@@ -2774,6 +2897,31 @@ def api_task_mark_done(week, task_id):
     result = task_extractor.mark_task_done(week, task_id, done)
     status = 200 if result.get("success") else 404
     return jsonify(result), status
+
+
+# ----- Briefing (the kitchen block Selene's 06:00 digest carries) -----
+
+@app.route('/api/briefing/kitchen', methods=['GET'])
+@require_token
+def api_briefing_kitchen():
+    """Today's plate, the next kitchen action, urgent expiry, three suggestions.
+
+    Read-only and cheap by contract: it never regenerates the LLM task sidecar,
+    because the caller is a 06:00 digest that must not hang. Components that
+    cannot be computed are absent and named in ``degraded`` rather than
+    silently missing.
+    """
+    from lib import kitchen_briefing
+
+    raw = request.args.get("date")
+    today = None
+    if raw:
+        try:
+            today = date.fromisoformat(raw)
+        except ValueError:
+            return jsonify({"error": "Invalid date. Expected YYYY-MM-DD"}), 400
+
+    return jsonify(kitchen_briefing.build(today))
 
 
 # ----- Inventory (receipt-to-pantry; same DB table the pantry API adapts) -----
@@ -2827,6 +2975,11 @@ def api_cook_now():
     Returns {recipes: [...]} — see lib/cook_now.generate. Each entry carries a
     `group` (the chip it belongs to); the page filters client-side from this one
     payload, so there is no per-chip round trip and no server-side filtering.
+
+    `limit` caps each chip *group*, not the whole list. The page's chips are a
+    filter over this payload, so every group with cookable recipes must be in
+    it; a global cap taken after the meal-tier weighting left Desserts, Snacks
+    and Drinks with nothing behind their chips (see cook_now.generate).
     """
     from lib import cook_now
 
@@ -2835,7 +2988,7 @@ def api_cook_now():
         limit = 30  # absent or unparseable
     elif limit < 0:
         limit = 0  # clamp instead of slicing from the end
-    return jsonify(cook_now.generate(limit=limit))
+    return jsonify(cook_now.generate(limit=limit, per_group=True))
 
 
 @app.route('/api/cook', methods=['POST'])
@@ -2868,8 +3021,10 @@ def api_inventory_add():
     """Add items to inventory. Body: {items: [{name, quantity, unit, ...}]}."""
     from lib.inventory import (
         InventoryItem, add_items,
-        normalize_category, normalize_location, normalize_source,
+        normalize_category, normalize_location, normalize_location_source,
+        normalize_source, read_inventory, refresh_inventory_views,
     )
+    from lib.expiry import compute_expires
     from lib.storage_locations import place_item
 
     data = request.get_json(force=True, silent=True)
@@ -2879,6 +3034,19 @@ def api_inventory_add():
     raw_items = data['items']
     if not isinstance(raw_items, list) or not raw_items:
         return jsonify({"error": "'items' must be a non-empty array"}), 400
+
+    trip_payload = data.get('trip')
+    if 'trip' in data:
+        if not isinstance(trip_payload, dict):
+            return jsonify({
+                "error": "'trip' must be an object with a non-empty 'source_id'"
+            }), 400
+        source_id = trip_payload.get('source_id')
+        if not isinstance(source_id, str) or not source_id.strip():
+            return jsonify({
+                "error": "'trip' must be an object with a non-empty 'source_id'"
+            }), 400
+        trip_payload = {**trip_payload, 'source_id': source_id.strip()}
 
     # Default on: tag items with the meal-plan recipe they were bought for.
     # Set {"match_plan": false} to skip (e.g. a pure restock).
@@ -2931,19 +3099,16 @@ def api_inventory_add():
                 matches = index.match(it.name)
                 it.for_recipe = ", ".join(matches) if matches else None
 
-    trip_payload = data.get('trip')
     # An all-fee items list is valid when a trip rides along (the ledger still
     # wants the rows) — only 400 when there's nothing to do at all.
     if not parsed and not trip_payload:
         return jsonify({"error": "No valid items provided"}), 400
 
-    result = add_items(parsed) if parsed else {"added": 0, "merged": 0, "total": 0}
-
     # Optional price ledger: a "trip" object turns this add into a recorded
     # shopping trip (photo receipts from the Claude flow). Uses the RAW
     # request dicts so unit_price/line_total survive InventoryItem parsing.
     if trip_payload:
-        from lib.inventory_db import record_trip
+        from lib.inventory_db import record_trip_with_inventory
         from lib.receipt_parser import to_cents
 
         # for_recipe assignments were computed on InventoryItem (by name);
@@ -2968,9 +3133,14 @@ def api_inventory_add():
             for it in raw_items
             if isinstance(it, dict)
         ]
-        # record_trip returns None on a duplicate source_id (same receipt
-        # shared twice) — that's fine, the inventory add still succeeded.
-        record_trip(
+        for item in parsed:
+            if item.expires is None:
+                item.expires = compute_expires(
+                    item.purchased, item.name, item.category
+                )
+            item.location_source = normalize_location_source(item.location_source)
+
+        trip_id, result = record_trip_with_inventory(
             {
                 "date": trip_payload.get('date', ''),
                 "store": trip_payload.get('store', 'HEB'),
@@ -2979,7 +3149,20 @@ def api_inventory_add():
                 "total_cents": to_cents(trip_payload.get('total')),
             },
             purchases,
+            [item.to_dict() for item in parsed],
         )
+        if trip_id is None:
+            result = {
+                "added": 0,
+                "merged": 0,
+                "total": len(read_inventory()),
+            }
+        else:
+            if not parsed:
+                result = {"added": 0, "merged": 0, "total": 0}
+            refresh_inventory_views()
+    else:
+        result = add_items(parsed)
 
     return jsonify({"status": "ok", **result})
 
@@ -3222,70 +3405,6 @@ def api_inventory_bulk():
         "removed": [_serialize_item(i) for i in result["removed"]],
         "not_found": result["not_found"],
     })
-
-
-@app.route('/api/claude-notes', methods=['GET'])
-def api_claude_notes_get():
-    """Return the shared Claude Notes.md body. Ungated, same-origin widget calls this."""
-    from lib.claude_notes import read_notes
-    return jsonify({"notes": read_notes()})
-
-
-@app.route('/api/claude-notes', methods=['POST'])
-def api_claude_notes_post():
-    """Save the shared Claude Notes.md. Body: {notes: str}. Ungated.
-
-    Returns the normalized body actually stored so the widget can re-sync.
-    """
-    from lib.claude_notes import read_notes, write_notes
-
-    data = request.get_json(force=True, silent=True)
-    if not isinstance(data, dict) or 'notes' not in data:
-        return jsonify({"error": "'notes' is required"}), 400
-    if not isinstance(data['notes'], str):
-        return jsonify({"error": "'notes' must be a string"}), 400
-
-    write_notes(data['notes'])
-    return jsonify({"status": "saved", "notes": read_notes()})
-
-
-@app.route('/api/claude-send', methods=['POST'])
-def api_claude_send():
-    """Deliver text to Claude. Body: {text: str}. Ungated, like claude-notes.
-
-    Two outcomes, both success:
-      - a `ko-claude` session is live  -> injected into it, status "sent"
-      - no session                     -> saved as notes, status "queued", and
-                                          the next Launch Claude opens with it
-
-    Ungated for the same reason as /api/claude-notes: this is the same-origin
-    widget on a tailnet-only server, and both endpoints end at the same place —
-    Claude's prompt. Gating one and not the other would be theatre.
-    """
-    from lib.claude_notes import read_notes, write_notes
-    from lib import claude_send
-
-    data = request.get_json(force=True, silent=True)
-    if not isinstance(data, dict) or 'text' not in data:
-        return jsonify({"error": "'text' is required"}), 400
-    if not isinstance(data['text'], str):
-        return jsonify({"error": "'text' must be a string"}), 400
-    if not data['text'].strip():
-        return jsonify({"error": "'text' is empty"}), 400
-
-    # The widget rides on every page, so without this the note loses its subject:
-    # "this has a whole greek yogurt, fix it" arrives with no referent for "this".
-    message = claude_send.compose(
-        data['text'],
-        page=str(data.get('page') or ''),
-        title=str(data.get('title') or ''),
-    )
-
-    if claude_send.send_text(message):
-        return jsonify({"status": "sent"})
-
-    write_notes(message)
-    return jsonify({"status": "queued", "notes": read_notes()})
 
 
 @app.route('/api/receipts/trips', methods=['GET'])
@@ -3653,31 +3772,42 @@ def api_system_health():
 @app.route('/system-health', methods=['GET'])
 def system_health_dashboard():
     """Interactive system health dashboard."""
-    return _serve_page_with_claude_bar('system_health.html')
+    return _serve_page('system_health.html')
 
 
 @app.route('/nutrition-review', methods=['GET'])
 def nutrition_review_page():
     """Human review UI for weak/unresolved nutrition matches."""
-    return _serve_page_with_claude_bar('nutrition_review.html')
+    return _serve_page('nutrition_review.html')
 
 
 @app.route('/review')
 def review_page():
     """Mobile inventory scan/review page: remove or extend expiry per item."""
-    return _serve_page_with_claude_bar('review.html')
+    return _serve_page('review.html')
 
 
 @app.route('/cook-now')
 def cook_now_page():
     """What you could cook right now, filterable by meal type."""
-    return _serve_page_with_claude_bar('cook_now.html')
+    return _serve_page('cook_now.html')
 
 
 @app.route('/receipt-paste', methods=['GET'])
 def receipt_paste_page():
     """Paste a photographed-receipt JSON (from the Claude app), preview, ingest."""
-    return _serve_page_with_claude_bar('receipt_paste.html')
+    return _serve_page('receipt_paste.html')
+
+
+@app.route('/meal-calendar', methods=['GET'])
+def meal_calendar_page():
+    """Read-only agenda of a week's plan: day by day, meal by meal.
+
+    The planner is an editor; this is the glanceable list. It renders client-side
+    from /api/week-board/<week> (``planned_meals``), so it can never disagree
+    with the planner about what is on a day.
+    """
+    return _serve_page('meal_calendar.html'), 200, {'Content-Type': 'text/html'}
 
 
 @app.route('/recent', methods=['GET'])
@@ -3695,7 +3825,7 @@ def recent_page():
     sub = (f"{len(recipes)} most recent · newest "
            f"{kitchen_today.arrival_word(newest, date.today()).lower()}"
            if newest else "nothing extracted yet")
-    html = _serve_page_with_claude_bar('recent.html', [
+    html = _serve_page('recent.html', [
         ('<!--SUB-->', sub),
         ('<!--RECENT-->', kitchen_today.render_recent_html(recipes)),
     ])
@@ -3724,7 +3854,7 @@ def prep_page():
     else:
         sub = "nothing planned for this week yet"
 
-    html = _serve_page_with_claude_bar('prep.html', [
+    html = _serve_page('prep.html', [
         ('<!--SUB-->', sub),
         ('<!--WEEK-->', prep["week"]),
         # Asked here because this is a page you already open in the kitchen. The
@@ -3783,7 +3913,7 @@ def home_page():
 
     today = date.today()
     kicker = f"KitchenOS · {today.strftime('%a %b %-d')}"
-    return _serve_page_with_claude_bar('home.html', [
+    return _serve_page('home.html', [
         ('<!--KICKER-->', kicker),
         # Above the cards: it is one line, it disappears when there is nothing
         # to ask, and it is the only thing on this page that asks the reader for
