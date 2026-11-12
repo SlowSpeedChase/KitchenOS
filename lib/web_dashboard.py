@@ -9,17 +9,17 @@ SECTIONS registry as the HTML fragment served at ``/``, the in-browser counterpa
 to the vault note.
 
 Base URL resolution matches ``templates/recipe_template.py``: the
-``KITCHENOS_API_BASE`` env var, defaulting to the tailnet host. Change the host
+``KITCHENOS_WEB_BASE_URL`` env var, defaulting to the tailnet host. Change the host
 in one place (env) and regenerate.
 """
 
-import os
 from html import escape
 from typing import Optional
 
-# Same default as templates/recipe_template.py — a stable Tailscale MagicDNS
-# hostname, never a raw 100.x IP (IPs churn; MagicDNS names don't).
-DEFAULT_API_BASE = "http://chases-mac-mini.taila69703.ts.net:5001"
+from lib.web_origin import CANONICAL_WEB_ORIGIN, web_origin
+
+# Compatibility export; the shared resolver owns the canonical HTTPS origin.
+DEFAULT_API_BASE = CANONICAL_WEB_ORIGIN
 
 NOTE_FILENAME = "KitchenOS Web.md"
 NOTE_SUBDIR = "Dashboards"
@@ -47,6 +47,9 @@ SECTIONS = [
             ("🍳", "Meal Planner", "/meal-planner",
              "drag recipes onto the week, set cook scale, place servings in "
              "slots / freezer / trash, and read the daily macro totals row"),
+            ("📆", "Meal calendar", "/meal-calendar",
+             "the week as a list — each day's breakfast, lunch, snack and "
+             "dinner, cook days vs leftovers, tap a recipe to open it"),
             ("🥘", "Cook Now", "/cook-now",
              "what you could cook right now, ranked by how much you already "
              "have; filter by meal type to drop desserts"),
@@ -95,8 +98,8 @@ SECTIONS = [
 
 
 def base_url() -> str:
-    """The web base URL for links, from KITCHENOS_API_BASE (tailnet default)."""
-    return os.environ.get("KITCHENOS_API_BASE", DEFAULT_API_BASE).rstrip("/")
+    """The web base URL for links, from KITCHENOS_WEB_BASE_URL (tailnet default)."""
+    return web_origin()
 
 
 def render_markdown(base: Optional[str] = None) -> str:
@@ -129,7 +132,7 @@ def render_markdown(base: Optional[str] = None) -> str:
         "on the recipe note.",
         "",
         "---",
-        f"*Base URL: `{base}` — set `KITCHENOS_API_BASE` and regenerate to "
+        f"*Base URL: `{base}` — set `KITCHENOS_WEB_BASE_URL` and regenerate to "
         "change it.*",
     ]
     return "\n".join(lines) + "\n"

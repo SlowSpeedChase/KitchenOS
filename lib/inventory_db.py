@@ -21,8 +21,12 @@ import json
 import os
 import sqlite3
 import threading
+from contextlib import contextmanager
+from datetime import date
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional, TypeVar
+
+T = TypeVar("T")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS trips (
@@ -169,6 +173,30 @@ def connect(path: Optional[Path] = None) -> sqlite3.Connection:
     return conn
 
 
+@contextmanager
+def write_transaction(conn: sqlite3.Connection | None = None):
+    """Own one immediate write transaction, or borrow the caller's.
+
+    A borrowed connection is already inside its caller's transaction. It must
+    remain open and uncommitted so a larger operation can succeed or roll back
+    as one unit.
+    """
+    if conn is not None:
+        yield conn
+        return
+
+    owned = connect()
+    try:
+        owned.execute("BEGIN IMMEDIATE")
+        yield owned
+        owned.commit()
+    except Exception:
+        owned.rollback()
+        raise
+    finally:
+        owned.close()
+
+
 _read_tls = threading.local()
 
 
@@ -269,69 +297,92 @@ def trip_exists(source_id: str) -> bool:
         conn.close()
 
 
-def record_trip(trip: dict, purchases: list[dict]) -> Optional[int]:
-    """Insert a trip and its purchase lines atomically.
-
-    Returns the new trip id, or None if ``source_id`` already exists
-    (duplicate receipt — nothing is written).
-    """
-    conn = connect()
+def _insert_trip(conn: sqlite3.Connection, trip: dict) -> int | None:
+    """Insert one trip, returning ``None`` only for a duplicate source id."""
     try:
-        with conn:
-            try:
-                cur = conn.execute(
-                    "INSERT INTO trips"
-                    " (date, store, source, source_id, total_cents,"
-                    "  needs_review, raw_text)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        trip["date"],
-                        trip.get("store", "HEB"),
-                        trip["source"],
-                        trip.get("source_id"),
-                        trip.get("total_cents"),
-                        1 if trip.get("needs_review") else 0,
-                        trip.get("raw_text"),
-                    ),
-                )
-            except sqlite3.IntegrityError as e:
-                if "trips.source_id" in str(e):
-                    return None
-                raise
-            trip_id = cur.lastrowid
-            conn.executemany(
-                "INSERT INTO purchases"
-                " (trip_id, raw_name, canonical_name, quantity, unit,"
-                "  unit_price_cents, total_cents, category, for_recipe)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [
-                    (
-                        trip_id,
-                        p["raw_name"],
-                        p["canonical_name"],
-                        p.get("quantity"),
-                        p.get("unit"),
-                        p.get("unit_price_cents"),
-                        p.get("total_cents"),
-                        p.get("category", "other"),
-                        p.get("for_recipe"),
-                    )
-                    for p in purchases
-                ],
+        cur = conn.execute(
+            "INSERT INTO trips"
+            " (date, store, source, source_id, total_cents,"
+            "  needs_review, raw_text)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                trip["date"],
+                trip.get("store", "HEB"),
+                trip["source"],
+                trip.get("source_id"),
+                trip.get("total_cents"),
+                1 if trip.get("needs_review") else 0,
+                trip.get("raw_text"),
+            ),
+        )
+    except sqlite3.IntegrityError as exc:
+        if "trips.source_id" in str(exc):
+            return None
+        raise
+    return cur.lastrowid
+
+
+def _insert_purchases(
+    conn: sqlite3.Connection, trip_id: int, purchases: list[dict]
+) -> None:
+    """Insert every purchase row for a caller-owned trip transaction."""
+    conn.executemany(
+        "INSERT INTO purchases"
+        " (trip_id, raw_name, canonical_name, quantity, unit,"
+        "  unit_price_cents, total_cents, category, for_recipe)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (
+                trip_id,
+                purchase["raw_name"],
+                purchase["canonical_name"],
+                purchase.get("quantity"),
+                purchase.get("unit"),
+                purchase.get("unit_price_cents"),
+                purchase.get("total_cents"),
+                purchase.get("category", "other"),
+                purchase.get("for_recipe"),
             )
+            for purchase in purchases
+        ],
+    )
+
+
+def record_trip(trip: dict, purchases: list[dict]) -> Optional[int]:
+    """Insert a trip and purchases, or return ``None`` for a duplicate."""
+    with write_transaction() as conn:
+        trip_id = _insert_trip(conn, trip)
+        if trip_id is None:
+            return None
+        _insert_purchases(conn, trip_id, purchases)
         return trip_id
-    finally:
-        conn.close()
+
+
+def record_trip_with_inventory(
+    trip: dict, purchases: list[dict], inventory_rows: list[dict]
+) -> tuple[int | None, dict | None]:
+    """Commit a receipt's ledger and stock effects in one transaction."""
+    with write_transaction() as conn:
+        trip_id = _insert_trip(conn, trip)
+        if trip_id is None:
+            return None, None
+        _insert_purchases(conn, trip_id, purchases)
+        result = merge_inventory_rows(inventory_rows, conn=conn)
+        return trip_id, result
+
+
+def _fetch_inventory_rows(conn: sqlite3.Connection) -> list[dict]:
+    rows = conn.execute(
+        f"SELECT {', '.join(_INVENTORY_COLS)} FROM inventory"
+        " ORDER BY category, name COLLATE NOCASE"
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def fetch_inventory_rows() -> list[dict]:
     conn = connect()
     try:
-        rows = conn.execute(
-            f"SELECT {', '.join(_INVENTORY_COLS)} FROM inventory"
-            " ORDER BY category, name COLLATE NOCASE"
-        ).fetchall()
-        return [dict(r) for r in rows]
+        return _fetch_inventory_rows(conn)
     finally:
         conn.close()
 
@@ -388,27 +439,120 @@ _NOT_NULL_FALLBACKS = {
 }
 
 
+def _inventory_row(row: dict) -> dict:
+    """Return a complete row using the same defaults as full replacement."""
+    return {
+        column: (
+            _NOT_NULL_FALLBACKS[column]
+            if row.get(column) is None and column in _NOT_NULL_FALLBACKS
+            else row.get(column)
+        )
+        for column in _INVENTORY_COLS
+    }
+
+
+def _merge_recipe_names(existing: str | None, incoming: str | None) -> str | None:
+    """Union comma-separated recipe names in first-seen order."""
+    names: list[str] = []
+    for source in (existing, incoming):
+        for part in (source or "").split(","):
+            name = part.strip()
+            if name and name not in names:
+                names.append(name)
+    return ", ".join(names) or None
+
+
+def merge_inventory_rows(
+    rows: list[dict], conn: sqlite3.Connection | None = None
+) -> dict:
+    """Add inventory rows atomically, merging on the case-insensitive key."""
+    added = 0
+    merged = 0
+    placeholders = ", ".join("?" * len(_INVENTORY_COLS))
+    upsert = (
+        f"INSERT INTO inventory ({', '.join(_INVENTORY_COLS)})"
+        f" VALUES ({placeholders})"
+        " ON CONFLICT(name, unit, location) DO UPDATE SET"
+        " quantity = inventory.quantity + excluded.quantity,"
+        " purchased = COALESCE(NULLIF(excluded.purchased, ''), inventory.purchased),"
+        " category = CASE WHEN excluded.category <> 'other'"
+        " THEN excluded.category ELSE inventory.category END,"
+        " notes = CASE WHEN inventory.notes = '' AND excluded.notes <> ''"
+        " THEN excluded.notes ELSE inventory.notes END,"
+        " for_recipe = excluded.for_recipe,"
+        " expires = CASE"
+        " WHEN inventory.expires IS NULL THEN excluded.expires"
+        " WHEN excluded.expires IS NULL THEN inventory.expires"
+        " ELSE MIN(inventory.expires, excluded.expires) END,"
+        " location_source = CASE"
+        " WHEN CASE excluded.location_source"
+        " WHEN 'manual' THEN 3 WHEN 'item' THEN 2"
+        " WHEN 'category' THEN 1 ELSE 0 END"
+        " > CASE inventory.location_source"
+        " WHEN 'manual' THEN 3 WHEN 'item' THEN 2"
+        " WHEN 'category' THEN 1 ELSE 0 END"
+        " THEN excluded.location_source ELSE inventory.location_source END"
+    )
+
+    with write_transaction(conn) as transaction:
+        for input_row in rows:
+            row = _inventory_row(input_row)
+            existing = transaction.execute(
+                "SELECT for_recipe FROM inventory"
+                " WHERE name = ? AND unit = ? AND location = ?",
+                (row["name"], row["unit"], row["location"]),
+            ).fetchone()
+
+            if existing is None:
+                if not row["purchased"]:
+                    row["purchased"] = date.today().isoformat()
+                added += 1
+            else:
+                if not row["purchased"]:
+                    row["purchased"] = None
+                merged += 1
+
+            row["for_recipe"] = _merge_recipe_names(
+                existing["for_recipe"] if existing is not None else None,
+                row["for_recipe"],
+            )
+            transaction.execute(
+                upsert, tuple(row[column] for column in _INVENTORY_COLS)
+            )
+
+        total = transaction.execute("SELECT COUNT(*) FROM inventory").fetchone()[0]
+        return {"added": added, "merged": merged, "total": total}
+
+
+def _replace_inventory_rows(conn: sqlite3.Connection, rows: list[dict]) -> None:
+    """Replace inventory rows on a caller-owned transaction."""
+    conn.execute("DELETE FROM inventory")
+    conn.executemany(
+        f"INSERT INTO inventory ({', '.join(_INVENTORY_COLS)})"
+        f" VALUES ({', '.join('?' * len(_INVENTORY_COLS))})",
+        [
+            tuple(_inventory_row(row)[column] for column in _INVENTORY_COLS)
+            for row in rows
+        ],
+    )
+
+
 def replace_inventory_rows(rows: list[dict]) -> None:
     """Overwrite the inventory table with ``rows`` atomically."""
-    conn = connect()
-    try:
-        with conn:
-            conn.execute("DELETE FROM inventory")
-            conn.executemany(
-                f"INSERT INTO inventory ({', '.join(_INVENTORY_COLS)})"
-                f" VALUES ({', '.join('?' * len(_INVENTORY_COLS))})",
-                [
-                    tuple(
-                        _NOT_NULL_FALLBACKS[c]
-                        if r.get(c) is None and c in _NOT_NULL_FALLBACKS
-                        else r.get(c)
-                        for c in _INVENTORY_COLS
-                    )
-                    for r in rows
-                ],
-            )
-    finally:
-        conn.close()
+    with write_transaction() as conn:
+        _replace_inventory_rows(conn, rows)
+
+
+def mutate_inventory_rows(
+    mutator: Callable[[list[dict]], tuple[list[dict], T, bool]],
+) -> tuple[T, bool]:
+    """Read and optionally replace all inventory rows in one write lock."""
+    with write_transaction() as conn:
+        rows = _fetch_inventory_rows(conn)
+        replacement, result, changed = mutator(rows)
+        if changed:
+            _replace_inventory_rows(conn, replacement)
+        return result, changed
 
 
 def stamp_inventory_use(refs: list[tuple[str, str]], when: str) -> int:

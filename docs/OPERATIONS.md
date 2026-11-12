@@ -158,20 +158,43 @@ content hash of `date + total + item names` on `trips.source_id` (source
 .venv/bin/python generate_price_dashboard.py --dry-run   # print markdown without saving
 ```
 
+### Shared home gateway
+
+The public origin is `https://chases-mac-mini.taila69703.ts.net`. DNS, TLS, Caddy, VPN On Demand,
+and recovery procedures live in the shared [gateway runbook](https://github.com/SlowSpeedChase/dotfiles/blob/main/docs/home-web-gateway.md).
+Keep local service/operator probes on `http://localhost:5001`; the Flask
+service remains the gateway's HTTP upstream.
+
+`KITCHENOS_WEB_BASE_URL` wins over deprecated `KITCHENOS_API_BASE`; when
+neither is set, generated links use the canonical origin. Remove a stale
+legacy override or set the new variable before regenerating views. Origins
+accept HTTP(S) and optional root slashes, but no credentials, path, query,
+or fragment. Invalid values fail validation.
+
+After gateway rollout, regenerate the web dashboard, inventory/nutrition
+views, and recipe action links using the existing commands in this runbook.
+`migrate_recipes.py` recognizes the retired localhost, raw Tailscale IP,
+MagicDNS HTTP, and `.local` action origins. Safari sync adds canonical
+bookmarks; its additive policy leaves existing bookmarks intact. These are
+operator rollout steps, not actions performed by the code migration.
+
+The iOS app upgrades only exact known legacy defaults when resolving config;
+custom settings and Keychain credentials survive. macOS keeps localhost.
+
 ### Generate web dashboard (tailnet launcher)
 
 Writes `Dashboards/KitchenOS Web.md` — a tap-anywhere launcher for the web app
 (Meal Planner, Nutrition Review, Inventory Review, System Health, Paste a
-Receipt, current plan/shopping list). Links point at `KITCHENOS_API_BASE`
-(default the Tailscale MagicDNS host
-`http://chases-mac-mini.taila69703.ts.net:5001`), so the note works from any
+Receipt, current plan/shopping list). Links point at `KITCHENOS_WEB_BASE_URL`
+(default the canonical HTTPS origin
+`https://chases-mac-mini.taila69703.ts.net`), so the note works from any
 device on the tailnet, not just localhost on the server. Re-run when the web
 base URL changes **or when `SECTIONS` in `lib/web_dashboard.py` changes**.
 
 ```bash
 .venv/bin/python scripts/generate_web_dashboard.py
 # point it at a different host first, if needed:
-KITCHENOS_API_BASE=http://other-host.taila69703.ts.net:5001 .venv/bin/python scripts/generate_web_dashboard.py
+KITCHENOS_WEB_BASE_URL=https://other-host.example .venv/bin/python scripts/generate_web_dashboard.py
 ```
 
 ### Sync Safari bookmarks
@@ -219,6 +242,17 @@ pass or after editing the profile note.
 
 Skips already-tagged recipes unless `--force`, so it's cheap to re-run. Each
 rewritten note gets a timestamped `.history/` backup.
+
+### Dislike scan
+
+Deterministic check (no model, no tokens) for ingredients listed under
+`**Dislike:**` in `My Meal System.md`. Exits 1 when anything is flagged.
+
+```bash
+.venv/bin/python scripts/scan_dislikes.py              # this week's planned recipes
+.venv/bin/python scripts/scan_dislikes.py 2026-W46 --swaps   # + local Ollama substitute ideas
+.venv/bin/python scripts/scan_dislikes.py --all        # whole library
+```
 
 ### Backfill missing `servings` (review aid)
 
@@ -462,7 +496,9 @@ Two guards worth knowing before you widen its scope:
 
 ## 2. LaunchAgents (all 9)
 
-All 9 agents run as `~/Library/LaunchAgents/com.kitchenos.<name>.plist`, with
+All 9 agents use the labels below. The API can be deployed through the reviewed
+release procedure below; the other jobs follow this legacy installation pattern.
+Agents run as `~/Library/LaunchAgents/com.kitchenos.<name>.plist`, with
 `ops/com.kitchenos.<name>.plist` in the repo as the canonical source —
 **edit the repo copy, then re-copy it to `~/Library/LaunchAgents/` and
 reload**, don't hand-edit the installed copy. General pattern:
@@ -475,6 +511,79 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.<name>.plist
 launchctl unload ~/Library/LaunchAgents/com.kitchenos.<name>.plist
 launchctl load ~/Library/LaunchAgents/com.kitchenos.<name>.plist
 ```
+
+### Reviewed API releases for the shared gateway
+
+The gateway API deployment uses `scripts/deploy_api.py`, independently of the dirty
+primary checkout. **Do not copy feature source into that checkout or install its
+checked-in API plist after switching to this release path.** The other eight jobs
+retain their existing deployment process. This is API-only deployment, not a
+migration of every KitchenOS scheduled workflow.
+
+First complete the [gateway network prerequisites](https://github.com/SlowSpeedChase/dotfiles/blob/main/docs/home-web-gateway.md):
+verify the enabled router reservation, active interface, and split-DNS-only upstreams
+before configuring environments, merging, deploying or activating the gateway.
+Use the exact reviewed/merged commit SHA, from a clean feature or separate release
+checkout. The deployer uses `git archive`; dirty and untracked files are excluded.
+
+Prepare a private external environment file (mode `0600`) without printing it.
+Preserve the existing API token and all unrelated credentials/settings. It must set
+`KITCHENOS_API_TOKEN` to a nonempty value, and explicit absolute paths for
+`KITCHENOS_DB`, `KITCHENOS_VAULT`, `KITCHENOS_STORAGE_TABLE`, and
+`KITCHENOS_ITEM_ALIASES` to the existing data.
+These paths must exist outside the release runtime. Preserve the current storage
+table and learned `config/item_aliases.json` cache in external shared locations
+and configure these paths before staging; do not reset them from repository defaults.
+Ensure API and scheduled receipt jobs use the same shared data paths when migrating
+those files; otherwise keep their existing locations until a coordinated move. Set the canonical `KITCHENOS_WEB_BASE_URL`.
+No deployment step initializes, migrates, copies, or restores the DB or vault.
+
+Run from the reviewed checkout, substituting its full approved SHA and the private
+config path. `stage` creates a separate venv and installs the reviewed requirements;
+it does not start services. Existing requirements are version ranges, so retain the
+created venv with the release for reproducible rollback.
+
+```bash
+reviewed_sha='REPLACE_WITH_FULL_REVIEWED_SHA'
+private_env='/absolute/path/to/private.env'
+python3.11 scripts/deploy_api.py stage --sha "$reviewed_sha" \
+  --python "$(command -v python3.11)" --env-file "$private_env"
+release="$HOME/Library/Application Support/KitchenOS API/releases/$reviewed_sha"
+plutil -lint "$release/api.plist"
+~/Dev/dotfiles/dev/bin/check-agent-names "$release/api.plist"
+# Inspect the candidate's paths and named launcher; never display .env.
+python3.11 scripts/deploy_api.py activate --sha "$reviewed_sha"
+```
+
+Activation checks the release's private configuration, backs up the installed
+`com.kitchenos.api` plist and its load state, then stops only that job and installs
+the release-specific named `KitchenOS · API` shim. It requires `/health` to return
+HTTP 200 with the exact `X-KitchenOS-Release` SHA and a forwarded remote
+`GET /api/recipes` to return HTTP 401 without sending a token. A stale process,
+missing token, or partial bootstrap fails acceptance and restores the previous
+plist/load state. After each stop, the deployer waits for launchd to report the job
+fully removed before loading either the reviewed or rollback plist. The journal and
+rollback data contain paths/SHAs, never secrets.
+The process binds `0.0.0.0:5001`, preserving direct private-network diagnostics.
+
+```bash
+python3.11 scripts/deploy_api.py rollback
+```
+
+Rollback restores the exact saved plist (including the initial dirty-checkout
+launcher), without changing any checkout files. It restores whether the old job
+was loaded. It does not undo application data mutations. If rollback reports an
+incomplete recovery, retain `activation-state.json` and retry after resolving the
+launchd/filesystem failure. Stage/activate/rollback commands serialize on a runtime
+lock. For a subsequent deployment, roll back the existing activation first; this
+first-release tool refuses to overwrite an active recovery baseline.
+
+Changing the responsible executable can require TCC grants against the new shim.
+Check normal API functionality, background-agent names, and any required TCC access
+after approved deployment; a synthetic probe does not establish these. Keep the
+previous runtime, venv and backups through gateway/device/reboot acceptance.
+Run approved artifact generation from this release using the same external config
+only after both canonical gateway origins pass.
 
 ### Launchers (`ops/agents/` and `.venv/bin/`)
 
@@ -595,6 +704,11 @@ Processes YouTube, Instagram, and web recipe URLs from the "Recipies to
 Process" iOS Reminders list. Runs `batch_extract.py` hourly, at `:10` past
 each hour (`RunAtLoad: true`).
 
+Failed URLs remain queued for up to five attempts. After the fifth failure,
+the agent marks the reminder complete and records the item in
+`logs/dead_letter.json`; attempt state lives in `logs/retry_tracker.json`.
+`--dry-run` writes neither file and never changes Reminders.
+
 ```bash
 cp ops/com.kitchenos.batch-extract.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.kitchenos.batch-extract.plist
@@ -664,7 +778,7 @@ launchctl load ~/Library/LaunchAgents/com.kitchenos.calendar-sync.plist
 ```
 
 Output ICS file: `{Obsidian Vault}/meal_calendar.ics`, also served at
-`http://localhost:5001/calendar.ics`.
+`https://chases-mac-mini.taila69703.ts.net/calendar.ics`.
 
 ### com.kitchenos.cleanup-icloud-old
 
@@ -740,6 +854,13 @@ Auto-generates weekly meal plan templates 2 weeks in advance. Runs
 `generate_meal_plan.py` daily at 6:00am. No `RunAtLoad` — reloading the
 agent does not trigger an immediate run, it only fires at the next 6:00am
 `StartCalendarInterval`.
+
+It is also the **daily inventory self-clean**: every run (not only the one
+that creates a new plan file) calls `refresh_inventory_views()` — `prune_expired()`
+(drops perishables more than `PRUNE_GRACE_DAYS` = 3 days past their date) then
+rewrites `Use It Up.md` and `Cook Now.md`. `/system-health → expiry_pruning`
+measures the same threshold. Look for `Aged out N expired item(s)` or
+`inventory self-clean failed` in `logs/meal_plan_generator.log`.
 
 ```bash
 cp ops/com.kitchenos.mealplan.plist ~/Library/LaunchAgents/
@@ -967,83 +1088,16 @@ Management → trust developer.
 
 ---
 
-## 9. Launch Claude from your phone (Termius + tmux)
+## 9. Retired Claude web bridge
 
-Every KitchenOS web page and the top of `Inventory.md` carry a **🤖 Launch Claude**
-button plus a **Notes** box. The button opens an `ssh://$KITCHENOS_SSH_TARGET` link
-(Termius on the phone), SSHes into the mini over Tailscale, and — via an SSH forced
-command — drops you into `claude` running inside a persistent tmux session
-(`ko-claude`), pre-seeded with whatever is in the shared `Claude Notes.md`.
+KitchenOS no longer renders a Launch Claude/Notes widget and does not register
+`/api/claude-send` or `/api/claude-notes`. Do not document or depend on an HTTP,
+tailnet, or page-UI route for those actions.
 
-**Pieces (all in the main checkout):**
-
-- `scripts/kitchenos-claude-launch.sh` — forced-command entrypoint;
-  `tmux new-session -A -s ko-claude` (attach-or-create → survives disconnect).
-- `scripts/kitchenos-claude-run.sh` — runs inside tmux; resolves `Claude Notes.md`
-  via `lib.paths.claude_notes_path()` and `exec claude "$(cat notes)"` (or bare
-  `claude` when notes are empty).
-- `scripts/kitchenos-claude-reset.sh` — `tmux kill-session -t ko-claude`; run it
-  after editing notes so the **next** launch re-seeds from the new notes (an
-  attach-only re-launch keeps the old session, so edited notes don't take effect
-  until you reset).
-- Notes are edited in the web textarea (saved via `POST /api/claude-notes`) or
-  directly in Obsidian as `Claude Notes.md` at the vault root — byte-identical.
-
-```bash
-# Reset the session so the next launch picks up freshly-edited notes:
-/Users/chaseeasterling/Dev/KitchenOS/scripts/kitchenos-claude-reset.sh
-```
-
-### One-time setup
-
-On the mini:
-
-```bash
-brew install tmux
-chmod +x scripts/kitchenos-claude-*.sh   # already +x in git, but confirm
-ssh-keygen -t ed25519 -f ~/.ssh/kitchenos_claude   # dedicated key, no passphrase or one you'll store in Termius
-```
-
-Add the public key to `~/.ssh/authorized_keys` on the mini with a forced command so
-this key can ONLY launch Claude (never a plain shell):
-
-```
-command="/Users/chaseeasterling/Dev/KitchenOS/scripts/kitchenos-claude-launch.sh",no-port-forwarding,no-X11-forwarding ssh-ed25519 AAAA...your-kitchenos_claude.pub
-```
-
-On the phone (Termius): import the `kitchenos_claude` private key; create a host
-**"KitchenOS Claude"** = `chaseeasterling@chases-mac-mini.taila69703.ts.net` presenting
-**only** that key (so the forced command always fires). Connect once to confirm you land
-in `claude` inside tmux. Set `KITCHENOS_SSH_TARGET` in `.env` if the `user@host` differs
-from the default, then restart the API LaunchAgent so pages emit the right link.
-
-Verify the forced command from the mini without the phone — `-i` + `IdentitiesOnly=yes`
-is exactly what Termius does. A forced command ignores any command you ask for, so
-without a PTY you get tmux's `open terminal failed: not a terminal`, which is itself
-proof the entry fired:
-
-```bash
-ssh -i ~/.ssh/kitchenos_claude -o IdentitiesOnly=yes \
-  chaseeasterling@chases-mac-mini.taila69703.ts.net 'echo NOT_FORCED'
-```
-
-**Caveats:** iOS routing of `ssh://` → Termius isn't guaranteed across versions — the
-saved Termius host is the reliable entry, the button is convenience. `claude` needs it
-on PATH under a non-login shell; `kitchenos-claude-run.sh` sources `~/.zprofile` and
-prepends Homebrew dirs. tmux/claude need a PTY (Termius interactive default).
-
-**The username must be a real account on the mini.** sshd prompts for a password for an
-account that doesn't exist and then rejects every attempt — indistinguishable from a
-wrong password. The button shipped as `chase@` (borrowed from the `debian` host block in
-`~/.ssh/config`) against a machine whose only account is `chaseeasterling`, so it read as
-"the button won't take my password" for months rather than as an error.
-
-**The forced command is bound to the key, not the host.** Clicking the button on the mini
-itself uses the default `~/.ssh/id_ed25519`, not `kitchenos_claude`, so it lands in an
-ordinary login shell — type `claude` yourself, or run the reset script and use the phone.
-Making a local click land in Claude too would need a client-side `~/.ssh/config` block
-pinning `IdentityFile ~/.ssh/kitchenos_claude` + `IdentitiesOnly yes` for that MagicDNS
-name; deliberately not done, since that hijacks every ssh to that name.
+`lib/claude_notes.py` and `lib/claude_send.py` remain dormant, unregistered
+implementation modules with their unit tests. They are not a server interface;
+keep them that way unless a separately reviewed feature defines an authenticated
+surface and its operating contract.
 
 ## 10. Completing work
 

@@ -133,3 +133,36 @@ def test_prompt_context_is_bounded(vault):
     """Injected into every suggestion prompt, so it cannot grow without limit."""
     ctx = prof.load_profile().prompt_context(max_chars=200)
     assert len(ctx) <= 200
+
+
+# --- dislikes: the one structural consumer of "Vegetables built into meals" ---
+
+def _profile(body: str):
+    return prof.Profile(prose=body)
+
+
+def test_dislikes_reads_the_dislike_bullet():
+    p = _profile(
+        "## Vegetables built into meals\n\n"
+        "- **Dislike:** Bell pepper. Exclude bell peppers from suggested meals. "
+        "Do not infer that all other peppers are disliked.\n"
+        "- **Standing preference:** Hide vegetables.\n")
+    assert p.dislikes() == ["bell pepper"]
+
+
+def test_dislikes_splits_lists_and_spelling_alternatives():
+    p = _profile(
+        "## Vegetables built into meals\n\n"
+        "- **Dislikes:** Bell peppers, pepperoncini/peperoncini. Exclude them.\n")
+    assert p.dislikes() == ["bell pepper", "pepperoncini", "peperoncini"]
+
+
+def test_dislikes_tolerates_rewording_and_parentheses():
+    p = _profile(
+        "## Veg I build into meals\n\n"
+        "- **Dislike**: bell pepper and pepperoncini (peperoncini) — never suggest these\n")
+    assert p.dislikes() == ["bell pepper", "pepperoncini", "peperoncini"]
+
+
+def test_dislikes_empty_when_no_bullet():
+    assert _profile("## Vegetables built into meals\n\n- Eat more.\n").dislikes() == []

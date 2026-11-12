@@ -78,6 +78,9 @@ def _cook_card(items: list, recipe_index: list, today: date) -> Card:
         items=items, recipe_index=recipe_index, today=today, limit=60
     ).get("recipes", [])
 
+    # Deliberately not gated on all_staples: this card asks "what *could* I
+    # cook", so a demoted all-staples recipe (pasta dough) still counts as
+    # ready here even though cook_now ranks it near the bottom.
     ready = [r for r in ranked if (r.get("coverage") or 0) >= 1.0]
     if ready:
         line = f"{_plural(len(ready), 'recipe')} need nothing you don't have"

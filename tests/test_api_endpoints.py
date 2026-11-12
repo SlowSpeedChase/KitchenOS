@@ -1,6 +1,7 @@
 """Tests for API endpoints."""
 
 import os
+from unittest.mock import patch
 
 import pytest
 from api_server import app
@@ -36,6 +37,70 @@ def test_send_to_reminders_requires_week(client):
     assert response.status_code == 400
     data = response.get_json()
     assert "week" in data.get("error", "").lower()
+
+
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        ("/generate-shopping-list", {"week": "../outside"}),
+        ("/send-to-reminders", {"week": "../outside"}),
+        ("/api/shopping-list/preview", {"week": "2026-W54"}),
+        ("/api/shopping-list/confirm", {"week": "../outside", "items_to_buy": []}),
+    ],
+)
+def test_shopping_list_path_escape_is_rejected_without_outside_mutation_or_reminders(
+    client, tmp_path, path, payload
+):
+    """Removing canonical week validation would permit request-controlled file paths."""
+    import api_server
+    import lib.shopping_list_generator
+
+    shopping_lists = tmp_path / "Shopping Lists"
+    shopping_lists.mkdir()
+    outside = tmp_path / "outside.md"
+    original = "outside sentinel\n"
+    outside.write_text(original, encoding="utf-8")
+
+    with patch.object(api_server, "SHOPPING_LISTS_PATH", shopping_lists), \
+         patch.object(lib.shopping_list_generator, "SHOPPING_LISTS_PATH", shopping_lists), \
+         patch("lib.reminders.add_to_reminders") as add_to_reminders:
+        response = client.post(path, json=payload)
+
+    assert response.status_code == 400
+    assert "week required (yyyy-wnn)" in response.get_json()["error"].lower()
+    assert outside.read_text(encoding="utf-8") == original
+    add_to_reminders.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        ("/generate-shopping-list", {"week": 1}),
+        ("/send-to-reminders", {"week": 1}),
+        ("/api/shopping-list/preview", {"week": 1}),
+        ("/api/shopping-list/confirm", {"week": 1, "items_to_buy": []}),
+    ],
+)
+def test_shopping_list_rejects_non_string_week_without_side_effects(client, tmp_path, path, payload):
+    """Removing the type check would turn malformed JSON into a route 500."""
+    import api_server
+    import lib.shopping_list_generator
+
+    shopping_lists = tmp_path / "Shopping Lists"
+    shopping_lists.mkdir()
+    outside = tmp_path / "outside.md"
+    original = "outside sentinel\n"
+    outside.write_text(original, encoding="utf-8")
+
+    with patch.object(api_server, "SHOPPING_LISTS_PATH", shopping_lists), \
+         patch.object(lib.shopping_list_generator, "SHOPPING_LISTS_PATH", shopping_lists), \
+         patch("lib.reminders.add_to_reminders") as add_to_reminders:
+        response = client.post(path, json=payload)
+
+    assert response.status_code == 400
+    assert "week required (yyyy-wnn)" in response.get_json()["error"].lower()
+    assert outside.read_text(encoding="utf-8") == original
+    add_to_reminders.assert_not_called()
 
 
 def test_suggest_meal_requires_fields(client):
@@ -120,72 +185,16 @@ def test_review_page_served(client):
     assert b'Inventory Review' in response.data
 
 
-def test_claude_notes_get_empty(client, tmp_vault):
-    """GET /api/claude-notes on a fresh vault returns empty notes."""
-    response = client.get('/api/claude-notes')
-    assert response.status_code == 200
-    data = response.get_json()
-    assert data == {"notes": ""}
-
-
-def test_claude_notes_save_and_get(client, tmp_vault):
-    """POST /api/claude-notes saves, returns normalized body, then GET retrieves it."""
+def test_claude_notes_routes_are_absent_and_leave_notes_untouched(client, tmp_vault):
+    """Disabled bridge routes cannot read or mutate the dormant note."""
     from lib.paths import claude_notes_path
 
-    # Save notes
-    response = client.post('/api/claude-notes', json={"notes": "buy milk"})
-    assert response.status_code == 200
-    data = response.get_json()
-    assert data["status"] == "saved"
-    assert data["notes"] == "buy milk\n"
+    sentinel = b"Keep this Claude Notes sentinel byte-for-byte.\n"
+    claude_notes_path().write_bytes(sentinel)
 
-    # Verify file exists with correct content
-    assert claude_notes_path().exists()
-    assert claude_notes_path().read_text(encoding="utf-8") == "buy milk\n"
-
-    # Verify GET retrieves it
-    response = client.get('/api/claude-notes')
-    assert response.status_code == 200
-    data = response.get_json()
-    assert data["notes"] == "buy milk\n"
-
-
-def test_claude_notes_post_missing_key(client, tmp_vault):
-    """POST /api/claude-notes without 'notes' key returns 400."""
-    response = client.post('/api/claude-notes', json={})
-    assert response.status_code == 400
-    data = response.get_json()
-    assert "notes" in data.get("error", "").lower()
-
-
-def test_claude_notes_post_non_string(client, tmp_vault):
-    """POST /api/claude-notes with non-string 'notes' value returns 400."""
-    response = client.post('/api/claude-notes', json={"notes": 123})
-    assert response.status_code == 400
-    data = response.get_json()
-    assert "string" in data.get("error", "").lower()
-
-
-def test_claude_notes_post_empty_clears(client, tmp_vault):
-    """Saving empty string clears the notes."""
-    from lib.paths import claude_notes_path
-
-    # Save some notes
-    client.post('/api/claude-notes', json={"notes": "hello"})
-    assert claude_notes_path().read_text(encoding="utf-8") == "hello\n"
-
-    # Clear with empty string
-    response = client.post('/api/claude-notes', json={"notes": ""})
-    assert response.status_code == 200
-    data = response.get_json()
-    assert data["status"] == "saved"
-    assert data["notes"] == ""
-
-    # Verify it's cleared
-    response = client.get('/api/claude-notes')
-    assert response.status_code == 200
-    data = response.get_json()
-    assert data["notes"] == ""
+    assert client.get('/api/claude-notes').status_code == 404
+    assert client.post('/api/claude-notes', json={"notes": "replace me"}).status_code == 404
+    assert claude_notes_path().read_bytes() == sentinel
 
 
 def _bulk_seed(client, name, unit, location, category="produce"):
@@ -509,6 +518,8 @@ def test_recipe_card_renders_grid(client, tmp_vault, monkeypatch):
     assert "recipe-grid" in body            # the matrix table rendered
     assert "Serves" in body and "protein" in body  # macro/servings header
     assert "AI-suggested" in body           # honest review banner
+    assert "/static/print-action.js" in body
+    assert 'data-print-action' in body
 
 
 def test_recipe_card_missing_returns_404(client, tmp_path, monkeypatch):
@@ -535,9 +546,30 @@ def test_print_week_page_renders(client, tmp_vault):
     response = client.get('/print/week?week=2026-W31')
     assert response.status_code == 200
     body = response.get_data(as_text=True)
+    assert "https://chases-mac-mini.taila69703.ts.net/recipe-card/Beef%20Bowl" in body
     assert "week-grid" in body
     assert "Shopping list" in body and "Get ahead" in body
     assert "Print this week" in body  # the on-screen print button
+    assert "/static/print-action.js" in body
+    assert 'data-print-action' in body
+
+
+def test_print_week_recipes_toggle(client, tmp_vault):
+    """?recipes=1 appends the full recipe; without it the page has only the toggle."""
+    recipes = tmp_vault / "Recipes"; recipes.mkdir(parents=True, exist_ok=True)
+    (recipes / "Beef Bowl.md").write_text(
+        '---\ntitle: "Beef Bowl"\nservings: 2\n---\n# Beef Bowl\n\n## Ingredients\n\n'
+        '| Amount | Unit | Ingredient |\n|---|---|---|\n| 1 | lb | ground beef |\n\n'
+        '## Instructions\n\n1. Brown the beef.\n')
+    plans = tmp_vault / "Meal Plans"; plans.mkdir(parents=True, exist_ok=True)
+    (plans / "2026-W31.md").write_text("## Monday (Jul 27)\n\n### dinner\n[[Beef Bowl]]\n\n")
+
+    off = client.get('/print/week?week=2026-W31').get_data(as_text=True)
+    assert 'id="include-recipes"' in off
+    assert "Brown the beef." not in off
+
+    on = client.get('/print/week?week=2026-W31&recipes=1').get_data(as_text=True)
+    assert "Brown the beef." in on and "ground beef" in on
 
 
 def test_print_week_invalid_week_400(client):
@@ -567,8 +599,8 @@ def test_plan_week_page_planned(client, tmp_vault):
     assert response.status_code == 200
     body = response.get_data(as_text=True)
     assert "Plan your week" in body
-    assert "/meal-planner?week=2026-W31" in body
-    assert "/print/week?week=2026-W31" in body
+    assert "https://chases-mac-mini.taila69703.ts.net/meal-planner?week=2026-W31" in body
+    assert "https://chases-mac-mini.taila69703.ts.net/print/week?week=2026-W31" in body
 
 
 def test_plan_week_unplanned_is_empty_state_not_404(client, tmp_vault):
@@ -887,7 +919,7 @@ def test_generate_shopping_list_omits_what_you_already_have(
 
 def test_generate_shopping_list_annotates_what_it_credited(
         client, tmp_vault, tmp_path, monkeypatch):
-    """Credited stock is named under 'Already have' — omitted, not silently vanished."""
+    """Credited stock is visible as an inventory match, not silently omitted."""
     from lib import pantry as pantry_module
 
     lists = _plan_and_recipe(tmp_path, monkeypatch, [
@@ -899,12 +931,218 @@ def test_generate_shopping_list_annotates_what_it_credited(
     client.post('/generate-shopping-list', json={"week": "2026-W31"})
     written = (lists / "2026-W31.md").read_text()
 
-    assert "## Already have" in written
-    assert "brown sugar — in stock, 1 cup needed" in written
+    assert "## Inventory matches — verify" in written
+    assert "1 cup brown sugar → brown sugar (5 cup) — exact match; enough recorded" in written
+
+
+def test_generate_shopping_list_splits_inventory_matches_from_purchase_items(
+        client, tmp_vault, tmp_path, monkeypatch):
+    from lib import pantry as pantry_module
+    from lib.shopping_list_generator import parse_shopping_list_file
+
+    lists = _plan_and_recipe(tmp_path, monkeypatch, [
+        {"amount": "0.33", "unit": "cup", "item": "shelled pistachios"},
+        {"amount": "1", "unit": "cup", "item": "flour"},
+    ])
+    monkeypatch.setattr(pantry_module, "load_pantry", lambda: [
+        {"item": "Pistachios", "amount": "1", "unit": "ct"},
+    ])
+
+    response = client.post('/generate-shopping-list', json={"week": "2026-W31"})
+    assert response.status_code == 200
+    written = (lists / "2026-W31.md").read_text()
+
+    assert "- [ ] 1 cup flour" in written
+    assert "- [ ] 0.33 cup shelled pistachios" not in written
+    assert "## Inventory matches — verify" in written
+    assert "0.33 cup shelled pistachios → Pistachios (1 ct)" in written
+    assert parse_shopping_list_file("2026-W31")["items"] == ["1 cup flour"]
+    assert response.get_json()["generated_count"] == 1
+    assert response.get_json()["inventory_match_count"] == 1
+
+
+def test_preview_and_confirm_preserve_purchase_match_split(
+        client, tmp_vault, tmp_path, monkeypatch):
+    """Planner confirmation writes only purchases as Reminders checkboxes."""
+    import api_server
+    from lib import pantry as pantry_module
+
+    lists = _plan_and_recipe(tmp_path, monkeypatch, [
+        {"amount": "1", "unit": "cup", "item": "flour"},
+        {"amount": "0.33", "unit": "cup", "item": "shelled pistachios"},
+    ])
+    monkeypatch.setattr(api_server, "SHOPPING_LISTS_PATH", lists)
+    monkeypatch.setattr(pantry_module, "load_pantry", lambda: [
+        {"item": "Pistachios", "amount": "1", "unit": "ct"},
+    ])
+
+    preview = client.post('/api/shopping-list/preview', json={
+        "week": "2026-W31", "use_pantry": True,
+    }).get_json()
+    assert preview["items"] == ["1 cup flour"]
+    assert preview["purchase_items"] == preview["items"]
+
+    response = client.post('/api/shopping-list/confirm', json={
+        "week": "2026-W31",
+        "items_to_buy": preview["purchase_items"],
+        "inventory_matches": preview["inventory_matches"],
+        "decisions": [],
+    })
+    assert response.status_code == 200
+    written = (lists / "2026-W31.md").read_text()
+    assert "- [ ] 1 cup flour" in written
+    assert "- [ ] 0.33 cup shelled pistachios" not in written
+    assert "0.33 cup shelled pistachios → Pistachios (1 ct)" in written
+
+
+def test_confirm_rejects_non_list_inventory_matches(client):
+    response = client.post('/api/shopping-list/confirm', json={
+        "week": "2026-W31", "items_to_buy": [], "inventory_matches": "bad",
+    })
+    assert response.status_code == 400
+    assert "inventory_matches must be a list" in response.get_json()["error"]
+
+
+def test_preview_alias_decision_decrements_the_matched_inventory_row(
+        client, tmp_vault, tmp_path, monkeypatch):
+    """Recipe aliases must spend the concrete row named by the preview."""
+    import api_server
+    from lib import pantry as pantry_module
+
+    lists = _plan_and_recipe(tmp_path, monkeypatch, [
+        {"amount": "1", "unit": "cup", "item": "mayonnaise"},
+    ])
+    monkeypatch.setattr(api_server, "SHOPPING_LISTS_PATH", lists)
+    pantry_rows = [{"item": "mayo", "amount": "2", "unit": "cup"}]
+    monkeypatch.setattr(pantry_module, "load_pantry",
+                        lambda: [dict(row) for row in pantry_rows])
+    saved = []
+    monkeypatch.setattr(pantry_module, "save_pantry",
+                        lambda rows: saved.extend(rows))
+
+    preview = client.post('/api/shopping-list/preview', json={
+        "week": "2026-W31", "use_pantry": True,
+    }).get_json()
+    line = preview["lines"][0]
+    assert line["matched_inventory"]["item"] == "mayo"
+
+    response = client.post('/api/shopping-list/confirm', json={
+        "week": "2026-W31",
+        "items_to_buy": [],
+        "inventory_matches": preview["inventory_matches"],
+        "decisions": [{
+            "item": line["matched_inventory"]["item"],
+            "amount": line["from_pantry"]["amount"],
+            "unit": line["from_pantry"]["unit"],
+        }],
+    })
+
+    assert response.status_code == 200
+    assert saved == [{"item": "mayo", "amount": "1", "unit": "cup"}]
+
+
+def test_regeneration_does_not_resurrect_old_generated_credits_or_exclusions(
+        client, tmp_vault, tmp_path, monkeypatch):
+    """A legacy generated checkbox is not a manual item just because it vanishes."""
+    from lib import pantry as pantry_module
+
+    lists = _plan_and_recipe(tmp_path, monkeypatch, [
+        {"amount": "1", "unit": "cup", "item": "brown sugar"},
+        {"amount": "2", "unit": "cup", "item": "water"},
+    ])
+    (lists / "2026-W31.md").write_text(
+        "# Shopping List\n\n## Items\n\n"
+        "- [ ] 1 cup brown sugar\n"
+        "- [ ] 2 cups water\n"
+        "- [ ] aluminum foil\n"
+    )
+    monkeypatch.setattr(pantry_module, "load_pantry", lambda: [
+        {"item": "brown sugar", "amount": "5", "unit": "cup"},
+    ])
+
+    response = client.post('/generate-shopping-list', json={"week": "2026-W31"})
+    assert response.status_code == 200
+    written = (lists / "2026-W31.md").read_text()
+
+    buy_lines = [line for line in written.splitlines() if line.startswith("- [ ] ")]
+    assert buy_lines == ["- [ ] aluminum foil"]
+    assert "1 cup brown sugar → brown sugar (5 cup) — exact match; enough recorded" in written
+
+
+def test_regeneration_semantically_cleans_stale_items_misclassified_by_metadata(
+        client, tmp_vault, tmp_path, monkeypatch):
+    from lib import pantry as pantry_module
+    from templates.shopping_list_template import generate_shopping_list_markdown
+
+    lists = _plan_and_recipe(tmp_path, monkeypatch, [
+        {"amount": "3", "unit": "each", "item": "eggs"},
+        {"amount": "1", "unit": "whole", "item": "protein powder"},
+    ])
+    legacy_note = generate_shopping_list_markdown(
+        "2026-W31",
+        ["2 cts eggs", "5 one scoop protein powder", "aluminum foil"],
+        generated_items=[],  # reproduces a bad first-migration snapshot
+    ).replace("kitchenos-generated-items-v2:", "kitchenos-generated-items:")
+    (lists / "2026-W31.md").write_text(legacy_note)
+    monkeypatch.setattr(pantry_module, "load_pantry", lambda: [])
+
+    response = client.post('/generate-shopping-list', json={"week": "2026-W31"})
+    assert response.status_code == 200
+    written = (lists / "2026-W31.md").read_text()
+    buy_lines = [line for line in written.splitlines() if line.startswith("- [ ] ")]
+
+    assert "- [ ] aluminum foil" in buy_lines
+    assert "- [ ] 2 cts eggs" not in buy_lines
+    assert "- [ ] 5 one scoop protein powder" not in buy_lines
+
+
+def test_versioned_provenance_preserves_manual_extra_of_a_generated_ingredient(
+        client, tmp_vault, tmp_path, monkeypatch):
+    from lib import pantry as pantry_module
+    from templates.shopping_list_template import generate_shopping_list_markdown
+
+    lists = _plan_and_recipe(tmp_path, monkeypatch, [
+        {"amount": "4", "unit": "cup", "item": "flour"},
+    ])
+    (lists / "2026-W31.md").write_text(generate_shopping_list_markdown(
+        "2026-W31",
+        ["4 cups flour", "1 cup flour"],
+        generated_items=["4 cups flour"],
+    ))
+    monkeypatch.setattr(pantry_module, "load_pantry", lambda: [])
+
+    response = client.post('/generate-shopping-list', json={"week": "2026-W31"})
+    assert response.status_code == 200
+    assert response.get_json()["manual_count"] == 1
+    written = (lists / "2026-W31.md").read_text()
+    assert "- [ ] 4 cups flour" in written
+    assert "- [ ] 1 cup flour" in written
+
+
+def test_unversioned_provenance_preserves_manual_quantity_variant(
+        client, tmp_vault, tmp_path, monkeypatch):
+    from lib import pantry as pantry_module
+
+    lists = _plan_and_recipe(tmp_path, monkeypatch, [
+        {"amount": "4", "unit": "cup", "item": "flour"},
+    ])
+    (lists / "2026-W31.md").write_text(
+        "# Shopping List\n\n## Items\n\n"
+        "- [ ] 4 cups flour\n"
+        "- [ ] 1 cup flour\n"
+    )
+    monkeypatch.setattr(pantry_module, "load_pantry", lambda: [])
+
+    response = client.post('/generate-shopping-list', json={"week": "2026-W31"})
+    assert response.status_code == 200
+    written = (lists / "2026-W31.md").read_text()
+    assert "- [ ] 4 cups flour" in written
+    assert "- [ ] 1 cup flour" in written
+    assert response.get_json()["manual_count"] == 1
 
 
 def test_credited_items_are_not_checkboxes(client, tmp_vault, tmp_path, monkeypatch):
-    """The 'Already have' notes must never be `- [ ]` lines.
+    """Inventory-match notes must never be `- [ ]` lines.
 
     parse_shopping_list_file collects every unchecked box in the file regardless
     of section, so a checkbox here would be sent to Reminders as something to buy
@@ -930,7 +1168,7 @@ def test_credited_items_are_not_checkboxes(client, tmp_vault, tmp_path, monkeypa
     # ...and regenerating must not resurrect it as a manual addition
     client.post('/generate-shopping-list', json={"week": "2026-W31"})
     written = (lists / "2026-W31.md").read_text()
-    assert written.count("brown sugar") == 1
+    assert len([line for line in written.splitlines() if "brown sugar" in line]) == 1
 
 
 def test_generate_shopping_list_never_decrements_inventory(
@@ -973,7 +1211,7 @@ def test_generate_shopping_list_use_pantry_false_keeps_raw_demand(
     written = (lists / "2026-W31.md").read_text()
 
     assert "- [ ] 1 cup brown sugar" in written
-    assert "## Already have" not in written
+    assert "## Inventory matches — verify" not in written
 
 
 # ---- Discoverability: the board and the review page explain themselves ----

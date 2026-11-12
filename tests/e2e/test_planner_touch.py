@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.e2e._weeks import unique_week
+
 pytestmark = pytest.mark.e2e
 
 # The only iPads this is used on are the 11" and 13" — point sizes, not pixels.
@@ -78,9 +80,17 @@ MEASURE_JS = """
 """ % TAP_FLOOR
 
 
-def _open(page, live_server, viewport):
+def _open(page, live_server, viewport, week=None):
+    """Open the planner in touch mode; on `week` when given, else the current one.
+
+    The e2e vault is a *copy of the live one*, so the current week holds
+    whatever is really planned. Geometry tests want that (real cards are the
+    realistic case); anything that asserts a slot is empty, or places a cook,
+    must own its week via unique_week().
+    """
     page.set_viewport_size(viewport)
-    page.goto(live_server.url("/meal-planner?touch=1"), wait_until="domcontentloaded")
+    url = "/meal-planner?touch=1" + (f"&week={week}" if week else "")
+    page.goto(live_server.url(url), wait_until="domcontentloaded")
     page.wait_for_selector(".recipe-card")
     page.wait_for_selector(".grid-cell")
 
@@ -158,9 +168,7 @@ class TestShelf:
         any earlier test that placed a cook would otherwise silently change the
         answer depending on run order.
         """
-        page.set_viewport_size(viewport)
-        page.goto(live_server.url("/meal-planner?touch=1&week=2030-W20"),
-                  wait_until="domcontentloaded")
+        _open(page, live_server, viewport, week=unique_week(12)[0])
         page.wait_for_selector(".recipe-card")
         page.wait_for_selector(".grid-cell")
         state = page.evaluate("""() => {
@@ -229,13 +237,18 @@ class TestTapToAssign:
         """Also pins display-vs-identity: cards render `short_title` when a recipe
         has one, but the cook is created under the real `name` — that is what
         `cooks.recipe`, the meal plan and the task-ID hash are all keyed on."""
-        _open(page, live_server, IPAD_PORTRAIT)
+        # Own the week: this places a cook, and it needs Thursday dinner empty.
+        # On the current week that was true only until a real Thursday dinner
+        # got planned — which is how this test first failed.
+        week, _ = unique_week(14)
+        _open(page, live_server, IPAD_PORTRAIT, week=week)
         card = page.locator("#recipe-list .recipe-card").first
         name = card.get_attribute("data-name")
         shown = card.locator(".recipe-name").inner_text().strip()
 
         cell = page.locator('.grid-cell[data-day="Thursday"][data-meal="dinner"]')
-        assert cell.locator(".grid-card").count() == 0, "starting from an empty slot"
+        assert cell.locator(".grid-card").count() == 0, (
+            f"starting from an empty slot — {week} should hold no cooks")
 
         card.click()
         page.wait_for_selector("#assign-bar:not([hidden])")
@@ -255,7 +268,8 @@ class TestTapToAssign:
         assert page_errors == []
 
     def test_the_armed_state_says_where_it_can_go(self, live_server, page):
-        _open(page, live_server, IPAD_PORTRAIT)
+        # Asserts on an empty cell's label, so it needs a week with empty cells.
+        _open(page, live_server, IPAD_PORTRAIT, week=unique_week(15)[0])
         assert page.locator(".grid-cell .empty-label").first.inner_text().strip() == "+"
         page.locator("#recipe-list .recipe-card").first.click()
         page.wait_for_selector("#assign-bar:not([hidden])")
@@ -272,7 +286,7 @@ class TestTapToAssign:
         assert page.locator(".recipe-card.armed").count() == 0
 
     def test_escape_and_cancel_both_disarm(self, live_server, page):
-        _open(page, live_server, IPAD_PORTRAIT)
+        _open(page, live_server, IPAD_PORTRAIT, week=unique_week(16)[0])
         card = page.locator("#recipe-list .recipe-card").first
 
         card.click()
@@ -308,12 +322,10 @@ class TestTapToAssign:
         cell click only reaches the handler when the tap lands on empty space.
         """
         page.set_viewport_size(IPAD_PORTRAIT)
-        page.goto(live_server.url("/meal-planner?touch=1&week=2030-W20"),
-                  wait_until="domcontentloaded")
-        page.wait_for_selector(".recipe-card")
-        page.wait_for_selector(".grid-cell")
+        week, _ = unique_week(13)
+        _open(page, live_server, IPAD_PORTRAIT, week=week)
         assert page.locator(".grid-cell.has-card").count() == 0, (
-            "this test needs an empty week — 2030-W20 should have no cooks")
+            f"this test needs an empty week — {week} should have no cooks")
         page.evaluate("""() => {
             window.__suggestedFor = null;
             window.suggestMeal = (cell) =>

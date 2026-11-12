@@ -56,8 +56,9 @@ from an iOS Reminders list, not through the API.
 
 ## Web/API tier
 
-The API is a **synchronous Flask app** (`api_server.py`) — roughly 60
-`@app.route` handlers spanning recipe CRUD/extraction, meal plans, shopping
+The API is a **synchronous Flask app** (`api_server.py`) — 91
+`@app.route` decorators across 82 unique literal paths (measured from current
+source), spanning recipe CRUD/extraction, meal plans, shopping
 lists, inventory, receipts, the meal planner UI, the serving-ledger board
 (`/api/cooks`, `/api/placements`, `/api/week-board/<week>`), the interactive
 recipe detail page (`/recipe/<name>`, live ingredient scaling), and the
@@ -68,12 +69,24 @@ it. It runs as the `com.kitchenos.api` LaunchAgent on port 5001.
 above) rather than running extraction in-process; most other routes read and
 write the vault and `data/kitchenos.db` directly.
 
-It is exposed off the Mac mini over **Tailscale**
-(`chases-mac-mini.taila69703.ts.net:5001`) for remote callers — the iOS
-Shortcut, MCP server, and the native app. When `KITCHENOS_API_TOKEN` is set,
+The shared **HTTPS home gateway** exposes the public origin
+(`https://chases-mac-mini.taila69703.ts.net`) for remote callers — the iOS
+Shortcut and native iOS app. The local MCP server and macOS app retain
+loopback HTTP. `lib/web_origin.py` resolves every generated public URL from
+`KITCHENOS_WEB_BASE_URL`, legacy `KITCHENOS_API_BASE`, then the canonical
+origin. When `KITCHENOS_API_TOKEN` is set,
 remote (non-localhost) callers of the Siri-facing endpoints (`/api/recipes`,
 `/api/recipes/<name>`, `/api/meal-plan/<week>`, `/api/suggest-meal`) must
 send `Authorization: Bearer <token>`; localhost is always exempt.
+
+The iOS default is the canonical HTTPS origin. `KitchenOSConfig.resolved`
+persists an upgrade only for the exact retired defaults
+`http://100.111.6.10:5001`, `http://chases-mac-mini.taila69703.ts.net:5001`,
+and `http://Chases-Mac-mini.local:5001`; custom endpoints and credentials
+remain unchanged. No multi-origin fallback is added.
+
+Gateway DNS, TLS, Caddy, VPN On Demand, and recovery live in the shared
+[home gateway runbook](https://github.com/SlowSpeedChase/dotfiles/blob/main/docs/home-web-gateway.md).
 
 The browsable pages are phone-first, reached over the tailnet from an iPhone.
 Two modules serve that:
@@ -145,6 +158,31 @@ change (do-not-edit banners included) — the DB, not the markdown, is
 authoritative. Hand edits to those files are silently overwritten on the
 next regeneration.
 
+### Mutation and request-boundary invariants
+
+- Flask has already URL-decoded request values. Recipe paths pass once through
+  `lib.safe_paths.contained_markdown`, which resolves them beneath the configured
+  root; neither routes nor path helpers decode them again.
+- The four shopping-list mutation/preview handlers (`/generate-shopping-list`,
+  `/send-to-reminders`, `/api/shopping-list/preview`, and
+  `/api/shopping-list/confirm`) pass week identifiers through `parse_iso_week`:
+  they must be canonical `YYYY-WNN` values for an actual ISO calendar week, and
+  their filenames are built only by `shopping_list_path` beneath the configured
+  shopping-list root.
+- Additive inventory writes use `BEGIN IMMEDIATE` and transactional merges on the
+  case-insensitive `(name, unit, location)` key. Whole-inventory operations obtain
+  that write lock before reading their complete snapshot, then replace it within
+  the same transaction.
+- `POST /api/inventory/add` accepts an optional `trip` only as an object with a
+  nonempty string `source_id`; malformed trip input is rejected before any write.
+- Receipt ingestion treats a duplicate `trips.source_id` as a successful no-op.
+  A valid receipt commits its trip, purchases, and non-fee inventory merge together;
+  a needs-review receipt intentionally persists its trip and purchases without
+  stock. Generated Inventory/Cook Now views refresh only after a successful stock
+  commit and are serialized so a slower writer cannot publish an older view afterward.
+  The public post-commit refresh boundary catches and logs every ordinary exception
+  so a durable write cannot become retryable because its derived view failed.
+
 ## Receipt → inventory
 
 Items enter inventory via five paths, condensed from `CLAUDE.md`'s
@@ -153,16 +191,18 @@ Items enter inventory via five paths, condensed from `CLAUDE.md`'s
 1. **Email (automatic)** — hourly `receipt-ingest` LaunchAgent fetches HEB
    receipt emails over IMAP, parses with the Claude API
    (`lib/receipt_parser.py`, Opus when `ANTHROPIC_API_KEY` is set else
-   Ollama fallback), validates line totals, records trip + purchases, and
-   updates inventory. Dedup by Gmail Message-ID.
+   Ollama fallback), validates line totals, then commits a valid receipt's ledger
+   and inventory together. A needs-review receipt intentionally stores its ledger
+   without stock. Dedup by Gmail Message-ID is a successful no-op.
 2. **CSA newsletter (automatic)** — `ingest_csa.py` (run at the tail of the
    hourly receipt ingest) parses the weekly Central Texas Farmers Co-op
    "Week N(A/B)" newsletter deterministically and adds the subscriber's
    tier/week produce with `source="csa"`, `purchased` rolled to the
    Wednesday pickup.
 3. **Photo receipt (Claude)** — a shared receipt photo is parsed by Claude,
-   normalized, and posted through `add_to_inventory` — optionally with a
-   `trip` block so photo receipts feed the same price ledger.
+   normalized, and posted through `add_to_inventory` — optionally with a `trip`
+   object carrying a nonempty `source_id`, so photo receipts feed the same price
+   ledger without accepting an unstable dedup key.
 4. **Manual** — `add_to_inventory` via MCP, or `POST /api/inventory/add`
    directly.
 5. **Markdown paste** — a pasted markdown table is preview-then-committed via
@@ -207,6 +247,18 @@ become something the user has to maintain:
   (`lib/meal_suggester.py`) ranks recipes by how much at-risk (expiring)
   inventory they use first, so waste-relevant recipes surface without an
   LLM tiebreak.
+- **Dislikes are a guard, not a prompt.** `lib/dislike_guard.py` matches the
+  `**Dislike:**` bullet of `My Meal System.md` (`Profile.dislikes()`) against a
+  recipe's parsed ingredient rows — word-boundary regexes with plural, hyphen,
+  doubled-letter and accent variants, plus opt-in synonyms (`capsicum` →
+  bell pepper). No model. It is consulted at four points: extraction writes
+  `dislike_hits` frontmatter; the placement APIs return a `dislike_hits`
+  warning; `meal_suggester.exclude_disliked` removes hits from the candidate
+  pool before any tier (including Claude) sees it; and
+  `scripts/scan_dislikes.py` reports a week. "Do not infer that all other
+  peppers are disliked" is pinned by negative tests (flakes, aleppo, urfa,
+  jalapeño). Substitute ideas (`suggest_swaps`) are optional, local Ollama
+  only, `llm_gate`-bounded, and never edit a recipe.
 
 ## Vault taxonomy
 

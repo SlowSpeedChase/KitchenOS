@@ -19,6 +19,7 @@ import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from lib.web_origin import web_origin
 from lib.backup import create_backup
 from lib.recipe_parser import parse_recipe_file, parse_ingredient_table
 from lib.seasonality import match_ingredients_to_seasonal, get_peak_months
@@ -35,6 +36,14 @@ NUTRITION_KEY_RENAMES = {
     'carbs': 'nutrition_carbs',
     'fat': 'nutrition_fat',
 }
+
+
+# Only these retired KitchenOS origins are rewritten in generated recipe actions.
+_LEGACY_ORIGIN = re.compile(
+    r"http://(?:localhost|100\.103\.114\.106|100\.111\.6\.10|"
+    r"chases-mac-mini\.taila69703\.ts\.net|Chases-Mac-mini\.local):5001"
+    r"(?=[/?#\s)]|$)"
+)
 
 
 def rename_nutrition_keys(content: str) -> tuple[str, list[str]]:
@@ -259,14 +268,10 @@ def migrate_recipe_content(content: str, filename: str = None) -> Tuple[str, Lis
         new_content = add_tools_callout(new_content, filename)
         changes.append("Added Tools callout with reprocess buttons")
 
-    # Migrate localhost URLs to MagicDNS hostname
-    if "localhost:5001" in new_content:
-        new_content = new_content.replace("http://localhost:5001", "http://chases-mac-mini.taila69703.ts.net:5001")
-        changes.append("Updated button URLs from localhost to MagicDNS hostname")
-    # Migrate old Tailscale IP to MagicDNS hostname
-    if "100.103.114.106:5001" in new_content:
-        new_content = new_content.replace("http://100.103.114.106:5001", "http://chases-mac-mini.taila69703.ts.net:5001")
-        changes.append("Updated button URLs from Tailscale IP to MagicDNS hostname")
+    # Upgrade known retired origins; arbitrary custom URLs remain unchanged.
+    if _LEGACY_ORIGIN.search(new_content):
+        new_content = _LEGACY_ORIGIN.sub(lambda match: web_origin(), new_content)
+        changes.append("Updated button URLs to the configured public origin")
 
     # Add "Add to Meal Plan" button if Tools callout exists but button is missing
     if has_tools_callout(new_content) and "Add to Meal Plan" not in new_content and filename:
@@ -276,7 +281,7 @@ def migrate_recipe_content(content: str, filename: str = None) -> Tuple[str, Lis
             f'> ```button\n'
             f'> name Add to Meal Plan\n'
             f'> type link\n'
-            f'> action http://chases-mac-mini.taila69703.ts.net:5001/add-to-meal-plan?recipe={encoded_filename}\n'
+            f'> action {web_origin()}/add-to-meal-plan?recipe={encoded_filename}\n'
             f'> ```\n'
         )
         # Insert before the closing of the tools callout (before the blank line after last ```)
@@ -385,7 +390,7 @@ def needs_content_migration(content: str) -> bool:
     Returns True if:
     - There's a 2-column ingredient table that needs conversion
     - Missing Tools callout
-    - Has localhost URLs that need Tailscale IP replacement
+    - Has retired KitchenOS origins that need public-origin replacement
     - Missing 'Add to Meal Plan' button in Tools callout
     """
     # Look for 2-column table header (Amount | Ingredient) without Unit
@@ -394,8 +399,8 @@ def needs_content_migration(content: str) -> bool:
     # Check for missing Tools callout
     if not has_tools_callout(content):
         return True
-    # Check for localhost URLs that need Tailscale IP replacement
-    if "localhost:5001" in content:
+    # Check for retired KitchenOS origins
+    if _LEGACY_ORIGIN.search(content):
         return True
     # Check for missing 'Add to Meal Plan' button
     if has_tools_callout(content) and "Add to Meal Plan" not in content:

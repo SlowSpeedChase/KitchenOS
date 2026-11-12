@@ -38,10 +38,14 @@ from extract_recipe import (
 from main import route_url
 
 RUNS_LOG_DIR = Path(__file__).parent / "logs" / "runs"
+_RETRY_TRACKER_PATH = Path(__file__).parent / "logs" / "retry_tracker.json"
+_DEAD_LETTER_PATH = Path(__file__).parent / "logs" / "dead_letter.json"
 
 # Configuration
 REMINDERS_LIST_NAME = "Recipies to Process"
 DELAY_BETWEEN_VIDEOS = 3  # seconds
+
+MAX_RETRIES = 5
 
 
 def request_reminders_access(store):
@@ -170,7 +174,8 @@ def _cleanup_run_logs(runs_dir: Path, max_age_days: int = 30) -> int:
     return removed
 
 
-def _write_run_log(total, succeeded, skipped, failed, invalid, start_time):
+def _write_run_log(total, succeeded, skipped, failed, invalid, start_time,
+                   dead_lettered=None):
     RUNS_LOG_DIR.mkdir(parents=True, exist_ok=True)
     _cleanup_run_logs(RUNS_LOG_DIR)
     filename = datetime.now().strftime("%Y-%m-%d-%H%M%S") + ".json"
@@ -182,6 +187,7 @@ def _write_run_log(total, succeeded, skipped, failed, invalid, start_time):
         "skipped_duplicate": len(skipped),
         "failed": len(failed),
         "invalid": len(invalid),
+        "dead_lettered": len(dead_lettered) if dead_lettered else 0,
         "invalid_urls": [url for url, _ in invalid],
         "succeeded_urls": succeeded,
     }
@@ -255,6 +261,92 @@ def trigger_analysis_agent(failure_log_path: Path):
         print(f"Warning: Failed to trigger analysis agent: {e}", file=sys.stderr)
 
 
+def _load_retry_tracker() -> dict:
+    try:
+        return json.loads(_RETRY_TRACKER_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_retry_tracker(tracker: dict):
+    _RETRY_TRACKER_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _RETRY_TRACKER_PATH.write_text(
+        json.dumps(tracker, indent=2), encoding="utf-8")
+
+
+def _record_failure(tracker: dict, url: str, error_category: str):
+    entry = tracker.get(url, {"attempts": 0, "last_category": ""})
+    entry["attempts"] = entry["attempts"] + 1
+    entry["last_category"] = error_category
+    entry["last_seen"] = datetime.now().isoformat(timespec="seconds")
+    tracker[url] = entry
+
+
+def _should_dead_letter(tracker: dict, url: str, error_category: str) -> bool:
+    entry = tracker.get(url)
+    if not entry:
+        return False
+    return entry["attempts"] >= MAX_RETRIES
+
+
+def _dead_letter(url: str, title: str, error: str, category: str, attempts: int):
+    try:
+        items = json.loads(_DEAD_LETTER_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        items = []
+    entry = {
+        "url": url,
+        "title": title,
+        "error": error,
+        "error_category": category,
+        "attempts": attempts,
+        "dead_lettered_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    items.append(entry)
+    _DEAD_LETTER_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _DEAD_LETTER_PATH.write_text(
+        json.dumps(items, indent=2), encoding="utf-8")
+    return entry
+
+
+def _rollback_dead_letter(entry: dict):
+    items = json.loads(_DEAD_LETTER_PATH.read_text(encoding="utf-8"))
+    items.remove(entry)
+    if items:
+        _DEAD_LETTER_PATH.write_text(
+            json.dumps(items, indent=2), encoding="utf-8")
+    else:
+        _DEAD_LETTER_PATH.unlink()
+
+
+def _move_to_dead_letter(store, reminder, url: str, title: str, error: str,
+                         category: str, attempts: int, dry_run: bool) -> bool:
+    """Persist the dead letter, then complete the reminder or roll it back."""
+    if dry_run:
+        return True
+    entry = _dead_letter(url, title, error, category, attempts)
+    if not mark_reminder_complete(store, reminder):
+        _rollback_dead_letter(entry)
+        return False
+    return True
+
+
+def _cleanup_failure_logs_for_run(failures_dir: Path, dry_run: bool) -> int:
+    if dry_run:
+        return 0
+    return cleanup_old_failure_logs(failures_dir)
+
+
+def _mark_complete_and_clear_retry(store, reminder, tracker: dict, url: str,
+                                   dry_run: bool) -> bool:
+    if dry_run:
+        return True
+    if not mark_reminder_complete(store, reminder):
+        return False
+    tracker.pop(url, None)
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Batch extract recipes from YouTube URLs in Reminders"
@@ -269,7 +361,7 @@ def main():
 
     # Clean up old failure logs
     failures_dir = Path(__file__).parent / FAILURES_DIR_NAME
-    removed = cleanup_old_failure_logs(failures_dir)
+    removed = _cleanup_failure_logs_for_run(failures_dir, args.dry_run)
     if removed:
         print(f"Cleaned up {removed} old failure log(s)")
 
@@ -312,6 +404,9 @@ def main():
     skipped = []
     failed = []
     invalid = []
+    dead_lettered = []
+
+    retry_tracker = _load_retry_tracker()
 
     # Share-sheet reminders store the shared link as a rich-link attachment that
     # EventKit/AppleScript can't read; recover those URLs from the Reminders
@@ -384,7 +479,8 @@ def main():
 
             # Mark complete (unless dry run)
             if not args.dry_run:
-                if mark_reminder_complete(store, reminder):
+                if _mark_complete_and_clear_retry(
+                        store, reminder, retry_tracker, url, args.dry_run):
                     print("       ✓ Marked complete")
                 else:
                     print("       ⚠ Failed to mark complete")
@@ -392,32 +488,65 @@ def main():
                 print("       ○ Would mark complete")
         else:
             error = result.get("error", "Unknown error")
-            print(f"       → Error: {error}")
-            print("       ✗ Left unchecked (will retry next run)")
             tb = result.get("_traceback", "")
             category = result.get("_error_category", classify_error(error, Exception))
-            failed.append({
-                "url": url,
-                "error": error,
-                "error_category": category,
-                "traceback": tb,
-                "reminder_title": title,
-                "timestamp": datetime.now().isoformat(timespec="seconds"),
-            })
+            _record_failure(retry_tracker, url, category)
+
+            if _should_dead_letter(retry_tracker, url, category):
+                attempts = retry_tracker[url]["attempts"]
+                print(f"       → Error: {error}")
+                moved = _move_to_dead_letter(
+                    store, reminder, url, title, error, category, attempts,
+                    args.dry_run)
+                if moved:
+                    if args.dry_run:
+                        print("       ○ Would mark complete (dead-lettered)")
+                    else:
+                        retry_tracker.pop(url, None)
+                        dead_lettered.append(url)
+                        print(f"       ✗ Dead-lettered after {attempts} attempts")
+                        print("       ✓ Marked complete (dead-lettered)")
+                else:
+                    print("       ⚠ Failed to mark complete; left queued")
+                    failed.append({
+                        "url": url,
+                        "error": error,
+                        "error_category": category,
+                        "traceback": tb,
+                        "reminder_title": title,
+                        "timestamp": datetime.now().isoformat(timespec="seconds"),
+                    })
+            else:
+                attempts = retry_tracker[url]["attempts"]
+                print(f"       → Error: {error}")
+                print(f"       ✗ Left unchecked (attempt {attempts}/{MAX_RETRIES})")
+                failed.append({
+                    "url": url,
+                    "error": error,
+                    "error_category": category,
+                    "traceback": tb,
+                    "reminder_title": title,
+                    "timestamp": datetime.now().isoformat(timespec="seconds"),
+                })
 
         # Delay between videos (unless last one or dry run)
         if i < len(reminders) and not args.dry_run and result["success"]:
             time.sleep(DELAY_BETWEEN_VIDEOS)
 
+    if not args.dry_run:
+        _save_retry_tracker(retry_tracker)
+
     # Summary
     print("\n" + "=" * 40)
     print("Summary")
     print("=" * 40)
-    total = len(succeeded) + len(skipped) + len(failed) + len(invalid)
+    total = len(succeeded) + len(skipped) + len(failed) + len(invalid) + len(dead_lettered)
     print(f"Processed: {total}")
     print(f"Succeeded: {len(succeeded)}")
     print(f"Skipped (duplicates): {len(skipped)}")
     print(f"Failed: {len(failed)}")
+    if dead_lettered:
+        print(f"Dead-lettered: {len(dead_lettered)}")
     if invalid:
         print(f"Invalid URLs: {len(invalid)}")
 
@@ -449,6 +578,7 @@ def main():
             failed=failed,
             invalid=invalid,
             start_time=run_start,
+            dead_lettered=dead_lettered,
         )
 
 

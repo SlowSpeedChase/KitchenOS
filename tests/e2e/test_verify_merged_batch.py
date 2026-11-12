@@ -70,6 +70,7 @@ class TestFractionalSubRecipe:
     def test_1_5_survives_save_and_reopen(self, live_server, page, page_errors):
         _open_planner(page, live_server)
         recipe = _eligible_recipe(page)
+        assert recipe, "no macro-eligible recipe in the corpus to test with"
         page.click("#tab-meals")
         page.click("#new-meal-btn")
         page.wait_for_selector("#meal-modal.visible")
@@ -81,17 +82,29 @@ class TestFractionalSubRecipe:
         row.locator("input").dispatch_event("input")
         page.click("#meal-modal-save")
         page.wait_for_selector("#meal-modal.visible", state="hidden")
+        # The modal hides *before* saveMealFromModal's `await loadMeals()`
+        # resolves; navigating on the hidden modal aborts that fetch, which
+        # logs "Failed to load meals TypeError: Failed to fetch" and fails the
+        # page_errors check below. The re-rendered card is the save's real
+        # completion signal.
+        page.wait_for_selector('.meal-card[data-name="E2E Roundtrip Meal"]',
+                               timeout=15_000)
 
         # Reload from the server, not from in-memory state.
         _open_planner(page, live_server)
         page.click("#tab-meals")
-        page.wait_for_selector(".meal-edit-btn")
+        page.wait_for_selector('.meal-card[data-name="E2E Roundtrip Meal"]',
+                               timeout=15_000)
         stored = page.evaluate(
             "() => mealsByName['E2E Roundtrip Meal'].sub_recipes[0].servings")
         assert stored == 1.5, f"servings came back as {stored!r}, not 1.5"
 
-        page.locator(".meal-edit-btn").first.click()
+        # *This* meal's ✎, not `.meal-edit-btn.first`: the Meals tab lists the
+        # vault copy's real plates (and other tests' meals) ahead of this one, so
+        # "first" opened whichever meal sorted to the top and read its 1.0.
+        page.locator('.meal-card[data-name="E2E Roundtrip Meal"] .meal-edit-btn').click()
         page.wait_for_selector("#meal-modal.visible")
+        assert page.input_value("#meal-name") == "E2E Roundtrip Meal"
         value = page.locator(".sub-recipe-row").first.locator("input").input_value()
         assert float(value) == 1.5, f"reopened editor shows {value!r}"
         assert page_errors == []

@@ -58,4 +58,5 @@ TEMPLATE_ROUTES: dict[str, str | None] = {
     "review.html": "/review",
     "recipe_detail.html": "/recipe/{recipe}",
     "meal_planner.html": "/meal-planner",
+    "meal_calendar.html": "/meal-calendar",
 }

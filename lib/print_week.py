@@ -118,7 +118,8 @@ def _targets_dict(vault_path: Path) -> tuple[dict, list[str]]:
 
 def build_week_packet(week: str, vault_path: Path, recipes_dir: Path, *,
                       pantry: Optional[list[dict]] = None,
-                      include_tasks: bool = False) -> dict:
+                      include_tasks: bool = False,
+                      include_recipes: bool = False) -> dict:
     """Assemble the print packet for ``week``. Pure w.r.t. the vault (no writes).
 
     Args:
@@ -128,6 +129,8 @@ def build_week_packet(week: str, vault_path: Path, recipes_dir: Path, *,
         include_tasks: when True, regenerate prep tasks if the cache is stale
             (an LLM call). Default False keeps the page read-only/fast — it uses
             only the cached sidecar and flags when none exists.
+        include_recipes: when True, append each planned recipe's ingredients
+            and steps (``packet["recipes"]``), one page per recipe.
     """
     from lib import shopping_list_generator, task_extractor
 
@@ -164,7 +167,47 @@ def build_week_packet(week: str, vault_path: Path, recipes_dir: Path, *,
         "do_ahead": do_ahead,
         "tasks_available": tasks_payload is not None,
         "warnings": warnings,
+        "recipes": _recipe_pages(days, recipes_dir) if include_recipes else [],
     }
+
+
+def _recipe_pages(days: list[dict], recipes_dir: Path) -> list[dict]:
+    """Each recipe on the week's grid, once, in the order it first appears.
+
+    Leftover placements repeat a recipe across days; it is printed once. Meal
+    bundles in a markdown week (``kind != "recipe"``) are skipped, as are names
+    with no recipe file — the grid already shows them, and an empty page helps
+    nobody at the stove.
+    """
+    from lib.recipe_parser import parse_recipe_file, parse_recipe_body
+
+    seen: list[str] = []
+    for d in days:
+        for meal in _MEALS:
+            for item in d["slots"].get(meal, []):
+                if item.get("kind") == "recipe" and item["name"] not in seen:
+                    seen.append(item["name"])
+
+    pages = []
+    for name in seen:
+        path = (recipes_dir / f"{name}.md").resolve()
+        if not path.is_relative_to(recipes_dir.resolve()) or not path.exists():
+            continue
+        try:
+            parsed = parse_recipe_file(path.read_text(encoding="utf-8"))
+            body = parse_recipe_body(parsed["body"])
+        except Exception:
+            continue
+        fm = parsed["frontmatter"]
+        pages.append({
+            "name": name,
+            "title": fm.get("title") or name,
+            "servings": fm.get("servings"),
+            "total_time": fm.get("total_time"),
+            "ingredients": body.get("ingredients", []),
+            "instructions": body.get("instructions", []),
+        })
+    return pages
 
 
 # ---- rendering ------------------------------------------------------------
@@ -255,6 +298,8 @@ def render_packet_html(packet: dict, base_url: str = "") -> str:
         warnings = "<div class='warnings'>" + "".join(
             f"<div>⚠ {escape(w)}</div>" for w in packet["warnings"]) + "</div>"
 
+    recipe_pages = "".join(_recipe_page_html(r) for r in packet.get("recipes", []))
+
     t = targets
     return (
         f"<h1>{escape(packet['week_label'])}</h1>"
@@ -264,4 +309,26 @@ def render_packet_html(packet: dict, base_url: str = "") -> str:
         f"<section><h2>The week</h2>{grid}</section>"
         f"<section class='pagebreak'><h2>Shopping list</h2>{shopping}</section>"
         f"<section class='pagebreak'><h2>Get ahead this week</h2>{prep}</section>"
+        f"{recipe_pages}"
+    )
+
+
+def _recipe_page_html(r: dict) -> str:
+    """One recipe on its own printed page: ingredients, then numbered steps."""
+    meta = " · ".join(escape(str(v)) for v in (
+        f"{r['servings']} servings" if r.get("servings") else None,
+        r.get("total_time")) if v)
+    ings = "".join(
+        "<li>☐ " + escape(" ".join(str(x) for x in (i.get("amount"), i.get("unit")) if x))
+        + (" " if i.get("amount") or i.get("unit") else "") + escape(str(i.get("item", ""))) + "</li>"
+        for i in r.get("ingredients", []))
+    steps = "".join(f"<li>{escape(str(s.get('text', '')))}</li>"
+                    for s in r.get("instructions", []))
+    return (
+        f"<section class='recipe-page pagebreak'><h2>{escape(str(r['title']))}</h2>"
+        + (f"<p class='recipe-meta'>{meta}</p>" if meta else "")
+        + (f"<h3>Ingredients</h3><ul class='checklist'>{ings}</ul>" if ings else "")
+        + (f"<h3>Steps</h3><ol class='steps'>{steps}</ol>" if steps else "")
+        + ("" if ings or steps else "<p class='empty'>No ingredients or steps in this recipe file.</p>")
+        + "</section>"
     )

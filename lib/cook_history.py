@@ -31,6 +31,51 @@ MANAGED_KEYS = frozenset({
 })
 
 
+def _is_cooked(row) -> bool:
+    """A ``cooks`` row records *intent* until it is cooked or judged.
+
+    Rows are created when a recipe is dropped onto the board, so row presence
+    measures planning. ``cooked_at`` is the signal; a verdict counts too,
+    because judging a dish asserts you made it. This predicate is the single
+    definition — ``recipe_stats`` and ``cooked_recipe_names`` both use it, so
+    the correction cannot be rediscovered a third time.
+    """
+    return row["cooked_at"] is not None or row["make_again"] is not None
+
+
+def cooked_recipe_names() -> set[str]:
+    """Names of recipes the ledger has seen actually cooked."""
+    conn = inventory_db.connect()
+    try:
+        rows = conn.execute(
+            "SELECT recipe, cooked_at, make_again FROM cooks").fetchall()
+    finally:
+        conn.close()
+    return {r["recipe"] for r in rows if _is_cooked(r)}
+
+
+def never_cooked(recipe_index: list[dict], limit: int = 1) -> list[dict]:
+    """Library recipes the ledger has never seen cooked, oldest arrival first.
+
+    The index is passed in, never loaded here: callers that need several
+    library-wide answers must parse the recipe files once and share the result.
+
+    Matching is case-insensitive because the ledger's ``recipe`` string can
+    drift in case from the filename (``_recipe_path`` already tolerates this).
+
+    Known limitation: a recipe cooked in a hand-edited week the ledger never
+    took over has no rows at all and reads as never-cooked. The failure mode is
+    suggesting something you made once, inside a block whose job is suggestion.
+    """
+    cooked = {n.strip().lower() for n in cooked_recipe_names()}
+    fresh = [r for r in recipe_index
+             if (r.get("name") or "").strip().lower() not in cooked]
+    fresh.sort(key=lambda r: (r.get("added") is None,
+                              r.get("added") or "",
+                              r.get("name") or ""))
+    return fresh[:limit]
+
+
 def recipe_stats(recipe: str) -> dict:
     """Ledger aggregates for one recipe, or ``{}`` if it has never been cooked."""
     conn = inventory_db.connect()
@@ -56,8 +101,7 @@ def recipe_stats(recipe: str) -> dict:
     # `cooked_at` is the signal. A verdict counts too: judging a dish asserts
     # you made it, and the verdict nudge asks about dishes whose date has passed,
     # so a verdict on a row nobody tapped 🍳 for is a real path.
-    cooked = [r for r in rows
-              if r["cooked_at"] is not None or r["make_again"] is not None]
+    cooked = [r for r in rows if _is_cooked(r)]
     if not cooked:
         return {}
 

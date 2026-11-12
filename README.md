@@ -22,6 +22,15 @@ For deeper technical detail than this overview covers, see:
 - **[docs/OPERATIONS.md](docs/OPERATIONS.md)** — the full command reference, LaunchAgent install/restart, deploy, maintenance
 - **[docs/ROADMAP.md](docs/ROADMAP.md)** — what's shipped and what's genuinely still open
 
+Open KitchenOS at **[https://chases-mac-mini.taila69703.ts.net](https://chases-mac-mini.taila69703.ts.net)** on your phone or computer.
+Generated links use `KITCHENOS_WEB_BASE_URL`; deprecated `KITCHENOS_API_BASE`
+is a fallback, followed by this canonical HTTPS origin. The iOS app migrates
+only its three known old defaults and preserves custom endpoints. The Mac app
+and local services keep `http://localhost:5001`.
+
+For DNS, TLS, Caddy, VPN On Demand, and recovery, use the shared
+[home gateway runbook](https://github.com/SlowSpeedChase/dotfiles/blob/main/docs/home-web-gateway.md).
+
 ## What It Does
 
 - **Extracts recipes** from YouTube videos, Instagram Reels, and recipe web
