@@ -1,4 +1,5 @@
 """Pure three-way field merge. Missing is distinct from an explicit null."""
+
 from dataclasses import dataclass
 
 from .models import validate_fields
@@ -11,20 +12,30 @@ class MergeDecision:
     conflicts: list[str]
 
 
-def merge_fields(common: dict | None, source: dict, apple: dict | None) -> MergeDecision:
+def merge_fields(
+    common: dict | None, source: dict, apple: dict | None
+) -> MergeDecision:
     validate_fields(source)
     if apple is not None:
         validate_fields(apple)
     if common is None:
         # A marker without a common snapshot is unexplained, even when equal.
-        return MergeDecision({}, dict(source) if apple is None else {}, [] if apple is None else ['recovery'])
+        return MergeDecision(
+            {},
+            dict(source) if apple is None else {},
+            [] if apple is None else ["recovery"],
+        )
     validate_fields(common)
     if apple is None:
-        return MergeDecision({}, {}, ['recovery'])
+        return MergeDecision({}, {}, ["recovery"])
     source_patch, apple_patch, conflicts = {}, {}, []
     missing = object()
     for key in sorted(common.keys() | source.keys() | apple.keys()):
-        base, left, right = common.get(key, missing), source.get(key, missing), apple.get(key, missing)
+        base, left, right = (
+            common.get(key, missing),
+            source.get(key, missing),
+            apple.get(key, missing),
+        )
         if left == right:
             continue
         if left == base and right is not missing:

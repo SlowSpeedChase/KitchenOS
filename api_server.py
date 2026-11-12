@@ -28,8 +28,6 @@ from lib.shopping_list_generator import (
     format_qty as shopping_list_format_qty,
     generate_shopping_list,
     parse_shopping_list_file,
-    extract_manual_items,
-    extract_legacy_manual_items,
     SHOPPING_LISTS_PATH,
 )
 from lib.web_origin import web_origin
@@ -47,14 +45,11 @@ from lib import recipe_refresh, nutrition_quality
 # import, so importing it lazily inside a route would record the time of that
 # request and report every stale server as fresh. See lib/boot.py.
 from lib import boot  # noqa: F401  (imported for its import-time side effect)
-from templates.shopping_list_template import generate_shopping_list_markdown
 from templates.recipe_template import format_recipe_markdown
 from templates.meal_plan_template import (
     format_week_heading,
-    format_week_range,
     generate_meal_plan_markdown,
 )
-from lib.meal_plan_index import regenerate_index
 from lib.ingredient_validator import validate_ingredients
 from lib.ingredient_cleaner import clean_ingredient_list
 from lib.seasonality import match_ingredients_to_seasonal, get_peak_months
@@ -454,7 +449,7 @@ def _serve_page(
 
 def success_page(message: str, filename: str) -> str:
     """Generate simple HTML success page."""
-    from urllib.parse import quote, urlsplit
+    from urllib.parse import quote
     encoded_filename = quote(filename, safe='')
     return _html_page("KitchenOS", f'''
 <div class="card ok"><strong>Success</strong><br>{message}</div>
@@ -2508,7 +2503,7 @@ def _render_add_form(recipe_display: str, error: str | None = None) -> str:
 def _success_page_for_wikilink(wikilink_target: str, day: str, meal: str, week: str,
                                warning: str = '') -> str:
     """Green confirmation card after a slot insert. Works for [[Recipe]] or [[Meal: X]]."""
-    from urllib.parse import quote, urlsplit
+    from urllib.parse import quote
     encoded_file = quote(f"Meal Plans/{week}", safe='')
     return _html_page("KitchenOS", f'''
 <div class="card ok"><strong>Added!</strong><br>
@@ -2521,7 +2516,7 @@ def _success_page_for_wikilink(wikilink_target: str, day: str, meal: str, week: 
 
 def _render_schedule_prompt(recipe: str, meal_name: str, action: str, info: str | None = None) -> str:
     """Screen 2 — hybrid optional schedule prompt after meal save."""
-    from urllib.parse import quote, urlsplit
+    from urllib.parse import quote
     weeks = _generate_week_options()
     days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     meals = ['Breakfast', 'Lunch', 'Snack', 'Dinner']

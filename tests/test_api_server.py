@@ -114,7 +114,7 @@ class TestGenerateShoppingListMerge:
             with patch.object(api_server, 'generate_shopping_list', mock_generate):
                 # Call the endpoint
                 with api_server.app.test_client() as client:
-                    response = client.post('/generate-shopping-list',
+                    client.post('/generate-shopping-list',
                                            json={'week': '2026-W35'})
 
                 # Verify manual item is preserved

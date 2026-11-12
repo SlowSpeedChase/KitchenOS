@@ -343,7 +343,8 @@ def test_expired_marker_can_renew_and_shell_has_no_credentials(client, viewing_s
     viewing_setup[0] += 900
     expired = client.get('/meal-planner')
     assert expired.status_code == 200
-    import json, re
+    import json
+    import re
     config = re.search(r'<script type="application/json" id="browser-view-config">(.*?)</script>', expired.text).group(1)
     assert json.loads(config) == {'state': 'expired', 'readOnly': True, 'expires_at': None}
     assert 'secret' not in config
@@ -578,7 +579,8 @@ def test_open_mode_loads_recipe_data_without_browser_credentials(client, viewing
 
 
 def test_open_mode_old_cookie_does_not_lock_page_or_writes(client, viewing_setup, monkeypatch):
-    import json, re
+    import json
+    import re
     monkeypatch.setenv("KITCHENOS_AUTH_MODE", "open")
     client.set_cookie("kitchenos_view", "expired-session")
     page = client.get("/recipe/Rice%20%26%20Beans", **REMOTE)

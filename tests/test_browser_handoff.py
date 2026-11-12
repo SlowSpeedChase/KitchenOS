@@ -1,4 +1,5 @@
 """One-use credentials must expire, bind to their origin, and stay bounded."""
+
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import importlib
@@ -9,8 +10,10 @@ import pytest
 @pytest.fixture
 def module():
     # An assertion gives a useful red result before the new module exists.
-    assert importlib.util.find_spec('lib.browser_handoff'), 'browser handoff store missing'
-    return importlib.import_module('lib.browser_handoff')
+    assert importlib.util.find_spec("lib.browser_handoff"), (
+        "browser handoff store missing"
+    )
+    return importlib.import_module("lib.browser_handoff")
 
 
 @pytest.fixture
@@ -24,11 +27,13 @@ def store(module, clock):
 
 
 def issue(store):
-    return store.issue('/recipe/Rice%20%26%20Beans', 'http://kitchen:5001', 'token-hash')
+    return store.issue(
+        "/recipe/Rice%20%26%20Beans", "http://kitchen:5001", "token-hash"
+    )
 
 
 def exchange(store, code):
-    return store.exchange(code, 'http://kitchen:5001', 'token-hash')
+    return store.exchange(code, "http://kitchen:5001", "token-hash")
 
 
 def test_code_succeeds_at_59_seconds_and_is_single_use(store, clock):
@@ -36,7 +41,7 @@ def test_code_succeeds_at_59_seconds_and_is_single_use(store, clock):
     assert issued.expires_at == 1060
     clock[0] += 59
     grant = exchange(store, issued.code)
-    assert grant.redirect_path == '/recipe/Rice%20%26%20Beans'
+    assert grant.redirect_path == "/recipe/Rice%20%26%20Beans"
     assert grant.expires_at == 1959
     assert exchange(store, issued.code) is None
 
@@ -50,9 +55,11 @@ def test_code_fails_at_60_seconds(store, clock):
 def test_grant_expires_absolutely_at_900_seconds(store, clock):
     grant = exchange(store, issue(store).code)
     clock[0] += 899
-    assert store.authorize(grant.session_id, 'http://kitchen:5001', 'token-hash')
+    assert store.authorize(grant.session_id, "http://kitchen:5001", "token-hash")
     clock[0] += 1
-    assert store.authorize(grant.session_id, 'http://kitchen:5001', 'token-hash') is None
+    assert (
+        store.authorize(grant.session_id, "http://kitchen:5001", "token-hash") is None
+    )
 
 
 def test_concurrent_exchange_has_one_winner(store):
@@ -62,12 +69,15 @@ def test_concurrent_exchange_has_one_winner(store):
     assert sum(result is not None for result in outcomes) == 1
 
 
-@pytest.mark.parametrize('origin,fingerprint', [
-    ('http://kitchen:5002', 'token-hash'),
-    ('https://kitchen:5001', 'token-hash'),
-    ('http://evil:5001', 'token-hash'),
-    ('http://kitchen:5001', 'rotated'),
-])
+@pytest.mark.parametrize(
+    "origin,fingerprint",
+    [
+        ("http://kitchen:5002", "token-hash"),
+        ("https://kitchen:5001", "token-hash"),
+        ("http://evil:5001", "token-hash"),
+        ("http://kitchen:5001", "rotated"),
+    ],
+)
 def test_code_and_session_bind_to_origin_and_token(store, origin, fingerprint):
     issued = issue(store)
     assert store.exchange(issued.code, origin, fingerprint) is None
@@ -77,8 +87,12 @@ def test_code_and_session_bind_to_origin_and_token(store, origin, fingerprint):
 
 def test_restart_revokes_existing_session(module, store):
     grant = exchange(store, issue(store).code)
-    assert module.BrowserHandoffStore().authorize(
-        grant.session_id, 'http://kitchen:5001', 'token-hash') is None
+    assert (
+        module.BrowserHandoffStore().authorize(
+            grant.session_id, "http://kitchen:5001", "token-hash"
+        )
+        is None
+    )
 
 
 def test_codes_and_sessions_are_stored_as_hashes_only(store):
@@ -111,10 +125,18 @@ def test_full_session_store_does_not_consume_valid_code(module, store, clock):
     assert exchange(store, pending.code) is not None
 
 
-@pytest.mark.parametrize('destination', [
-    'https://evil.test/', '//evil.test/', '/refresh', '/recipe/../refresh',
-    '/recipe/a/b', '/recipe/a?next=evil', '/recipe/a#secret',
-])
+@pytest.mark.parametrize(
+    "destination",
+    [
+        "https://evil.test/",
+        "//evil.test/",
+        "/refresh",
+        "/recipe/../refresh",
+        "/recipe/a/b",
+        "/recipe/a?next=evil",
+        "/recipe/a#secret",
+    ],
+)
 def test_store_rejects_non_view_destinations(store, destination):
     with pytest.raises(ValueError):
-        store.issue(destination, 'http://kitchen:5001', 'token-hash')
+        store.issue(destination, "http://kitchen:5001", "token-hash")

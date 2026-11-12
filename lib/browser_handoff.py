@@ -3,6 +3,7 @@
 Only SHA-256 keys persist. Raw credentials exist solely in return values, whose
 repr deliberately omits them. A restart revokes every outstanding credential.
 """
+
 from dataclasses import dataclass, field
 from datetime import date
 import hashlib
@@ -50,14 +51,20 @@ def _key(value: str) -> str:
 def _valid_destination(path: str) -> bool:
     if not isinstance(path, str):
         return False
-    if path.startswith('/recipe/'):
-        encoded = path[len('/recipe/'):]
+    if path.startswith("/recipe/"):
+        encoded = path[len("/recipe/") :]
         name = unquote(encoded)
-        return bool(name and name not in ('.', '..') and
-                    not any(c in name for c in '/\\\x00') and
-                    not any(ord(c) < 32 for c in name) and
-                    not any(c in encoded for c in '?#'))
-    match = re.fullmatch(r'/meal-planner\?week=(\d{4}-W\d{2})&date=(\d{4}-\d{2}-\d{2})&view=calendar', path)
+        return bool(
+            name
+            and name not in (".", "..")
+            and not any(c in name for c in "/\\\x00")
+            and not any(ord(c) < 32 for c in name)
+            and not any(c in encoded for c in "?#")
+        )
+    match = re.fullmatch(
+        r"/meal-planner\?week=(\d{4}-W\d{2})&date=(\d{4}-\d{2}-\d{2})&view=calendar",
+        path,
+    )
     if not match:
         return False
     try:
@@ -65,7 +72,7 @@ def _valid_destination(path: str) -> bool:
     except ValueError:
         return False
     iso = day.isocalendar()
-    return match[1] == f'{iso.year:04d}-W{iso.week:02d}'
+    return match[1] == f"{iso.year:04d}-W{iso.week:02d}"
 
 
 class BrowserHandoffStore:
@@ -77,12 +84,14 @@ class BrowserHandoffStore:
 
     def _prune(self, now):
         for entries in (self._codes, self._sessions):
-            for key in [key for key, entry in entries.items() if entry.expires_at <= now]:
+            for key in [
+                key for key, entry in entries.items() if entry.expires_at <= now
+            ]:
                 del entries[key]
 
     def issue(self, destination, origin, token_fingerprint):
         if not _valid_destination(destination):
-            raise ValueError('Invalid viewing destination')
+            raise ValueError("Invalid viewing destination")
         with self._lock:
             now = self._clock()
             self._prune(now)
@@ -90,35 +99,47 @@ class BrowserHandoffStore:
                 raise CapacityExceeded()
             code = secrets.token_urlsafe(32)
             expires = now + CODE_TTL
-            self._codes[_key(code)] = _Entry(destination, origin, token_fingerprint, expires)
+            self._codes[_key(code)] = _Entry(
+                destination, origin, token_fingerprint, expires
+            )
             return IssuedCode(code, expires)
 
     def exchange(self, code, origin, token_fingerprint):
-        if not isinstance(code, str) or not re.fullmatch(r'[A-Za-z0-9_-]{43}', code):
+        if not isinstance(code, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", code):
             return None
         with self._lock:
             now = self._clock()
             self._prune(now)
             key = _key(code)
             entry = self._codes.get(key)
-            if entry is None or (entry.origin, entry.token_fingerprint) != (origin, token_fingerprint):
+            if entry is None or (entry.origin, entry.token_fingerprint) != (
+                origin,
+                token_fingerprint,
+            ):
                 return None
             # Check before consuming: the caller may retry while the code lives.
             if len(self._sessions) >= CAPACITY:
                 raise CapacityExceeded()
             session_id = secrets.token_urlsafe(32)
             expires = now + SESSION_TTL
-            self._sessions[_key(session_id)] = _Entry(entry.redirect_path, origin, token_fingerprint, expires)
+            self._sessions[_key(session_id)] = _Entry(
+                entry.redirect_path, origin, token_fingerprint, expires
+            )
             del self._codes[key]
             return BrowserGrant(session_id, entry.redirect_path, expires)
 
     def authorize(self, session_id, origin, token_fingerprint):
-        if not isinstance(session_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{43}', session_id):
+        if not isinstance(session_id, str) or not re.fullmatch(
+            r"[A-Za-z0-9_-]{43}", session_id
+        ):
             return None
         with self._lock:
             now = self._clock()
             self._prune(now)
             entry = self._sessions.get(_key(session_id))
-            if entry is None or (entry.origin, entry.token_fingerprint) != (origin, token_fingerprint):
+            if entry is None or (entry.origin, entry.token_fingerprint) != (
+                origin,
+                token_fingerprint,
+            ):
                 return None
             return entry
