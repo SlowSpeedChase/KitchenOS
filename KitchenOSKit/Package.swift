@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "KitchenOSKit",
-    platforms: [.macOS("26.0"), .iOS("26.0")],
+    platforms: [.macOS("27.0"), .iOS("27.0")],
     products: [
         .library(name: "KitchenOSKit", targets: ["KitchenOSKit"]),
     ],

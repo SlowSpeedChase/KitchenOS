@@ -114,6 +114,19 @@ final class NavigationToolsTests: XCTestCase {
         XCTAssertTrue(voice.contains { $0.name == "openWebDestination" })
         XCTAssertFalse(chat.contains { $0.name == "openWebDestination" })
     }
+    @MainActor func testDeclinedConfirmationClearsProposalAndSkipsWrite() async {
+        struct Declined: Error {}
+        var declined: [String] = []
+        let outcome = await AskKitchenOSIntent.finish(
+            reply: "Ready", proposal: .init(recipe: "Beans", day: "Friday", meal: "dinner"),
+            navigation: .destination(.recipe(name: "Beans")),
+            confirm: { _ in throw Declined() },
+            add: { _ in XCTFail("Declined confirmation must not write"); return "Added Beans." },
+            decline: { proposal in declined.append(proposal.recipe) })
+        XCTAssertEqual(declined, ["Beans"])
+        XCTAssertNil(outcome.destination)
+        XCTAssertFalse(outcome.dialog.contains("Added Beans"))
+    }
     @MainActor func testCancellationAtEntryDoesNotConfirmWriteOrNavigate() async {
         let task = Task { @MainActor in
             withUnsafeCurrentTask { $0?.cancel() }

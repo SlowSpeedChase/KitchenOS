@@ -4,11 +4,14 @@ import AppIntents
 /// meal-planning assistant (RecipeAI + tools) so new Siri can answer over real
 /// KitchenOS data. Any plan change the model proposes is gated behind a native
 /// Siri confirmation before KitchenOS writes it — the assistant never writes on its own.
-public struct AskKitchenOSIntent: AppIntent {
+public struct AskKitchenOSIntent: AppIntent, LongRunningIntent {
     public static var title: LocalizedStringResource = "Ask KitchenOS"
     public static var description = IntentDescription(
         "Ask KitchenOS anything about your recipes and meal plan; it answers using your real data."
     )
+
+    /// One live assistant shared across invocations = Siri follow-ups keep context.
+    @MainActor static let voiceSessions = IdleSessionStore<MealPlanAssistant>()
 
     @Parameter(title: "Request", requestValueDialog: "What can I help you with?")
     public var request: String
@@ -22,15 +25,22 @@ public struct AskKitchenOSIntent: AppIntent {
             return .result(dialog: "The KitchenOS assistant needs Apple Intelligence enabled.")
         }
 
-        let assistant = await MealPlanAssistant(surface: .voice)
+        let assistant = await Self.voiceSessions.current { MealPlanAssistant(surface: .voice) }
         let reply: String
         do {
-            reply = Self.plainSpoken(try await assistant.reply(to: request))
+            let raw = try await performBackgroundTask {
+                try await assistant.reply(to: request)
+            }
+            reply = Self.plainSpoken(raw)
         } catch is CancellationError {
             throw CancellationError()
         } catch KitchenOSError.unreachable {
             return .result(dialog: "I can't reach KitchenOS right now.")
         } catch {
+            // A failure here can be session-permanent (e.g. the transcript outgrew the
+            // context window) — and a kept session would be reused and re-fail on every
+            // retry within the idle window. Drop it so the next ask starts fresh.
+            await Self.voiceSessions.reset()
             return .result(dialog: "Something went wrong reaching the assistant.")
         }
 
@@ -41,7 +51,8 @@ public struct AskKitchenOSIntent: AppIntent {
                     actionName: .add,
                     dialog: "Add \(proposal.recipe) to \(proposal.day) \(proposal.meal)?")
             },
-            add: { proposal in try await assistant.confirm(proposal) })
+            add: { proposal in try await assistant.confirm(proposal) },
+            decline: { _ in await assistant.clearProposal() })
         if let destination = outcome.destination {
             try Task.checkCancellation()
             return .result(opensIntent: OpenKitchenOSWebIntent(destination: destination),
@@ -59,7 +70,8 @@ public struct AskKitchenOSIntent: AppIntent {
     @MainActor static func finish(
         reply: String, proposal: PendingMealAddition?, navigation: PendingWebNavigation,
         confirm: (PendingMealAddition) async throws -> Void,
-        add: (PendingMealAddition) async throws -> String
+        add: (PendingMealAddition) async throws -> String,
+        decline: (PendingMealAddition) async -> Void = { _ in }
     ) async -> ReplyOutcome {
         do { try Task.checkCancellation() }
         catch { return ReplyOutcome(dialog: "Cancelled.", destination: nil) }
@@ -71,7 +83,12 @@ public struct AskKitchenOSIntent: AppIntent {
             do {
                 try await confirm(proposal)
                 try Task.checkCancellation()
-            } catch { return ReplyOutcome(dialog: "Okay, I didn't change the meal plan.", destination: nil) }
+            } catch {
+                // Declined: drop the pending proposal so the multi-turn session
+                // does not offer the same write again on the next turn.
+                await decline(proposal)
+                return ReplyOutcome(dialog: "Okay, I didn't change the meal plan.", destination: nil)
+            }
             do { dialog = try await add(proposal) }
             catch {
                 let message = Task.isCancelled || error is CancellationError

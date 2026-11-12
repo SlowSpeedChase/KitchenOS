@@ -33,4 +33,17 @@ final class RecipeSearchTests: XCTestCase {
         let results = try await client.recipes(matching: q)
         XCTAssertEqual(results.map(\.name), ["Tofu Bowl"])
     }
+
+    func testAllRecipesIncludeIngredientsSendsParamAndDecodes() async throws {
+        MockURLProtocol.handler = { request in
+            let comps = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!
+            XCTAssertEqual(comps.path, "/api/recipes")
+            XCTAssertTrue(comps.queryItems?.contains(URLQueryItem(name: "include_ingredients", value: "1")) ?? false)
+            let body = #"[{"name": "Butter Chicken", "cuisine": "Indian", "protein": "chicken", "ingredient_items": ["chicken thighs", "garam masala"]}]"#
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                    Data(body.utf8))
+        }
+        let recipes = try await KitchenOSClient.mock().allRecipes(includeIngredients: true)
+        XCTAssertEqual(recipes.first?.ingredientItems, ["chicken thighs", "garam masala"])
+    }
 }

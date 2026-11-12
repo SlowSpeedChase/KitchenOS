@@ -3,7 +3,7 @@ import FoundationModels
 
 /// The single on-device LLM gateway for KitchenOS (Apple Foundation Models).
 /// C1 uses it for recipe summaries and natural-language query parsing; C2 will add a
-/// tools-enabled session, C3 reuses the availability gating. Requires iOS/macOS 26.
+/// tools-enabled session, C3 reuses the availability gating. Requires Apple Intelligence (Foundation Models framework floor iOS/macOS 26; this app's floor is 27).
 public enum RecipeAI {
     public enum AIAvailability: Sendable, Equatable {
         case available

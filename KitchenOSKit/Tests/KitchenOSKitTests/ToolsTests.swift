@@ -48,4 +48,11 @@ final class ToolsTests: XCTestCase {
         XCTAssertEqual(back.day, "Friday")
         XCTAssertEqual(back.meal, "dinner")
     }
+
+    func testProposalStoreTakeConsumes() {
+        let store = ProposalStore()
+        store.set(PendingMealAddition(recipe: "Butter Chicken", day: "Thursday", meal: "dinner"))
+        XCTAssertNotNil(store.take())
+        XCTAssertNil(store.take(), "take() must consume — a declined proposal must not re-prompt on the next turn")
+    }
 }

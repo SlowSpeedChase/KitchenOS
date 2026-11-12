@@ -9,7 +9,7 @@ targets:
   KitchenOSSiri:
     type: application
     supportedDestinations: [macOS, iOS]
-    deploymentTarget: "26.0"
+    deploymentTarget: "27.0"
     sources:
       - KitchenOSSiri/Sources
     dependencies:

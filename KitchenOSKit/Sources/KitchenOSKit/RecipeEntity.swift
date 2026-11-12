@@ -7,13 +7,17 @@ public struct RecipeEntity: AppEntity, IndexedEntity, Identifiable {
     public var id: String          // recipe name
     public var cuisine: String?
     public var proteinName: String?
+    public var ingredientItems: [String]?
 
-    public init(id: String, cuisine: String? = nil, proteinName: String? = nil) {
+    public init(id: String, cuisine: String? = nil, proteinName: String? = nil,
+                ingredientItems: [String]? = nil) {
         self.id = id; self.cuisine = cuisine; self.proteinName = proteinName
+        self.ingredientItems = ingredientItems
     }
 
     public init(_ summary: RecipeSummary) {
         self.id = summary.name; self.cuisine = summary.cuisine; self.proteinName = summary.protein
+        self.ingredientItems = summary.ingredientItems
     }
 
     public static var typeDisplayRepresentation: TypeDisplayRepresentation { "Recipe" }
@@ -30,7 +34,10 @@ public struct RecipeEntity: AppEntity, IndexedEntity, Identifiable {
         let facets = [cuisine, proteinName].compactMap { $0 }
         if !facets.isEmpty {
             set.contentDescription = facets.joined(separator: " · ")
-            set.keywords = facets
+        }
+        let keywords = facets + (ingredientItems ?? [])
+        if !keywords.isEmpty {
+            set.keywords = keywords
         }
         return set
     }
@@ -38,10 +45,9 @@ public struct RecipeEntity: AppEntity, IndexedEntity, Identifiable {
     public static var defaultQuery = RecipeEntityQuery()
 }
 
-// Note: RecipeEntity conforms to IndexedEntity (semantic index) above; indexing is driven
-// manually via RecipeIndexer (app launch + Settings button). The system-driven
-// IndexedEntityQuery reindex hooks require iOS/macOS 27 (CSSearchableIndexDescription) —
-// a future enhancement if we raise the floor.
+// RecipeEntity conforms to IndexedEntity (semantic index) above. Indexing is driven both
+// manually via RecipeIndexer (app launch + Settings button) and by the system through the
+// IndexedEntityQuery conformance below (iOS/macOS 27 floor). The `indexDescription` parameter is ignored — the app maintains a single default index.
 public struct RecipeEntityQuery: EntityStringQuery {
     public init() {}
 
@@ -61,4 +67,18 @@ public struct RecipeEntityQuery: EntityStringQuery {
     }
 
     public func suggestedEntities() async throws -> [RecipeEntity] { [] }
+}
+
+// System-driven reindex hooks (iOS/macOS 27): the OS calls these on its own schedule.
+// The corpus is small (~252 recipes) and the server returns the full index in one call,
+// so a targeted per-id reindex would cost the same round-trip — both hooks do a full pass.
+extension RecipeEntityQuery: IndexedEntityQuery {
+    public func reindexAllEntities(indexDescription: CSSearchableIndexDescription) async throws {
+        try await RecipeIndexer.reindexAll()
+    }
+
+    public func reindexEntities(for identifiers: [String],
+                                indexDescription: CSSearchableIndexDescription) async throws {
+        try await RecipeIndexer.reindexAll()
+    }
 }

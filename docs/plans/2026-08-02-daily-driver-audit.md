@@ -287,7 +287,10 @@ The highest value-per-hour in the audit. Nothing here needs the corpus re-derive
 24. ~~Remove composite-meal UI, keep the parser~~ **DONE, inverted (2026-08-03):** composite
     meals were kept and made ledger-native — a plate is now a bundle of ordinary cooks and
     contributes its macros to the day-totals row *(Decision C)*.
-25. Freeze the native app; collapse nav from 12 rows to ~6 in two tiers *(Decision D)*.
+25. ~~Freeze the native app; collapse nav from 12 rows to ~6 in two tiers~~
+    **RESOLVED, inverted (2026-08-12): keep at parity and invest** *(Decision D)* —
+    the native app is the only possible Siri surface, so the nav-collapse premise
+    (freeze it, shrink it) doesn't apply.
 
 ---
 
@@ -299,4 +302,7 @@ The highest value-per-hour in the audit. Nothing here needs the corpus re-derive
 - **B — Legacy week model.** Retire it now (M–L; deletes the four most fragile guards in the
   codebase) or keep paying the two-model tax on every planner change?
 - **C — Composite meals.** Remove ~1,000 LOC of unreachable UI, or keep it?
-- **D — Native app.** Freeze (recommended) or keep at parity?
+- **D — Native app.** ~~Freeze (recommended) or keep at parity?~~ **Resolved
+  2026-08-12: keep at parity and invest.** The native app is the only possible
+  Siri surface; the iOS 27 new-Siri feature
+  (`docs/superpowers/specs/2026-08-12-ios27-new-siri-design.md`) builds on it.

@@ -23,10 +23,12 @@ FAKE_INDEX = [
 @pytest.fixture(autouse=True)
 def _reset_caches_and_index(monkeypatch):
     # Patch the index loader to a deterministic list and clear caches.
-    monkeypatch.setattr(
-        api_server, "get_recipe_index",
-        lambda path, include_ingredients=False: FAKE_INDEX,
-    )
+    def fake_index(path, include_ingredients=False):
+        if include_ingredients:
+            return FAKE_INDEX
+        return [{k: v for k, v in r.items() if k != "ingredient_items"} for r in FAKE_INDEX]
+
+    monkeypatch.setattr(api_server, "get_recipe_index", fake_index)
     api_server._recipe_cache["data"] = None
     api_server._recipe_ingredient_cache["data"] = None
     yield
@@ -55,3 +57,17 @@ def test_no_ingredient_param_returns_full_index(client):
     resp = client.get("/api/recipes")
     assert resp.status_code == 200
     assert len(resp.get_json()) == 3
+
+
+def test_include_ingredients_param_returns_ingredient_items(client):
+    resp = client.get("/api/recipes?include_ingredients=1")
+    assert resp.status_code == 200
+    rows = resp.get_json()
+    assert len(rows) == 3
+    assert all("ingredient_items" in r for r in rows)
+
+
+def test_default_index_omits_ingredient_items(client):
+    resp = client.get("/api/recipes")
+    assert resp.status_code == 200
+    assert all("ingredient_items" not in r for r in resp.get_json())
