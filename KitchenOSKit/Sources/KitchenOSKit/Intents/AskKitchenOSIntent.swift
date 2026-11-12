@@ -19,7 +19,8 @@ public struct AskKitchenOSIntent: AppIntent, LongRunningIntent {
     public init() {}
     public init(request: String) { self.request = request }
 
-    public func perform() async throws -> some IntentResult & ProvidesDialog {
+    public func perform() async throws -> some IntentResult & ProvidesDialog & OpensIntent {
+        try Task.checkCancellation()
         guard RecipeAI.isReady else {
             return .result(dialog: "The KitchenOS assistant needs Apple Intelligence enabled.")
         }
@@ -31,6 +32,8 @@ public struct AskKitchenOSIntent: AppIntent, LongRunningIntent {
                 try await assistant.reply(to: request)
             }
             reply = Self.plainSpoken(raw)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch KitchenOSError.unreachable {
             return .result(dialog: "I can't reach KitchenOS right now.")
         } catch {
@@ -41,28 +44,75 @@ public struct AskKitchenOSIntent: AppIntent, LongRunningIntent {
             return .result(dialog: "Something went wrong reaching the assistant.")
         }
 
-        // No write proposed — just speak the answer.
-        guard let proposal = await assistant.pendingProposal() else {
-            return .result(dialog: IntentDialog(stringLiteral: reply))
+        let outcome = await Self.finish(
+            reply: reply, proposal: assistant.pendingProposal(), navigation: assistant.takeNavigation(),
+            confirm: { proposal in
+                try await requestConfirmation(
+                    actionName: .add,
+                    dialog: "Add \(proposal.recipe) to \(proposal.day) \(proposal.meal)?")
+            },
+            add: { proposal in try await assistant.confirm(proposal) },
+            decline: { _ in await assistant.clearProposal() })
+        if let destination = outcome.destination {
+            try Task.checkCancellation()
+            return .result(opensIntent: OpenKitchenOSWebIntent(destination: destination),
+                           dialog: IntentDialog(stringLiteral: outcome.dialog))
         }
+        return .result(dialog: IntentDialog(stringLiteral: outcome.dialog))
+    }
 
-        // A plan change was proposed: confirm via Siri before writing (the only write path).
-        do {
-            try await requestConfirmation(
-                actionName: .add,
-                dialog: "Add \(proposal.recipe) to \(proposal.day) \(proposal.meal)?"
-            )
-        } catch {
-            // User declined the change — keep the assistant's answer, skip the write.
-            await assistant.clearProposal()
-            return .result(dialog: IntentDialog(stringLiteral: reply))
+    struct ReplyOutcome {
+        let dialog: String
+        let destination: WebDestination?
+    }
+
+    /// Both Siri and the tests use the same confirmation/write/navigation order.
+    @MainActor static func finish(
+        reply: String, proposal: PendingMealAddition?, navigation: PendingWebNavigation,
+        confirm: (PendingMealAddition) async throws -> Void,
+        add: (PendingMealAddition) async throws -> String,
+        decline: (PendingMealAddition) async -> Void = { _ in }
+    ) async -> ReplyOutcome {
+        do { try Task.checkCancellation() }
+        catch { return ReplyOutcome(dialog: "Cancelled.", destination: nil) }
+        var dialog = reply
+        if let proposal {
+            guard MealSlot(rawValue: proposal.meal.lowercased()) != nil else {
+                return ReplyOutcome(dialog: "I didn't recognize that meal. Please say breakfast, lunch, snack, or dinner.", destination: nil)
+            }
+            do {
+                try await confirm(proposal)
+                try Task.checkCancellation()
+            } catch {
+                // Declined: drop the pending proposal so the multi-turn session
+                // does not offer the same write again on the next turn.
+                await decline(proposal)
+                return ReplyOutcome(dialog: "Okay, I didn't change the meal plan.", destination: nil)
+            }
+            do { dialog = try await add(proposal) }
+            catch {
+                let message = Task.isCancelled || error is CancellationError
+                    ? "The request was cancelled. Check the meal plan before trying again."
+                    : "I couldn't update the meal plan."
+                return ReplyOutcome(dialog: message, destination: nil)
+            }
+            // A completed write is not rolled back by cancelling its next navigation step.
+            do { try Task.checkCancellation() }
+            catch { return ReplyOutcome(dialog: dialog, destination: nil) }
         }
-
-        do {
-            let confirmation = try await assistant.confirm(proposal)
-            return .result(dialog: IntentDialog(stringLiteral: confirmation))
-        } catch {
-            return .result(dialog: "I couldn't update the meal plan.")
+        do { try Task.checkCancellation() }
+        catch { return ReplyOutcome(dialog: proposal == nil ? "Cancelled." : dialog, destination: nil) }
+        switch navigation {
+        case .none: return ReplyOutcome(dialog: dialog, destination: nil)
+        case .clarification(let question):
+            return ReplyOutcome(dialog: proposal == nil ? question : dialog + " " + question, destination: nil)
+        case .destination(let target):
+            let opening: String
+            switch target {
+            case .recipe(let name): opening = "I'll open \(name) in your browser."
+            case .mealPlan(let date): opening = "I'll open the meal plan for \(date) in your browser."
+            }
+            return ReplyOutcome(dialog: proposal == nil ? opening : dialog + " " + opening, destination: target)
         }
     }
 

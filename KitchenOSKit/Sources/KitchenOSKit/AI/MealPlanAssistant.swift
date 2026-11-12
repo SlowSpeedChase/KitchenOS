@@ -31,19 +31,31 @@ public final class MealPlanAssistant {
     private let session: LanguageModelSession
     private let client: KitchenOSClient
     private let proposals = ProposalStore()
+    private let navigation = PendingWebDestinationStore()
+    private let surface: AssistantSurface
 
     public init(client: KitchenOSClient = KitchenOSClient(config: .resolved()),
                 surface: AssistantSurface = .chat) {
         self.client = client
-        let store = proposals
-        let tools: [any Tool] = [
+        self.surface = surface
+        session = LanguageModelSession(
+            tools: Self.tools(client: client, surface: surface, proposals: proposals, navigation: navigation),
+            instructions: Self.instructions(for: surface))
+    }
+
+    static func tools(client: KitchenOSClient, surface: AssistantSurface,
+                      proposals: ProposalStore, navigation: PendingWebDestinationStore) -> [any Tool] {
+        var tools: [any Tool] = [
             FindRecipesTool(client: client),
             MealPlanTool(client: client),
             SuggestMealTool(client: client),
             CookWithIngredientsTool(client: client),
-            AddToMealPlanTool(onPropose: { store.set($0) }),
+            AddToMealPlanTool(onPropose: { proposals.set($0) }),
         ]
-        session = LanguageModelSession(tools: tools, instructions: Self.instructions(for: surface))
+        if case .voice = surface {
+            tools.append(OpenWebDestinationTool(client: client, store: navigation))
+        }
+        return tools
     }
 
     /// Surface-specific system instructions. The shared core (use real data, never invent,
@@ -67,7 +79,15 @@ public final class MealPlanAssistant {
                 and don't recite long lists (offer two or three options at most). To add a \
                 recipe to the plan, call proposeAddToMealPlan; the system asks the user to \
                 confirm out loud, so never tell them to tap anything and never claim you have \
-                changed the plan yourself.
+                changed the plan yourself. Only when the user explicitly says open or show, \
+                call openWebDestination with one real saved recipe or meal-plan day. Ordinary \
+                questions receive spoken answers without navigation. For find-and-show, use \
+                the recipe lookup first, then its exact returned name. Never invent URLs. \
+                A bare weekday means this ISO week; explicit next week means the next ISO week. \
+                Ask for clarification for ambiguous next Friday or open that without a target \
+                in this invocation. Never claim a page has opened; the foreground continuation \
+                will report browser dispatch. Today is \((try? WebDayResolver.resolve(.today)) ?? "unavailable"); \
+                the current ISO week is \(WeekDate.currentWeekID()).
                 """
         }
     }
@@ -76,7 +96,14 @@ public final class MealPlanAssistant {
     public static var isAvailable: Bool { RecipeAI.isReady }
 
     public func reply(to message: String) async throws -> String {
-        try await session.respond(to: message).content
+        navigation.begin(request: message)
+        if case .voice = surface { proposals.set(nil) }
+        do {
+            try Task.checkCancellation()
+            let content = try await session.respond(to: message).content
+            try Task.checkCancellation()
+            return content
+        } catch { navigation.clear(); proposals.set(nil); throw error }
     }
 
     /// A pending proposal produced during the last reply, if any. Consumes it: a proposal
@@ -84,12 +111,14 @@ public final class MealPlanAssistant {
     /// the user declined — a stale proposal must never re-prompt on a later question.
     public func pendingProposal() -> PendingMealAddition? { proposals.take() }
     public func clearProposal() { proposals.set(nil) }
+    public func takeNavigation() -> PendingWebNavigation { navigation.take() }
 
     /// Apply a confirmed proposal (the only write path). Returns a user-facing message.
     public func confirm(_ p: PendingMealAddition) async throws -> String {
         guard let slot = MealSlot(rawValue: p.meal.lowercased()) else {
             return "I didn't recognize the meal \"\(p.meal)\"."
         }
+        try Task.checkCancellation()
         try await client.addRecipe(p.recipe, day: p.day, meal: slot, week: WeekDate.currentWeekID())
         clearProposal()
         return "Added \(p.recipe) to \(p.day) \(slot.title)."

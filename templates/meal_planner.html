@@ -696,6 +696,11 @@
             margin-top: 2px;
         }
 
+        .cooking-opportunity {
+            font-size: 0.75rem; font-weight: 400; line-height: 1.35;
+            margin-top: 0.35rem; white-space: normal;
+        }
+
         .day-header {
             text-align: center;
             padding: 8px 4px;
@@ -1995,6 +2000,8 @@
             }
         }
     </style>
+<link rel="stylesheet" href="/static/planning-calendar.css">
+<script src="/static/planning-calendar.js" defer></script>
 </head>
 <body>
     <div class="app">
@@ -2057,6 +2064,11 @@
                 </div>
                 <button class="nav-btn" id="next-week" aria-label="Next week">&rarr;</button>
             </div>
+            <div class="pc-switch" aria-label="Planner view">
+                <button type="button" id="view-grid" aria-pressed="true" onclick="setPlannerView('grid')">Grid</button>
+                <button type="button" id="view-calendar" aria-pressed="false" onclick="setPlannerView('calendar')">Calendar</button>
+            </div>
+            <div id="planning-calendar" hidden></div>
             <!-- Shown only in board mode. The chips, scale stepper, freezer and bin
                  all appear at once with nothing saying what they are; this is the
                  one sentence that makes the rest legible. -->
@@ -2162,6 +2174,7 @@
         <div class="loading-spinner">Loading...</div>
     </div>
 
+    <script src="/static/browser-view.js"></script>
     <script>
         // --- Constants ---
         const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -2169,6 +2182,38 @@
         const MEAL_LABELS = { breakfast: 'Breakfast', lunch: 'Lunch', snack: 'Snack', dinner: 'Dinner' };
 
         // --- State ---
+        const viewing = window.KitchenBrowserView;
+        let selectedDate = null;
+        let gridFocusPending = false;
+        const civilDate = value => {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return null;
+            const result = new Date(`${value}T12:00:00`);
+            return Number.isFinite(+result) && civilStamp(result) === value ? result : null;
+        };
+        const civilStamp = date => `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+        function focusGridDate() {
+            document.querySelectorAll('#grid [data-day]').forEach(node => node.classList.toggle('selected-date', dayDates[node.dataset.day] === selectedDate));
+            if (!gridFocusPending || document.body.classList.contains('pc-mode')) return;
+            const day = DAYS.find(day => dayDates[day] === selectedDate);
+            if (!day) return;
+            const heading = document.querySelector(`.day-header[data-day="${day}"]`);
+            const card = document.querySelector(`.grid-cell[data-day="${day}"] .grid-card`);
+            const target = card || document.querySelector(`.grid-cell[data-day="${day}"]`);
+            gridFocusPending = false;
+            requestAnimationFrame(() => {heading.tabIndex=-1;heading.focus({preventScroll:true});target?.scrollIntoView({block:'center',inline:'center'});});
+        }
+        let planningCalendar = null;
+        function setPlannerView(view) {
+            const calendar = view === 'calendar';
+            document.body.classList.toggle('pc-mode', calendar);
+            document.getElementById('planning-calendar').hidden = !calendar;
+            document.getElementById('view-calendar').setAttribute('aria-pressed', String(calendar));
+            document.getElementById('view-grid').setAttribute('aria-pressed', String(!calendar));
+            const url = new URL(location); url.searchParams.set('view', view); history.replaceState({}, '', url);
+            if (calendar && !planningCalendar) planningCalendar = window.KitchenPlanningCalendar.mount({root:document.getElementById('planning-calendar'),week:currentWeek,date:selectedDate,readOnly:viewing.readOnly,onSelection:selection=>{selectedDate=selection.date;updateURL(currentWeek);},onScheduled:()=>loadWeekBoard(currentWeek)});
+            if (!calendar && planningCalendar) { planningCalendar.destroy(); planningCalendar = null; }
+            if (!calendar) {gridFocusPending=Boolean(selectedDate);focusGridDate();}
+        }
         let currentWeek = '';
         let dayDates = {};       // { Monday: '2026-02-23', ... }
         let allRecipes = [];
@@ -2267,6 +2312,7 @@
         let chipSortables = [];         // Sortable instances for the 'servings' chip-drag group
         let armedRecipe = null;         // card awaiting a slot tap (tap-to-assign); null = idle
         let ledgerBusy = false;         // true while a board mutation is in flight — serializes rapid taps
+        let availabilityLoadGen = 0;
         let boardLoadGen = 0;           // monotonically increasing — a stale loadWeekBoard response never renders over a newer one
         let boardStateUnknown = false;  // true when the last loadWeekBoard failed — legacy writes (save/suggest) must fail closed until a load succeeds
 
@@ -2274,7 +2320,18 @@
         document.addEventListener('DOMContentLoaded', init);
 
         async function init() {
-            currentWeek = getWeekFromURL() || getCurrentISOWeek();
+            if(viewing.expired){hideLoading();return;}
+            setInterval(() => {
+                if (!viewing.expired && !document.hidden && currentWeek) loadCookingAvailability(currentWeek, boardLoadGen);
+            }, 60000);
+            document.addEventListener('visibilitychange', () => {
+                if (!viewing.expired && !document.hidden && currentWeek) loadCookingAvailability(currentWeek, boardLoadGen);
+            });
+            const dateParam=new URLSearchParams(location.search).get('date');
+            const requested=civilDate(dateParam);
+            selectedDate=requested ? dateParam : null;
+            if(dateParam && !requested){const error=document.createElement('p');error.setAttribute('role','alert');error.textContent='Choose a valid date (YYYY-MM-DD). Showing the selected week.';document.querySelector('.grid-header').after(error);}
+            currentWeek = requested ? dateToISOWeek(requested) : (getWeekFromURL() || getCurrentISOWeek());
             updateURL(currentWeek);
             buildGrid();
             setupEventListeners();
@@ -2298,6 +2355,7 @@
             loadUseItUp().catch(err => console.error('use-it-up load failed', err));
 
             hideLoading();
+            setPlannerView(new URLSearchParams(location.search).get('view') || 'grid');
         }
 
         // --- Week Utilities ---
@@ -2357,7 +2415,9 @@
         function updateURL(week) {
             const url = new URL(window.location);
             url.searchParams.set('week', week);
+            if(selectedDate)url.searchParams.set('date',selectedDate);
             window.history.replaceState({}, '', url);
+            planningCalendar?.setSelection({week,date:selectedDate});
         }
 
         // --- Week Display ---
@@ -2395,7 +2455,7 @@
             DAYS.forEach((dayName, i) => {
                 const d = new Date(monday);
                 d.setDate(monday.getDate() + i);
-                dayDates[dayName] = d.toISOString().split('T')[0];
+                dayDates[dayName] = civilStamp(d);
             });
 
             // Update day headers with dates
@@ -2405,6 +2465,7 @@
                 const header = document.querySelector(`.day-header[data-day="${dayName}"]`);
                 if (header) {
                     header.innerHTML = `${dayName.slice(0, 3)}<div class="day-date">${formatDateShort(d)}</div>`;
+                    header.dataset.date=dayDates[dayName];header.setAttribute('aria-label',`${dayName}, ${formatDateShort(d)} meals`);
                 }
             });
         }
@@ -2464,6 +2525,7 @@
         let mealsSidebarSortable = null;
 
         function initSidebarSortable() {
+            if (viewing.readOnly) return;
             if (sidebarSortable) {
                 sidebarSortable.destroy();
                 sidebarSortable = null;
@@ -2524,6 +2586,7 @@
         }
 
         function initGridSortables() {
+            if (viewing.readOnly) return;
             gridSortables.forEach(s => s.destroy());
             gridSortables = [];
 
@@ -2665,6 +2728,7 @@
         }
 
         function cycleCardServings(card) {
+            if (viewing.readOnly) return;
             const s = parseFloat(card.dataset.servings) || 1;
             setCardServings(card, s >= 3 ? 1 : Math.floor(s) + 1);
         }
@@ -2771,6 +2835,7 @@
         }
 
         async function markCooked(recipe, servings, card) {
+            if (viewing.readOnly) return;
             if (!confirm(`Mark "${recipe}" cooked? This subtracts its ingredients from your inventory.`)) return;
             try {
                 const resp = await fetch('/api/cook', {
@@ -3316,8 +3381,38 @@
             wireChipSortables();
         }
 
+        async function loadCookingAvailability(week, generation) {
+            const availabilityGeneration = ++availabilityLoadGen;
+            const labels = {
+                good: 'Good cooking day',
+                possible: 'Possible · flexible blocks',
+                busy: 'Busy · keep food easy',
+                unknown: 'Availability unknown'
+            };
+            function paint(days) {
+                if (availabilityGeneration !== availabilityLoadGen || generation !== boardLoadGen || week !== currentWeek) return;
+                DAYS.forEach(day => {
+                    const header = document.querySelector(`.day-header[data-day="${day}"]`);
+                    if (!header) return;
+                    header.querySelector('.cooking-opportunity')?.remove();
+                    const label = document.createElement('div');
+                    label.className = 'cooking-opportunity';
+                    label.textContent = labels[days[dayDates[day]]] || labels.unknown;
+                    header.appendChild(label);
+                });
+            }
+            paint({});
+            try {
+                const response = await fetch(`/api/cooking-availability/${week}`);
+                if (!response.ok) return;
+                const snapshot = await response.json();
+                paint(snapshot.days || {});
+            } catch (_) { /* Keep unknown when the server is unavailable. */ }
+        }
+
         async function loadWeekBoard(week) {
             const gen = ++boardLoadGen;
+            loadCookingAvailability(week, gen);
             let loaded;
             try {
                 const resp = await fetch(`/api/week-board/${week}`);
@@ -3339,11 +3434,13 @@
             renderFreezerTab();
             renderBoardIfActive();
             renderDayTotals();
+            focusGridDate();
         }
 
         // --- Board mutations ---
 
         async function ensureLegacyImported() {
+            if (viewing.readOnly) return;
             // Cheap client-side check first: if the board already has cooks we
             // never need to import (also protects against the server's own
             // idempotence guard, which 409s on a week that already has cooks).
@@ -3360,6 +3457,7 @@
         }
 
         async function createCook(name, day, meal, scale, baseServings) {
+            if (viewing.readOnly) return;
             // Guard against rapid double-drops (or a drop racing another
             // mutation) reading/writing stale state — see adjustScale below
             // for the fuller rationale.
@@ -3385,6 +3483,7 @@
         }
 
         async function adjustScale(cook, delta) {
+            if (viewing.readOnly) return;
             // Serialize board mutations: two rapid stepper taps both close
             // over the same `cook` object (captured before either PATCH
             // resolves), so without this guard the second click computes its
@@ -3422,6 +3521,7 @@
         // exactly the moment it is least wanted. The note is optional and
         // skippable — over time the notes turn out to be the useful part.
         async function setCookVerdict(cookId, makeAgain) {
+            if (viewing.readOnly) return;
             try {
                 const resp = await fetch(`/api/cooks/${cookId}`, {
                     method: 'PATCH',
@@ -3442,6 +3542,7 @@
         }
 
         async function addCookNote(cook) {
+            if (viewing.readOnly) return;
             const note = prompt(`Note about "${cook.recipe}" — what would you change?`,
                                 cook.cook_note || '');
             if (note === null) return;  // cancelled, as opposed to cleared
@@ -3460,6 +3561,7 @@
         }
 
         async function markCookCooked(cook) {
+            if (viewing.readOnly) return;
             if (!confirm(`Mark "${cook.recipe}" cooked? This subtracts its ingredients from your inventory.`)) return;
             if (ledgerBusy) return;
             ledgerBusy = true;
@@ -3508,6 +3610,7 @@
         // one caller runs inside markCookCooked's existing lock and would
         // otherwise deadlock against it.
         async function bankLeftovers(cook) {
+            if (viewing.readOnly) return;
             const n = fmtMult(cook.unassigned);
             try {
                 const resp = await fetch(`/api/cooks/${cook.id}/freeze-rest`,
@@ -3538,6 +3641,7 @@
         }
 
         async function deleteCook(cookId) {
+            if (viewing.readOnly) return;
             if (!confirm('Delete this cook and all its servings?')) return;
             if (ledgerBusy) return;
             ledgerBusy = true;
@@ -3558,6 +3662,7 @@
         // --- Chip drag wiring (group 'servings': grid cells, freezer tray, trash) ---
 
         async function handleChipDrop(evt) {
+            if (viewing.readOnly) return;
             const chip = evt.item;
             const toEl = evt.to;
             const count = Math.min(1, parseFloat(chip.dataset.count) || 0);
@@ -3626,6 +3731,7 @@
         // NOT the legacy grid path: that ends in saveMealPlan(), which PUTs
         // scale-less meal-plan data over ledger-authored Markdown.
         async function moveCookCard(card, cell) {
+            if (viewing.readOnly) return;
             // A plate is N cooks; they move together. FIRST statement, so the
             // ledger path is reached before anything that could fall through to
             // debounceSave(). Without it a bundle card has no dataset.cookId, so
@@ -3671,6 +3777,7 @@
         // always-reload finally, so a plate and a cook behave identically.
 
         async function createBundle(mealName, day, meal) {
+            if (viewing.readOnly) return;
             if (ledgerBusy) return;
             ledgerBusy = true;
             try {
@@ -3695,6 +3802,7 @@
         }
 
         async function moveBundleCard(card, cell) {
+            if (viewing.readOnly) return;
             const bundleId = card.dataset.bundleId;
             if (!bundleId) return;
             const date = dayDates[cell.dataset.day];
@@ -3724,6 +3832,7 @@
         }
 
         async function patchBundle(group, body, failMsg) {
+            if (viewing.readOnly) return;
             if (ledgerBusy) return null;
             ledgerBusy = true;
             try {
@@ -3773,6 +3882,7 @@
         }
 
         async function deleteBundle(group) {
+            if (viewing.readOnly) return;
             const n = group.cooks.length;
             if (!confirm(`Remove "${group.bundle_name}" and all ${n} of its recipes ` +
                          `from this week?`)) return;
@@ -3800,6 +3910,7 @@
         }
 
         function wireChipSortables() {
+            if (viewing.readOnly) return;
             chipSortables.forEach(s => s.destroy());
             chipSortables = [];
 
@@ -3847,11 +3958,13 @@
         }
 
         async function loadMealPlan(week) {
+            if(viewing.expired)return;
             updateWeekDisplay();
 
             const resp = await fetch(`/api/meal-plan/${week}`);
             if (!resp.ok) throw new Error('Failed to load meal plan');
             const data = await resp.json();
+            if(week!==currentWeek)return;
 
             // Clear existing grid cards
             document.querySelectorAll('.grid-card').forEach(c => c.remove());
@@ -3901,6 +4014,7 @@
             const subList = (subRecipes && subRecipes.length)
                 ? subRecipes
                 : (meta ? meta.sub_recipes : []);
+            card.dataset.recipeNames = JSON.stringify((subList || []).map(sub=>sub.recipe));
             const chipsWrap = document.createElement('div');
             (subList || []).forEach(sub => {
                 const chip = document.createElement('span');
@@ -3960,11 +4074,13 @@
         }
 
         function debounceSave() {
+            if (viewing.readOnly) return;
             if (saveTimeout) clearTimeout(saveTimeout);
             saveTimeout = setTimeout(saveMealPlan, 500);
         }
 
         async function saveMealPlan() {
+            if (viewing.readOnly) return;
             // Fail closed while the board state is unknown (last load
             // failed): this week might be ledger-managed, and the legacy PUT
             // would clobber it. The server 409s as backstop, but don't even
@@ -4545,6 +4661,17 @@
                 return btn;
             }
 
+            if (viewing.readOnly) {
+                const group=card.dataset.bundleId ? bundleGroupFromCard(card) : null;
+                const names=group ? group.cooks.map(c=>c.recipe)
+                    : card.dataset.kind==='meal' ? JSON.parse(card.dataset.recipeNames||'[]') : [card.dataset.name];
+                [...new Set(names)].forEach(name=>addAction(
+                    card.dataset.kind==='meal' ? `Open ${displayNameFor(name)}` : 'Open recipe',
+                    ()=>{window.location.href=`/recipe/${encodeURIComponent(name)}`;}));
+                document.getElementById('card-sheet-backdrop').classList.add('visible');
+                return;
+            }
+
             // A plate has no single recipe to open, so it offers its own file
             // and its members individually rather than one arbitrary link.
             const bundleGroup = card.dataset.bundleId ? bundleGroupFromCard(card) : null;
@@ -4732,6 +4859,7 @@
             closeCardSheet();
             showLoading();
             currentWeek = offsetWeek(currentWeek, delta);
+            if(selectedDate){const next=civilDate(selectedDate);next.setDate(next.getDate()+delta*7);selectedDate=civilStamp(next);gridFocusPending=true;}
             suggestionSkipIndex = {};
             updateURL(currentWeek);
             try {
@@ -4755,6 +4883,7 @@
         }
 
         function armRecipe(card) {
+            if (viewing.readOnly) return;
             if (armedRecipe === card) { disarmRecipe(); return; }  // tap again cancels
             disarmRecipe();
             armedRecipe = card;
@@ -4782,6 +4911,7 @@
         }
 
         async function placeArmedRecipe(cell) {
+            if (viewing.readOnly) return;
             const card = armedRecipe;
             if (!card) return;
             const name = card.dataset.name;
@@ -5089,7 +5219,7 @@
                     <div class="meal-card-name">${escapeHtml(meal.name)}</div>
                     <div class="meal-card-meta"${mealMetaTitle(meal.nutrition)}>${escapeHtml(parts.join(' · '))}</div>
                 `;
-                card.addEventListener('dblclick', () => openMealEditor(meal.name));
+                card.addEventListener('dblclick', () => {if(!viewing.readOnly)openMealEditor(meal.name);});
                 // Visible edit affordance — dblclick has no touch equivalent
                 const editBtn = document.createElement('button');
                 editBtn.className = 'meal-edit-btn';
@@ -5108,6 +5238,7 @@
         // --- Meal editor modal ---
 
         function openMealEditor(name) {
+            if (viewing.readOnly) return;
             editingMealName = name || null;
             const modal = document.getElementById('meal-modal');
             const title = document.getElementById('meal-modal-title');
@@ -5308,6 +5439,7 @@
         }
 
         async function saveMealFromModal() {
+            if (viewing.readOnly) return;
             const name = document.getElementById('meal-name').value.trim();
             if (!name) { showToast('Name required', 'error'); return; }
             const description = document.getElementById('meal-description').value.trim();
@@ -5423,6 +5555,7 @@
         // --- Pantry-aware shopping list flow ---
 
         async function startShoppingListFlow() {
+            if (viewing.readOnly) return;
             try {
                 const resp = await fetch('/api/shopping-list/preview', {
                     method: 'POST',
@@ -5473,6 +5606,7 @@
         }
 
         async function confirmFromPantryModal() {
+            if (viewing.readOnly) return;
             const body = document.getElementById('pantry-modal-body');
             const overlapping = body._overlapping || [];
             const decisions = [];
@@ -5503,6 +5637,7 @@
         }
 
         async function confirmShoppingList(decisions, itemsToBuy, inventoryMatches) {
+            if (viewing.readOnly) return;
             try {
                 const items = itemsToBuy ?? (pendingShoppingPreview
                     ? pendingShoppingPreview.purchase_items : []);
@@ -5573,6 +5708,7 @@
         // --- Suggestion ---
 
         async function suggestMeal(cell) {
+            if (viewing.readOnly) return;
             // Fail closed while the board state is unknown — see saveMealPlan.
             if (boardStateUnknown) return;
             // NOTE: there used to be a second guard here returning early on any

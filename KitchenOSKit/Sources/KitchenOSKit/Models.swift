@@ -2,6 +2,7 @@ import Foundation
 
 public struct RecipeSummary: Codable, Sendable, Hashable {
     public let name: String
+    public let displayName: String?
     public let cuisine: String?
     public let protein: String?
     public let image: String?
@@ -13,6 +14,7 @@ public struct RecipeSummary: Codable, Sendable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case name, cuisine, protein, image
+        case displayName = "display_name"
         case ingredientItems = "ingredient_items"
         case nutritionCalories = "nutrition_calories"
         case nutritionProtein = "nutrition_protein"
@@ -23,7 +25,9 @@ public struct RecipeSummary: Codable, Sendable, Hashable {
     public init(name: String, cuisine: String? = nil, protein: String? = nil,
                 image: String? = nil, ingredientItems: [String]? = nil,
                 nutritionCalories: Double? = nil, nutritionProtein: Double? = nil,
-                nutritionCarbs: Double? = nil, nutritionFat: Double? = nil) {
+                nutritionCarbs: Double? = nil, nutritionFat: Double? = nil,
+                displayName: String? = nil) {
+        self.displayName = displayName
         self.name = name; self.cuisine = cuisine; self.protein = protein
         self.image = image; self.ingredientItems = ingredientItems
         self.nutritionCalories = nutritionCalories; self.nutritionProtein = nutritionProtein

@@ -127,6 +127,30 @@ public final class KitchenOSClient: @unchecked Sendable {
         return req
     }
 
+    /// The browser handoff has stricter redirect rules than the ordinary API client.
+    func browserHandoffData(_ destination: WebDestination) async throws -> Data {
+        try Task.checkCancellation()
+        var req = jsonRequest(path: "/api/browser-handoffs")
+        req.httpBody = try encoder.encode(destination)
+        let data: Data, response: URLResponse
+        do { (data, response) = try await session.data(for: req, delegate: BrowserHandoffRedirectPolicy()) }
+        catch {
+            try Task.checkCancellation()
+            if error is CancellationError || (error as? URLError)?.code == .cancelled {
+                throw CancellationError()
+            }
+            throw KitchenOSError.unreachable
+        }
+        try Task.checkCancellation()
+        guard let http = response as? HTTPURLResponse,
+              let actual = http.url, let expected = req.url,
+              actual.scheme?.lowercased() == expected.scheme?.lowercased(),
+              actual.host?.lowercased() == expected.host?.lowercased(),
+              actual.port == expected.port else { throw KitchenOSError.unreachable }
+        guard (200..<300).contains(http.statusCode) else { throw KitchenOSError.http(http.statusCode) }
+        return data
+    }
+
     // MARK: - Plumbing
 
     private func request(_ url: URL, method: String = "GET") -> URLRequest {

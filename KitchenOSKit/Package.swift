@@ -8,7 +8,7 @@ let package = Package(
         .library(name: "KitchenOSKit", targets: ["KitchenOSKit"]),
     ],
     targets: [
-        .target(name: "KitchenOSKit"),
+        .target(name: "KitchenOSKit", resources: [.process("Resources")]),
         .testTarget(name: "KitchenOSKitTests", dependencies: ["KitchenOSKit"]),
     ],
     swiftLanguageModes: [.v5]

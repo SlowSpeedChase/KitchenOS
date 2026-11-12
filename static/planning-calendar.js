@@ -1,0 +1,257 @@
+/* Calendar planning owns only preparation scheduling, never the legacy grid save. */
+(() => {
+  const el = (tag, text, cls) => { const n = document.createElement(tag); if (text != null) n.textContent = text; if (cls) n.className = cls; return n; };
+  const button = (text, action, cls) => { const n = el('button', text, cls); n.type = 'button'; n.addEventListener('click', action); return n; };
+  const label = (text, input) => { const n = el('label', text); n.append(input); return n; };
+  const input = (type, value, attrs = {}) => { const n = el('input'); n.type = type; n.value = value; Object.assign(n, attrs); return n; };
+  const overlap = (a,b,c,d) => a < d && b > c;
+  function zonedParts(value, zone) {
+    return Object.fromEntries(new Intl.DateTimeFormat('en-CA', {timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(value)).map(p=>[p.type,p.value]));
+  }
+  function localStamp(value, zone) { const p = zonedParts(value, zone); return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`; }
+  function offsetStamp(date, time, zone) {
+    // Resolve civil time against the selected IANA zone, not the browser's zone.
+    const desired = Date.parse(`${date}T${time}:00Z`); let instant = desired;
+    for (let i=0; i<3; i++) { const represented = Date.parse(`${localStamp(instant,zone)}:00Z`); instant += desired-represented; }
+    if (localStamp(instant,zone) !== `${date}T${time}`) throw new Error('That time does not exist in this timezone. Choose another time.');
+    const offset = Math.round((desired-instant)/60000), sign = offset < 0 ? '-' : '+';
+    return `${date}T${time}:00${sign}${String(Math.floor(Math.abs(offset)/60)).padStart(2,'0')}:${String(Math.abs(offset)%60).padStart(2,'0')}`;
+  }
+  async function json(url, options={}) {
+    const response = await fetch(url,options); const data = await response.json();
+    if (!response.ok) { const error = new Error(data.error || 'Unable to load. Try refreshing.'); error.status=response.status; throw error; }
+    return data;
+  }
+  function mount({root, week, date=null, readOnly=false, onSelection, onScheduled}) {
+    let requestedDate=date, focusPending=Boolean(date);
+    let currentWeek=week, generation=0, controller, snapshot, cooks=[], plannedMeals=[], selected=null, dayIndex=0, expanded=false, destroyed=false, submitting=false;
+    root.classList.add('pc'); root.replaceChildren();
+    const status=el('p','Loading calendar…','pc-status'); status.setAttribute('role','status');
+    const heading=el('h2',readOnly?'Planned meals':'Make room to cook');
+    const intro=el('p',readOnly?'Browse the meals planned for each day.':'Choose a meal, then a cooking opening. Time Blocking stays flexible.','pc-intro');
+    const refresh=button('Refresh calendar',()=>load());
+    const timeline=el('section',null,'pc-calendar'); timeline.setAttribute('aria-label','Calendar and planned meals');
+    const tray=el('section',null,'pc-tray');
+    const editor=el('section',null,'pc-editor'); editor.hidden=true;
+    const content=el('div',null,'pc-content'); const side=el('div',null,'pc-side'); side.append(tray,editor); content.append(timeline,side);
+    root.append(heading,intro,status,refresh,content);
+    let dateInput,timeInput,durationInput,zoneInput,mealInput,servingsInput,openings,warnings,estimate,submit;
+    const zone=()=>snapshot?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const clock=value=>new Intl.DateTimeFormat(undefined,{timeZone:zone(),hour:'numeric',minute:'2-digit'}).format(new Date(value));
+    const dates=()=>Object.keys(snapshot?.days || {}).sort();
+    const dayTitle=d=>new Intl.DateTimeFormat(undefined,{weekday:'short',month:'short',day:'numeric',timeZone:'UTC'}).format(new Date(`${d}T12:00Z`));
+    // Ledger identities win over their generated Markdown links. Legacy-only
+    // entries remain visible without importing them or creating cook rows.
+    function projectMeals(board,plan) {
+      const rows=new Map();
+      const slots=['breakfast','lunch','snack','dinner'];
+      const owned=new Map((board.cooks||[]).map(c=>[c.id,c]));
+      if(!Array.isArray(board.planned_meals))throw new Error('Unable to load planned meals. Refresh the page.');
+      for(const entry of board.planned_meals){
+        if(!entry.date||!entry.meal)continue;
+        const identity=entry.bundle_id?`bundle:${entry.bundle_id}`:`cook:${entry.cook_id}`;
+        const key=JSON.stringify([identity,entry.date,entry.meal]);
+        let row=rows.get(key);
+        if(!row){row={identity,date:entry.date,meal:entry.meal,kind:entry.bundle_id?'meal':'recipe',name:entry.bundle_id?entry.bundle_name:entry.recipe,recipes:[],cook:null};rows.set(key,row);}
+        if(!row.recipes.includes(entry.recipe))row.recipes.push(entry.recipe);
+        if(entry.anchor&&!entry.bundle_id)row.cook=owned.get(entry.cook_id)||null;
+      }
+      const legacy=Array.isArray(plan.planned_meals)?plan.planned_meals:(plan.days||[]).flatMap(day=>slots.filter(meal=>day[meal]).map(meal=>({...day[meal],date:day.date,meal})));
+      for(const entry of legacy){
+        if(!entry.name)continue;
+        const covered=[...rows.values()].some(row=>row.date===entry.date&&row.meal===entry.meal&&(entry.kind==='meal' ? row.kind==='meal'&&row.name===entry.name : row.recipes.includes(entry.name)));
+        if(covered)continue;
+        const identity=`legacy:${entry.kind||'recipe'}:${entry.name}`;
+        rows.set(JSON.stringify([identity,entry.date,entry.meal]),{identity,date:entry.date,meal:entry.meal,kind:entry.kind||'recipe',name:entry.name,recipes:entry.kind==='meal'?(entry.sub_recipes||[]).map(sub=>sub.recipe):[entry.name],cook:null});
+      }
+      return [...rows.values()].sort((a,b)=>a.date.localeCompare(b.date)||slots.indexOf(a.meal)-slots.indexOf(b.meal));
+    }
+    function renderTray() {
+      if(readOnly){tray.replaceChildren();tray.hidden=true;return;}
+      tray.replaceChildren(el('h3','Meals to plan'));
+      const available=cooks.filter(c=>!c.date && !c.bundle_id && !c.cooked_at);
+      if (!available.length) tray.append(el('p','No unscheduled meals this week. Add a recipe in Grid, or choose a planned meal below.'));
+      for (const c of available) {
+        const card=el('article',null,'pc-meal'); card.append(el('h4',c.recipe));
+        if(c.notes)card.append(el('p',c.notes));
+        card.append(button('Choose cooking time',()=>choose(c)));tray.append(card);
+      }
+    }
+    function renderCalendar() {
+      timeline.replaceChildren();
+      const ds=dates();
+      if(requestedDate && ds.includes(requestedDate)) dayIndex=ds.indexOf(requestedDate);
+      dayIndex=Math.min(dayIndex,Math.max(0,ds.length-1));
+      function selectDay(index){dayIndex=index;requestedDate=ds[index];focusPending=true;onSelection?.({week:currentWeek,date:requestedDate});renderCalendar();}
+      const nav=el('div',null,'pc-day-nav');
+      const prev=button('Previous day',()=>{selectDay(Math.max(0,dayIndex-1));});prev.disabled=dayIndex===0;
+      const next=button('Next day',()=>{selectDay(Math.min(ds.length-1,dayIndex+1));});next.disabled=dayIndex===ds.length-1;
+      nav.append(prev,el('strong',ds[dayIndex]?dayTitle(ds[dayIndex]):''),next);timeline.append(nav);
+      const expand=button(expanded?'Show until 10 pm':'Show until midnight',()=>{expanded=!expanded;renderCalendar();});expand.setAttribute('aria-pressed',String(expanded));timeline.append(expand);
+      const lanes=el('div',null,'pc-lanes');
+      ds.forEach((d,index)=>{
+        const lane=el('section',null,`pc-day${index===dayIndex?' pc-selected-day':''}`);lane.dataset.date=d;lane.append(el('h3',dayTitle(d)));
+        const allDay=el('div',null,'pc-all-day');
+        const dayStart=Date.parse(offsetStamp(d,'00:00',zone()));
+        const nextDate=new Date(`${d}T12:00Z`);nextDate.setUTCDate(nextDate.getUTCDate()+1);
+        const dayEnd=Date.parse(offsetStamp(nextDate.toISOString().slice(0,10),'00:00',zone()));
+        const events=(snapshot.events||[]).filter(e=>overlap(dayStart,dayEnd,Date.parse(e.start),Date.parse(e.end)));
+        events.filter(e=>e.all_day).forEach(e=>{
+          const item=el('div',null,'pc-all-day-item');item.append(el('strong',e.title),el('small',snapshot.choices[e.id]?'All-day context':'Needs your choice'));
+          [['blocking','Blocks cooking'],['background','Background information']].forEach(([choice,text])=>{
+            const b=button(text,async()=>{
+              b.disabled=true;
+              try { await json(`/api/planning-calendar/occurrences/${e.id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({choice,revision:snapshot.revision})});await load(); }
+              catch(err){status.textContent=err.message;if(err.status===409)await load();}
+              finally{b.disabled=false;}
+            });b.setAttribute('aria-pressed',String(snapshot.choices[e.id]===choice));b.disabled=readOnly;item.append(b);
+          });allDay.append(item);
+        });
+        if(!events.some(e=>e.all_day))allDay.append(el('small',snapshot.days[d].covered?'No all-day events':'Calendar availability unknown'));
+        lane.append(allDay);
+        const track=el('div',null,'pc-track');const endHour=expanded?24:22;
+        for(let hour=12;hour<endHour;hour++){const tick=el('div',hour===12?'12 pm':hour<24?`${hour%12 || 12}${hour<12?' am':' pm'}`:'midnight','pc-hour');tick.style.top=`${(hour-12)*64}px`;track.append(tick);}
+        track.style.height=`${(endHour-12)*64}px`;
+        const blocks=events.filter(e=>!e.all_day).map(e=>({...e,kind:e.role}));
+        (snapshot.schedules||[]).filter(s=>s.date===d).forEach(s=>blocks.push({...s,id:`cook-${s.cook_id}`,title:s.recipe,end:new Date(Date.parse(s.start)+s.duration_minutes*60000).toISOString(),kind:'cook'}));
+        const visible=blocks.map(e=>{const a=localStamp(Math.max(dayStart,Date.parse(e.start)),zone()).slice(11).split(':').map(Number);const b=Date.parse(e.end)>=dayEnd?[24,0]:localStamp(e.end,zone()).slice(11).split(':').map(Number);return {...e,a:Math.max(12,a[0]+a[1]/60),b:Math.min(endHour,b[0]+b[1]/60)};}).filter(e=>e.b>e.a).sort((a,b)=>a.a-b.a || a.b-b.b);
+        // Assign overlap clusters independent columns, not overlays with hidden labels.
+        let cluster=[],clusterEnd=0;
+        function paint(){if(!cluster.length)return;const ends=[];cluster.forEach(e=>{let column=ends.findIndex(end=>end<=e.a);if(column<0)column=ends.length;ends[column]=e.b;e.column=column;});cluster.forEach(e=>{
+          const block=button('',()=>{
+            if(e.kind==='cook'){const c=cooks.find(c=>c.id===e.cook_id);if(c)choose(c);}
+            else detail.textContent=`${e.title} · ${clock(e.start)}–${clock(e.end)} · ${e.role==='flexible'?'Flexible · Time Blocking':'Commitment'}`;
+          },`pc-block pc-${e.kind}-block`);
+          block.append(el('strong',e.title),el('small',`${clock(e.start)}–${clock(e.end)}`),el('small',e.kind==='flexible'?'Flexible':e.kind==='cook'?'Cooking':'Commitment'));
+          block.style.top=`${(e.a-12)*64}px`;block.style.height=`${Math.max(44,(e.b-e.a)*64-4)}px`;block.style.left=`calc(34px + (100% - 36px) * ${e.column/ends.length})`;block.style.width=`calc((100% - 36px) / ${ends.length} - 3px)`;track.append(block);
+        });cluster=[];}
+        visible.forEach(e=>{if(e.a>=clusterEnd)paint();cluster.push(e);clusterEnd=Math.max(clusterEnd,e.b);});paint();lane.append(track);
+        const mealList=el('div',null,'pc-day-meals');
+        const mealHeading=el('h3',`${dayTitle(d)} meals`,'pc-meals-heading');mealHeading.dataset.date=d;mealHeading.tabIndex=-1;mealList.append(mealHeading);
+        const meals=plannedMeals.filter(row=>row.date===d);
+        meals.forEach(row=>{
+          const item=el('div',null,'pc-planned-meal');item.dataset.identity=row.identity;
+          const title=`${row.name} · ${row.meal}`;
+          const linkTo=recipe=>{const link=el('a',recipe);link.href=`/recipe/${encodeURIComponent(recipe)}`;return link;};
+          if(!readOnly&&row.cook&&!row.cook.cooked_at)item.append(button(title,()=>choose(row.cook)));
+          else if(row.kind!=='meal'&&row.recipes.length===1){const link=linkTo(row.recipes[0]);link.textContent=title;item.append(link);}
+          else {item.append(el('p',title));const members=el('ul');row.recipes.forEach(recipe=>{const member=el('li');member.append(linkTo(recipe));members.append(member);});item.append(members);}
+          mealList.append(item);
+        });
+        if(!meals.length)mealList.append(el('p','No meals planned for this day.'));
+        if(readOnly)lane.insertBefore(mealList,allDay);else lane.append(mealList);
+        lanes.append(lane);
+      });
+      timeline.append(lanes);const detail=el('p','Select an event for its full name and time.','pc-event-detail');detail.setAttribute('role','status');timeline.append(detail);
+      if(focusPending && requestedDate){
+        const heading=root.querySelector(`.pc-meals-heading[data-date="${requestedDate}"]`);
+        if(heading){focusPending=false;requestAnimationFrame(()=>{if(destroyed||!heading.isConnected)return;heading.focus({preventScroll:true});heading.scrollIntoView({block:'start',inline:'nearest'});});}
+      }
+    }
+    async function choose(cook) {
+      if(readOnly)return;
+      selected=cook;editor.hidden=false;editor.replaceChildren();
+      const selectionWeek=currentWeek; let durationEdited=false;
+      const existing=(snapshot.schedules||[]).find(s=>s.cook_id===cook.id);
+      const start=existing?localStamp(existing.start,existing.timezone):null;
+      const form=el('form');form.append(el('h3',cook.recipe));
+      estimate=el('p',existing?`${existing.duration_minutes} min · reserved cooking time`:'90 min · planning estimate');form.append(estimate);
+      dateInput=input('date',start?.slice(0,10)||cook.date||dates()[dayIndex],{required:true,min:dates()[0],max:dates()[6]});
+      timeInput=input('time',start?.slice(11)||'18:00',{required:true,step:'900'});
+      durationInput=input('number',existing?.duration_minutes||90,{min:'15',max:'360',step:'15',required:true});
+      zoneInput=input('text',existing?.timezone||zone(),{required:true});
+      servingsInput=input('number','1',{min:'0.25',step:'0.25',required:true});
+      mealInput=el('select');['breakfast','lunch','snack','dinner'].forEach(m=>{const o=el('option',m[0].toUpperCase()+m.slice(1));o.value=m;mealInput.append(o);});mealInput.value=cook.meal||'dinner';
+      const fields=el('div',null,'pc-fields');fields.append(label('Cooking date',dateInput),label('Start time',timeInput),label('Duration (minutes)',durationInput),label('Meal',mealInput),label('Timezone',zoneInput));
+      if(!cook.date)fields.append(label('Servings to eat',servingsInput));else form.append(el('p','Existing servings and leftovers will be kept.'));
+      form.append(fields);warnings=el('p',null,'pc-warning');warnings.setAttribute('role','status');form.append(warnings);
+      openings=el('div',null,'pc-openings');form.append(el('h4','Cooking openings'),openings);
+      submit=el('button','Schedule meal','pc-submit');submit.type='submit';form.append(submit,button('Cancel',()=>{selected=null;editor.hidden=true;}));editor.append(form);
+      const update=()=>{renderOpenings();warn();};dateInput.addEventListener('change',()=>{dayIndex=Math.max(0,dates().indexOf(dateInput.value));renderCalendar();update();});timeInput.addEventListener('input',warn);zoneInput.addEventListener('change',warn);
+      durationInput.addEventListener('input',()=>{durationEdited=true;});
+      durationInput.addEventListener('change',()=>{estimate.textContent=`${durationInput.value} min · your planning window`;load();warn();});
+      form.addEventListener('submit',schedule);update();dateInput.focus();
+      load();
+      if(!existing){
+        try {const recipe=await json(`/api/recipes/${encodeURIComponent(cook.recipe)}`);if(selected!==cook||currentWeek!==selectionWeek||!editor.contains(form))return;
+          const timing=recipe.cooking_duration;
+          const minutes=timing?.minutes;
+          if(minutes && !durationEdited){durationInput.value=Math.max(15,Math.min(360,Math.ceil(minutes/15)*15));estimate.textContent=`${durationInput.value} min · ${timing.source==='recipe'?'recipe timing':'planning estimate'}`;await load();}
+          // Timing updates must not overwrite a duration the user has edited.
+        } catch (_) { /* Honest 90-minute fallback remains visible. */ }
+      }
+    }
+    function renderOpenings(){
+      if(!selected||!openings)return;openings.replaceChildren();const day=snapshot?.days[dateInput.value];
+      if(snapshot?.duration_minutes!==Number(durationInput.value)){openings.append(el('p','Updating cooking openings…'));return;}
+      if(!day?.covered){openings.append(el('p','Availability unknown. You can still set a time manually.'));return;}
+      const candidates=(day.windows||[]).filter(w=>!(snapshot.schedules||[]).some(s=>s.cook_id===selected.id&&s.start===w.start));
+      if(!candidates.length){openings.append(el('p','No opening fits this duration. Try a shorter window or another day.'));return;}
+      const picker=el('select');picker.setAttribute('aria-label','Available cooking openings');
+      candidates.forEach((w,i)=>{const o=el('option',`${clock(w.start)}–${clock(w.end)}${w.overlaps_flexible?' · overlaps Time Blocking':''}${w.unresolved_all_day_ids.length?' · conditional':''}`);o.value=i;picker.append(o);});
+      const use=()=>{const w=candidates[Number(picker.value)];timeInput.value=localStamp(w.start,zone()).slice(11);zoneInput.value=zone();warn();};
+      openings.append(picker,button('Use this opening',use,'pc-opening'));
+      picker.addEventListener('change',()=>{const w=candidates[Number(picker.value)];const context=w.adjacent_event_ids.map(id=>snapshot.events.find(e=>e.id===id)).filter(Boolean);near.textContent=context.map(e=>`${e.title} · ${clock(e.start)}–${clock(e.end)}`).join(' / ');});const near=el('small');openings.append(near);picker.dispatchEvent(new Event('change'));
+    }
+    function warn(){
+      if(!selected)return;try{
+        const start=Date.parse(offsetStamp(dateInput.value,timeInput.value,zoneInput.value)),end=start+Number(durationInput.value)*60000;
+        const messages=[];
+        if(!snapshot?.days[dateInput.value]?.covered)messages.push('Calendar availability is unknown.');
+        for(const e of snapshot?.events||[]){if(!overlap(start,end,Date.parse(e.start),Date.parse(e.end)))continue;
+          if(e.all_day){if(snapshot.choices[e.id]==='blocking')messages.push(`Blocks cooking: ${e.title}.`);else if(!snapshot.choices[e.id])messages.push(`Needs your choice: ${e.title}.`);}
+          else messages.push(`${e.role==='flexible'?'Overlaps Time Blocking':'Conflicts with commitment'}: ${e.title} (${clock(e.start)}–${clock(e.end)}).`);
+        }
+        for(const s of snapshot?.schedules||[]){if(s.cook_id!==selected.id&&overlap(start,end,Date.parse(s.start),Date.parse(s.start)+s.duration_minutes*60000))messages.push(`Overlaps cooking: ${s.recipe}.`);}
+        warnings.textContent=messages.join(' ') || 'No calendar conflict in this window.';
+      }catch(err){warnings.textContent=err.message;}
+    }
+    async function schedule(event){
+      event.preventDefault();if(readOnly||submitting||!selected)return;
+      const target=selected,weekAtStart=currentWeek;submitting=true;submit.disabled=true;
+      try{
+        const start=offsetStamp(dateInput.value,timeInput.value,zoneInput.value);
+        await json(`/api/cooks/${target.id}/schedule`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:dateInput.value,meal:mealInput.value,start,timezone:zoneInput.value,duration_minutes:Number(durationInput.value),servings_to_eat:Number(servingsInput.value)})});
+        if(currentWeek===weekAtStart){selected=null;editor.hidden=true;await load();status.textContent='Meal scheduled.';await onScheduled?.();}
+      }catch(err){status.textContent=err.message;warnings.textContent=err.message;}
+      finally{submitting=false;if(submit)submit.disabled=false;}
+    }
+    async function load(){
+      if(destroyed||window.KitchenBrowserView?.expired)return;
+      const gen=++generation;controller?.abort();controller=new AbortController();
+      const duration=selected?Number(durationInput.value):90;
+      try{
+        const [data,board,plan]=await Promise.all([json(`/api/planning-calendar/${currentWeek}?duration_minutes=${duration}${selected?'&exclude_cook_id='+selected.id:''}`,{signal:controller.signal}),json(`/api/week-board/${currentWeek}`,{signal:controller.signal}),json(`/api/meal-plan/${currentWeek}`,{signal:controller.signal})]);
+        if(destroyed||gen!==generation)return;
+        const meals=projectMeals(board,plan);snapshot=data;cooks=board.cooks;plannedMeals=meals;
+        status.textContent=data.fresh?`Calendar updated · ${new Date(data.synced_at).toLocaleString()} · ${zone()}`:'Calendar needs refresh';
+        renderTray();renderCalendar();if(selected){renderOpenings();warn();}focusLinkedCook();
+      }catch(err){if(err.name!=='AbortError'&&gen===generation){
+          status.textContent='Couldn’t refresh calendar. Check your connection and try again.';
+          if(snapshot){snapshot={...snapshot,fresh:false,events:[],choices:{},days:Object.fromEntries(Object.keys(snapshot.days).map(d=>[d,{covered:false,windows:[]}]))};renderCalendar();if(selected){renderOpenings();warn();}}
+        }}
+    }
+    let pendingFocus = new URLSearchParams(window.location.search).get('focusCookID');
+    if (pendingFocus && !/^[1-9][0-9]*$/.test(pendingFocus)) pendingFocus = null;
+    function focusLinkedCook() {
+      if (readOnly || !pendingFocus) return;
+      const id = Number(pendingFocus); pendingFocus = null;
+      const cook = Number.isSafeInteger(id) ? cooks.find(c => c.id === id) : null;
+      if (!cook || cook.bundle_id || cook.cooked_at) {
+        status.textContent = 'This cooking item is no longer available to schedule. No changes were made.'; return;
+      }
+      choose(cook); editor.scrollIntoView({block: 'nearest'}); dateInput.focus();
+    }
+    const timer=setInterval(()=>{if(!document.hidden&&!submitting&&!window.KitchenBrowserView?.expired)load();},60000);load();
+    const expire=()=>{controller?.abort();clearInterval(timer);};
+    window.addEventListener('kitchenos:view-expired',expire);
+    function setSelection({week:nextWeek,date:nextDate}){
+      if(nextWeek===currentWeek && nextDate===requestedDate)return;
+      if(nextDate!==requestedDate){requestedDate=nextDate;focusPending=Boolean(nextDate);}
+      if(nextWeek===currentWeek){if(snapshot)renderCalendar();return;}
+      currentWeek=nextWeek;selected=null;dayIndex=0;editor.hidden=true;snapshot=null;timeline.replaceChildren();tray.replaceChildren();load();
+    }
+    return {setSelection,setWeek(value){setSelection({week:value,date:null});},destroy(){destroyed=true;generation++;controller?.abort();clearInterval(timer);window.removeEventListener('kitchenos:view-expired',expire);root.replaceChildren();}};
+  }
+  window.KitchenPlanningCalendar={mount};
+})();
