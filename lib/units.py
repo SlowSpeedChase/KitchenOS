@@ -302,6 +302,57 @@ def _match_portion(unit: str, item: str, portions: list) -> Optional[float]:
     return None
 
 
+_PREP_WORDS = ("chopped", "diced", "sliced", "slices", "grated", "shredded",
+               "minced", "packed", "crumbled", "mashed", "pureed", "cubed")
+
+
+def _portion_volume_unit(p: dict) -> Optional[str]:
+    """The volume unit a portion is measured in, from its unit field or label."""
+    u = (p.get("unit") or "").lower()
+    if u in VOLUME_ML:
+        return u
+    for tok in re.findall(r"[a-zA-Z]+", str(p.get("label", ""))):
+        nu = normalize_unit(tok).lower()
+        if nu in VOLUME_ML and nu not in ("l",):  # bare "l" is noise in labels
+            return nu
+    return None
+
+
+def _match_volume_portion(unit: str, item: str, portions: list) -> Optional[float]:
+    """Grams per ONE ``unit`` from a household volume portion, or None.
+
+    Prefers a portion in the same unit, then one whose label shares the line's
+    prep word ("cup, chopped or diced" for "dill pickles, chopped" over "cup
+    (about 23 slices)"). Falls back to scaling a portion in another volume unit
+    — FDC gives fresh dill as "1 cup sprigs", and "2 tbsp dill" is that cup over
+    sixteen — because the alternative is a 0 g line and a silent undercount.
+    Never scales up from a smaller unit.
+    """
+    target = normalize_unit(unit).lower()
+    if target not in VOLUME_ML or not portions:
+        return None
+    item_l = (item or "").lower()
+    prep = {w for w in _PREP_WORDS if w in item_l}
+    best, best_key = None, None
+    for p in portions:
+        gw = p.get("gram_weight")
+        if not isinstance(gw, (int, float)) or gw <= 0:
+            continue
+        pu = _portion_volume_unit(p)
+        if pu is None:
+            continue
+        label = str(p.get("label", "")).lower()
+        # Only scale DOWN (a cup portion tells you a spoon; a spoon does not
+        # tell you a cup): FDC's "1 tablespoon protein powder = 15.5 g" would
+        # make a cup 248 g, sixteen times one heaped-spoon measurement.
+        if VOLUME_ML[pu] < VOLUME_ML[target]:
+            continue
+        key = (pu == target, any(w in label for w in prep))
+        if best_key is None or key > best_key:
+            best, best_key = gw / VOLUME_ML[pu] * VOLUME_ML[target], key
+    return best
+
+
 # --- Core conversion ----------------------------------------------------------
 
 def to_grams(
@@ -339,7 +390,9 @@ def to_grams(
             return GramResult(grams, "volume_density", CONFIDENCE["volume_density"], False)
         # No density: FDC ships household portions ("1 cup = X g") for many foods.
         # Use one whose label matches the requested volume unit before giving up.
-        portion = _match_portion(unit, item, usda_portions or [])
+        portion = _match_volume_portion(unit, item, usda_portions or [])
+        if portion is None:
+            portion = _match_portion(unit, item, usda_portions or [])
         if portion is not None:
             return GramResult(qty * portion, "usda_portion", CONFIDENCE["usda_portion"], False)
         return GramResult(

@@ -46,7 +46,7 @@ def test_failed_load_keeps_obsidian_link(page, recipe_url, status, title):
     assert parse_qs(uri.query) == {"vault": ["KitchenOS"], "file": ["Recipes/Browser Access Test"]}
     expect(page.locator("#recipe-subtitle")).to_contain_text("Obsidian")
     expect(page.locator("#scale-select")).not_to_be_visible()
-    expect(page.get_by_role("button", name="Add to this week")).to_be_disabled()
+    expect(page.get_by_role("button", name="Add to meal plan")).to_be_disabled()
 
 
 def test_network_failure_keeps_recovery_available(page, recipe_url):
@@ -63,7 +63,7 @@ def test_successful_load_reveals_scaling_and_plan_action(page, recipe_url, page_
     expect(page.locator("#recipe-title")).to_have_text("Browser Access Test")
     expect(page.locator("#ingredients-body")).to_contain_text("beans")
     expect(page.locator("#instructions-list")).to_contain_text("Cook the beans")
-    expect(page.get_by_role("button", name="Add to this week")).to_be_enabled()
+    expect(page.get_by_role("button", name="Add to meal plan")).to_be_enabled()
     page.get_by_label("Scale", exact=True).select_option("2")
     expect(page.locator("#ingredients-body tr td").first).to_have_text("4")
     assert page_errors == []

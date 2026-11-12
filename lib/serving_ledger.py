@@ -205,8 +205,40 @@ def create_cook(recipe: str, week: str, scale: float = 1.0,
         conn.close()
 
 
+def default_slot(week: str, meal: str, today=None) -> str:
+    """The date a cook with no slot should land on: first free ``meal`` in ``week``.
+
+    Exists so a cook is never created unplaced — an undated cook renders only in
+    the planner's Unscheduled tray, which is where recipes added from their own
+    page used to disappear. The search runs from today (or the week's Monday if
+    the week hasn't started; a past week also starts Monday) to Sunday, and a
+    night counts as taken if any cook is anchored there or any serving is
+    placed there. If every night is taken, the first candidate is returned —
+    doubling up a dinner beats hiding the recipe.
+    """
+    from datetime import timedelta
+    today = today or _date.today()
+    year, week_num = int(week[:4]), int(week.split("-W")[1])
+    monday = _date.fromisocalendar(year, week_num, 1)
+    sunday = monday + timedelta(days=6)
+    start = today if monday <= today <= sunday else monday
+    candidates = [(start + timedelta(days=i)).isoformat()
+                  for i in range((sunday - start).days + 1)]
+    conn = inventory_db.connect()
+    try:
+        marks = ",".join("?" * len(candidates))
+        taken = {r[0] for r in conn.execute(
+            f"SELECT date FROM cooks WHERE meal = ? AND date IN ({marks})"
+            f" UNION SELECT date FROM placements WHERE destination = 'slot'"
+            f" AND meal = ? AND date IN ({marks})",
+            (meal, *candidates, meal, *candidates)).fetchall()}
+    finally:
+        conn.close()
+    return next((d for d in candidates if d not in taken), candidates[0])
+
+
 def find_recent_duplicate(recipe: str, week: str, date, meal,
-                          window_s: float) -> Optional[dict]:
+                          window_s: float, any_slot: bool = False) -> Optional[dict]:
     """An identical cook created within ``window_s`` seconds, or None.
 
     Exists to absorb a double-tap, not to prevent cooking the same dish twice:
@@ -218,17 +250,23 @@ def find_recent_duplicate(recipe: str, week: str, date, meal,
 
     ``date``/``meal`` are matched with ``IS`` rather than ``=`` because the real
     duplicates carry NULL for both, and NULL = NULL is never true in SQL.
+
+    ``any_slot`` ignores date/meal. The API passes it when the request named no
+    slot, because ``default_slot`` gives the *second* tap the next free night —
+    matching on the slot would then miss the first tap's cook entirely.
     """
     if window_s <= 0 or not recipe or not week:
         return None
+    slot_sql = "" if any_slot else " AND date IS ? AND meal IS ?"
+    slot_args = () if any_slot else (date, meal)
     conn = inventory_db.connect()
     try:
         row = conn.execute(
             "SELECT id FROM cooks"
-            " WHERE recipe = ? AND week = ? AND date IS ? AND meal IS ?"
+            " WHERE recipe = ? AND week = ?" + slot_sql +
             "   AND created_at >= datetime('now', ?)"
             " ORDER BY id DESC LIMIT 1",
-            (recipe, week, date, meal, f"-{float(window_s)} seconds"),
+            (recipe, week, *slot_args, f"-{float(window_s)} seconds"),
         ).fetchone()
     finally:
         conn.close()

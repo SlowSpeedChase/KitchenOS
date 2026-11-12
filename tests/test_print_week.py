@@ -179,3 +179,50 @@ class TestLedgerWeekPacket:
         packet = print_week.build_week_packet(WEEK, vault, recipes, pantry=[])
         html = print_week.render_packet_html(packet)
         assert "excludes Mystery Soup" in html
+
+
+class TestRecipePages:
+    """Optional full recipes at the end of the print packet (?recipes=1)."""
+
+    def _full_recipe(self, recipes_dir, name):
+        (recipes_dir / f"{name}.md").write_text(
+            f'---\ntitle: "{name}"\nservings: 4\ntotal_time: "30 minutes"\n---\n\n'
+            f"# {name}\n\n## Ingredients\n\n| Amount | Unit | Ingredient |\n"
+            "|--------|------|------------|\n| 1 | lb | ground beef |\n| 2 | cup | rice |\n\n"
+            "## Instructions\n\n1. Brown the beef.\n2. Serve over rice.\n")
+
+    def test_off_by_default(self, tmp_vault):
+        vault, recipes = _setup_markdown_week(tmp_vault)
+        packet = print_week.build_week_packet(WEEK, vault, recipes, pantry=[])
+        assert packet["recipes"] == []
+        assert "class='recipe-page" not in print_week.render_packet_html(packet)
+
+    def test_each_recipe_once_in_week_order(self, tmp_vault):
+        vault, recipes = _setup_markdown_week(tmp_vault)
+        self._full_recipe(recipes, "Beef Bowl")
+        packet = print_week.build_week_packet(WEEK, vault, recipes, pantry=[],
+                                              include_recipes=True)
+        # Oatmeal (Mon breakfast) before Beef Bowl (Mon dinner); Beef Bowl's
+        # second appearance on Wednesday does not print it twice.
+        assert [r["name"] for r in packet["recipes"]] == ["Oatmeal", "Beef Bowl"]
+        beef = packet["recipes"][1]
+        assert [i["item"] for i in beef["ingredients"]] == ["ground beef", "rice"]
+        assert [s["text"] for s in beef["instructions"]] == ["Brown the beef.", "Serve over rice."]
+
+        html = print_week.render_packet_html(packet)
+        assert html.count("class='recipe-page") == 2
+        assert "Brown the beef." in html and "ground beef" in html
+
+    def test_missing_recipe_file_is_skipped(self, tmp_vault):
+        vault, recipes = _setup_markdown_week(tmp_vault)
+        (recipes / "Oatmeal.md").unlink()
+        packet = print_week.build_week_packet(WEEK, vault, recipes, pantry=[],
+                                              include_recipes=True)
+        assert [r["name"] for r in packet["recipes"]] == ["Beef Bowl"]
+
+    def test_recipe_text_is_escaped(self, tmp_vault):
+        vault, recipes = _setup_markdown_week(tmp_vault)
+        packet = print_week.build_week_packet(WEEK, vault, recipes, pantry=[],
+                                              include_recipes=True)
+        packet["recipes"][0]["instructions"] = [{"step": 1, "text": "<script>x</script>"}]
+        assert "<script>x" not in print_week.render_packet_html(packet)

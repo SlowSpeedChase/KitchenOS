@@ -273,6 +273,18 @@ become something the user has to maintain:
   (`lib/meal_suggester.py`) ranks recipes by how much at-risk (expiring)
   inventory they use first, so waste-relevant recipes surface without an
   LLM tiebreak.
+- **Dislikes are a guard, not a prompt.** `lib/dislike_guard.py` matches the
+  `**Dislike:**` bullet of `My Meal System.md` (`Profile.dislikes()`) against a
+  recipe's parsed ingredient rows — word-boundary regexes with plural, hyphen,
+  doubled-letter and accent variants, plus opt-in synonyms (`capsicum` →
+  bell pepper). No model. It is consulted at four points: extraction writes
+  `dislike_hits` frontmatter; the placement APIs return a `dislike_hits`
+  warning; `meal_suggester.exclude_disliked` removes hits from the candidate
+  pool before any tier (including Claude) sees it; and
+  `scripts/scan_dislikes.py` reports a week. "Do not infer that all other
+  peppers are disliked" is pinned by negative tests (flakes, aleppo, urfa,
+  jalapeño). Substitute ideas (`suggest_swaps`) are optional, local Ollama
+  only, `llm_gate`-bounded, and never edit a recipe.
 
 ## Vault taxonomy
 
