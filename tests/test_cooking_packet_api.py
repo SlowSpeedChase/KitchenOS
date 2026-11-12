@@ -1,7 +1,6 @@
 """Saved packet HTTP contract; real isolated repository, controlled jobs."""
 import importlib
 import json
-from copy import deepcopy
 
 import pytest
 

@@ -1,7 +1,6 @@
 """Rendering contracts, hostile text boundaries, and real browser editing flows."""
 from copy import deepcopy
 from pathlib import Path
-import json
 
 from bs4 import BeautifulSoup
 import pytest

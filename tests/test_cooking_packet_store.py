@@ -125,7 +125,7 @@ def test_stale_null_deletion_preserves_current_override(store, orphan):
 
 def test_invalid_batch_rolls_back_null_deletion(store):
     first = store.replace_generated("2026-W40", draft())
-    edited = store.patch_packet("2026-W40", first["revision"], [change()])
+    store.patch_packet("2026-W40", first["revision"], [change()])
     orphaned = store.replace_generated("2026-W40", draft(()))
     with pytest.raises(ValueError):
         store.patch_packet("2026-W40", orphaned["revision"], [change(value=None), change(item_id="recipe:Soup", field="recipe", value="Other")])
@@ -523,7 +523,7 @@ def test_null_can_still_delete_a_previously_valid_orphan_ingredient_stage_overri
     generated = partition_fixture()
     first = store.replace_generated('2026-W40', generated)
     edit = change(item_id='ingredient:test', field='prep_stage', value='finish_after_cooking')
-    saved = store.patch_packet('2026-W40', first['revision'], [edit])
+    store.patch_packet('2026-W40', first['revision'], [edit])
     vanished = store.replace_generated('2026-W40', draft())
     assert vanished['needs_review'][0]['item_id'] == 'ingredient:test'
     cleared = store.patch_packet('2026-W40', vanished['revision'], [{**edit, 'value': None}])
