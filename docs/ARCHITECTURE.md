@@ -215,9 +215,13 @@ Items enter inventory via five paths, condensed from `CLAUDE.md`'s
 "Receipt → Inventory Workflow":
 
 1. **Email (automatic)** — hourly `receipt-ingest` LaunchAgent fetches HEB
-   receipt emails over IMAP, parses with the Claude API
-   (`lib/receipt_parser.py`, Opus when `ANTHROPIC_API_KEY` is set else
-   Ollama fallback), validates line totals, then commits a valid receipt's ledger
+   receipt emails over IMAP, parses with the OpenAI Responses API
+   (`lib/receipt_parser.py`, `gpt-5.4`, overridable with
+   `KITCHENOS_RECEIPT_MODEL`). Provider selection is OpenAI when
+   `OPENAI_API_KEY` is set, otherwise Claude when `ANTHROPIC_API_KEY` is set,
+   otherwise Ollama. API failures propagate; they do not switch providers.
+   Structured Outputs enforce the receipt shape; validation checks line totals,
+   then commits a valid receipt's ledger
    and inventory together. A needs-review receipt intentionally stores its ledger
    without stock. Dedup by Gmail Message-ID is a successful no-op.
 2. **CSA newsletter (automatic)** — `ingest_csa.py` (run at the tail of the

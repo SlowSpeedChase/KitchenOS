@@ -2,7 +2,7 @@
 """Ingest HEB receipt emails into the KitchenOS DB.
 
 Run hourly by ops/com.kitchenos.receipt-ingest.plist. For each new email
-(dedup by Message-ID against trips.source_id): parse with Ollama, validate,
+(dedup by Message-ID against trips.source_id): parse with the configured receipt provider, validate,
 record trip + purchases, update inventory (skipping fee lines), regenerate
 the Inventory.md view and the price dashboard.
 

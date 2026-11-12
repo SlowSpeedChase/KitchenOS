@@ -10,9 +10,10 @@ markdown plus one SQLite database — nothing is required to leave your Mac
 except the video/web fetch itself and the AI calls you opt into.
 
 AI is hybrid, not a single model: local Ollama (`mistral:7b`) handles recipe
-extraction, seasonal matching, and receipt parsing as a fallback; the Claude
-API is the **load-bearing** model for receipt parsing and meal suggestions
-whenever `ANTHROPIC_API_KEY` is configured; OpenAI Whisper is the transcript
+extraction, seasonal matching, and receipt parsing as a fallback. OpenAI
+handles automatic receipts when `OPENAI_API_KEY` is configured; Claude handles
+meal suggestions and receipts without an OpenAI key when `ANTHROPIC_API_KEY`
+is configured. OpenAI Whisper is the transcript
 fallback; and the native app additionally uses on-device Apple Foundation
 Models.
 
@@ -73,10 +74,10 @@ app build/deploy, and the 9 background LaunchAgents).
 - [Ollama](https://ollama.ai/) with the `mistral:7b` model — required for
   extraction, seasonal matching, and as the receipt-parsing fallback
 - YouTube API key
-- OpenAI API key (for Whisper transcript fallback)
+- OpenAI API key (automatic receipt parsing and Whisper transcript fallback)
 - Anthropic API key (`ANTHROPIC_API_KEY`) — optional but recommended; when
-  set, Claude does the load-bearing work for receipt parsing and meal
-  suggestions instead of the Ollama fallback
+  set, Claude handles meal suggestions and receipt parsing when no OpenAI
+  key is configured
 
 ### Setup
 
@@ -98,7 +99,7 @@ app build/deploy, and the 9 background LaunchAgents).
    ```bash
    YOUTUBE_API_KEY="your_youtube_api_key"
    OPENAI_API_KEY="your_openai_api_key"
-   ANTHROPIC_API_KEY="your_anthropic_api_key"   # optional; enables Claude for receipts + meal suggestions
+   ANTHROPIC_API_KEY="your_anthropic_api_key"   # optional; Claude meal suggestions + receipt fallback
    USDA_FDC_API_KEY="your_usda_fdc_api_key"     # optional; nutrition engine
    ```
 
@@ -144,8 +145,9 @@ SQLite database (`data/kitchenos.db`), the single source of truth for that
 data. Items enter automatically or manually:
 
 - **Email (automatic)** — an hourly LaunchAgent checks Gmail for HEB receipt
-  emails, parses them with the **Claude API** (falling back to Ollama if
-  `ANTHROPIC_API_KEY` isn't set), validates the totals, and records the
+  emails, parses them with the **OpenAI API** (`gpt-5.4`; override with
+  `KITCHENOS_RECEIPT_MODEL`). Without an OpenAI key it selects Claude, or
+  Ollama if neither cloud key is set. It validates the totals and records the
   trip, line-item prices, and inventory updates. Re-ingesting the same
   email is always a no-op.
 - **CSA newsletter (automatic)** — a weekly Central Texas Farmers Co-op
