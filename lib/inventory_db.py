@@ -377,18 +377,27 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_cooks_bundle ON cooks(bundle_id)")
     # INSERT OR IGNORE preserves any previously configured preference. These
     # new tables reference no migrated column and can be created in _SCHEMA.
-    conn.executemany(
-        "INSERT OR IGNORE INTO retailer_preferences"
-        " (retailer, location_id, display_name, address, preference_rank, policy_json)"
-        " VALUES (?, ?, ?, ?, ?, ?)",
-        [
-            ("heb", "425", "H-E-B Hancock Center", "1000 East 41st Street, Austin, Texas 78751", 1,
-             json.dumps({"prefer_owned_brand": True, "reason": "cashback"})),
-            ("costco", "681", "Costco North Austin", "10401 Research Boulevard, Austin, Texas 78759", 2,
-             json.dumps({"require_bulk_suitability": True,
-                         "allow_storage_friendly_remainder": True})),
-        ],
-    )
+    # Probe with a read first: connect() runs on every open, and even a no-op
+    # INSERT takes SQLite's write lock, so an unconditional seed made every
+    # plain reader wait out busy_timeout behind any open BEGIN IMMEDIATE
+    # (the Apple bridge reports status while its sync transaction is held).
+    seeded = {r[0] for r in conn.execute(
+        "SELECT retailer FROM retailer_preferences")}
+    seeds = [
+        ("heb", "425", "H-E-B Hancock Center", "1000 East 41st Street, Austin, Texas 78751", 1,
+         json.dumps({"prefer_owned_brand": True, "reason": "cashback"})),
+        ("costco", "681", "Costco North Austin", "10401 Research Boulevard, Austin, Texas 78759", 2,
+         json.dumps({"require_bulk_suitability": True,
+                     "allow_storage_friendly_remainder": True})),
+    ]
+    missing = [row for row in seeds if row[0] not in seeded]
+    if missing:
+        conn.executemany(
+            "INSERT OR IGNORE INTO retailer_preferences"
+            " (retailer, location_id, display_name, address, preference_rank, policy_json)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            missing,
+        )
     conn.commit()
 
 
