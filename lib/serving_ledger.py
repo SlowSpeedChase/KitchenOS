@@ -976,7 +976,6 @@ def schedule_cook(cook_id: int, *, date: str, meal: str, start: str,
     drain_schedule_views. Owned calls drain after commit; IO errors leave work
     durable and propagate rather than claiming the generated view is current.
     """
-    import math
     from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
     from lib.cooking_windows import valid_duration
