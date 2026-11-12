@@ -519,7 +519,8 @@ def parse_shopping_list_file(week: str) -> dict:
     for line in content.split('\n'):
         # Match unchecked: - [ ] item
         if re.match(r'^- \[ \] ', line):
-            item = line[6:].strip()  # Remove "- [ ] " prefix
+            from lib.shopping_note import strip_item_marker
+            item = strip_item_marker(line[6:])
             if item:
                 unchecked.append(item)
         # Match checked: - [x] item

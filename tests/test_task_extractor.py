@@ -352,3 +352,187 @@ class TestPageRenderNeverBlocks:
              patch.object(task_extractor, "_classify_with_ollama", return_value=None):
             task_extractor.extract_tasks("2026-W18", force=True)
             claude.assert_called_once()
+
+
+def test_completion_during_model_extraction_survives_final_merge(vault, monkeypatch):
+    """Regeneration must merge the current cache, not the pre-model snapshot."""
+    monkeypatch.setattr(task_extractor, '_classify_with_claude', lambda _: None)
+    monkeypatch.setattr(task_extractor, '_classify_with_ollama', lambda _: None)
+    initial = task_extractor.extract_tasks('2026-W18')
+    task_id = initial['tasks'][0]['id']
+    def classify(_):
+        task_extractor.mark_task_done('2026-W18', task_id, True)
+        return None
+    monkeypatch.setattr(task_extractor, '_classify_with_claude', classify)
+    result = task_extractor.extract_tasks('2026-W18', force=True)
+    assert result['tasks'][0]['done'] is True
+    assert task_extractor.load_cached_tasks('2026-W18')['tasks'][0]['done'] is True
+
+
+def test_undo_during_model_extraction_survives_final_merge(vault, monkeypatch):
+    monkeypatch.setattr(task_extractor, '_classify_with_claude', lambda _: None)
+    monkeypatch.setattr(task_extractor, '_classify_with_ollama', lambda _: None)
+    initial = task_extractor.extract_tasks('2026-W18')
+    task_id = initial['tasks'][0]['id']
+    task_extractor.mark_task_done('2026-W18', task_id, True)
+    def classify(_):
+        task_extractor.mark_task_done('2026-W18', task_id, False)
+        return None
+    monkeypatch.setattr(task_extractor, '_classify_with_claude', classify)
+    result = task_extractor.extract_tasks('2026-W18', force=True)
+    assert result['tasks'][0]['done'] is False
+    assert task_extractor.load_cached_tasks('2026-W18')['tasks'][0]['done'] is False
+
+
+def test_mark_done_refuses_stale_expected_hash(vault, monkeypatch):
+    from lib.apple_integration.models import RevisionConflict
+    from lib.note_mutation import content_hash
+    monkeypatch.setattr(task_extractor, '_classify_with_claude', lambda _: None)
+    monkeypatch.setattr(task_extractor, '_classify_with_ollama', lambda _: None)
+    initial = task_extractor.extract_tasks('2026-W18')
+    sidecar = vault / 'Meal Plans' / '2026-W18.tasks.json'
+    expected = content_hash(sidecar.read_text())
+    sidecar.write_text(sidecar.read_text() + '\n')
+    before = sidecar.read_bytes()
+    with pytest.raises(RevisionConflict):
+        task_extractor.mark_task_done('2026-W18', initial['tasks'][0]['id'], expected_hash=expected, operation_id='completion-1')
+    assert sidecar.read_bytes() == before
+
+
+def test_plan_changed_during_classification_cannot_make_old_tasks_fresh(vault, monkeypatch):
+    from lib.apple_integration.models import RevisionConflict
+    monkeypatch.setattr(task_extractor, '_classify_with_claude', lambda _: None)
+    monkeypatch.setattr(task_extractor, '_classify_with_ollama', lambda _: None)
+    task_extractor.extract_tasks('2026-W18')
+    sidecar = vault / 'Meal Plans' / '2026-W18.tasks.json'
+    before = sidecar.read_bytes()
+    plan = vault / 'Meal Plans' / '2026-W18.md'
+    def classify(_):
+        plan.write_text(plan.read_text().replace('[[Test Pasta]]', ''))
+        return None
+    monkeypatch.setattr(task_extractor, '_classify_with_claude', classify)
+    with pytest.raises(RevisionConflict):
+        task_extractor.extract_tasks('2026-W18', force=True)
+    assert sidecar.read_bytes() == before
+    assert not task_extractor._is_cache_fresh('2026-W18', {})
+
+
+def test_unpersisted_forced_page_fallback_preserves_completion(vault, monkeypatch):
+    from flask import Flask
+    monkeypatch.setattr(task_extractor, '_classify_with_claude', lambda _: None)
+    monkeypatch.setattr(task_extractor, '_classify_with_ollama', lambda _: None)
+    initial = task_extractor.extract_tasks('2026-W18')
+    task_extractor.mark_task_done('2026-W18', initial['tasks'][0]['id'], True)
+    sidecar = vault / 'Meal Plans' / '2026-W18.tasks.json'
+    before = sidecar.read_bytes()
+    with Flask(__name__).test_request_context('/prep?force=1'):
+        result = task_extractor.extract_tasks('2026-W18', force=True)
+    assert result['tasks'][0]['done'] is True
+    assert sidecar.read_bytes() == before
+
+
+def test_explicit_regeneration_repairs_malformed_cache(vault, monkeypatch):
+    monkeypatch.setattr(task_extractor, '_classify_with_claude', lambda _: None)
+    monkeypatch.setattr(task_extractor, '_classify_with_ollama', lambda _: None)
+    sidecar = vault / 'Meal Plans' / '2026-W18.tasks.json'
+    sidecar.write_text('{invalid json')
+    result = task_extractor.extract_tasks('2026-W18', force=True)
+    assert len(result['tasks']) == 3
+    assert task_extractor.load_cached_tasks('2026-W18')['tasks'] == result['tasks']
+
+
+def test_cold_page_task_can_still_be_marked_done(vault):
+    """The page's uncached heuristic task retains its existing completion action."""
+    from flask import Flask
+    task_id = '95d6123b4f7d'  # Test Pasta|Monday|dinner|1
+    with Flask(__name__).test_request_context('/prep/done'):
+        result = task_extractor.mark_task_done('2026-W18', task_id)
+    assert result == {'success': True, 'task_id': task_id, 'done': True}
+    assert task_extractor.load_cached_tasks('2026-W18')['tasks'][0]['done'] is True
+
+
+def test_plan_edit_during_sidecar_replace_stays_stale_despite_fresh_mtime(vault, monkeypatch):
+    import hashlib
+    from lib import note_mutation
+    monkeypatch.setattr(task_extractor, '_classify_with_claude', lambda _: None)
+    monkeypatch.setattr(task_extractor, '_classify_with_ollama', lambda _: None)
+    plan = vault / 'Meal Plans' / '2026-W18.md'
+    expected = hashlib.sha256(plan.read_bytes()).hexdigest()
+    real_replace = note_mutation._replace
+    def change_plan(path, text, before):
+        plan.write_text(plan.read_text().replace('[[Test Pasta]]', ''))
+        real_replace(path, text, before)
+    monkeypatch.setattr(note_mutation, '_replace', change_plan)
+    result = task_extractor.extract_tasks('2026-W18', force=True)
+    sidecar = vault / 'Meal Plans' / '2026-W18.tasks.json'
+    assert sidecar.stat().st_mtime >= plan.stat().st_mtime
+    assert result['plan_hash'] == expected
+    assert not task_extractor._is_cache_fresh('2026-W18', result)
+
+
+@pytest.mark.parametrize('bad_hash', [None, 'malformed', 'f' * 64])
+def test_invalid_declared_plan_hash_does_not_certify_cache_fresh(vault, bad_hash):
+    sidecar = vault / 'Meal Plans' / '2026-W18.tasks.json'
+    cached = {'week': '2026-W18', 'tasks': [], 'plan_hash': bad_hash}
+    sidecar.write_text(json.dumps(cached))
+    assert not task_extractor._is_cache_fresh('2026-W18', cached)
+
+
+def test_legacy_cache_without_plan_hash_keeps_mtime_freshness(vault):
+    sidecar = vault / 'Meal Plans' / '2026-W18.tasks.json'
+    cached = {'week': '2026-W18', 'tasks': []}
+    sidecar.write_text(json.dumps(cached))
+    assert task_extractor._is_cache_fresh('2026-W18', cached)
+
+
+def test_cold_page_completion_also_records_source_plan_hash(vault):
+    import hashlib
+    from flask import Flask
+    expected = hashlib.sha256((vault / 'Meal Plans' / '2026-W18.md').read_bytes()).hexdigest()
+    with Flask(__name__).test_request_context('/prep/done'):
+        task_extractor.mark_task_done('2026-W18', '95d6123b4f7d')
+    assert task_extractor.load_cached_tasks('2026-W18')['plan_hash'] == expected
+
+
+def test_malformed_cache_page_completion_repairs_exact_journaled_bytes(vault):
+    """Unreadable disk JSON must not strand tasks shown by the prep page."""
+    from flask import Flask
+    from lib import inventory_db as db
+    from lib.apple_integration import prep
+    from lib.apple_integration.models import SourceUnavailable
+    sidecar = vault / 'Meal Plans' / '2026-W18.tasks.json'
+    original = b'{invalid json\r\n'
+    sidecar.write_bytes(original)
+    with Flask(__name__).test_request_context('/prep'):
+        shown = task_extractor.extract_tasks('2026-W18')
+    assert len(shown['tasks']) == 3
+    assert sidecar.read_bytes() == original
+    with pytest.raises(SourceUnavailable):
+        prep.collect('2026-W18')
+    with Flask(__name__).test_request_context('/prep/done'):
+        result = task_extractor.mark_task_done('2026-W18', '95d6123b4f7d', operation_id='repair-completion')
+    assert result == {'success': True, 'task_id': '95d6123b4f7d', 'done': True}
+    repaired = task_extractor.load_cached_tasks('2026-W18')
+    assert len(repaired['tasks']) == 3
+    assert repaired['tasks'][0]['id'] == shown['tasks'][0]['id']
+    assert repaired['tasks'][0]['done'] is True
+    assert [t['done'] for t in repaired['tasks'][1:]] == [False, False]
+    assert task_extractor._is_cache_fresh('2026-W18', repaired)
+    with db.connect() as conn:
+        edit = conn.execute('SELECT * FROM apple_file_edits WHERE operation_id=?', ('repair-completion',)).fetchone()
+        assert edit['before_text'].encode('utf-8') == original
+        assert edit['after_text'].encode('utf-8') == sidecar.read_bytes()
+        assert edit['status'] == 'applied'
+
+
+def test_malformed_cache_with_stale_expected_hash_never_repairs(vault):
+    from lib.apple_integration.models import RevisionConflict
+    from lib.note_mutation import content_hash
+    sidecar = vault / 'Meal Plans' / '2026-W18.tasks.json'
+    original = b'{invalid json\r\n'
+    sidecar.write_bytes(original)
+    with pytest.raises(RevisionConflict):
+        task_extractor.mark_task_done('2026-W18', '95d6123b4f7d',
+                                      expected_hash=content_hash('older bytes'),
+                                      operation_id='stale-completion')
+    assert sidecar.read_bytes() == original

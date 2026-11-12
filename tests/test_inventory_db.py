@@ -490,3 +490,24 @@ def test_a_pre_bundle_database_gains_the_columns_and_the_index(tmp_db):
     # The pre-existing row survives, unbundled.
     assert row["recipe"] == "Chili"
     assert row["bundle_id"] is None
+
+
+def test_apple_sync_schema_upgrades_existing_database(tmp_db):
+    """New sync tables coexist with pre-integration inventory without data loss."""
+    conn = sqlite3.connect(tmp_db)
+    conn.executescript('''
+        CREATE TABLE inventory (
+            id INTEGER PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE,
+            quantity REAL NOT NULL, unit TEXT NOT NULL DEFAULT 'ct' COLLATE NOCASE,
+            category TEXT NOT NULL DEFAULT 'other', location TEXT NOT NULL DEFAULT 'pantry',
+            purchased TEXT, source TEXT NOT NULL DEFAULT 'manual', notes TEXT NOT NULL DEFAULT '',
+            for_recipe TEXT, expires TEXT, location_source TEXT,
+            UNIQUE(name, unit, location));
+        INSERT INTO inventory(id, name, quantity) VALUES(1, 'limes', 4);
+    ''')
+    conn.close()
+    conn = idb.connect()
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert {'apple_bridge', 'apple_scopes', 'apple_items', 'apple_operations', 'apple_conflicts', 'apple_file_edits'} <= tables
+    assert conn.execute('SELECT quantity FROM inventory WHERE id=1').fetchone()[0] == 4
+    conn.close()

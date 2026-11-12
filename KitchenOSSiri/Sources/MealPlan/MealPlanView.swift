@@ -16,7 +16,9 @@ extension MealSlot {
 
 /// Weekly meal plan: navigate weeks, fill/clear slots, ask for suggestions.
 struct MealPlanView: View {
+    @StateObject private var availability = CookingAvailabilityModel()
     @State private var weekAnchor = Date()
+    @State private var showPlanningCalendar = false
     @State private var plan: MealPlan?
     @State private var status = ""
     @State private var isLoading = false
@@ -38,6 +40,7 @@ struct MealPlanView: View {
             if let plan {
                 ForEach(Array(plan.days.enumerated()), id: \.offset) { dayIndex, day in
                     Section("\(day.day) · \(day.date)") {
+                        Text((availability.days[day.date] ?? .unknown).label).font(.caption)
                         ForEach(MealSlot.allCases, id: \.self) { meal in
                             slotRow(dayIndex: dayIndex, day: day, meal: meal)
                         }
@@ -54,12 +57,15 @@ struct MealPlanView: View {
         .overlay { if isLoading { ProgressView() } }
         .toolbar {
             ToolbarItemGroup {
+                Button("Plan with calendar") { showPlanningCalendar = true }
                 Button { shiftWeek(-1) } label: { Image(systemName: "chevron.left") }
                 Text(weekID).font(.callout.monospaced())
                 Button { shiftWeek(1) } label: { Image(systemName: "chevron.right") }
             }
         }
+        .sheet(isPresented: $showPlanningCalendar, onDismiss: { Task { await load() } }) { PlanningCalendarSheet(week: weekID) }
         .task(id: weekID) { await load() }
+        .task(id: weekID) { await availability.follow(week: weekID) }
         .sheet(item: $editing) { ref in
             RecipePickerSheet { picked in
                 setSlot(dayIndex: ref.dayIndex, meal: ref.meal,

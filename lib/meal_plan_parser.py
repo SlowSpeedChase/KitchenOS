@@ -40,16 +40,18 @@ def get_week_start_date(year: int, week: int) -> date:
     return week1_monday + timedelta(weeks=week - 1)
 
 
-def extract_meals_for_day(section: str) -> dict:
-    """Extract breakfast, lunch, dinner from a day section.
+def extract_meals_for_day(section: str, *, all_entries: bool = False) -> dict:
+    """Extract references from the four recognized meal slots in a day.
 
     Args:
         section: Markdown section for a single day
+        all_entries: Return a list per slot instead of its first entry.
 
     Returns:
-        Dict with 'breakfast', 'lunch', 'dinner' keys (None if empty)
+        Slot dict of MealEntry/None, or lists (empty when absent) with all_entries.
     """
-    meals = {'breakfast': None, 'lunch': None, 'snack': None, 'dinner': None}
+    meals = {slot: [] if all_entries else None
+             for slot in ('breakfast', 'lunch', 'snack', 'dinner')}
 
     for meal_type in ['breakfast', 'lunch', 'snack', 'dinner']:
         pattern = rf'###\s+{meal_type}\s*\n(.*?)(?=###|\Z)'
@@ -57,12 +59,16 @@ def extract_meals_for_day(section: str) -> dict:
         if match:
             content = match.group(1).strip()
             # Match either `[[Recipe]]` or `[[Meal: Bundle Name]]`, with optional xN
-            link_match = re.search(r'\[\[(Meal:\s*)?([^\]]+)\]\]\s*(?:x([\d.]+))?', content)
-            if link_match:
+            for link_match in re.finditer(r'\[\[(Meal:\s*)?([^\]]+)\]\]\s*(?:x([\d.]+))?', content):
                 kind = "meal" if link_match.group(1) else "recipe"
                 name = link_match.group(2).strip()
                 servings = float(link_match.group(3)) if link_match.group(3) else 1.0
-                meals[meal_type] = MealEntry(name=name, servings=servings, kind=kind)
+                entry = MealEntry(name=name, servings=servings, kind=kind)
+                if all_entries:
+                    meals[meal_type].append(entry)
+                else:
+                    meals[meal_type] = entry
+                    break
 
     return meals
 
@@ -187,13 +193,15 @@ def insert_recipe_into_meal_plan(content: str, day: str, meal: str, recipe_name:
     return content[:insert_pos] + new_slot + content[section_end:]
 
 
-def parse_meal_plan(content: str, year: int, week: int) -> list[dict]:
+def parse_meal_plan(content: str, year: int, week: int, *, all_entries: bool = False) -> list[dict]:
     """Parse meal plan markdown into structured day data.
 
     Args:
         content: Full markdown content of meal plan file
         year: ISO year
         week: ISO week number
+        all_entries: Opt in to every entry per meal slot; default keeps the
+            historical first-entry shape used by mutation/import callers.
 
     Returns:
         List of 7 dicts, one per day, with keys:
@@ -214,9 +222,10 @@ def parse_meal_plan(content: str, year: int, week: int) -> list[dict]:
         pattern = rf'##\s+{day_name}\s+\([^)]+\)(.*?)(?=##\s+(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)|\Z)'
         match = re.search(pattern, content, re.IGNORECASE | re.DOTALL)
 
-        meals = {'breakfast': None, 'lunch': None, 'snack': None, 'dinner': None}
+        meals = {slot: [] if all_entries else None
+                 for slot in ('breakfast', 'lunch', 'snack', 'dinner')}
         if match:
-            meals = extract_meals_for_day(match.group(0))
+            meals = extract_meals_for_day(match.group(0), all_entries=all_entries)
 
         result.append({
             'date': day_date,
