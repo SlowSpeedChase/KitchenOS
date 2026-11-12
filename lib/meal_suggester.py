@@ -252,6 +252,30 @@ def score_overlap(
     return score, shared
 
 
+def exclude_disliked(recipes: list[dict],
+                     dislikes: list[str] | None = None) -> list[dict]:
+    """Drop every recipe whose ingredient rows hit a dislike — before any LLM.
+
+    The profile's dislikes used to reach the model only as prose inside
+    ``_profile_block()``: a request, not a guard, which is how a bell-pepper
+    salad was suggested onto W46–W48. This is a hard filter on the candidate
+    pool, a deterministic string match (``lib/dislike_guard.py``), so neither
+    the ranker nor Claude ever sees a disliked recipe. ``dislikes=None`` reads
+    the vault profile; a missing profile filters nothing.
+
+    Works on ``get_recipe_index(include_ingredients=True)`` rows, whose
+    ``ingredient_items`` come from the same ingredient-section extractors the
+    guard uses everywhere else.
+    """
+    from lib import dislike_guard
+    if dislikes is None:
+        dislikes = dislike_guard.current_dislikes()
+    if not dislikes:
+        return list(recipes)
+    return [r for r in recipes
+            if not dislike_guard.scan_items(r.get("ingredient_items") or [], dislikes)]
+
+
 def rank_candidates(
     candidates: list[dict],
     planned_items: set[str],
@@ -656,6 +680,9 @@ def suggest_meal(
 
     # Load all recipes with ingredients
     all_recipes = get_recipe_index(recipes_dir, include_ingredients=True)
+    # Hard exclusion, ahead of every tier (waste, macro, overlap, Claude) — see
+    # exclude_disliked for why prose in the prompt was not enough.
+    all_recipes = exclude_disliked(all_recipes)
 
     # Names already in the plan
     planned_names = {m["name"] for m in planned_meals}

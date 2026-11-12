@@ -243,6 +243,17 @@ pass or after editing the profile note.
 Skips already-tagged recipes unless `--force`, so it's cheap to re-run. Each
 rewritten note gets a timestamped `.history/` backup.
 
+### Dislike scan
+
+Deterministic check (no model, no tokens) for ingredients listed under
+`**Dislike:**` in `My Meal System.md`. Exits 1 when anything is flagged.
+
+```bash
+.venv/bin/python scripts/scan_dislikes.py              # this week's planned recipes
+.venv/bin/python scripts/scan_dislikes.py 2026-W46 --swaps   # + local Ollama substitute ideas
+.venv/bin/python scripts/scan_dislikes.py --all        # whole library
+```
+
 ### Backfill missing `servings` (review aid)
 
 A recipe with no `servings` has its per-serving macros divided by 1, so the
