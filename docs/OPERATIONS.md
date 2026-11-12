@@ -578,6 +578,17 @@ launchd/filesystem failure. Stage/activate/rollback commands serialize on a runt
 lock. For a subsequent deployment, roll back the existing activation first; this
 first-release tool refuses to overwrite an active recovery baseline.
 
+The October 2026 recipe Obsidian-link repair uses a separate runtime root,
+`~/Library/Application Support/KitchenOS API/rollouts/recipe-obsidian-link`,
+so activation preserves the gateway's original recovery journal and backs up
+the currently running reviewed release as the repair's immediate rollback
+target. Use that same root for the repair's deployment status, logs and rollback:
+
+```bash
+.venv/bin/python scripts/deploy_api.py rollback \
+  --runtime-root "$HOME/Library/Application Support/KitchenOS API/rollouts/recipe-obsidian-link"
+```
+
 Changing the responsible executable can require TCC grants against the new shim.
 Check normal API functionality, background-agent names, and any required TCC access
 after approved deployment; a synthetic probe does not establish these. Keep the

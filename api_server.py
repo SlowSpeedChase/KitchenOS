@@ -797,7 +797,13 @@ def recipe_detail_page(name):
         # so the outer escape would re-escape the entities).
         return error_page(f"Recipe not found: {name}"), 404
 
-    html = _serve_page('recipe_detail.html', [('vault=KitchenOS', f'vault={VAULT_NAME}')])
+    # This escape hatch must work before (or without) the gated JSON request.
+    # Build it from the validated filename, not the recipe's display title.
+    obsidian_url = (f"obsidian://open?vault={quote(paths.vault_root().name, safe='')}"
+                    f"&file={quote('Recipes/' + name, safe='')}")
+    html = _serve_page('recipe_detail.html', [
+        ('<!--OBSIDIAN_URL-->', str(escape(obsidian_url))),
+    ])
     return html, 200, {'Content-Type': 'text/html'}
 
 
