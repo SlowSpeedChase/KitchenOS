@@ -14,6 +14,13 @@ tier that shipped since and corrects two stale statuses.
 
 ## Done / Shipped
 
+**2026-09-26 — Canonical HTTPS home gateway (implementation branch).** Generated
+web, recipe, inventory, nutrition, plan/print, and bookmark links share
+`lib/web_origin.py` and `KITCHENOS_WEB_BASE_URL` (legacy `KITCHENOS_API_BASE`
+remains compatible). iOS upgrades only exact retired defaults; custom
+endpoints and macOS loopback are preserved. Deployment and artifact
+regeneration remain rollout work. See the [shared gateway runbook](https://github.com/SlowSpeedChase/dotfiles/blob/main/docs/home-web-gateway.md).
+
 **2026-08-23 — iOS print/share fallback.** Printable week packets and recipe
 cards now use the system share sheet on iPhone and iPad, where people can choose
 **Print**, Save to Files, or AirDrop. Desktop browsers retain their normal print
@@ -22,7 +29,7 @@ one cannot silently regress back to a no-op on iOS.
 
 **2026-07-08 — Web dashboard tailnet launcher** (PR #32). `lib/web_dashboard.py`
 + `scripts/generate_web_dashboard.py` regenerate `Dashboards/KitchenOS Web.md` — a
-tap-anywhere generated note whose links point at `KITCHENOS_API_BASE` (Tailscale
+tap-anywhere generated note whose links point at `KITCHENOS_WEB_BASE_URL` (Tailscale
 MagicDNS host by default), so the web app (Meal Planner, current plan/shopping
 list, Nutrition Review, System Health) opens from any device on the tailnet, not
 just localhost on the server. Follows the generated-read-only-view pattern

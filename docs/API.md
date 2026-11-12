@@ -10,13 +10,23 @@ and why" (pipeline flow, AI stack, background services) see
 `docs/OPERATIONS.md`.
 
 The API server is a synchronous Flask app (`api_server.py`), run as the
-`com.kitchenos.api` LaunchAgent on port 5001, exposed over Tailscale at
-`chases-mac-mini.taila69703.ts.net:5001`.
+`com.kitchenos.api` LaunchAgent on port 5001, reached through the shared HTTPS gateway at
+`https://chases-mac-mini.taila69703.ts.net`.
+
+Generated public URLs resolve through `lib.web_origin.web_origin()`:
+`KITCHENOS_WEB_BASE_URL` → deprecated `KITCHENOS_API_BASE` → the canonical
+origin above. Values must be HTTP(S) origins without credentials, a nonroot
+path, query, or fragment; trailing root slashes are removed. Internal MCP
+and operator health calls remain `http://localhost:5001`.
+
+DNS, TLS, Caddy, VPN On Demand, and recovery are documented in the shared
+[home gateway runbook](https://github.com/SlowSpeedChase/dotfiles/blob/main/docs/home-web-gateway.md).
 
 **Auth**: when `KITCHENOS_API_TOKEN` is set, remote (non-localhost) callers of
 the token-gated routes below must send `Authorization: Bearer <token>`.
-Localhost (the Mac app, local browser UI, MCP server, LaunchAgents) is always
-exempt. Gated routes are marked **🔒** in the table.
+Direct localhost callers (the Mac app, local browser UI, MCP server, LaunchAgents)
+are exempt. A remote browser forwarded through the loopback gateway is still a
+remote caller. Gated routes are marked **🔒** in the table.
 
 Two things this does **not** currently amount to, both worth knowing before you
 rely on it:
@@ -30,7 +40,13 @@ rely on it:
   bare, so the moment `KITCHENOS_API_TOKEN` is set, every gated route 401s for a
   remote browser and the planner, freezer and board stop working from any
   machine but this one. `KitchenOSKit` does send it, so the native app is fine.
-  The token is currently unset, which is the only reason this isn't biting.
+  Reviewed gateway deployments require a token, so remote browser access needs
+  a browser authentication flow before these API-backed views can work. The
+  recipe page distinguishes access failures from missing recipes and renders its
+  **Open in Obsidian** link on the server, before fetching recipe details. That
+  link uses the configured vault name and recipe filename, works even when the
+  API request fails, and does not carry the API token. Failed loads hide the
+  empty recipe panels and disable **Add to this week**.
 
 ## 1. HTTP endpoints
 
@@ -57,12 +73,12 @@ literal paths. Path | Method | Purpose.
 | `/api/meal-plan/<week>` 🔒 | GET | Meal plan as structured JSON (creates the week file from template if missing). A `kind: "meal"` slot also carries `sub_recipes`, `slot` and a derived `nutrition` rollup **per 1× the bundle** — shipped here rather than left to the client's `/api/meals` fetch, because the planner loads meals and the plan concurrently and a card built from the plan can't assume the meal index is populated. |
 | `/api/meal-plan/<week>` 🔒 | PUT | Save a meal plan from structured JSON `{days: [...]}`; round-trips through `rebuild_meal_plan_markdown`. |
 | `/api/suggest-meal` 🔒 | POST | Suggest a recipe for an empty meal-plan slot. Ranks by, in priority order: at-risk inventory (waste), macro-gap fit (when `My Macros.md` targets exist — protein-weighted), then ingredient overlap. Body `{week, day, meal, skip_index?}`. A planned `[[Meal: X]]` bundle is flattened to its sub-recipes before ranking, so its ingredients and macros count toward the day (they used to count as zero).  Response `{suggestion, macro_context}`: `suggestion` carries `nutrition` (per-serving macros or null), `macro_fit` (0–1) and `nutrition_unknown` (true when the recipe's macros aren't trustworthy); `macro_context` is `{target, current, remaining, projected_with_suggestion}` for the day, or null when no targets are set. |
-| `/add-to-meal-plan` | GET | Screen 1 of the recipe-button flow — renders the branch-picker form (`?recipe=`). |
+| `/add-to-meal-plan` | GET | Screen 1 of the recipe-button flow — renders the branch-picker form (`?recipe=`). Shows a warning card when the recipe contains a disliked ingredient; the `direct`/`schedule_meal` success pages repeat it. |
 | `/add-to-meal-plan` | POST | Screen 1 submit. Branches on `mode`: `direct` (schedule into a week/day/slot immediately), `existing` (append to an existing `vault/Meals/<name>.meal.md`), `new` (create a new meal), `schedule_meal` (screen 2 — schedule a just-created/updated meal). `existing`/`new` end on an optional schedule prompt. |
 | `/meal-planner` | GET | Interactive drag-and-drop meal-planner board (HTML/JS UI). |
 | `/current/meal-plan` | GET | The current ISO week's meal plan, rendered as HTML by `lib/note_view.py`. `?week=` overrides. Wikilinks become `/recipe/<name>` links; the note's dead `kitchenos://` button becomes a working HTTP one. Keeps an "Open in Obsidian" footer link. Was a 302 to `obsidian://`, which dead-ended on a phone. |
 | `/current/shopping-list` | GET | The current ISO week's shopping list, rendered as HTML. `?week=` overrides. When no list exists yet, offers a **Generate shopping list** button that POSTs to `/generate-shopping-list` — the workflow's only phone-reachable trigger. Checkbox state is rendered read-only; the vault note stays the single source of truth. |
-| `/api/bundles` 🔒 | POST | Place a composite plate on a week. Body `{meal_name, week, date, meal, scale?}` — `meal_name` is the plate, `meal` is the slot. Creates **one ordinary cook per sub-recipe** sharing a `bundle_id`, each placed at its `sub_multiplier` share, so the plate's macros land in the day-totals row and every downstream consumer still sees one recipe per row. 201, or **200** with the existing bundle on a double-tap inside the dedupe window. 404 for an unknown plate. Converts a hand-edited legacy week (with a backup) before writing. |
+| `/api/bundles` 🔒 | POST | Place a composite plate on a week. Body `{meal_name, week, date, meal, scale?}` — `meal_name` is the plate, `meal` is the slot. Creates **one ordinary cook per sub-recipe** sharing a `bundle_id`, each placed at its `sub_multiplier` share, so the plate's macros land in the day-totals row and every downstream consumer still sees one recipe per row. 201, or **200** with the existing bundle on a double-tap inside the dedupe window. 404 for an unknown plate. Converts a hand-edited legacy week (with a backup) before writing. The 201 body carries `dislike_hits` across all members when any has one. |
 | `/api/bundles/<id>/move` 🔒 | POST | Re-anchor a whole plate. Body `{date, meal}`. One transaction: a date outside the members' week refuses all of them, never some. |
 | `/api/bundles/<id>` 🔒 | PATCH | Set a bundle-wide field on every member. Allowed: `cooked_at`, `make_again`, `cook_note` — anything else is a 400. `scale` is deliberately excluded: scaling a plate up usually means more protein, not more rice, so it stays a per-member PATCH on `/api/cooks/<id>`. Returns `{bundle_id, bundle_name, cooks, consumption}`; the bundle-wide verdict is what stops one plate generating a separate "was this worth making?" nudge per sub-recipe. |
 | `/api/bundles/<id>` 🔒 | DELETE | Remove a whole plate from the week. Returns `{status, cooks}`. |
@@ -143,7 +159,7 @@ and every stale server reports as fresh.
 | `/api/nutrition-review/recompute` 🔒 | POST | Rerun the nutrition engine for one recipe file and persist + return the new summary. |
 | `/api/week-board/<week>` 🔒 | GET | Serving-ledger board view of a week (`serving_ledger.week_board`) — cooks and their placements. |
 | `/api/week-board/<week>/import-legacy` 🔒 | POST | One-time conversion of a hand-edited week into the serving ledger (`lib.week_view.import_legacy_week`). |
-| `/api/cooks` 🔒 | POST | Create a cook — one preparation of a recipe at a fractional scale (serving ledger). |
+| `/api/cooks` 🔒 | POST | Create a cook — one preparation of a recipe at a fractional scale (serving ledger). When the recipe contains a disliked ingredient (see **Dislike warnings** below), the 201 body also carries `dislike_hits`. |
 | `/api/cooks/<int:cook_id>` 🔒 | PATCH | Update a cook. Body accepts any of `scale`, `servings_produced`, `date`, `meal`, `notes`, `cooked_at`, plus the post-eating verdict: `make_again` (`true`/`false`/`null`) and `cook_note` (free text). `make_again` is strictly binary — anything other than a bool or null is a `400`, since a stray `4` would store as truthy. `null` means *not judged*, which is deliberately distinct from `false`. Writing a verdict or yield also refreshes `cook_count` / `observed_servings` / `make_again_count` / `verdict_count` / `last_cooked` on the recipe note (best-effort; a missing note never fails the write). |
 | `/api/cooks/<int:cook_id>` 🔒 | DELETE | Delete a cook and its placements. |
 | `/api/cooks/<int:cook_id>/move` 🔒 | POST | Move a scheduled cook to another slot. Body `date` + `meal`. Re-anchors the cook **and** re-points the slot placements sitting at its old anchor, merging into any placement already at the destination; placements in other cells (planned leftovers) are left alone. Rejects a `date` outside the cook's `week` with a `400` — `cooks.week` is not updatable and `week_board()` filters on it, so such a cook would render on no board at all. |
@@ -259,3 +275,35 @@ used by in-app UI (not currently wired to a dedicated Siri intent).
 
 See `docs/superpowers/specs/2026-06-21-siri-app-intents-voice-design.md` for
 the original design rationale and phrase catalogue.
+
+### Gateway client identity
+
+Protected routes preserve bearer authentication through Caddy. Only an immediate
+loopback socket may supply `X-Forwarded-For`; the nearest forwarded hop determines
+the local exemption. Direct remote callers cannot spoof it. Local clients without
+forwarding remain exempt. `KITCHENOS_API_TOKEN` is still optional for standalone
+use, but shared-gateway activation requires the unauthenticated protected-route
+probe to return 401, so production must configure it. Reviewed API releases expose
+a non-secret `X-KitchenOS-Release` SHA on `/health` for deployment verification;
+the health JSON remains unchanged.
+
+
+## Dislike warnings
+
+Placement responses (`POST /api/cooks`, `POST /api/bundles`) gain an optional
+`dislike_hits` field when a placed recipe contains an ingredient the user
+dislikes, per the `**Dislike:**` bullet in `My Meal System.md`:
+
+```json
+"dislike_hits": [
+  {"recipe": "Pepper Salad", "item": "red bell pepper, diced", "dislike": "bell pepper"}
+]
+```
+
+- **Warn, never block.** The cook is already committed (status stays 201); the
+  user may have swapped the ingredient by hand.
+- **Absent when clean**, so existing clients see an unchanged payload. A
+  double-tap returning 200 does not repeat the warning.
+- Detection is a deterministic string match (`lib/dislike_guard.py`) — no LLM,
+  so it is safe on the request path. The meal planner and recipe page surface
+  it as a toast / inline note.

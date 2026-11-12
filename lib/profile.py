@@ -28,6 +28,7 @@ PROFILE_FILENAME = "My Meal System.md"
 # Health shorthand used throughout the note: [heart] = helps lower LDL,
 # [steady] = keeps blood sugar level.
 _TAG_RE = re.compile(r"\[(\w+)\]")
+_DISLIKE_RE = re.compile(r"^-\s*\*\*Dislikes?\b[^*]*\*\*:?\s*(?P<items>.+)$", re.I)
 _BLOCK_RE = re.compile(r"^-\s*\*\*(?P<category>[^:*]+):?\*\*:?\s*(?P<items>.+)$")
 
 
@@ -48,6 +49,34 @@ class Profile:
                 if item.lower().startswith(needle):
                     return set(_TAG_RE.findall(item))
         return set()
+
+    def dislikes(self) -> list[str]:
+        """Disliked foods, lowercased and singular, from the ``**Dislike:**`` bullet.
+
+        Consumed structurally by ``lib/dislike_guard.py`` — a deterministic
+        string match, no model — so this must survive the note being reworded.
+        The bullet is found anywhere in the note (it lives under "Vegetables
+        built into meals" today), and only its *first clause* is read: the rest
+        is instruction prose ("Exclude bell peppers…", "Do not infer…") that
+        would otherwise turn into bogus terms. Lists split on commas, slashes,
+        "and"/"or" and parentheses, so "pepperoncini/peperoncini" and
+        "pepperoncini (peperoncini)" both yield two spellings.
+        """
+        out: list[str] = []
+        for line in self.prose.splitlines():
+            m = _DISLIKE_RE.match(line.strip())
+            if not m:
+                continue
+            clause = re.split(r"\.\s|\.$|\s[—–-]\s|:|;", m.group("items").strip())[0]
+            for raw in re.split(r",|/|\(|\)|\band\b|\bor\b", clause, flags=re.I):
+                term = re.sub(r"\s+", " ", raw).strip(" .*").lower()
+                if not term:
+                    continue
+                if term.endswith("s") and not term.endswith("ss") and len(term) > 3:
+                    term = term[:-1]
+                if term not in out:
+                    out.append(term)
+        return out
 
     def all_buffer_foods(self) -> list[str]:
         return [item for items in self.buffer_menu.values() for item in items]

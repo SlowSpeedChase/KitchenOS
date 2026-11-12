@@ -1,6 +1,8 @@
+**Status: shipped — see docs/plans/INDEX.md Done.**
+
 # Capture Queue: Retry Cap + Dead-Letter Path
 
-**Status:** Vision
+**Status:** Done (shipped 2026-08-24, `870c5e9`)
 **Created:** 2026-08-22
 **Updated:** 2026-08-22
 

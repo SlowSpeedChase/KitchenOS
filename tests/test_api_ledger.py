@@ -1115,3 +1115,87 @@ class TestBundleRoutes:
         _post_bundle(client)
         resp = client.put("/api/meal-plan/2026-W28", json={"days": []})
         assert resp.status_code == 409
+
+
+class TestCookWithoutASlotDefaultsToDinner:
+    """Nothing should land in the Unscheduled tray just because a caller
+    didn't name a slot. A cook POSTed without a date and/or meal is placed at
+    dinner on the first free night of its week (from today onward)."""
+
+    def test_no_slot_lands_on_a_dinner(self, client, tmp_db, tmp_vault):
+        cook = _create_cook(client, date=None, meal=None).get_json()
+        assert cook["meal"] == "dinner"
+        # 2026-W28 is in the past, so the search starts on its Monday.
+        assert cook["date"] == "2026-07-06"
+        assert [(p["destination"], p["date"], p["meal"]) for p in cook["placements"]] == \
+            [("slot", "2026-07-06", "dinner")]
+
+    def test_next_one_takes_the_next_free_dinner(self, client, tmp_db, tmp_vault):
+        _create_cook(client, date=None, meal=None)
+        second = _create_cook(client, recipe="Tacos", date=None, meal=None).get_json()
+        assert (second["date"], second["meal"]) == ("2026-07-07", "dinner")
+
+    def test_a_given_meal_is_kept(self, client, tmp_db, tmp_vault):
+        cook = _create_cook(client, date=None, meal="lunch").get_json()
+        assert (cook["date"], cook["meal"]) == ("2026-07-06", "lunch")
+
+    def test_a_given_date_gets_dinner(self, client, tmp_db, tmp_vault):
+        cook = _create_cook(client, date="2026-07-09", meal=None).get_json()
+        assert (cook["date"], cook["meal"]) == ("2026-07-09", "dinner")
+
+    def test_undated_double_tap_is_still_one_cook(self, client, tmp_db, tmp_vault):
+        a = _create_cook(client, date=None, meal=None)
+        b = _create_cook(client, date=None, meal=None)
+        assert b.status_code == 200
+        assert b.get_json()["id"] == a.get_json()["id"]
+        assert len(serving_ledger.cooks_for_week("2026-W28")) == 1
+
+
+def test_default_slot_starts_today_and_falls_back_when_full(tmp_db):
+    from datetime import date as _d
+    today = _d(2026, 7, 9)  # Thursday of 2026-W28
+    assert serving_ledger.default_slot("2026-W28", "dinner", today) == "2026-07-09"
+    for day in ("2026-07-09", "2026-07-10", "2026-07-11", "2026-07-12"):
+        serving_ledger.create_cook(recipe="X" + day, week="2026-W28",
+                                   servings_produced=1.0, date=day, meal="dinner")
+    # Every remaining night is taken: fall back to the first candidate.
+    assert serving_ledger.default_slot("2026-W28", "dinner", today) == "2026-07-09"
+    # A future week starts on its Monday.
+    assert serving_ledger.default_slot("2026-W30", "dinner", today) == "2026-07-20"
+
+# --- dislike guard: warn, don't block ---------------------------------------
+
+_DISLIKE_PROFILE = ("## Vegetables built into meals\n\n"
+                    "- **Dislike:** Bell pepper, pepperoncini. Do not infer other peppers.\n")
+_RECIPE_ROWS = ("---\ntitle: \"{name}\"\n---\n\n## Ingredients\n\n"
+                "| Amount | Unit | Ingredient |\n|---|---|---|\n{rows}")
+
+
+def _write_recipe(vault, name, items):
+    d = vault / "Recipes"
+    d.mkdir(exist_ok=True)
+    rows = "".join(f"| 1 | whole | {i} |\n" for i in items)
+    (d / f"{name}.md").write_text(_RECIPE_ROWS.format(name=name, rows=rows))
+
+
+def test_create_cook_warns_on_a_disliked_ingredient(client, tmp_db, tmp_vault):
+    (tmp_vault / "My Meal System.md").write_text(_DISLIKE_PROFILE)
+    _write_recipe(tmp_vault, "Pepper Salad", ["black beans", "red bell pepper, diced"])
+    resp = _create_cook(client, recipe="Pepper Salad")
+    assert resp.status_code == 201          # warned, not blocked
+    assert resp.get_json()["dislike_hits"] == [
+        {"recipe": "Pepper Salad", "item": "red bell pepper, diced",
+         "dislike": "bell pepper"}]
+
+
+def test_create_cook_payload_unchanged_when_clean(client, tmp_db, tmp_vault):
+    (tmp_vault / "My Meal System.md").write_text(_DISLIKE_PROFILE)
+    _write_recipe(tmp_vault, "Chili", ["beef", "red pepper flakes"])
+    assert "dislike_hits" not in _create_cook(client).get_json()
+
+
+def test_add_to_meal_plan_form_shows_the_warning(client, tmp_db, tmp_vault):
+    (tmp_vault / "My Meal System.md").write_text(_DISLIKE_PROFILE)
+    _write_recipe(tmp_vault, "Dilly Salad", ["olives", "pepperoncini"])
+    html = client.get("/add-to-meal-plan?recipe=Dilly%20Salad.md").get_data(as_text=True)
+    assert "contains something you dislike" in html and "pepperoncini" in html

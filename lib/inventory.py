@@ -19,6 +19,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Callable, Optional, TypeVar
 
+from lib.web_origin import web_origin
 from lib import paths
 from lib.expiry import compute_expires, expiry_status
 
@@ -306,9 +307,7 @@ def render_inventory_md(items: list[InventoryItem]) -> str:
             it.notes.replace("|", "\\|"),
         ]
         rows.append("| " + " | ".join(cells) + " |")
-    base = os.environ.get(
-        "KITCHENOS_API_BASE", "http://chases-mac-mini.taila69703.ts.net:5001"
-    )
+    base = web_origin()
     ssh_target = os.environ.get(
         "KITCHENOS_SSH_TARGET", "chaseeasterling@chases-mac-mini.taila69703.ts.net"
     )

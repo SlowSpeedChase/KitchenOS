@@ -1172,11 +1172,11 @@
 
         body.board-mode .board-help { display: block; }
 
-        /* --- Unscheduled section (top of Freezer tab): cooks with no
-           date/meal yet — e.g. "Add to this week" from the recipe detail
-           page. Without this, such cooks have no home cell and never
-           render anywhere on the board, so the feature looks like it
-           silently drops the recipe. --- */
+        /* --- Unscheduled section: cooks with no date/meal yet. Without
+           this, such cooks have no home cell and never render anywhere on
+           the board. It shows on EVERY sidebar tab whenever non-empty —
+           it used to live only inside the Freezer tab, where nobody looked,
+           so a recipe added from its detail page seemed to vanish. --- */
         .unscheduled-section {
             display: none;
             flex-direction: column;
@@ -2032,7 +2032,7 @@
             <div class="meals-list" id="meals-list">
                 <button class="new-meal-btn" id="new-meal-btn">+ New Meal</button>
             </div>
-            <div class="unscheduled-section" id="unscheduled-section">
+            <div class="unscheduled-section active empty" id="unscheduled-section">
                 <div class="unscheduled-title">Unscheduled</div>
                 <div class="board-help">
                     Cooked, but not assigned to a day yet — drag a chip onto a meal slot.
@@ -3377,7 +3377,9 @@
                     })
                 });
                 if (!resp.ok) { showToast((await resp.json()).error || 'Failed to add recipe', 'error'); return; }
+                const created = await resp.json().catch(() => ({}));
                 await loadWeekBoard(currentWeek);
+                warnDislikes(created);
             } catch (err) { showToast('Failed to create cook', 'error'); }
             finally { ledgerBusy = false; }
         }
@@ -3685,7 +3687,9 @@
                     showToast(err.error || 'Failed to add the plate', 'error');
                     return;
                 }
+                const placed = await resp.json().catch(() => ({}));
                 await loadWeekBoard(currentWeek);
+                warnDislikes(placed);
             } catch (err) { showToast('Failed to add the plate', 'error'); }
             finally { ledgerBusy = false; }
         }
@@ -4945,6 +4949,17 @@
 
         // --- Toast ---
 
+        // Placement responses carry `dislike_hits` when a recipe contains
+        // something My Meal System.md dislikes. Warn, don't block — the cook
+        // is already on the board. Shown after loadWeekBoard so a re-render
+        // can't swallow it.
+        function warnDislikes(payload) {
+            const hits = (payload && payload.dislike_hits) || [];
+            if (!hits.length) return;
+            const foods = [...new Set(hits.map(h => h.dislike))].join(', ');
+            showToast(`Heads up: contains ${foods} — swap it?`, 'error');
+        }
+
         function showToast(message, type = 'success') {
             const toast = document.getElementById('toast');
             toast.textContent = message;
@@ -4979,7 +4994,6 @@
             const recipeList = document.getElementById('recipe-list');
             const mealsList = document.getElementById('meals-list');
             const freezerTray = document.getElementById('freezer-tray');
-            const unscheduledSection = document.getElementById('unscheduled-section');
             const chips = document.getElementById('filter-chips');
             const title = document.getElementById('sidebar-title');
             const search = document.getElementById('search-input');
@@ -4987,7 +5001,8 @@
             recipeList.classList.toggle('hidden-tab', tab !== 'recipes');
             mealsList.classList.toggle('active', tab === 'meals');
             if (freezerTray) freezerTray.classList.toggle('active', tab === 'freezer');
-            if (unscheduledSection) unscheduledSection.classList.toggle('active', tab === 'freezer');
+            // The Unscheduled tray is not tab-scoped: it shows on every tab
+            // whenever it has anything in it (see .unscheduled-section).
             chips.style.display = (tab === 'recipes') ? '' : 'none';
             search.style.display = (tab === 'freezer') ? 'none' : '';
 

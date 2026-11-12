@@ -45,6 +45,16 @@ KCAL_SANITY_RANGE = (50, 2500)          # per serving
 # grams is flagged for review (only when there is more than one resolved line).
 CONFIDENCE_LEDGER = 0.6                 # portion-ledger grams estimate confidence
 CONFIDENCE_STATED = 0.98                # the recipe stated the weight outright
+CONFIDENCE_CAN_SIZE = 0.9               # net weight printed on the stated can
+CONFIDENCE_DRAINED = 0.6                # ...minus an assumed drained-liquid share
+# Drained solids as a share of a can's net weight. A 15 oz (425 g) can of beans
+# or chickpeas drains to ~240-260 g (USDA/FDA drained-weight figures; roughly
+# 1.5 cups). The FDC record for "canned, drained" is per 100 g of solids, so
+# charging the full 425 g overcounts the line by ~65%.
+DRAINED_FRACTION = 0.6
+_CONTAINER_UNITS = {"can", "tin", "jar"}
+_CAN_SIZE = re.compile(r"(\d+(?:\.\d+)?)\s*-?\s*(?:ounce|oz)\b", re.I)
+_DRAINED = re.compile(r"\b(drained|rinsed)\b", re.I)
 DOMINANT_LINE_FRACTION = 0.5            # one line > 50% of recipe grams
 
 # A single ingredient line over this many grams (~24 lb) is almost certainly a
@@ -195,7 +205,14 @@ def _resolve_food(item: str, *, use_cache: bool, resolution_provider: str,
             if fdc_local.has_data(conn):
                 local = fdc_local.resolve_local(conn, item)
                 if local:
-                    return local, 0.85, "fdc-local"
+                    # The local store is a ranker too and can latch onto a
+                    # modifier just like the LLM did ("cherry tomatoes" ->
+                    # cherries); it gets the same vetting, not a free pass.
+                    conf, resolver, note = resolution_guard.vet(
+                        norm, local.get("description", ""), 0.85, "fdc-local")
+                    if note:
+                        local["guard_note"] = note
+                    return local, conf, resolver
         except Exception:
             pass  # never let the local store break resolution
 
@@ -275,6 +292,25 @@ def _resolve_food(item: str, *, use_cache: bool, resolution_provider: str,
     return record, confidence, resolver
 
 
+def _can_size_grams(amount, unit, item) -> Optional[units.GramResult]:
+    """Weight from a container size stated in the line: "1 can chickpeas
+    (15-ounce)". The ounces are per container, so they multiply by the amount.
+    Declines on anything but a can/tin/jar unit (on a cup line the aside is not
+    a per-unit weight) and on two different sizes in one line."""
+    if units.normalize_unit(unit or "").lower() not in _CONTAINER_UNITS:
+        return None
+    sizes = {float(m) for m in _CAN_SIZE.findall(item or "")}
+    if len(sizes) != 1:
+        return None
+    qty = units.parse_amount_to_float(amount) or 1.0
+    grams = qty * sizes.pop() * units.MASS_G["oz"]
+    if _DRAINED.search(item or ""):
+        return units.GramResult(grams * DRAINED_FRACTION, "can_size", CONFIDENCE_DRAINED,
+                                True, note=f"can size, drained ~{DRAINED_FRACTION:.0%} of net")
+    return units.GramResult(grams, "can_size", CONFIDENCE_CAN_SIZE, False,
+                            note="can size stated in the recipe")
+
+
 def _resolve_grams(amount, unit, item, record, *, use_cache: bool, portion_provider: str):
     """Convert to grams, falling back to a cached/LLM portion estimate."""
     # An author-supplied metric aside — "light brown sugar (165 g)" — outranks
@@ -282,6 +318,13 @@ def _resolve_grams(amount, unit, item, record, *, use_cache: bool, portion_provi
     # Checked first for that reason: 60 corpus lines currently carry an exact
     # weight that is discarded in favour of a density estimate. The value is
     # absolute (it restates the whole line), so the amount is NOT re-applied.
+    # A container size ("1 can chickpeas (15-ounce)") is checked before the
+    # stated-weight path, which reads any aside as the weight of the whole line:
+    # on "2 cans (15 oz)" that halves the line.
+    can_g = _can_size_grams(amount, unit, item)
+    if can_g is not None:
+        return can_g
+
     _, explicit_g = gram_equivalent.extract(item or "")
     if explicit_g:
         return units.GramResult(explicit_g, "stated_weight", CONFIDENCE_STATED, False,
@@ -289,10 +332,15 @@ def _resolve_grams(amount, unit, item, record, *, use_cache: bool, portion_provi
 
     density = (record or {}).get("density_g_per_ml")
     portions = (record or {}).get("portions") or []
+    # A spice has no piece weight. The table matches by substring, so "1 whole
+    # onion powder" was weighed as an onion (110 g) — harmless while it also
+    # resolved to an onion, ~375 kcal of phantom once it resolves to the spice.
+    # 0 (not None) disables the table lookup; FDC portions still apply.
+    is_spice = str((record or {}).get("description", "")).startswith("Spices,")
     gr = units.to_grams(
         amount, unit, item,
         density_g_per_ml=density,
-        piece_weight_g=None,
+        piece_weight_g=0.0 if is_spice else None,
         usda_portions=portions,
     )
     if gr.method != "unresolved":
@@ -442,6 +490,11 @@ def calculate_recipe_nutrition(
         # leading number also derails the food match.
         amount, unit, item = recover_range_remnant(amount, unit, item)
 
+        # "onion powder, to taste" arrives as amount "to taste", unit "whole":
+        # the unit is the parser's fabricated default, so move the phrase into
+        # the unit, or the line is weighed as one whole onion (110 g).
+        if str(amount or "").strip().lower() == "to taste":
+            unit = "to taste"
         is_negligible = (unit or "").strip().lower() == "to taste"
         if not is_negligible:
             countable += 1
