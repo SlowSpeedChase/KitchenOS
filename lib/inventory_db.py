@@ -217,6 +217,33 @@ CREATE TABLE IF NOT EXISTS placements (
     meal TEXT,
     count REAL NOT NULL DEFAULT 1.0
 );
+CREATE TABLE IF NOT EXISTS cook_schedule (
+    cook_id INTEGER PRIMARY KEY REFERENCES cooks(id) ON DELETE CASCADE,
+    start TEXT NOT NULL,
+    timezone TEXT NOT NULL,
+    duration_minutes INTEGER NOT NULL CHECK (duration_minutes BETWEEN 15 AND 360)
+);
+CREATE TABLE IF NOT EXISTS cooking_packets (
+    week TEXT PRIMARY KEY,
+    generated_json TEXT NOT NULL,
+    edits_json TEXT NOT NULL DEFAULT '[]',
+    store_snapshot_json TEXT NOT NULL DEFAULT '{"version":1}',
+    request_ids_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'reviewed')),
+    generated_at TEXT NOT NULL,
+    store_refreshed_at TEXT,
+    reviewed_at TEXT,
+    updated_at TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision > 0)
+);
+CREATE TABLE IF NOT EXISTS retailer_preferences (
+    retailer TEXT PRIMARY KEY,
+    location_id TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    address TEXT NOT NULL,
+    preference_rank INTEGER NOT NULL,
+    policy_json TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_cooks_week ON cooks(week);
 CREATE INDEX IF NOT EXISTS idx_placements_cook ON placements(cook_id);
 """
@@ -348,6 +375,29 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # Pinned by tests/test_inventory_db.py::
     # test_a_pre_bundle_database_gains_the_columns_and_the_index.
     conn.execute("CREATE INDEX IF NOT EXISTS idx_cooks_bundle ON cooks(bundle_id)")
+    # INSERT OR IGNORE preserves any previously configured preference. These
+    # new tables reference no migrated column and can be created in _SCHEMA.
+    # Probe with a read first: connect() runs on every open, and even a no-op
+    # INSERT takes SQLite's write lock, so an unconditional seed made every
+    # plain reader wait out busy_timeout behind any open BEGIN IMMEDIATE
+    # (the Apple bridge reports status while its sync transaction is held).
+    seeded = {r[0] for r in conn.execute(
+        "SELECT retailer FROM retailer_preferences")}
+    seeds = [
+        ("heb", "425", "H-E-B Hancock Center", "1000 East 41st Street, Austin, Texas 78751", 1,
+         json.dumps({"prefer_owned_brand": True, "reason": "cashback"})),
+        ("costco", "681", "Costco North Austin", "10401 Research Boulevard, Austin, Texas 78759", 2,
+         json.dumps({"require_bulk_suitability": True,
+                     "allow_storage_friendly_remainder": True})),
+    ]
+    missing = [row for row in seeds if row[0] not in seeded]
+    if missing:
+        conn.executemany(
+            "INSERT OR IGNORE INTO retailer_preferences"
+            " (retailer, location_id, display_name, address, preference_rank, policy_json)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            missing,
+        )
     conn.commit()
 
 
@@ -482,6 +532,31 @@ def fetch_inventory_rows() -> list[dict]:
         return _fetch_inventory_rows(conn)
     finally:
         conn.close()
+
+
+def fetch_inventory_rows_with_ids(*, conn: sqlite3.Connection | None = None) -> list[dict]:
+    """Read each real inventory container with its stable SQLite row ID.
+
+    Unlike the aggregated pantry view, this retains distinct locations and
+    location provenance. Reading never merges, migrates or replaces rows.
+    Ordinary startup owns schema initialization. An absent database is empty;
+    an existing database without the inventory schema raises OperationalError.
+    """
+    owns_connection = conn is None
+    if owns_connection:
+        path = db_path()
+        if not path.exists():
+            return []
+        conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            f"SELECT id, {', '.join(_INVENTORY_COLS)} FROM inventory ORDER BY id"
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        if owns_connection:
+            conn.close()
 
 
 def fetch_trips(limit: int = 100) -> list[dict]:

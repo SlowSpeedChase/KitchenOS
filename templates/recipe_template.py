@@ -8,6 +8,7 @@ from urllib.parse import quote
 from lib.web_origin import web_origin
 from lib import frontmatter
 from lib.ingredient_parser import parse_ingredient
+from lib.recipe_parser import INSTRUCTION_PHASE_HEADINGS, normalize_instruction_phase
 
 # Compatibility export; renderers resolve the configured origin at call time.
 API_BASE_URL = web_origin()
@@ -309,7 +310,15 @@ def format_recipe_markdown(recipe_data, video_url, video_title, channel, date_ad
     # Format instructions
     # Multi-paragraph steps need continuation paragraphs indented for proper markdown
     instruction_blocks = []
+    previous_phase = None
     for inst in recipe_data.get('instructions', []):
+        phase = normalize_instruction_phase(inst.get('phase'))
+        if phase != previous_phase:
+            # A neutral heading ends a phased run without assigning uncertain
+            # steps to the preceding phase. All-legacy output stays unchanged.
+            heading = INSTRUCTION_PHASE_HEADINGS.get(phase, "Instructions")
+            instruction_blocks.append(f"### {heading}")
+            previous_phase = phase
         time_note = f" ({inst['time']})" if inst.get('time') else ""
         text = inst.get('text', '').strip()
 

@@ -15,7 +15,7 @@ import re
 import requests
 
 from lib.backup import create_backup
-from lib.recipe_parser import find_existing_recipe, find_existing_recipe_by_source_url, parse_recipe_file, extract_my_notes
+from lib.recipe_parser import find_existing_recipe, find_existing_recipe_by_source_url, parse_recipe_file, extract_my_notes, normalize_instruction_phase
 from lib.ingredient_validator import validate_ingredients
 from lib.ingredient_cleaner import clean_ingredient_list
 from lib.ingredient_parser import parse_ingredient, parse_ingredient_best
@@ -51,7 +51,7 @@ OBSIDIAN_RECIPES_PATH = paths.recipes_dir()
 
 
 def normalize_instructions(instructions: list) -> list:
-    """Normalize instructions to {step, text, time} format.
+    """Normalize instructions to {step, text, time} with optional native phase.
 
     Handles AI responses that return instructions as plain strings
     instead of the requested {step, text, time} dicts.
@@ -70,11 +70,14 @@ def normalize_instructions(instructions: list) -> list:
             })
         elif isinstance(inst, dict):
             # Already a dict - ensure it has required keys
-            normalized.append({
+            instruction = {
                 "step": inst.get("step", i),
                 "text": inst.get("text", inst.get("description", "")),
                 "time": inst.get("time")
-            })
+            }
+            if "phase" in inst:
+                instruction["phase"] = normalize_instruction_phase(inst["phase"])
+            normalized.append(instruction)
         else:
             # Unknown format - skip
             continue

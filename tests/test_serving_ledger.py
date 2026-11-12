@@ -15,6 +15,29 @@ def _mk_cook(**over):
     return sl.create_cook(**kw)
 
 
+def test_week_readers_borrow_connection_without_migrating_or_closing(tmp_db):
+    cook = _mk_cook(week="2026-W40", date=None, meal=None)
+    sl.schedule_cook(cook["id"], date="2026-09-29", meal="dinner",
+                     start="2026-09-29T18:00:00-05:00", timezone="America/Chicago",
+                     duration_minutes=60, servings_to_eat=1)
+    inventory_db.merge_inventory_rows([{"name": "corn", "quantity": 2, "unit": "can",
+                                        "location": "garage", "location_source": "manual"}])
+    with sqlite3.connect(tmp_db) as setup:
+        setup.execute("UPDATE inventory SET location_source = NULL")
+    conn = sqlite3.connect(f"{tmp_db.as_uri()}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        cooks = sl.cooks_for_week("2026-W40", conn=conn)
+        schedules = sl.schedules_for_week("2026-W40", conn=conn)
+        assert cooks[0]["id"] == cook["id"]
+        assert len(cooks[0]["placements"]) == 1 and cooks[0]["unassigned"] == 5
+        assert schedules[0]["cook_id"] == cook["id"]
+        assert conn.execute("SELECT location_source FROM inventory").fetchone()[0] is None
+        assert conn.execute("SELECT 1").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
 def test_create_cook_autoplaces_anchor_serving(tmp_db):
     cook = _mk_cook()
     assert cook["recipe"] == "Chili"

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Print cooking packet — KitchenOS</title>
+  <link rel="stylesheet" href="/static/tokens.css">
+  <link rel="stylesheet" href="/static/kitchenos.css">
+  <link rel="stylesheet" href="/static/cooking-packet.css">
+  <script src="/static/print-action.js" defer></script>
+</head>
+<body class="packet-print">
+  <a class="skip-link screen-only" href="#packet-main">Skip to cooking packet</a>
+  <div class="packet-wrap">
+    <div class="packet-actions screen-only">
+      <a href="/cooking-packet?week={{ week|urlencode }}">Back to cooking packet</a>
+      <button type="button" data-print-action>Print cooking packet</button>
+    </div>
+    <main id="packet-main">
+      {# SECURITY: packet_html must ONLY be render_print_packet's escaped fragment.
+         Never pass arbitrary packet dictionaries, notes or strings through safe. #}
+      {{ packet_html|safe }}
+    </main>
+  </div>
+</body>
+</html>

@@ -18,6 +18,33 @@ def test_connect_creates_schema(tmp_db):
     assert {"trips", "purchases", "inventory"} <= tables
 
 
+def test_packet_tables_and_retailer_seed_are_idempotent(tmp_db):
+    conn = idb.connect()
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert {"cooking_packets", "retailer_preferences"} <= tables
+    rows = conn.execute("SELECT retailer, location_id FROM retailer_preferences").fetchall()
+    assert {r["retailer"]: r["location_id"] for r in rows} == {"heb": "425", "costco": "681"}
+    conn.execute("UPDATE retailer_preferences SET preference_rank=9 WHERE retailer='heb'")
+    conn.commit()
+    conn.close()
+    conn = idb.connect()
+    assert conn.execute("SELECT COUNT(*) FROM retailer_preferences").fetchone()[0] == 2
+    assert conn.execute("SELECT preference_rank FROM retailer_preferences WHERE retailer='heb'").fetchone()[0] == 9
+    conn.close()
+
+
+def test_existing_database_gains_packet_tables_without_losing_inventory(tmp_db):
+    idb.replace_inventory_rows([{"name": "Rice", "quantity": 2, "unit": "lb"}])
+    conn = idb.connect()
+    conn.executescript("DROP TABLE IF EXISTS cooking_packets; DROP TABLE IF EXISTS retailer_preferences;")
+    conn.close()
+    conn = idb.connect()
+    assert conn.execute("SELECT COUNT(*) FROM cooking_packets").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM retailer_preferences").fetchone()[0] == 2
+    assert conn.execute("SELECT name, quantity FROM inventory").fetchone()["quantity"] == 2
+    conn.close()
+
+
 def test_record_trip_and_dedup(tmp_db):
     trip = {
         "date": "2026-06-09",

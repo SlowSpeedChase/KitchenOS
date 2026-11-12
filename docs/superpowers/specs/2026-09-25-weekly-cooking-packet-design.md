@@ -129,6 +129,24 @@ When a legacy recipe lacks headings, an explicit packet generation or refresh cl
 
 Missing phases stay absent. The UI must not fill empty "Freeze" or "Reheat" cards with generic advice that could be unsafe for the food.
 
+## Freezer-bag assembly is the primary workflow
+
+The packet is first a freezer-prep guide for meals that will later go into the Instant Pot. A recipe card must never present one undifferentiated ingredient list that implies every ingredient belongs in the freezer bag. Every generated ingredient row has exactly one packet-only preparation stage:
+
+- `bag_now`: put into the labeled freezer bag during this prep session
+- `prep_then_bag`: complete the named preparation first, then add it to the freezer bag
+- `freeze_separately`: prepare now and freeze in a separate labeled container
+- `add_at_cook_time`: keep out of the bag and add when pressure cooking starts
+- `finish_after_cooking`: keep out of the bag and add after pressure release
+- `serve_separately`: keep out of the bag and serve alongside or as a garnish
+- `needs_review`: keep out of the bag until its destination is confirmed
+
+These stages are presentation data in the saved packet, keyed by the ingredient's stable source ID. They do not rewrite recipe ingredients. Source instructions or reviewed packet edits may establish a stage. Conservative deterministic rules may identify explicit phrases such as "reserve," "add after pressure release," or "serve with." An explicit background refresh may ask the bounded classifier for candidates, but deterministic validation accepts only known ingredient IDs and the closed stage vocabulary. When evidence is incomplete or contradictory, use `needs_review`; never guess that an ingredient belongs in the bag.
+
+Each recipe leads with a **Freezer prep** block. It shows **Put in the freezer bag now** first, then **Prep before bagging** when present. A visually distinct **Keep out of the freezer bag** block separates add-at-cook-time, finish-after-cooking, serve-separately, freeze-separately and needs-review rows. Cook-day directions follow those blocks. Print and mobile views must state that an ingredient appears in one destination only and must not duplicate an ingredient across bag and keep-out lists.
+
+The production schedule may include assembling and labeling each bag, but cook-day-only ingredients are not pull/prep tasks for the freezer session unless they require a separate preparation now. Shopping requirements still include every ingredient needed for the complete meal.
+
 ## Shared preparation
 
 Shared prep reduces duplicate work without inventing cooking instructions. Create a shared step only when all contributing recipes agree on:

@@ -27,6 +27,14 @@ FREEZING_RULE = """- freezes_well: true only if the source says leftovers freeze
   anything raw or served fresh.
   null whenever you are unsure — that is the expected answer for most recipes."""
 
+INSTRUCTION_PHASE_RULE = """- Keep instruction steps in source order and number them continuously.
+- For each instruction, use only these phase values:
+  prep_or_flavor_base (prep, marinades, aromatics, or a flavor base),
+  cook (main cooking), finish_and_taste (finishing and seasoning),
+  freeze_and_store (cooling, portioning, freezing, or storing), reheat (reheating).
+  Use null when the phase is uncertain. Do not invent additional phases or
+  storage/reheating steps that the source does not provide."""
+
 # Used by scripts/backfill_freezes_well.py for the recipes captured before
 # `freezes_well` existed. Same rule as the extractor so a backfilled answer and
 # a freshly-extracted one mean the same thing.
@@ -49,6 +57,7 @@ Rules:
 - Extract ONLY what is shown/said in the video
 """ + NAMING_RULE + """
 """ + FREEZING_RULE + """
+""" + INSTRUCTION_PHASE_RULE + """
 - When inferring (timing, quantities, temperatures), mark with "(estimated)"
 - If a field cannot be determined, use null
 - Set needs_review: true if significant inference was required
@@ -75,7 +84,7 @@ Output valid JSON matching this schema:
     {"amount": "number or string", "unit": "string", "item": "string", "inferred": boolean}
   ],
   "instructions": [
-    {"step": number, "text": "string", "time": "string or null"}
+    {"step": number, "text": "string", "time": "string or null", "phase": "prep_or_flavor_base|cook|finish_and_taste|freeze_and_store|reheat or null"}
   ],
   "storage": "string or null",
   "meal_occasion": ["up to 3 strings - when would someone make this? e.g. weeknight-dinner, grab-and-go-breakfast, meal-prep, weekend-project, packed-lunch, afternoon-snack, date-night, post-workout, crowd-pleaser, lazy-sunday"],
@@ -124,6 +133,7 @@ Rules:
 - Extract EXACTLY what is written (no inference needed)
 """ + NAMING_RULE + """
 """ + FREEZING_RULE + """
+""" + INSTRUCTION_PHASE_RULE + """
 - Parse quantities and ingredients precisely
 - Number the instructions in order
 - Set needs_review: false (this is explicit text)
@@ -149,7 +159,7 @@ Output valid JSON matching this schema:
     {"amount": "number or string", "unit": "string", "item": "string", "inferred": false}
   ],
   "instructions": [
-    {"step": number, "text": "string", "time": "string or null"}
+    {"step": number, "text": "string", "time": "string or null", "phase": "prep_or_flavor_base|cook|finish_and_taste|freeze_and_store|reheat or null"}
   ],
   "storage": "string or null",
   "meal_occasion": ["up to 3 strings - when would someone make this? e.g. weeknight-dinner, grab-and-go-breakfast, meal-prep, weekend-project, packed-lunch, afternoon-snack, date-night, post-workout, crowd-pleaser, lazy-sunday"],

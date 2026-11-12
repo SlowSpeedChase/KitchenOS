@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Cooking packet — KitchenOS</title>
+  <link rel="stylesheet" href="/static/tokens.css">
+  <link rel="stylesheet" href="/static/kitchenos.css">
+  <link rel="stylesheet" href="/static/cooking-packet.css">
+  <script src="/static/cooking-packet.js" defer></script>
+</head>
+<body class="packet-screen">
+  <a class="skip-link" href="#packet-main">Skip to cooking packet</a>
+  <main id="packet-main" class="packet-wrap" data-week="{{ week }}">
+    <header class="packet-heading">
+      <a href="/plan-week">Plan your week</a>
+      <h1>Weekly cooking packet</h1>
+      <p id="packet-range" class="packet-range"></p>
+      <p id="packet-meta" class="packet-meta"></p>
+    </header>
+    <div class="packet-actions" aria-label="Packet actions">
+      <button type="button" id="refresh-week">Refresh from week</button>
+      <button type="button" id="refresh-stores">Refresh store picks</button>
+      <a id="print-packet" href="/print/cooking-packet?week={{ week|urlencode }}">Print cooking packet</a>
+      <button type="button" id="mark-reviewed">Mark reviewed</button>
+    </div>
+    <p id="packet-status" role="status" aria-live="polite" aria-atomic="true"></p>
+    <p id="packet-error" role="alert"></p>
+    <div id="conflict-actions" class="packet-actions" hidden>
+      <button type="button" id="load-latest">Load latest revision and keep my text</button>
+    </div>
+    <div id="packet-content"></div>
+    <noscript>Enable JavaScript to load and edit the saved cooking packet. The print view is available above.</noscript>
+  </main>
+</body>
+</html>

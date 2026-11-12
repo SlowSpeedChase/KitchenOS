@@ -11,6 +11,110 @@ from lib.recipe_parser import (
 )
 
 
+def test_phase_headings_preserve_one_flat_global_order():
+    body = """## Instructions
+
+### Prep or Flavor Base
+
+1. Chop onions.
+
+   Keep the pieces small.
+
+### Cook
+
+1. Simmer.
+
+### Finish and Taste
+
+1. Add lemon.
+
+### Freeze and Store
+
+1. Cool and freeze.
+
+### Reheat
+
+1. Warm gently.
+
+## Notes
+
+1. This is not a cooking step.
+"""
+    parsed = parse_recipe_body(body)
+    assert parsed["instructions"] == [
+        {"step": 1, "text": "Chop onions.\n\n   Keep the pieces small.", "time": None, "phase": "prep_or_flavor_base"},
+        {"step": 2, "text": "Simmer.", "time": None, "phase": "cook"},
+        {"step": 3, "text": "Add lemon.", "time": None, "phase": "finish_and_taste"},
+        {"step": 4, "text": "Cool and freeze.", "time": None, "phase": "freeze_and_store"},
+        {"step": 5, "text": "Warm gently.", "time": None, "phase": "reheat"},
+    ]
+    assert parsed["instruction_phases"]["cook"] == [
+        {"step": 2, "text": "Simmer.", "time": None, "phase": "cook"}
+    ]
+
+
+def test_legacy_instructions_keep_their_current_shape():
+    body = "## Instructions\n\n2. Mix.\n\n5. Bake.\n\n## Notes\n\nKeep cold."
+    assert parse_recipe_body(body) == {
+        "ingredients": [], "description": "", "video_tips": [],
+        "instructions": [
+            {"step": 2, "text": "Mix.", "time": None},
+            {"step": 5, "text": "Bake.", "time": None},
+        ],
+    }
+
+
+def test_parse_instruction_phases_groups_repeated_headings_without_reordering():
+    from lib import recipe_parser
+
+    parse_phases = getattr(recipe_parser, "parse_instruction_phases", None)
+    assert callable(parse_phases), "phase parsing interface is missing"
+    phases = parse_phases("""## Instructions
+
+### Cook
+
+1. Simmer.
+
+### Reheat
+
+1. Warm.
+
+### Cook
+
+1. Sear.
+""")
+    assert phases == {
+        "cook": [
+            {"step": 1, "text": "Simmer.", "time": None, "phase": "cook"},
+            {"step": 3, "text": "Sear.", "time": None, "phase": "cook"},
+        ],
+        "reheat": [{"step": 2, "text": "Warm.", "time": None, "phase": "reheat"}],
+    }
+    assert parse_phases("## Instructions\n\n1. Mix.") == {}
+    assert parse_phases("# No instructions") == {}
+
+
+def test_unclassified_heading_does_not_inherit_a_canonical_phase():
+    parsed = parse_recipe_body("""## Instructions
+
+1. Read the recipe.
+
+### Cook
+
+1. Simmer.
+
+### Instructions
+
+1. Check the source.
+""")
+    assert parsed["instructions"] == [
+        {"step": 1, "text": "Read the recipe.", "time": None},
+        {"step": 2, "text": "Simmer.", "time": None, "phase": "cook"},
+        {"step": 3, "text": "Check the source.", "time": None},
+    ]
+    assert list(parsed["instruction_phases"]) == ["cook"]
+
+
 def test_parse_recipe_file_extracts_frontmatter():
     """Should extract frontmatter as dict"""
     content = '''---

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Simple API server for iOS Shortcuts integration."""
 
-from flask import Flask, request, jsonify, send_file, g, has_request_context
+from flask import Flask, request, jsonify, send_file, render_template, g, has_request_context
 from markupsafe import escape
 from urllib.parse import quote, urlsplit
 from youtube_transcript_api import YouTubeTranscriptApi
@@ -1037,6 +1037,136 @@ def print_week_page():
     body = print_week.render_packet_html(packet, base_url=base)
     html = _serve_page('print_week.html', [('<!--PACKET-->', body)])
     return html, 200, {'Content-Type': 'text/html'}
+
+
+def _packet_response(packet):
+    """Expose recorded freshness only; source freshness has not been checked."""
+    return {**packet, "freshness": {
+        **{key: packet.get(key) for key in (
+            "generated_at", "updated_at", "store_refreshed_at", "reviewed_at", "revision", "status")},
+        "source_changes_checked": False,
+    }}
+
+
+def _packet_error(fn):
+    """Keep untrusted payloads and internal exceptions out of client errors."""
+    @functools.wraps(fn)
+    def wrapper(week, *args, **kwargs):
+        from lib import cooking_packet_jobs as jobs, cooking_packet_store as store
+        try:
+            parse_iso_week(week)
+            return fn(week, *args, **kwargs)
+        except store.RevisionConflict:
+            current = store.get_packet(week)
+            return jsonify({"error": "Packet changed. Load the latest revision and retry.",
+                            "revision": current["revision"] if current else None}), 409
+        except jobs.OperationConflict:
+            return jsonify({"error": "A refresh for this week is already running."}), 409
+        except jobs.OperationCapacity:
+            return jsonify({"error": "Refresh workers are busy. Please retry shortly."}), 503
+        except KeyError:
+            return jsonify({"error": "No saved cooking packet for this week."}), 404
+        except (ValueError, TypeError):
+            return jsonify({"error": "Invalid cooking packet request."}), 400
+        except sqlite3.OperationalError:
+            return jsonify({"error": "Packet storage is busy. Please retry."}), 503
+        except Exception:
+            return jsonify({"error": "Could not load or save the cooking packet."}), 500
+    return wrapper
+
+
+@app.route('/api/cooking-packets/<week>', methods=['GET'])
+@require_token
+@_packet_error
+def api_cooking_packet_get(week):
+    from lib import cooking_packet_store as store
+    packet = store.get_packet(week)
+    if packet is None:
+        raise KeyError(week)
+    return jsonify(_packet_response(packet))
+
+
+@app.route('/api/cooking-packets/<week>', methods=['PATCH'])
+@require_token
+@_packet_error
+def api_cooking_packet_patch(week):
+    from lib import cooking_packet_store as store
+    if not request.is_json:
+        return jsonify({"error": "Content-Type must be application/json."}), 415
+    data = request.get_json(silent=True)
+    if (not isinstance(data, dict) or not {"revision", "changes"} <= set(data)
+            or set(data) - {"revision", "changes", "status"}
+            or ("status" in data and data["status"] not in ("draft", "reviewed"))):
+        raise ValueError('invalid packet patch')
+    packet = store.patch_packet(week, data["revision"], data["changes"], status=data.get("status"))
+    return jsonify(_packet_response(packet))
+
+
+@app.route('/api/cooking-packets/<week>/refresh', methods=['POST'])
+@require_token
+@_packet_error
+def api_cooking_packet_refresh(week):
+    from lib import cooking_packet_jobs as jobs, cooking_packet_store as store
+    from lib import cooking_packet_builder, recipe_phases
+    if not request.is_json:
+        return jsonify({"error": "Content-Type must be application/json."}), 415
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or set(data) != {"request_id"}:
+        raise ValueError('invalid refresh request')
+    request_id = data["request_id"]
+
+    def refresh():
+        with recipe_phases.classification_refresh():
+            draft = cooking_packet_builder.build_week_draft(week, paths.recipes_dir())
+        saved = store.replace_generated(week, draft, request_id=request_id)
+        return {"revision": saved["revision"]}
+
+    return jsonify(jobs.start_operation('packet', week, request_id, refresh)), 202
+
+
+@app.route('/api/cooking-packets/<week>/refresh/<operation_id>', methods=['GET'])
+@require_token
+@_packet_error
+def api_cooking_packet_refresh_status(week, operation_id):
+    from lib import cooking_packet_jobs as jobs
+    operation = jobs.get_operation('packet', week, operation_id)
+    if operation is None:
+        return jsonify({"error": "Refresh operation not found. Retry the refresh."}), 404
+    return jsonify(operation)
+
+
+def _packet_page_week():
+    if len(request.args.getlist('week')) != 1:
+        raise ValueError('one week required')
+    return parse_iso_week(request.args.get('week'))
+
+
+@app.route('/cooking-packet', methods=['GET'])
+def cooking_packet_page():
+    """Render only the mobile shell; the explicit refresh API assembles data."""
+    try:
+        week = _packet_page_week()
+    except ValueError:
+        return error_page('Choose a valid week (YYYY-Www) to open a cooking packet.'), 400
+    return render_template('cooking_packet.html', week=week)
+
+
+@app.route('/print/cooking-packet', methods=['GET'])
+def print_cooking_packet_page():
+    """Print a saved snapshot only; never build, classify, or look up products."""
+    from lib import cooking_packet_store as store
+    from lib.cooking_packet_render import render_print_packet
+    try:
+        week = _packet_page_week()
+    except ValueError:
+        return error_page('Choose a valid week (YYYY-Www) to print a cooking packet.'), 400
+    packet = store.get_packet(week)
+    if packet is None:
+        return _html_page('Cooking packet',
+            '<p>No cooking packet has been saved for this week.</p>'
+            f'<p><a href="/cooking-packet?week={escape(week)}">Build cooking packet</a></p>'), 404
+    return render_template('print_cooking_packet.html', week=week,
+                           packet_html=render_print_packet(packet))
 
 
 @app.route('/recipe-card/<name>', methods=['GET'])

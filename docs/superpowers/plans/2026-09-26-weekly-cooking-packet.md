@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Start execution from a commit that contains the currently uncommitted `cook_schedule` and planning-calendar work; this feature consumes `serving_ledger.schedules_for_week()` and `POST /api/cooks/<id>/schedule` rather than replacing them.
+- The isolated branch does not contain the main checkout's uncommitted calendar work. Task 0 adds only the cook-schedule storage and API contract this feature consumes; it does not import calendar snapshots or calendar UI.
 - Use `.venv/bin/python` for Python commands and Python 3.11 syntax.
 - `data/kitchenos.db` remains the single source of truth for packets, inventory, purchases, cooks, placements, and schedules.
 - Never decrement inventory, record purchases, assign servings, or rewrite legacy recipes while generating a packet.
@@ -44,6 +44,63 @@
 - Existing parser, template, prompt, planner, API, registry, and documentation files change only at their integration points.
 
 ---
+
+### Task 0: Cook-schedule prerequisite
+
+**Files:**
+- Create: `lib/cook_schedule.py`
+- Modify: `lib/inventory_db.py`
+- Modify: `lib/serving_ledger.py`
+- Modify: `api_server.py`
+- Create: `tests/test_cook_schedule.py`
+
+**Interfaces:**
+- Produces: `cook_schedule.validate(date: str, start: str, timezone: str, duration_minutes: int) -> str`, `serving_ledger.schedules_for_week(week: str) -> list[dict]`, `serving_ledger.schedule_cook(cook_id: int, *, date: str, meal: str, start: str, timezone: str, duration_minutes: int, servings_to_eat: float) -> dict`, and `POST /api/cooks/<id>/schedule`.
+- The API body contains exactly `date`, `meal`, `start`, `timezone`, `duration_minutes`, and `servings_to_eat`.
+
+- [ ] **Step 1: Write failing schedule tests**
+
+```python
+def test_retry_only_places_first_serving_once(tmp_db):
+    cook = create_unscheduled_cook(servings=8)
+    schedule_cook(cook["id"], **valid_args(servings_to_eat=1))
+    schedule_cook(cook["id"], **valid_args(servings_to_eat=1))
+    saved = get_cook(cook["id"])
+    assert sum(p["count"] for p in saved["placements"]) == 1
+    assert saved["unassigned"] == 7
+
+def test_generic_move_removes_stale_timed_schedule(tmp_db):
+    cook = create_unscheduled_cook(servings=8)
+    schedule_cook(cook["id"], **valid_args())
+    move_cook(cook["id"], "2026-09-23", "dinner")
+    assert schedules_for_week("2026-W39") == []
+
+def test_invalid_offset_date_or_duration_rolls_back(tmp_db):
+    cook = create_unscheduled_cook(servings=8)
+    with pytest.raises(ValueError):
+        schedule_cook(cook["id"], **valid_args(start="2026-09-23T19:00:00-05:00"))
+    assert get_cook(cook["id"])["date"] is None
+```
+
+- [ ] **Step 2: Run the tests and verify missing schedule APIs**
+
+Run: `.venv/bin/python -m pytest tests/test_cook_schedule.py -v`
+
+- [ ] **Step 3: Implement the minimal schedule dependency**
+
+Add `cook_schedule(cook_id PRIMARY KEY REFERENCES cooks(id) ON DELETE CASCADE, start, timezone, duration_minutes CHECK 15..360)`. Validate IANA timezone, offset-aware timestamp, matching local date, 15-minute start/duration increments, finish by midnight, finite positive servings, same cook week, uncooked single recipe, and capacity. The transaction moves the cook, creates only the first placement for a previously unscheduled cook, and upserts timing. Generic date/meal changes remove stale timing.
+
+- [ ] **Step 4: Run schedule and ledger regressions**
+
+Run: `.venv/bin/python -m pytest tests/test_cook_schedule.py tests/test_serving_ledger.py tests/test_api_ledger.py -v`
+Expected: PASS with retries and concurrent requests producing one initial placement.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add lib/cook_schedule.py lib/inventory_db.py lib/serving_ledger.py api_server.py tests/test_cook_schedule.py
+git commit -m "feat: persist cooking schedules"
+```
 
 ### Task 1: Packet persistence and edit merging
 
@@ -250,6 +307,44 @@ git add lib/recipe_phases.py prompts/cooking_packet.py lib/cooking_packet_builde
 git commit -m "feat: derive shared cooking prep and schedule"
 ```
 
+### Task 4B: Separate freezer-bag ingredients from cook-day ingredients
+
+**Files:**
+- Modify: `lib/recipe_phases.py`
+- Modify: `lib/cooking_packet_builder.py`
+- Modify: `lib/cooking_packet_store.py`
+- Modify: `tests/test_recipe_phases.py`
+- Modify: `tests/test_cooking_packet_builder.py`
+- Modify: `tests/test_cooking_packet_store.py`
+
+**Interfaces:**
+- Produces: `assign_ingredient_stages(recipe: str, ingredients: list[dict], instructions: list[dict], proposer: Callable | None = None) -> list[dict]`.
+- Every returned ingredient retains its stable `item_id` and has exactly one `prep_stage`, `stage_source`, `stage_reason`, and `needs_review` value.
+- `prep_stage` is editable through Task 1's exact sparse change shape.
+
+- [ ] **Step 1: Write failing freezer-bag separation tests**
+
+Cover explicit bag ingredients, add-at-cook-time liquid, post-release finish ingredients, serving garnishes/sides, prep-then-bag, separate freezing, contradictory evidence, unknown ingredients, stable IDs, model proposal validation, and one-stage-only output.
+
+- [ ] **Step 2: Implement conservative stage assignment**
+
+Use only the closed stages `bag_now`, `prep_then_bag`, `freeze_separately`, `add_at_cook_time`, `finish_after_cooking`, `serve_separately`, and `needs_review`. Explicit source wording can establish a stage. Bounded proposals may run only inside `classification_refresh()` and still pass deterministic validation. Unknown or conflicting evidence becomes `needs_review`, which is always kept out of the bag. Do not infer general food rules as recipe facts.
+
+- [ ] **Step 3: Integrate the packet draft and edit store**
+
+Stage every recipe-card ingredient exactly once. Preserve shopping requirements for every stage. Do not turn cook-time-only rows into freezer-session prep tasks. Add `prep_stage` to the packet edit allowlist without changing the exact `{item_id, field, value}` shape.
+
+- [ ] **Step 4: Run focused regressions**
+
+Run: `.venv/bin/python -m pytest tests/test_recipe_phases.py tests/test_cooking_packet_builder.py tests/test_cooking_packet_store.py -v`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add lib/recipe_phases.py lib/cooking_packet_builder.py lib/cooking_packet_store.py tests/test_recipe_phases.py tests/test_cooking_packet_builder.py tests/test_cooking_packet_store.py
+git commit -m "feat: separate freezer bag and cook day ingredients"
+```
+
 ### Task 5: Mobile and print rendering
 
 **Files:**
@@ -263,6 +358,8 @@ git commit -m "feat: derive shared cooking prep and schedule"
 **Interfaces:**
 - Consumes: Task 1 merged packet document.
 - Produces: `render_print_packet(packet: dict) -> str`; screen JavaScript consumes `GET /api/cooking-packets/<week>`, sends Task 1 patch shapes for packet-only edits, and sends cook timing changes to existing `POST /api/cooks/<id>/schedule`.
+
+**Freezer-prep amendment:** Before rendering, the builder assigns every ingredient exactly one closed `prep_stage`: `bag_now`, `prep_then_bag`, `freeze_separately`, `add_at_cook_time`, `finish_after_cooking`, `serve_separately`, or `needs_review`. Uncertain rows stay out of the bag. Ingredient stage edits use the existing exact sparse edit shape with field `prep_stage`.
 
 - [ ] **Step 1: Write failing render-contract tests**
 
@@ -283,7 +380,7 @@ Run: `.venv/bin/python -m pytest tests/test_cooking_packet_render.py -v`
 
 - [ ] **Step 3: Implement responsive and print presentation**
 
-Mirror the reference PDF's navy/teal/gold hierarchy, Letter margins, schedule table, location columns, stage labels, phase cards, guidance boxes, repeated footer, and page counters. The mobile shell uses semantic collapsible sections, labeled controls, 44px touch targets, `aria-live`, visible focus, reduced motion, `textContent`, per-card Save, and persisted checkboxes. Reuse `static/print-action.js`.
+Mirror the reference PDF's navy/teal/gold hierarchy, Letter margins, schedule table, location columns, stage labels, phase cards, guidance boxes, repeated footer, and page counters. Lead every recipe with **Freezer prep**: **Put in the freezer bag now**, optional **Prep before bagging**, and a prominent **Keep out of the freezer bag** group split into cook-time, finish, serve, separate-freeze, and needs-review destinations. Do not show a generic ingredient list that implies everything is bagged. Each ingredient appears in exactly one destination. The mobile shell uses semantic collapsible sections, labeled controls, 44px touch targets, `aria-live`, visible focus, reduced motion, `textContent`, per-card Save, and persisted checkboxes. Reuse `static/print-action.js`.
 
 - [ ] **Step 4: Run render tests and static accessibility contract checks**
 

@@ -28,6 +28,7 @@ commit or roll back explicitly in a try/except/finally.
 from __future__ import annotations
 
 import contextlib
+import math
 import re
 import sqlite3
 import uuid
@@ -273,12 +274,16 @@ def find_recent_duplicate(recipe: str, week: str, date, meal,
     return get_cook(row["id"]) if row else None
 
 
-def get_cook(cook_id: int) -> Optional[dict]:
-    conn = inventory_db.connect()
+def get_cook(cook_id: int, *, conn=None) -> Optional[dict]:
+    """Read cook and placements, optionally borrowing a caller's connection."""
+    owns_connection = conn is None
+    if owns_connection:
+        conn = inventory_db.connect()
     try:
         return _get_cook_in_txn(conn, cook_id)
     finally:
-        conn.close()
+        if owns_connection:
+            conn.close()
 
 
 def _get_cook_in_txn(conn, cook_id: int) -> Optional[dict]:
@@ -316,6 +321,15 @@ def update_cook(cook_id: int, **fields) -> dict:
     conn = inventory_db.connect()
     try:
         with _write_txn(conn):
+            if "date" in fields or "meal" in fields:
+                row = conn.execute("SELECT date, meal FROM cooks WHERE id = ?",
+                                   (cook_id,)).fetchone()
+                if row is not None and any(
+                    key in fields and fields[key] != row[key]
+                    for key in ("date", "meal")
+                ):
+                    conn.execute("DELETE FROM cook_schedule WHERE cook_id = ?",
+                                 (cook_id,))
             if "servings_produced" in fields:
                 new_cap = float(fields["servings_produced"])
                 placed = _placed_sum(conn, cook_id)
@@ -451,6 +465,22 @@ def move_cook(cook_id: int, date: str, meal: str) -> dict:
     return get_cook(cook_id)
 
 
+def schedules_for_week(week: str, *, conn=None) -> list[dict]:
+    """Persisted sessions in start order; a borrowed connection stays open."""
+    owns_connection = conn is None
+    if owns_connection:
+        conn = inventory_db.connect()
+    try:
+        return [_row_to_dict(row) for row in conn.execute(
+            "SELECT s.cook_id, s.start, s.timezone, s.duration_minutes,"
+            " c.recipe, c.week, c.date, c.meal, c.scale, c.servings_produced, c.cooked_at"
+            " FROM cook_schedule s JOIN cooks c ON c.id = s.cook_id"
+            " WHERE c.week = ? ORDER BY s.start, s.cook_id", (week,)).fetchall()]
+    finally:
+        if owns_connection:
+            conn.close()
+
+
 def _move_cook_in_txn(conn, cook_id: int, date: str, meal: str) -> None:
     """Re-anchor one cook. Caller owns validation and the transaction.
 
@@ -473,7 +503,7 @@ def _move_cook_in_txn(conn, cook_id: int, date: str, meal: str) -> None:
     old_date, old_meal = row["date"], row["meal"]
     if (old_date, old_meal) == (date, meal):
         return
-    conn.execute("DELETE FROM cook_schedule WHERE cook_id=?", (cook_id,))
+    conn.execute("DELETE FROM cook_schedule WHERE cook_id = ?", (cook_id,))
     conn.execute("UPDATE cooks SET date = ?, meal = ? WHERE id = ?",
                  (date, meal, cook_id))
     # `IS` rather than `=` so a NULL old anchor matches nothing instead of
@@ -637,14 +667,18 @@ def move_bundle(bundle_id: str, date: str, meal: str) -> dict:
     return get_bundle(bundle_id)
 
 
-def cooks_for_week(week: str) -> list[dict]:
-    conn = inventory_db.connect()
+def cooks_for_week(week: str, *, conn=None) -> list[dict]:
+    """Read full cook/placement records through one owned or borrowed connection."""
+    owns_connection = conn is None
+    if owns_connection:
+        conn = inventory_db.connect()
     try:
         ids = [r["id"] for r in conn.execute(
             "SELECT id FROM cooks WHERE week = ? ORDER BY id", (week,)).fetchall()]
+        return [get_cook(i, conn=conn) for i in ids]
     finally:
-        conn.close()
-    return [get_cook(i) for i in ids]
+        if owns_connection:
+            conn.close()
 
 
 def freezer_contents() -> list[dict]:
@@ -932,15 +966,6 @@ def week_board(week: str, recipes_dir) -> dict:
     }
 
 
-def schedules_for_week(week: str) -> list[dict]:
-    conn = inventory_db.connect()
-    try:
-        return [dict(r) for r in conn.execute(
-            'SELECT s.*, c.recipe, c.date, c.meal FROM cook_schedule s JOIN cooks c ON c.id=s.cook_id WHERE c.week=?', (week,))]
-    finally:
-        conn.close()
-
-
 def schedule_cook(cook_id: int, *, date: str, meal: str, start: str,
                   timezone: str, duration_minutes: int, servings_to_eat: float | None,
                   expected_unplaced: bool | None = None,
@@ -951,7 +976,6 @@ def schedule_cook(cook_id: int, *, date: str, meal: str, start: str,
     drain_schedule_views. Owned calls drain after commit; IO errors leave work
     durable and propagate rather than claiming the generated view is current.
     """
-    import math
     from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
     from lib.cooking_windows import valid_duration
