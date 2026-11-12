@@ -7,6 +7,7 @@ from urllib.parse import quote
 from youtube_transcript_api import YouTubeTranscriptApi
 from googleapiclient.discovery import build
 import functools
+import ipaddress
 import math
 import os
 import re
@@ -28,6 +29,7 @@ from lib.shopping_list_generator import (
     extract_legacy_manual_items,
     SHOPPING_LISTS_PATH,
 )
+from lib.web_origin import web_origin
 from lib.backup import create_backup
 from lib.recipe_index import get_recipe_index
 from lib.meal_plan_parser import (
@@ -71,18 +73,36 @@ VAULT_NAME = paths.vault_root().name
 app = Flask(__name__)
 
 
+def _loopback(address):
+    try:
+        ip = ipaddress.ip_address(address)
+        return (getattr(ip, "ipv4_mapped", None) or ip).is_loopback
+    except ValueError:
+        return False
+
+
+def _local_client():
+    # Only Caddy's immediate loopback socket can assert a forwarded client.
+    # Use the nearest hop; never a client-supplied leftmost address in a chain.
+    if not _loopback(request.remote_addr or ""):
+        return False
+    forwarded = request.headers.get("X-Forwarded-For")
+    return forwarded is None or _loopback(forwarded.rsplit(",", 1)[-1].strip())
+
+
 def require_token(view):
     """Require a bearer token for non-localhost callers when KITCHENOS_API_TOKEN is set.
 
-    No-op when the env var is unset. Localhost (Mac app, local browser UI) is always
-    exempt; remote callers (iPad over Tailscale) must send Authorization: Bearer <token>.
+    No-op when the env var is unset. Direct localhost (Mac app, local browser UI) is
+    exempt; Caddy-forwarded remote clients retain authentication and must send
+    Authorization: Bearer <token>.
     """
     @functools.wraps(view)
     def wrapper(*args, **kwargs):
         token = os.environ.get("KITCHENOS_API_TOKEN")
         if not token:
             return view(*args, **kwargs)
-        if request.remote_addr in ("127.0.0.1", "::1"):
+        if _local_client():
             return view(*args, **kwargs)
         if request.headers.get("Authorization", "") == f"Bearer {token}":
             return view(*args, **kwargs)
@@ -403,7 +423,11 @@ def get_video_info():
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint."""
-    return jsonify({'status': 'ok'})
+    response = jsonify({'status': 'ok'})
+    release = os.environ.get('KITCHENOS_RELEASE_SHA', '')
+    if re.fullmatch(r'[0-9a-f]{40}', release):
+        response.headers['X-KitchenOS-Release'] = release
+    return response
 
 
 @app.route('/api/recipes', methods=['GET'])
@@ -773,7 +797,13 @@ def recipe_detail_page(name):
         # so the outer escape would re-escape the entities).
         return error_page(f"Recipe not found: {name}"), 404
 
-    html = _serve_page('recipe_detail.html', [('vault=KitchenOS', f'vault={VAULT_NAME}')])
+    # This escape hatch must work before (or without) the gated JSON request.
+    # Build it from the validated filename, not the recipe's display title.
+    obsidian_url = (f"obsidian://open?vault={quote(paths.vault_root().name, safe='')}"
+                    f"&file={quote('Recipes/' + name, safe='')}")
+    html = _serve_page('recipe_detail.html', [
+        ('<!--OBSIDIAN_URL-->', str(escape(obsidian_url))),
+    ])
     return html, 200, {'Content-Type': 'text/html'}
 
 
@@ -799,7 +829,7 @@ def plan_week_page():
         from lib.print_week import _targets_dict
         targets, _ = _targets_dict(paths.vault_root())
 
-    base = os.environ.get("KITCHENOS_API_BASE", "").rstrip("/")
+    base = web_origin()
     body = plan_week.render_plan_center_html(
         week, packet, targets, base,
         plan_week.shift_week(week, -1), plan_week.shift_week(week, 1))
@@ -811,7 +841,8 @@ def plan_week_page():
 def print_week_page():
     """Printable one-page 'week packet': plan grid + macros vs targets +
     shopping list + do-ahead prep. Defaults to the current ISO week; ?week=
-    overrides, ?tasks=1 regenerates prep (an LLM call) instead of read-only cache.
+    overrides, ?tasks=1 regenerates prep (an LLM call) instead of read-only cache,
+    ?recipes=1 appends every planned recipe in full (one page each).
     """
     from lib import print_week
 
@@ -823,14 +854,15 @@ def print_week_page():
         return error_page(f"Invalid week format: {week} (expected YYYY-WNN)"), 400
 
     include_tasks = request.args.get('tasks') in ('1', 'true', 'yes')
+    include_recipes = request.args.get('recipes') in ('1', 'true', 'yes')
     try:
         packet = print_week.build_week_packet(
             week, paths.vault_root(), _resolve_recipes_dir(),
-            include_tasks=include_tasks)
+            include_tasks=include_tasks, include_recipes=include_recipes)
     except FileNotFoundError:
         return error_page(f"No meal plan for {week} yet — plan a week first."), 404
 
-    base = os.environ.get("KITCHENOS_API_BASE", "").rstrip("/")
+    base = web_origin()
     body = print_week.render_packet_html(packet, base_url=base)
     html = _serve_page('print_week.html', [('<!--PACKET-->', body)])
     return html, 200, {'Content-Type': 'text/html'}
@@ -1707,11 +1739,20 @@ def api_cook_create():
     # why the window is seconds rather than a uniqueness constraint — cooking
     # the same dish twice in a week is legitimate; doing it twice in three
     # seconds is a button that didn't look like it worked.
+    unslotted = not data.get('date') or not data.get('meal')
     existing = serving_ledger.find_recent_duplicate(
         data.get('recipe'), data.get('week'), data.get('date'), data.get('meal'),
-        COOK_DEDUPE_WINDOW_S)
+        COOK_DEDUPE_WINDOW_S, any_slot=unslotted)
     if existing is not None:
         return jsonify(existing), 200
+
+    # Never create an unplaced cook: it would show only in the planner's
+    # Unscheduled tray. A missing meal means dinner; a missing date means the
+    # first free night of that meal in the week (serving_ledger.default_slot).
+    if unslotted and re.match(r'^\d{4}-W\d{2}$', data.get('week') or ''):
+        data['meal'] = data.get('meal') or 'dinner'
+        data['date'] = data.get('date') or serving_ledger.default_slot(
+            data['week'], data['meal'])
 
     # C1: a hand-edited legacy week must be converted (import + backup)
     # BEFORE its first ledger row lands, or the regen below clobbers it.
@@ -1727,7 +1768,39 @@ def api_cook_create():
         notes=data.get('notes'))
     _regen_weeks(cook["week"], _iso_week_of(data["date"]) if data.get("date") else None)
     _sync_cook_history(cook["recipe"])
-    return jsonify(cook), 201
+    return jsonify(_with_dislike_hits(cook, [cook["recipe"]])), 201
+
+
+def _with_dislike_hits(payload: dict, recipes) -> dict:
+    """Attach `dislike_hits` to a placement response when any recipe has one.
+
+    Warn, never block: the row is already committed, and the user may have
+    swapped the ingredient by hand. A deterministic string match against
+    `My Meal System.md` (lib/dislike_guard.py) — no model, so it is safe on a
+    request path. The key is absent when there is nothing to say, so existing
+    clients see an unchanged payload.
+    """
+    from lib import dislike_guard
+    try:
+        hits = dislike_guard.warning_for(recipes)
+    except Exception:
+        hits = []
+    return {**payload, "dislike_hits": hits} if hits else payload
+
+
+def _dislike_banner(recipes) -> str:
+    """HTML warning card for the Obsidian add-to-meal-plan pages; '' if clean."""
+    from html import escape
+    from lib import dislike_guard
+    try:
+        hits = dislike_guard.warning_for(recipes)
+    except Exception:
+        hits = []
+    if not hits:
+        return ''
+    rows = ''.join(f'<li>{escape(h["recipe"])}: {escape(h["item"])}</li>' for h in hits)
+    return (f'<div class="card warn" style="margin:1rem 0"><strong>Heads up — contains something you '
+            f'dislike</strong><ul>{rows}</ul></div>')
 
 
 def _apply_cook_patch(cook_id, data) -> tuple:
@@ -1844,7 +1917,7 @@ def api_bundle_create():
     # the first is the omission the legacy-import path already had reported
     # against it as "I don't see this on the recipe page anywhere".
     _sync_cook_history(*[c["recipe"] for c in bundle["cooks"]])
-    return jsonify(bundle), 201
+    return jsonify(_with_dislike_hits(bundle, [c["recipe"] for c in bundle["cooks"]])), 201
 
 
 @app.route('/api/bundles/<bundle_id>/move', methods=['POST'])
@@ -2291,6 +2364,7 @@ def _render_add_form(recipe_display: str, error: str | None = None) -> str:
 <h2>Add to Meal Plan</h2>
 <div class="recipe-name">{recipe_display}</div>
 {error_html}
+{_dislike_banner([recipe_display])}
 <form method="POST" action="/add-to-meal-plan">
     <input type="hidden" name="recipe" value="{recipe_display}">
 
@@ -2370,13 +2444,15 @@ def _render_add_form(recipe_display: str, error: str | None = None) -> str:
 ''')
 
 
-def _success_page_for_wikilink(wikilink_target: str, day: str, meal: str, week: str) -> str:
+def _success_page_for_wikilink(wikilink_target: str, day: str, meal: str, week: str,
+                               warning: str = '') -> str:
     """Green confirmation card after a slot insert. Works for [[Recipe]] or [[Meal: X]]."""
     from urllib.parse import quote
     encoded_file = quote(f"Meal Plans/{week}", safe='')
     return _html_page("KitchenOS", f'''
 <div class="card ok"><strong>Added!</strong><br>
 [[{wikilink_target}]] &rarr; {day} {meal} ({week})</div>
+{warning}
 <p><a href="obsidian://open?vault={VAULT_NAME}&file={encoded_file}">View Meal Plan</a></p>
 <p><a href="obsidian://open?vault={VAULT_NAME}">Back to Obsidian</a></p>
 ''')
@@ -2485,7 +2561,9 @@ def _schedule_meal_bundle(meal_name: str, week: str, day: str, meal: str):
     _sync_cook_history(*[c["recipe"] for c in bundle["cooks"]])
     # Unchanged confirmation copy: from the user's side this is still "the plate
     # is on Tuesday dinner".
-    return _success_page_for_wikilink(f"Meal: {meal_name}", day, meal, week)
+    return _success_page_for_wikilink(
+        f"Meal: {meal_name}", day, meal, week,
+        warning=_dislike_banner(dict.fromkeys(c["recipe"] for c in bundle["cooks"])))
 
 
 #: Monday-first, matching ISO weekday numbering and the planner's grid.
@@ -2541,7 +2619,8 @@ def _schedule_recipe_directly(recipe: str, week: str, day: str, meal: str):
         date=cook_date, meal=slot, initial_placement_count=1.0)
     _regen_weeks(cook["week"], _iso_week_of(cook_date))
     _sync_cook_history(cook["recipe"])
-    return _success_page_for_wikilink(recipe, day, meal, week)
+    return _success_page_for_wikilink(recipe, day, meal, week,
+                                      warning=_dislike_banner([recipe_name]))
 
 
 @app.route('/add-to-meal-plan', methods=['GET'])
@@ -3858,6 +3937,17 @@ def cook_now_page():
 def receipt_paste_page():
     """Paste a photographed-receipt JSON (from the Claude app), preview, ingest."""
     return _serve_page('receipt_paste.html')
+
+
+@app.route('/meal-calendar', methods=['GET'])
+def meal_calendar_page():
+    """Read-only agenda of a week's plan: day by day, meal by meal.
+
+    The planner is an editor; this is the glanceable list. It renders client-side
+    from /api/week-board/<week> (``planned_meals``), so it can never disagree
+    with the planner about what is on a day.
+    """
+    return _serve_page('meal_calendar.html'), 200, {'Content-Type': 'text/html'}
 
 
 @app.route('/recent', methods=['GET'])

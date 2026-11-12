@@ -546,11 +546,30 @@ def test_print_week_page_renders(client, tmp_vault):
     response = client.get('/print/week?week=2026-W31')
     assert response.status_code == 200
     body = response.get_data(as_text=True)
+    assert "https://chases-mac-mini.taila69703.ts.net/recipe-card/Beef%20Bowl" in body
     assert "week-grid" in body
     assert "Shopping list" in body and "Get ahead" in body
     assert "Print this week" in body  # the on-screen print button
     assert "/static/print-action.js" in body
     assert 'data-print-action' in body
+
+
+def test_print_week_recipes_toggle(client, tmp_vault):
+    """?recipes=1 appends the full recipe; without it the page has only the toggle."""
+    recipes = tmp_vault / "Recipes"; recipes.mkdir(parents=True, exist_ok=True)
+    (recipes / "Beef Bowl.md").write_text(
+        '---\ntitle: "Beef Bowl"\nservings: 2\n---\n# Beef Bowl\n\n## Ingredients\n\n'
+        '| Amount | Unit | Ingredient |\n|---|---|---|\n| 1 | lb | ground beef |\n\n'
+        '## Instructions\n\n1. Brown the beef.\n')
+    plans = tmp_vault / "Meal Plans"; plans.mkdir(parents=True, exist_ok=True)
+    (plans / "2026-W31.md").write_text("## Monday (Jul 27)\n\n### dinner\n[[Beef Bowl]]\n\n")
+
+    off = client.get('/print/week?week=2026-W31').get_data(as_text=True)
+    assert 'id="include-recipes"' in off
+    assert "Brown the beef." not in off
+
+    on = client.get('/print/week?week=2026-W31&recipes=1').get_data(as_text=True)
+    assert "Brown the beef." in on and "ground beef" in on
 
 
 def test_print_week_invalid_week_400(client):
@@ -580,8 +599,8 @@ def test_plan_week_page_planned(client, tmp_vault):
     assert response.status_code == 200
     body = response.get_data(as_text=True)
     assert "Plan your week" in body
-    assert "/meal-planner?week=2026-W31" in body
-    assert "/print/week?week=2026-W31" in body
+    assert "https://chases-mac-mini.taila69703.ts.net/meal-planner?week=2026-W31" in body
+    assert "https://chases-mac-mini.taila69703.ts.net/print/week?week=2026-W31" in body
 
 
 def test_plan_week_unplanned_is_empty_state_not_404(client, tmp_vault):

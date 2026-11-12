@@ -144,3 +144,37 @@ def test_no_new_api_route_is_silently_ungated():
         "new ungated /api route(s) — gate them or add them to KNOWN_UNGATED"
     assert KNOWN_UNGATED - ungated == set(), \
         "KNOWN_UNGATED lists route(s) that are now gated — drop them from the list"
+
+
+@pytest.mark.parametrize("peer,forwarded", [
+    ("127.0.0.1", "100.64.0.5"),
+    ("::1", "100.64.0.5"),
+    ("::ffff:127.0.0.1", "100.64.0.5"),
+    ("127.0.0.1", "127.0.0.1, 100.64.0.5"),
+    ("127.0.0.1", "invalid"),
+    ("100.64.0.5", "127.0.0.1"),
+])
+def test_forwarded_remote_cannot_take_local_auth_exemption(client, monkeypatch, peer, forwarded):
+    monkeypatch.setenv("KITCHENOS_API_TOKEN", "secret")
+    response = client.get("/api/recipes", headers={"X-Forwarded-For": forwarded},
+                          environ_base={"REMOTE_ADDR": peer})
+    assert response.status_code == 401
+
+
+def test_forwarded_remote_with_token_is_allowed(client, monkeypatch):
+    monkeypatch.setenv("KITCHENOS_API_TOKEN", "secret")
+    response = client.get("/api/recipes", headers={
+        "X-Forwarded-For": "100.64.0.5", "Authorization": "Bearer secret"})
+    assert response.status_code == 200
+
+
+def test_forwarded_loopback_remains_local(client, monkeypatch):
+    monkeypatch.setenv("KITCHENOS_API_TOKEN", "secret")
+    assert client.get("/api/recipes", headers={"X-Forwarded-For": "127.0.0.1"}).status_code == 200
+
+
+def test_health_identifies_reviewed_release_without_changing_body(client, monkeypatch):
+    monkeypatch.setenv("KITCHENOS_RELEASE_SHA", "a" * 40)
+    response = client.get('/health')
+    assert response.json == {'status': 'ok'}
+    assert response.headers.get('X-KitchenOS-Release') == 'a' * 40

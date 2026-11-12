@@ -41,6 +41,7 @@ from lib.units import (
     VOLUME_ML,
     get_unit_family,
     lookup_density,
+    lookup_piece_weight,
     parse_amount_to_float,
 )
 
@@ -200,9 +201,17 @@ def clean_ingredient(ing: dict) -> CleanIngredient:
     if family == "other":
         needs_review = True
         notes.append(f"unrecognized unit '{unit}'")
-    elif family == "count" and lookup_density(item) is not None:
+    elif (family == "count" and lookup_density(item) is not None
+            and lookup_piece_weight(item) is None):
         # A liquid/powder measured by count (e.g. "maple syrup" × "whole") can't
         # be converted to grams reliably — flag rather than miscount.
+        #
+        # A density alone does not mean pourable, so it cannot be the whole
+        # test. That only held while the density table listed nothing you could
+        # count; the moment fresh onion got a density (so "1 tsp grated onion"
+        # would convert) "1 small piece yellow onion" began reporting as a
+        # liquid. A piece weight is the positive signal that an ingredient is
+        # legitimately countable, and liquids and powders have none.
         needs_review = True
         notes.append("liquid/powder with a count unit")
 

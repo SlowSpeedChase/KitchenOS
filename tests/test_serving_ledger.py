@@ -246,6 +246,25 @@ def test_placements_for_week_includes_cross_week_cook_excludes_non_slot(tmp_db):
     assert all("2026-07-06" <= d <= "2026-07-12" for d in dates)
 
 
+def test_planned_meals_for_week_marks_cook_days_and_leftovers(tmp_db):
+    # Chili cooked Tue dinner, eaten again Thu lunch (same cook, leftover).
+    chili = _mk_cook()
+    sl.add_placement(chili["id"], "slot", 1.0, date="2026-07-09", meal="lunch")
+    # Soup belongs to next week but is eaten Sat lunch this week.
+    soup = _mk_cook(recipe="Soup", week="2026-W29", date="2026-07-15")
+    sl.add_placement(soup["id"], "slot", 1.0, date="2026-07-11", meal="lunch")
+    # A cook with no slot yet is not on any day.
+    _mk_cook(recipe="Pending", date=None, meal=None)
+
+    rows = sl.planned_meals_for_week("2026-W28")
+    got = [(r["date"], r["meal"], r["recipe"], r["anchor"], r["count"]) for r in rows]
+    assert got == [
+        ("2026-07-07", "dinner", "Chili", True, 1.0),
+        ("2026-07-09", "lunch", "Chili", False, 1.0),
+        ("2026-07-11", "lunch", "Soup", False, 1.0),
+    ]
+
+
 # --- Task 2: recipe_macros, day_totals, week_board -------------------------
 
 RECIPE_MD = """---

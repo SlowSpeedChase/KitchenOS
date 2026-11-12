@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-title" content="KitchenOS">
+    <meta name="theme-color" content="#f4ede3" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#0f1116" media="(prefers-color-scheme: dark)">
+    <title>Meal calendar · KitchenOS</title>
+    <link rel="stylesheet" href="/static/tokens.css">
+    <link rel="stylesheet" href="/static/kitchenos.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: var(--font-body);
+            background: var(--bg);
+            background-image: var(--dots);
+            background-size: var(--dot-size) var(--dot-size);
+            color: var(--ink);
+            min-height: 100vh;
+            padding: 20px 16px calc(32px + env(safe-area-inset-bottom));
+            max-width: 720px;
+            margin: 0 auto;
+            border-top: 3px solid var(--app-kitchenos);
+            -webkit-text-size-adjust: 100%;
+        }
+
+        header { margin-bottom: 14px; }
+        .kicker {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: .12em;
+            color: var(--app-kitchenos);
+            margin-bottom: 6px;
+        }
+        .kicker a { color: inherit; text-decoration: none; }
+        h1 {
+            font-family: var(--font-display);
+            font-size: 30px;
+            font-weight: 600;
+            letter-spacing: -.01em;
+        }
+        .sub { color: var(--muted); font-size: 14px; margin-top: 5px; }
+
+        .week-nav {
+            display: flex; align-items: center; gap: 8px;
+            margin: 12px 0 16px;
+        }
+        .week-nav a {
+            font-size: 14px; font-weight: 600;
+            color: var(--ink); text-decoration: none;
+            padding: 8px 12px; min-height: 40px;
+            display: inline-flex; align-items: center;
+            border: 1px solid var(--line); border-radius: var(--radius-box);
+            background: var(--surface);
+            white-space: nowrap;
+        }
+        .week-nav a.arrow { font-size: 18px; min-width: 40px; justify-content: center; }
+        .week-nav .spacer { flex: 1; }
+        .week-nav a.edit { color: var(--app-kitchenos); }
+
+        .day {
+            background: var(--surface);
+            background-image: var(--grain);
+            border: 1px solid var(--line);
+            border-radius: var(--radius-box);
+            padding: 12px 15px;
+            margin-bottom: 8px;
+        }
+        .day.today { border-color: var(--app-kitchenos); }
+        .day-head {
+            display: flex; align-items: baseline; gap: 8px;
+            margin-bottom: 6px;
+        }
+        .day-name { font-size: 16px; font-weight: 600; }
+        .today-tag {
+            font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+            text-transform: uppercase; letter-spacing: .1em;
+            color: var(--app-kitchenos);
+        }
+        .day-kcal {
+            margin-left: auto; font-size: 13px; color: var(--muted);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .meal {
+            display: grid;
+            grid-template-columns: 76px 1fr;
+            gap: 2px 10px;
+            padding: 5px 0;
+            border-top: 1px solid var(--line-soft);
+            font-size: 15px;
+        }
+        .meal:first-of-type { border-top: 0; }
+        .meal-label {
+            font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+            text-transform: uppercase; letter-spacing: .08em;
+            color: var(--muted); padding-top: 3px;
+        }
+        .meal-items { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+        a.recipe {
+            color: var(--ink); text-decoration: none;
+            overflow-wrap: anywhere;
+        }
+        a.recipe:hover { color: var(--app-kitchenos); }
+        .tag { font-size: 12px; color: var(--muted); white-space: nowrap; }
+        .tag.cook { color: var(--app-kitchenos); font-weight: 600; }
+
+        .nothing { font-size: 14px; color: var(--muted); }
+
+        h2 {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: .1em;
+            margin: 22px 0 8px;
+        }
+        .unscheduled .meal-items { padding: 4px 0; }
+        .unscheduled-help { font-size: 13px; color: var(--muted); margin-top: 6px; }
+        .unscheduled-help a { color: var(--app-kitchenos); font-weight: 600; }
+
+        .error { color: var(--muted); font-size: 15px; padding: 20px 2px; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="kicker"><a href="/">‹ KitchenOS</a></div>
+        <h1>Meal calendar</h1>
+        <div class="sub" id="week-label">Loading…</div>
+    </header>
+
+    <nav class="week-nav" aria-label="Week">
+        <a id="prev-week" class="arrow" href="#" aria-label="Previous week">‹</a>
+        <a id="this-week" href="/meal-calendar">This week</a>
+        <a id="next-week" class="arrow" href="#" aria-label="Next week">›</a>
+        <span class="spacer"></span>
+        <a class="edit" id="edit-link" href="/meal-planner">Edit in planner</a>
+    </nav>
+
+    <main id="days"></main>
+    <section id="unscheduled"></section>
+
+    <script>
+        const MEALS = ['breakfast', 'lunch', 'snack', 'dinner'];
+        const MEAL_LABELS = { breakfast: 'Breakfast', lunch: 'Lunch', snack: 'Snack', dinner: 'Dinner' };
+
+        function pad(n) { return String(n).padStart(2, '0'); }
+        function localISODate(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+
+        function dateToISOWeek(d) {
+            const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+            const dayNum = date.getUTCDay() || 7;
+            date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+            const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+            const weekNo = Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
+            return `${date.getUTCFullYear()}-W${pad(weekNo)}`;
+        }
+
+        // Monday of an ISO week, as a local Date.
+        function mondayOf(week) {
+            const [y, w] = week.split('-W').map(Number);
+            const jan4 = new Date(y, 0, 4);
+            const jan4Dow = jan4.getDay() || 7;
+            return new Date(y, 0, 4 - (jan4Dow - 1) + (w - 1) * 7);
+        }
+
+        function addDays(d, n) { return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n); }
+
+        function el(tag, cls, text) {
+            const e = document.createElement(tag);
+            if (cls) e.className = cls;
+            if (text != null) e.textContent = text;
+            return e;
+        }
+
+        function recipeLink(name) {
+            const a = el('a', 'recipe', name);
+            a.href = `/recipe/${encodeURIComponent(name)}`;
+            return a;
+        }
+
+        function fmtCount(n) { return Number.isInteger(n) ? String(n) : n.toFixed(1); }
+
+        const params = new URLSearchParams(location.search);
+        const thisWeek = dateToISOWeek(new Date());
+        const week = /^\d{4}-W\d{2}$/.test(params.get('week') || '') ? params.get('week') : thisWeek;
+        const monday = mondayOf(week);
+        const todayISO = localISODate(new Date());
+
+        function wireNav() {
+            document.getElementById('prev-week').href = `/meal-calendar?week=${dateToISOWeek(addDays(monday, -7))}`;
+            document.getElementById('next-week').href = `/meal-calendar?week=${dateToISOWeek(addDays(monday, 7))}`;
+            document.getElementById('edit-link').href = `/meal-planner?week=${week}`;
+            const rangeFmt = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+            const sunday = addDays(monday, 6);
+            const rel = week === thisWeek ? 'This week · '
+                : week === dateToISOWeek(addDays(new Date(), 7)) ? 'Next week · '
+                : week === dateToISOWeek(addDays(new Date(), -7)) ? 'Last week · ' : '';
+            document.getElementById('week-label').textContent =
+                `${rel}${rangeFmt.format(monday)} – ${rangeFmt.format(sunday)}, ${sunday.getFullYear()}`;
+            document.title = `Meal calendar · ${rangeFmt.format(monday)} – ${rangeFmt.format(sunday)}`;
+        }
+
+        function render(board) {
+            const daysEl = document.getElementById('days');
+            daysEl.innerHTML = '';
+            const planned = board.planned_meals || [];
+            const totals = board.day_totals || {};
+            const dayFmt = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+
+            for (let i = 0; i < 7; i++) {
+                const d = addDays(monday, i);
+                const iso = localISODate(d);
+                const card = el('article', 'day');
+                card.dataset.date = iso;
+                if (iso === todayISO) card.classList.add('today');
+
+                const head = el('div', 'day-head');
+                head.appendChild(el('span', 'day-name', dayFmt.format(d)));
+                if (iso === todayISO) head.appendChild(el('span', 'today-tag', 'Today'));
+                const t = totals[iso];
+                if (t && t.calories) head.appendChild(el('span', 'day-kcal', `${Math.round(t.calories)} kcal`));
+                card.appendChild(head);
+
+                const todays = planned.filter(p => p.date === iso);
+                if (!todays.length) {
+                    card.appendChild(el('div', 'nothing', 'Nothing planned'));
+                }
+                MEALS.forEach(meal => {
+                    const items = todays.filter(p => p.meal === meal);
+                    if (!items.length) return;
+                    const row = el('div', 'meal');
+                    row.appendChild(el('div', 'meal-label', MEAL_LABELS[meal]));
+                    const list = el('div', 'meal-items');
+                    items.forEach(p => {
+                        const line = el('div');
+                        line.appendChild(recipeLink(p.recipe));
+                        line.append(' ');
+                        const tagText = p.anchor ? 'cook' : 'leftover';
+                        const servings = p.count && Math.abs(p.count - 1) > 1e-6 ? ` · ${fmtCount(p.count)} servings` : '';
+                        line.appendChild(el('span', `tag ${p.anchor ? 'cook' : ''}`, tagText + servings));
+                        list.appendChild(line);
+                    });
+                    row.appendChild(list);
+                    card.appendChild(row);
+                });
+                daysEl.appendChild(card);
+            }
+
+            const unsched = (board.cooks || []).filter(c => !c.date || !c.meal);
+            const section = document.getElementById('unscheduled');
+            section.innerHTML = '';
+            if (unsched.length) {
+                section.appendChild(el('h2', null, 'Not on a day yet'));
+                const card = el('div', 'day unscheduled');
+                const list = el('div', 'meal-items');
+                unsched.forEach(c => {
+                    const line = el('div');
+                    line.appendChild(recipeLink(c.recipe));
+                    list.appendChild(line);
+                });
+                card.appendChild(list);
+                const help = el('div', 'unscheduled-help');
+                help.append('Pick a day for these in the ');
+                const a = el('a', null, 'meal planner');
+                a.href = `/meal-planner?week=${week}`;
+                help.append(a, '.');
+                card.appendChild(help);
+                section.appendChild(card);
+            }
+        }
+
+        async function load() {
+            wireNav();
+            try {
+                const resp = await fetch(`/api/week-board/${week}`);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                render(await resp.json());
+            } catch (err) {
+                const daysEl = document.getElementById('days');
+                daysEl.innerHTML = '';
+                daysEl.appendChild(el('div', 'error', 'Couldn’t load this week’s plan. Reload to try again.'));
+            }
+        }
+
+        load();
+    </script>
+</body>
+</html>
