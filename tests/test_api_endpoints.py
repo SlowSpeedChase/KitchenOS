@@ -879,6 +879,7 @@ def _plan_and_recipe(tmp_path, monkeypatch, ingredients):
     """A one-recipe week wired into both the API and the generator."""
     import lib.shopping_list_generator as slg
 
+    monkeypatch.setenv("KITCHENOS_VAULT", str(tmp_path))
     plans = tmp_path / "Meal Plans"
     plans.mkdir(exist_ok=True)
     (plans / "2026-W31.md").write_text("## Monday (Jul 27)\n### Dinner\n[[Test Bake]]\n")
@@ -1064,7 +1065,7 @@ def test_regeneration_does_not_resurrect_old_generated_credits_or_exclusions(
     assert response.status_code == 200
     written = (lists / "2026-W31.md").read_text()
 
-    buy_lines = [line for line in written.splitlines() if line.startswith("- [ ] ")]
+    buy_lines = [line.split(" <!-- kitchenos-item:")[0] for line in written.splitlines() if line.startswith("- [ ] ")]
     assert buy_lines == ["- [ ] aluminum foil"]
     assert "1 cup brown sugar → brown sugar (5 cup) — exact match; enough recorded" in written
 
@@ -1089,7 +1090,7 @@ def test_regeneration_semantically_cleans_stale_items_misclassified_by_metadata(
     response = client.post('/generate-shopping-list', json={"week": "2026-W31"})
     assert response.status_code == 200
     written = (lists / "2026-W31.md").read_text()
-    buy_lines = [line for line in written.splitlines() if line.startswith("- [ ] ")]
+    buy_lines = [line.split(" <!-- kitchenos-item:")[0] for line in written.splitlines() if line.startswith("- [ ] ")]
 
     assert "- [ ] aluminum foil" in buy_lines
     assert "- [ ] 2 cts eggs" not in buy_lines

@@ -243,3 +243,16 @@ def test_config_validation_requires_existing_external_data_and_token(tmp_path):
         result = subprocess.run([sys.executable, '-c', deploy.CONFIG_CHECK, str(config), str(root)], capture_output=True)
         assert result.returncode == (0 if missing is None else 1)
         assert b'fixture' not in result.stdout
+
+
+def test_open_mode_activation_requires_successful_unauthenticated_data(deployment):
+    source, sha, config, root, agents, plist, old, state, runner = deployment
+    release = deploy.stage(source, sha, root, Path('/test/python'), config, runner)
+    def open_runner(args):
+        if "-c" in args and deploy.CONFIG_CHECK in args:
+            return subprocess.CompletedProcess(args, 0, "open\n", "")
+        if args[0] == "curl" and args[-1].endswith("/api/recipes"):
+            return subprocess.CompletedProcess(args, 0, "[]\n200", "")
+        return runner(args)
+    deploy.activate(root, release, agents, 501, open_runner)
+    assert json.loads((root / 'activation-state.json').read_text())["status"] == "active"

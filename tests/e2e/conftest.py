@@ -141,3 +141,61 @@ def page_errors(page):
     page.on("console", lambda m: m.type == "error" and errors.append(f"console: {m.text}"))
     page.on("pageerror", lambda e: errors.append(f"pageerror: {e}"))
     return errors
+
+
+@pytest.fixture(scope="module")
+def siri_server(tmp_path_factory) -> LiveServer:
+    """Synthetic domain data behind real remote bearer/viewing-session checks."""
+    root = tmp_path_factory.mktemp("kitchenos-siri-e2e")
+    vault = root / "KitchenOS"
+    for folder in ("Recipes", "Meal Plans", "Meals"):
+        (vault / folder).mkdir(parents=True)
+    (vault / "Recipes" / "Rice & Beans 100%.md").write_text(
+        "---\ntitle: Rice & Beans 100%\nservings: 4\ndish_type: main\n"
+        "nutrition_calories: 400\nnutrition_protein: 20\n"
+        "nutrition_carbs: 60\nnutrition_fat: 10\n---\n# Rice & Beans 100%\n\n"
+        "## Ingredients\n\n| Amount | Unit | Ingredient |\n|---|---|---|\n"
+        "| 1 | cup | rice |\n\n## Instructions\n\n1. Simmer the fixture rice until tender.\n"
+    )
+    storage = root / "storage_locations.json"
+    shutil.copy2(REPO / "config" / "storage_locations.json", storage)
+    port = _free_port()
+    log = root / "server.log"
+    db = root / "kitchenos.db"
+    env = {**os.environ, "KITCHENOS_VAULT": str(vault), "KITCHENOS_DB": str(db),
+           "KITCHENOS_STORAGE_TABLE": str(storage), "KITCHENOS_API_TOKEN": "siri-fixture-token",
+           "KITCHENOS_NO_LLM": "1", "OPENAI_API_KEY": "", "ANTHROPIC_API_KEY": ""}
+    (root / "clock.txt").write_text(str(time.time()))
+    # The remote address middleware is test-only; production auth is unchanged.
+    runner = '''
+from lib import inventory_db
+with inventory_db.connect() as conn:
+    c = conn.execute("INSERT INTO cooks(recipe,week,date,meal,scale,servings_produced) VALUES ('Rice & Beans 100%','2026-W42','2026-10-16','dinner',1,4)")
+    conn.execute("INSERT INTO placements(cook_id,destination,date,meal,count) VALUES (?,'slot','2026-10-16','dinner',1)", (c.lastrowid,))
+    conn.commit()
+import api_server
+from lib.browser_handoff import BrowserHandoffStore
+from pathlib import Path
+import os
+clock_file = Path(os.environ['KITCHENOS_DB']).parent / 'clock.txt'
+api_server.browser_handoff_store = BrowserHandoffStore(clock=lambda: float(clock_file.read_text()))
+original = api_server.app.wsgi_app
+def remote(environ, start_response):
+    environ['REMOTE_ADDR'] = '198.51.100.9'
+    return original(environ, start_response)
+api_server.app.wsgi_app = remote
+api_server.app.run(host='0.0.0.0', port=PORT, debug=False)
+'''.replace("port=PORT", f"port={port}")
+    with log.open("w") as logfile:
+        proc = subprocess.Popen([sys.executable, "-c", runner], env=env, cwd=REPO,
+                                stdout=logfile, stderr=subprocess.STDOUT)
+    base_url = f"http://127.0.0.1:{port}"
+    try:
+        _await_health(proc, base_url, log)
+        yield LiveServer(base_url, vault, db, log)
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()

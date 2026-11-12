@@ -191,12 +191,23 @@ def main():
         print(f"Saved to {args.output}")
     else:
         try:
-            create_reminders_list(REMINDERS_LIST)
-            if args.clear:
-                clear_reminders_list(REMINDERS_LIST)
-                print(f"Cleared {REMINDERS_LIST} list")
-            add_to_reminders(formatted, REMINDERS_LIST)
-            print(f"Added {len(formatted)} items to {REMINDERS_LIST}")
+            from lib.apple_integration import service as apple_service
+            if apple_service.configured():
+                from lib.shopping_note import save_shopping_note
+                week = args.week or meal_plan_path.stem
+                apple_service.validate_scope('shopping', week)
+                if args.clear:
+                    raise ValueError('Native integration removes only explicitly selected owned items; --clear is unavailable')
+                save_shopping_note(week, lines, result.get('inventory_matches') or [], selected_items=formatted)
+                queued = apple_service.enqueue('shopping', week)
+                print(f"Queued {queued['queued']} items for the native Mac bridge; delivered 0")
+            else:
+                create_reminders_list(REMINDERS_LIST)
+                if args.clear:
+                    clear_reminders_list(REMINDERS_LIST)
+                    print(f"Cleared {REMINDERS_LIST} list")
+                sent = add_to_reminders(formatted, REMINDERS_LIST)
+                print(f"Added {sent} items to {REMINDERS_LIST}")
         except Exception as e:
             print(f"Error adding to Reminders: {e}", file=sys.stderr)
             print("Use --output to save to a file instead.")

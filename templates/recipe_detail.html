@@ -347,6 +347,7 @@
         </div>
     </div>
 
+    <script src="/static/browser-view.js"></script>
     <script>
         function escapeHtml(s) {
             return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
@@ -497,6 +498,7 @@
         // totals into real per-serving macros — the server rewrites the
         // frontmatter and recomputes, so the numbers and the label change together.
         function wireServingsForm() {
+            if (window.KitchenBrowserView.readOnly) return;
             const form = document.getElementById('servings-form');
             if (!form) return;
             form.addEventListener('submit', async (e) => {
@@ -671,6 +673,7 @@
         }
 
         async function addToThisWeek() {
+            if (window.KitchenBrowserView.readOnly) return;
             const btn = document.getElementById('add-week-btn');
             const status = document.getElementById('add-week-status');
             const daySelect = document.getElementById('add-day');
@@ -745,6 +748,7 @@
         populateDayPicker();
 
         async function loadRecipe() {
+            if (window.KitchenBrowserView.expired) return;
             try {
                 const resp = await fetch(`/api/recipes/${encodeURIComponent(recipeName)}`);
                 if (!resp.ok) {

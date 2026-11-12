@@ -22,40 +22,41 @@ and operator health calls remain `http://localhost:5001`.
 DNS, TLS, Caddy, VPN On Demand, and recovery are documented in the shared
 [home gateway runbook](https://github.com/SlowSpeedChase/dotfiles/blob/main/docs/home-web-gateway.md).
 
-**Auth**: when `KITCHENOS_API_TOKEN` is set, remote (non-localhost) callers of
-the token-gated routes below must send `Authorization: Bearer <token>`.
-Direct localhost callers (the Mac app, local browser UI, MCP server, LaunchAgents)
-are exempt. A remote browser forwarded through the loopback gateway is still a
-remote caller. Gated routes are marked **🔒** in the table.
+**Direct browser access**: Set `KITCHENOS_AUTH_MODE=open` in the active server environment and restart the API to allow ordinary links and browser actions without credentials. This bypasses both bearer-token checks and Siri viewing-cookie restrictions, including expired cookies. Anyone who can reach the server can read and change KitchenOS. Keep the existing API token for native clients; omit this setting or use `required` to restore the existing token/session behavior.
 
-Two things this does **not** currently amount to, both worth knowing before you
-rely on it:
+**Auth**: when `KITCHENOS_API_TOKEN` is set, remote callers of the
+routes marked **🔒** must send `Authorization: Bearer <token>`. Existing
+loopback exemptions still apply except to a browser carrying `kitchenos_view`.
+A valid explicit bearer takes precedence over that cookie. A remote caller
+forwarded by the loopback gateway remains remote under the existing nearest-hop
+client check.
 
-- **Coverage is partial.** 28 `/api/` routes are ungated, including mutating
-  ones (`/api/inventory/*`, `/api/pantry` PUT, `/api/shopping-list/confirm`,
-  `/api/recipes/save`). They are listed in `KNOWN_UNGATED` in
-  `tests/test_api_auth.py`, which fails if a *new* ungated route appears — so
-  the gap is pinned and visible, not closed.
-- **No browser page sends the header.** Every `fetch()` in `templates/` is
-  bare, so the moment `KITCHENOS_API_TOKEN` is set, every gated route 401s for a
-  remote browser and the planner, freezer and board stop working from any
-  machine but this one. `KitchenOSKit` does send it, so the native app is fine.
-  Reviewed gateway deployments require a token, so remote browser access needs
-  a browser authentication flow before these API-backed views can work. The
-  recipe page distinguishes access failures from missing recipes and renders its
-  **Open in Obsidian** link on the server, before fetching recipe details. That
-  link uses the configured vault name and recipe filename, works even when the
-  API request fails, and does not carry the API token. Failed loads hide the
-  empty recipe panels and disable **Add to this week**.
+Siri web navigation exchanges a one-use code for **15 minutes of viewing
+access** to the recipe and planner pages and their approved read endpoints.
+The global guard applies to a marked browser before loopback exemptions,
+blocks all other routes (including legacy mutating GET actions), and retains
+the restrictive cookie for 24 hours after issuance. Expired, invalid, restarted,
+or token-rotated sessions cannot regain anonymous access while that marker is
+present. See the handoff contract below.
+
+This does not close the wider browser authentication gap: routes listed in
+`KNOWN_UNGATED` in `tests/test_api_auth.py` retain their existing behavior for
+clients without a handoff cookie. Ordinary remote pages do not attach the
+native bearer, so their gated fetches can still return 401. Do not infer the
+server's token configuration from this document. The recipe page retains its
+server-rendered **Open in Obsidian** link and specific access-failure message,
+so its fallback remains usable when recipe JSON is unavailable.
 
 ## 1. HTTP endpoints
 
-**Measured from current source:** 91 `@app.route` decorators register 82 unique
-literal paths. Path | Method | Purpose.
+HTTP routes and their request/response behavior:
 
 | Path | Method | Purpose |
 |------|--------|---------|
 | `/transcript` | GET, POST | Fetch a YouTube video's transcript + description as one text blob (`{url}` body or `?url=`). Used by ad-hoc tooling, not the main pipeline. |
+| `/api/browser-handoffs` 🔒 | POST | Native-authorized typed recipe/day destination → one-use browser bootstrap path. Viewing cookies alone cannot issue codes. |
+| `/api/browser-handoffs/exchange` | POST | Same-origin JSON code exchange → canonical destination and a viewing cookie. The code authenticates this endpoint. |
+| `/browser/open` | GET | Minimal first-party bootstrap; requires an ephemeral code fragment and is not bookmarkable. |
 | `/health` | GET | Liveness check — `{"status": "ok"}`. |
 | `/api/recipes` 🔒 | GET | Recipe metadata index for the meal-planner sidebar. `?ingredient=<term>` filters to recipes whose ingredient list contains the case-insensitive substring — backs the Siri "recipes with X" intent. Cached 5 min. |
 | `/api/recipes/by-ingredients` 🔒 | POST | Rank recipes by ingredient overlap. Body `{ingredients: [str], limit?: int}` → `{matches: [{name, score, shared_ingredients}]}` (zero-overlap excluded). Reuses `meal_suggester` scoring. |
@@ -65,7 +66,7 @@ literal paths. Path | Method | Purpose.
 | `/images/<path:filename>` | GET | Serve a recipe image from `Recipes/Images/` in the vault. |
 | `/extract` | POST | Run full recipe extraction (`extract_recipe.py` subprocess) and save to Obsidian. Body `{url}`. **Returns `{"status": "success", "recipe": "<name>"}` on success — the key is `recipe`, not `recipe_name`.** |
 | `/generate-shopping-list` | POST | Generate a shopping list markdown file from a meal plan. Body `{week, use_pantry?}`. **Compares with current inventory but never decrements it.** Unmatched demand becomes checkboxes under **Need to purchase** and is the only generated content sent to Reminders. Every broad or exact inventory match appears as a plain bullet under **Inventory matches — verify**, with the needed amount, matched inventory row, and match reason; these lines are excluded from Reminders. Expired rows are ignored, water/ice are omitted, and `use_pantry: false` returns raw demand. The response includes `inventory_match_count`, `inventory_credited_count`, and `inventory_review_count`; manually-added purchase items are preserved using an encoded generated-item snapshot, with semantic cleanup for legacy notes whose old generator changed quantities or names. `/api/shopping-list/preview` → `/confirm` remains the only path that spends stock. |
-| `/send-to-reminders` | POST | Push a week's unchecked shopping-list items to the Apple Reminders "Shopping" list. Body `{week}`. Returns `{success, items_sent, items_skipped}`. Fired by the **Send to Reminders** button on `/current/shopping-list`. All items go over in **one** `osascript` call (~0.4s per Reminders round-trip, so the old item-at-a-time loop cost ~10s for a 24-item list), and the list is created if missing — no separate `create_reminders_list` call is needed. Item text is passed as `argv`, never interpolated into the AppleScript: these strings come from LLM-extracted ingredient lines, and a quote in one used to be able to close the string literal and get the remainder evaluated. |
+| `/send-to-reminders` 🔒 | POST | Body `{week}`. A configured native integration queues its shopping scope and returns `{success:true, native:true, queued, delivered:0, items_sent:0, sent:0}`; a missing native destination returns 409 and never falls back. Paused/disconnected native mode also never runs AppleScript. Otherwise pushes unchecked items to the legacy "Shopping" list and returns `{success, items_sent, items_skipped, queued:0, delivered:items_sent}`. Fired by the **Send to Reminders** button on `/current/shopping-list`. All items go over in **one** `osascript` call (~0.4s per Reminders round-trip, so the old item-at-a-time loop cost ~10s for a 24-item list), and the list is created if missing — no separate `create_reminders_list` call is needed. Item text is passed as `argv`, never interpolated into the AppleScript: these strings come from LLM-extracted ingredient lines, and a quote in one used to be able to close the string literal and get the remainder evaluated. |
 | `/calendar.ics` | GET | Serve the generated meal-plan ICS calendar file. |
 | `/refresh-nutrition` | GET | Regenerate the nutrition dashboard for `?week=`. |
 | `/refresh` | GET | Template refresh only — re-renders a recipe file (`?file=`) from its existing frontmatter/body against the current template. Does **not** re-fetch from YouTube; preserves `## My Notes`. |
@@ -91,9 +92,12 @@ literal paths. Path | Method | Purpose.
 | `/api/pantry` | GET | Read the pantry adapter's item list (DB-backed, legacy JSON-shaped view). Expired rows remain stored for history but are omitted from this usable-stock view. |
 | `/api/pantry` | PUT | Overwrite the pantry item list. Body `{items: [...]}`. |
 | `/api/shopping-list/preview` | POST | **Pantry-aware shopping list, step 1.** Body `{week, use_pantry?}` → canonical purchase-only `items`/`purchase_items`, `inventory_matches`, and per-line records split into `from_pantry` / `to_buy`. Each line includes `status`, `matched_inventory`, and stable `needed_display`, `to_buy_display`, and `inventory_match_note` strings for confirmation clients. |
-| `/api/shopping-list/confirm` | POST | **Pantry-aware shopping list, step 2.** Body `{week, items_to_buy, inventory_matches?, decisions?}` — saves purchase checkboxes plus plain inventory-match bullets and, if `decisions` are present, decrements DB inventory accordingly (`pantry.apply_decisions`). Choosing “Buy fresh” sends the line's full `needed_display`, not a pantry-subtracted remainder. |
+| `/api/shopping-list/confirm` 🔒 | POST | **Pantry-aware shopping list, step 2.** Body `{week, items_to_buy, inventory_matches?, decisions?}` — saves purchase checkboxes plus plain inventory-match bullets and, if `decisions` are present, decrements DB inventory accordingly (`pantry.apply_decisions`). Choosing “Buy fresh” sends the line's full `needed_display`, not a pantry-subtracted remainder. |
 | `/api/tasks/<week>` | GET | Cross-recipe prep-task sidecar payload (prep/active/passive classification) for the "Today's Prep" panel. `?force=1` bypasses the freshness cache. |
-| `/api/tasks/<week>/<task_id>/done` | POST | Mark a prep task done/undone. Body `{done?: bool}` (default true). |
+| `/api/tasks/<week>/saved` 🔒 | GET | Read the saved, fresh task sidecar without extraction or recovery. Returns the existing tasks payload; 404 absent, 409 stale/unsafe, 400 malformed week, 503 I/O unavailable. |
+| `/api/shopping-list/saved/<week>` 🔒 | GET | Read the saved shopping note: `{week,content_hash,rows:[{id,text,completed,issue}]}`. No identity migration or generation. Empty legacy IDs have `identity_missing`. 404 absent, 409 unsafe identity, 400 malformed week, 503 I/O unavailable. |
+| `/api/shopping-list/saved/<week>/completion` 🔒 | POST | Exactly `{row_id,completed:bool,expected_hash:SHA256,operation_id:UUID}`; returns the current saved payload. Exact row-ID mutation with hash precondition and durable idempotent replay; stale hash/unsafe row is 409. No pantry, purchase, trip or cook mutation. Missing list is 404; malformed input 400; I/O unavailable 503. |
+| `/api/tasks/<week>/<task_id>/done` 🔒 | POST | Mark a prep task done/undone. Body `{done?: bool}` (default true). |
 | `/api/briefing/kitchen` 🔒 | GET | The kitchen block Selene's 06:00 morning digest carries. `?date=YYYY-MM-DD` overrides today (400 on an unparseable date). **Read-only and cheap by contract**: it parses the recipe library and reads inventory once for the whole payload, and it never regenerates the `/api/tasks` sidecar — a stale or missing sidecar just skips the two task-derived `next` rungs rather than blocking on an LLM classification pass. Response has exactly seven keys: `date`, `week`, `plate` (today's placed servings in meal order, each `{meal, recipe, leftover}` — a placement whose parent cook was made on any strictly earlier date is a leftover, with no lower bound: a cook from a month ago whose leftovers are eaten today still counts, and the cook can be from a different ISO week entirely, so long as one of its placements lands in today's week), `next` (the one thing to do today, or `null`; `{kind, text, detail}` where `kind` is one of `prep` (today's own sidecar step), `ahead` (a do-ahead step for the nearest future day this week), `verdict` (asking how a past cook went), or `plan-week` (nothing at all is planned)), `at_risk` (expiring inventory, most urgent first, `{item, status, expires}`), `look` (up to three suggestions, one per reason — `never-cooked`, `on-hand`, `seasonal` — `{reason, recipe, detail}`), and `degraded` (labels for any component that failed and fell back to empty/absent rather than taking the rest of the block down with it). |
 | `/api/inventory` | GET | List DB inventory items. `?category=&location=` filter. Each item carries a computed `expiry_status` (`expired`/`soon`/`ok`/`null`), plus `location_source`, `last_used` and `use_count`. `location_source` records **how the row's `location` was decided**: `manual` (the user placed it, or supplied it explicitly in a request), `item` (a hand-curated `by_item` override matched), `category` (a `by_category` rule matched a real category), or `default` (nothing matched). Absent/NULL reads as `default`, and only `default` renders as unsure. `last_used`/`use_count` are written by consume-on-cook when a row is used but not safely decrementable. Backs the native app's inventory cleanup screen. |
 | `/api/use-it-up` | GET | Recipes ranked by how much expiring/at-risk inventory they use, to avoid waste. `?limit=` (default 10). Returns `{at_risk, suggestions}`; staples excluded, only the actionable expiry window considered. Backs the `use_it_up` MCP tool and the meal-planner "Use It Up" panel. |
@@ -160,6 +164,9 @@ and every stale server reports as fresh.
 | `/api/week-board/<week>` 🔒 | GET | Serving-ledger board view of a week (`serving_ledger.week_board`) — cooks and their placements. |
 | `/api/week-board/<week>/import-legacy` 🔒 | POST | One-time conversion of a hand-edited week into the serving ledger (`lib.week_view.import_legacy_week`). |
 | `/api/cooks` 🔒 | POST | Create a cook — one preparation of a recipe at a fractional scale (serving ledger). When the recipe contains a disliked ingredient (see **Dislike warnings** below), the 201 body also carries `dislike_hits`. |
+| `/api/cooks/<int:cook_id>` 🔒 | GET | Return the raw current ledger cook, including placements, unassigned servings, cooked state and bundle identity; 404 absent. Resolves typed native cook IDs without title matching, generation or mutation. |
+| `/api/cooks/<int:cook_id>/schedule` 🔒 | POST | `{date,meal,start,timezone,duration_minutes,servings_to_eat,expected_unplaced?:bool}` → `{cook,schedule}`. Schedule an eligible uncooked single-recipe cook through the ledger. Offset-bearing start, IANA timezone, same week, 15-minute steps, 15–360-minute duration and finish by midnight are required. First placement requires positive servings; existing anchor servings and unrelated leftovers are preserved. Optional `expected_unplaced` is checked inside the write transaction: mismatch/nonboolean is 400. Native omitted anchored servings are explicit null, accepted only with `expected_unplaced:false` and a current anchor; absent precondition retains legacy positive-serving validation. |
+| `/api/cooks/<int:cook_id>/schedule` 🔒 | DELETE | Remove only the timed reservation; preserve cook, meal/serving placements, scale, inventory and cooked state. Repeated unscheduling is a no-op; absent cook is 404. |
 | `/api/cooks/<int:cook_id>` 🔒 | PATCH | Update a cook. Body accepts any of `scale`, `servings_produced`, `date`, `meal`, `notes`, `cooked_at`, plus the post-eating verdict: `make_again` (`true`/`false`/`null`) and `cook_note` (free text). `make_again` is strictly binary — anything other than a bool or null is a `400`, since a stray `4` would store as truthy. `null` means *not judged*, which is deliberately distinct from `false`. Writing a verdict or yield also refreshes `cook_count` / `observed_servings` / `make_again_count` / `verdict_count` / `last_cooked` on the recipe note (best-effort; a missing note never fails the write). |
 | `/api/cooks/<int:cook_id>` 🔒 | DELETE | Delete a cook and its placements. |
 | `/api/cooks/<int:cook_id>/move` 🔒 | POST | Move a scheduled cook to another slot. Body `date` + `meal`. Re-anchors the cook **and** re-points the slot placements sitting at its old anchor, merging into any placement already at the destination; placements in other cells (planned leftovers) are left alone. Rejects a `date` outside the cook's `week` with a `400` — `cooks.week` is not updatable and `week_board()` filters on it, so such a cook would render on no board at all. |
@@ -245,17 +252,15 @@ running" message otherwise.
 
 ## 3. Siri / App Intents surface
 
-Siri and Shortcuts entry points into KitchenOS, defined in
-`KitchenOSKit/Sources/KitchenOSKit/Intents/`. Every intent routes through the
-single shared `KitchenOSClient` (`KitchenOSKit/Sources/KitchenOSKit/KitchenOSClient.swift`
-+ `+Meals`/`+Search`/`+MealPlanEdit`/`+Inventory`/`+Receipts`/`+System`
-extensions) — iOS talks to the Tailscale hostname, macOS talks to localhost,
-both overridable via `UserDefaults["kitchenos.baseURL"]`. When a bearer token
-is configured (`CredentialStore`) it's attached automatically, matching the
-`KITCHENOS_API_TOKEN` gating (🔒) on the server routes above. Write-capable
-intents always call `requestConfirmation(actionName: .add, ...)` before
-hitting a mutating endpoint — the app never writes to the meal plan without
-an explicit Siri confirmation.
+Shared Siri and Shortcuts entry points are defined in
+`KitchenOSKit/Sources/KitchenOSKit/Intents/` and use `KitchenOSClient`.
+Its defaults connect iOS over Tailscale and macOS over localhost; both are
+configurable via `UserDefaults["kitchenos.baseURL"]`. A configured bearer from
+`CredentialStore` is attached automatically, matching the server's optional
+`KITCHENOS_API_TOKEN` policy. Existing add-to-plan/assistant writes retain their
+confirmation gates. The five Mac Apple actions below use the shared serialized
+Apple integration service and execute the explicitly configured action; they do
+not add a universal confirmation step to every mutation.
 
 | Intent | Parameters | Backing endpoint(s) | Purpose |
 |--------|-----------|----------------------|---------|
@@ -267,6 +272,7 @@ an explicit Siri confirmation.
 | `GetRecipeNutritionIntent` | `recipe: RecipeEntity` | `GET /api/recipes/<name>` | "How many calories are in X" — reads `nutrition_calories`/`nutrition_protein`/etc. off the recipe detail response. |
 | `SummarizeRecipeIntent` | `recipe: RecipeEntity` | `GET /api/recipes/<name>`, then on-device `RecipeAI.summarize` | On-device summary of a recipe's steps/ingredients — no separate summarization endpoint. |
 | `AskKitchenOSIntent` | `request: String` (free-text, open-ended) | Indirect — delegates to `MealPlanAssistant`/`RecipeAI` (on-device LLM + tools), which itself calls into `KitchenOSClient`; any proposed write goes through the same read-modify-write `addRecipe`/`putMealPlan` path after a confirmation gate | Freeform natural-language entry point ("what should I make tonight", "add pasta to Friday"). |
+| `OpenKitchenOSWebIntent` | `kind: WebNavigationKind`, `recipeName: String?`, `date: String?` | `POST /api/browser-handoffs` | Non-discoverable foreground continuation from `AskKitchenOSIntent`; opens the resolved web destination in the default browser. |
 | `OpenRecipeIntent` | `target: RecipeEntity` | None — pure in-app navigation via `RecipeRouter`, no HTTP endpoint | Opens a recipe directly in the app (e.g. tapping the indexed entity in Spotlight). |
 
 `KitchenOSClient` also exposes `recipesByIngredients(_:limit:)` →
@@ -276,17 +282,490 @@ used by in-app UI (not currently wired to a dedicated Siri intent).
 See `docs/superpowers/specs/2026-06-21-siri-app-intents-voice-design.md` for
 the original design rationale and phrase catalogue.
 
+### Mac Apple actions
+
+These five actions are in `KitchenOSSiri/Sources/Intents/AppleIntegrationIntents.swift`,
+compiled only on macOS. Buttons and intents share `AppleIntegrationCoordinator`.
+They require the designated Mac's local server; missing connection, permission or
+destination continues in the foreground to setup and asks the caller to rerun.
+
+| Action / metadata identifier | Parameters | Semantics |
+|---|---|---|
+| Send Shopping List to Reminders / `SendShoppingListToRemindersIntent` | Date in week (default today) | Activate the selected shopping week using its chosen writable list, then sync active scopes. |
+| Send Prep Tasks to Reminders / `SendPrepTasksToRemindersIntent` | Date in week (default today) | Activate the selected prep week using its chosen writable list, then sync active scopes. |
+| Sync Cooking Calendar / `SyncCookingCalendarIntent` | Date in week (default today) | Activate the selected cooking week/calendar; export eligible existing schedules. |
+| Schedule Cooking / `ScheduleCookingIntent` | Week date, exact planned cook entity, start, duration (default 60), meal (default dinner), optional servings | Refetch cook by ledger ID, validate and POST its schedule. First placement requires servings. Existing portions stay unchanged. Reconcile only if this cooking week is already active; otherwise report the KitchenOS save and direct the caller to Sync Cooking Calendar. |
+| Sync KitchenOS / `SyncKitchenOSIntent` | None | Reconcile already active weeks; does not activate historical scopes. |
+
+The week parameter resolves through the local timezone's ISO week-year. Entities
+use ledger integer IDs, never recipe/display titles. Reports distinguish setup,
+paused, queued, conflicts, unavailable and acknowledged delivery; counts are
+**overall sync across active weeks**, not proof that one chosen cook was delivered.
+A successful schedule followed by failed sync is reported as saved in KitchenOS
+with Apple delivery unconfirmed.
+
+Build metadata must contain all five discoverable action identifiers in
+`Contents/Resources/Metadata.appintents/extract.actionsdata`. This does not prove
+installed discovery or execution. Create named Mac Shortcuts from the action
+library; no new automatic Mac phrases are registered. iOS has no Apple writer or
+these five Mac actions.
+
+## Native Apple integration (model version 1)
+
+`lib/apple_integration/routes.py` registers every route below under
+`/api/apple-integration`. All use the shared authorization policy: explicit open access bypasses the
+bearer/session gate; otherwise localhost is exempt and remote callers need the
+configured `KITCHENOS_API_TOKEN` bearer value. **Local writer** routes additionally require the shared local-client check: the
+immediate socket must be loopback and any nearest `X-Forwarded-For` hop must also
+be loopback. Caddy-forwarded remote clients are rejected even with a valid bearer,
+an unset token or open access; direct remote clients cannot spoof local authority. Settings/status may be used by
+iOS; iOS never becomes a second EventKit writer.
+
+Errors are `{error: string}`: 400 malformed/unknown/missing fields, 401 bad remote
+bearer, 403 nonlocal writer/stale owner/paused writer, 409 stale revision or
+conflicting lifecycle, 413 oversized complete batch. Source IO/recovery failures
+return 503 `{error:"Source recovery unavailable; retry", retryable:true,
+report:SyncReport}`. The bridge accepts at most 2 MiB JSON, 5,000 observations,
+and no duplicate observation tokens. Complete work output is also bounded to
+2 MiB and 5,000 combined items, retained items, operations and retry observations.
+Overflow fails; no array is truncated or interpreted as deleted membership.
+No endpoint accepts a file path.
+
+### Shared JSON types
+
+All keys are snake_case. UUIDs are canonical lowercase UUID strings. ISO weeks
+are exact `YYYY-Www` keys, not display labels. Types below list every wire key;
+`?` means nullable, not an omitted required property.
+
+```text
+BridgeContext = {owner_id:UUID, owner_generation:int>0}
+Locator = {calendar_id:string, item_id:string, external_id:string?}
+DueValue = null | {date:"YYYY-MM-DD", time:"HH:MM"?, timezone:IANA-name?}
+SourceItem = {logical_id:string, domain:"shopping"|"prep"|"cooking",
+  week:ISO-week, title:string, fields:object, source_revision:SHA256,
+  state:"active"|"retired"|"history"|"conflict"}
+SyncItem = SourceItem + {revision:int>0, generation:int>0, token:UUID,
+  destination_id:string, locator:Locator?, common_fields:object?}
+  (SyncItem.state also permits "suppressed".)
+Observation = {token:UUID, generation:int>0, revision:int>0,
+  availability:"present"|"missing"|"unavailable", locator:Locator?,
+  title:string?, fields:object, absence_confirmed:bool,
+  issue:null|"unsupported_all_day"|"unsupported_recurrence"|"identity_ambiguous",
+  has_user_notes:bool?}
+AppleOperation = {operation_id:UUID, token:UUID, generation:int>0,
+  revision:int>0, action:"upsert"|"delete", destination_id:string,
+  locator:Locator?, title:string, fields:object, expected_apple_hash:SHA256?}
+SyncReport = {created:int, updated:int, deleted:int, queued:int,
+  conflicts:int, unavailable:int, last_success:offset-ISO-timestamp?}
+Scope = {domain, week, destination_id, status:"active"|"paused"|"archived",
+  revision:int>0}
+ConflictSummary = {conflict_id:UUID, token:UUID, field:string, revision:int>0}
+ObservationRetry = {request_id:UUID, observations:[Observation]}
+OwnedRemovalItem = {token:UUID, expected_revision:int>0, observation:Observation}
+```
+
+Reminder fields are exactly `{completed:bool, due:DueValue}`. Date-only due has
+null `time` and `timezone`; a timed due requires both. Cooking fields are exactly
+`{start:offset-ISO-timestamp, timezone:IANA-name, duration_minutes:int}`. Use the
+specified timezone's local offset representation consistently. An ordinary
+present observation requires a non-null title and all domain fields. Unsupported
+all-day/recurring/ambiguous objects use `issue`; never coerce them into valid
+cooking fields. Unavailable/missing observations may use `{}`. Only complete,
+readable native reconciliation may set `absence_confirmed:true` on `missing`.
+
+The Apple hash is SHA-256 of UTF-8 canonical JSON **`{"title":title,"fields":fields}`**:
+lexicographically sorted object keys, no whitespace, unescaped Unicode, finite
+JSON values. The native adapter must verify the object's exact ownership marker
+`kitchenos-native://item/<token>`, generation/identity and this hash immediately
+before every mutation. A locator alone is not ownership. Search all readable
+relevant stores to disambiguate moved/reidentified objects. A null expected hash
+permits first creation only after the adapter's available identifier/marker
+searches find no owned object; finding one requires observation/recovery.
+Public EventKit cannot prove global Calendar absence. A previously linked,
+unlocatable Calendar event stays unavailable. For a never-linked first export,
+finite recovery windows leave a residual duplicate risk if an interrupted save
+was moved beyond every searched window before its locator was acknowledged. Never
+adopt old AppleScript reminders, clear a list/calendar, or mutate foreign objects.
+
+### Exact endpoint envelopes
+
+| Method and suffix | Request | Successful response |
+|---|---|---|
+| POST `/owner` (**local writer**) | `{owner_id:UUID, permissions?:{domain:Permission}, destinations?:{domain:[{id:string,title:string}]}}` | `{model_version:1, context:BridgeContext, status:IntegrationStatus}` |
+| DELETE `/owner` (**local writer**) | `{context:BridgeContext}` | `IntegrationStatus` |
+| PUT `/settings` | `{paused:bool, expected_revision:int>0}` | `IntegrationStatus` |
+| PUT `/scopes/<domain>/<week>` | `{domain, week, destination_id:string, state:"active"|"paused"|"archived", expected_revision:int>=0}` | `{scope:Scope, report:SyncReport}` |
+| GET `/status` | No body | `IntegrationStatus` |
+| GET `/work` (**local writer**) | Query `owner_id=<UUID>&owner_generation=<positive integer>`; no body | `WorkBatch` |
+| POST `/observations` (**local writer**) | `{context:BridgeContext, request_id:UUID, complete:true, observations:[Observation]}` | `{operations:[AppleOperation], report:SyncReport}` |
+| POST `/operations/<uuid>/ack` (**local writer**) | `{context:BridgeContext, operation_id:UUID, outcome:"saved"|"deleted"|"changed"|"failed", locator:Locator?, observed_fields:object, observed_hash:SHA256?}` | `{report:SyncReport}` |
+| POST `/operations/<uuid>/recover-saved` (**local writer**) | `{context:BridgeContext, ack:OperationAck, observation:Observation}`; saved ack operation ID matches path | `{report:SyncReport}` |
+| POST `/sync/complete` (**local writer**) | `{context:BridgeContext, scopes:[Scope], request_ids:[UUID]}`; exact scopes from fresh work and completed observation request IDs covering its current items | `{report:SyncReport}` |
+| POST `/conflicts/<uuid>/resolve` | `{choice:"keep_kitchenos"|"keep_apple"|"keep_manual"|"restore", expected_revision:int>0}` | `{report:SyncReport}` |
+| POST `/items/<token>/restore` | `{expected_revision:int>0}` | `{item:SyncItem, report:SyncReport}` |
+| POST `/items/remove-owned` (**local writer**) | `{context:BridgeContext, request_id:UUID, items:[OwnedRemovalItem]}` | `{operations:[AppleOperation]}` |
+| GET `/links/<token>` | No body | `{domain, week, source_id:string, state:string}` |
+| GET `/items` | Exactly query `domain=<domain>&week=<ISO-week>` | `{items:[SyncItem + {has_due_override:bool,due_override:DueValue}]}` including retained generations; maximum 5,000 items / 2 MiB. No refresh or recovery. |
+| GET `/conflicts/<uuid>` | No body | `{conflict_id,token,field,revision,source,apple,choices}` for an open conflict; 409 closed/missing. Recorded source/Apple evidence, not a fresh Apple scan. |
+
+Path domain/week and operation ID must match their payload. Initial scope creation
+uses `expected_revision:0`; later edits use `Scope.revision`. Owner settings start
+at revision 1; use `IntegrationStatus.settings_revision`. Item restoration/removal
+uses **item** revision, while conflict resolution uses **conflict** revision.
+Conflict detail advertises only currently supported choices; revalidation still
+occurs on POST. `source_recovery` offers manual separation, plus restore only for
+a suppressed item; present Apple evidence alone cannot make an unreadable source
+safe to import. Opening `kitchenos-native://item/<token>` resolves the exact source
+and displays it without mutation; missing, historical or retired sources explain
+their state without creating replacements.
+
+`Permission` is one of `unknown`, `not_determined`, `denied`, `restricted`,
+`authorized`, `write_only`, or `unavailable`. Owner registration optionally replaces
+the full reported permission/destination maps; omitted maps are preserved. It is
+also the permission/status refresh call. One owner UUID reconnects idempotently.
+Replacement requires explicit quiescent disconnection; pending operations,
+imports, requests or resolutions prevent it. Disconnection leaves Apple objects
+and source data in place, increments owner generation, and invalidates old clients.
+
+```text
+IntegrationStatus = {
+  model_version:1, configured:bool, connected:bool, paused:bool,
+  settings_revision:int>=0, report:SyncReport,
+  permissions:{domain:Permission}, destinations:{domain:[{id,title}]},
+  scopes:[Scope], conflicts:[ConflictSummary] (maximum 100 summaries)
+}
+WorkBatch = {
+  model_version:1, context:BridgeContext, items:[SyncItem],
+  operations:[AppleOperation], scopes:[Scope], report:SyncReport,
+  paused:bool, retry_requests:[ObservationRetry], retained_items:[SyncItem]
+}
+```
+
+`report.conflicts` counts all open conflicts even when the summary list reaches
+100. `queued` counts durable pending operations/recovery work; it never means
+Apple delivery. Permission reports reflect the native owner's latest report.
+`report.unavailable` counts active, latest-generation items whose stored
+observation is still current for the item revision and is unavailable, uncertain
+missing, or carries a stored issue. A present observation with an issue (such as
+`identity_ambiguous`) instead opens a conflict without storing that observation;
+it appears in `report.conflicts`, not `report.unavailable`. A `/work` response
+also counts unreadable source scopes from its refresh; a `/observations` response
+also counts unavailable or uncertain-missing observations in its submitted
+batch. Each response shows the larger stored or transient unavailable count.
+Paused/archived scopes, retired items, and observations made before a source
+revision changed are excluded from the stored count. A linked retired item with
+an unavailable or uncertain-missing Apple observation opens
+`retired_unavailable` review and appears in `report.conflicts`; it stays in
+`/work` until resolved. Source failures do not imply Apple deletion. Status
+reads only the bridge journal; it does not perform source inference or native IO.
+`has_user_notes` is true when Apple notes contain user prose beyond exact
+ownership-marker lines; omitted means false for older replay payloads. Retirement
+opens review instead of deleting such an item, and EventKit rechecks notes just
+before deletion.
+`last_success` records a complete converged pass, including an unchanged or empty
+active scope. The native owner freshly checks Apple permissions/destinations and
+observes current work after all writes; the completion endpoint revalidates owner,
+scopes, current item coverage and source availability. At least one active scope
+is required, with no pending work or open conflicts. An empty pass submits a
+completed empty observation request. Work/status reads and individual write acks
+do not advance the timestamp. An identical valid completion proof reuses its
+SQLite receipt timestamp rather than recording another success.
+
+Work `items` contains the latest generations in active scopes, excluding detached
+history and already-cleaned retirement rows. Suppressed/conflicted rows remain
+visible as such and must not be exported. `retained_items` contains old incomplete
+owned generations with locators in active scopes, plus retained rows with explicit
+pending cleanup. It is separate recovery UI data: **do not include it in ordinary
+observations**. Archived/paused scopes stop normal work. Archiving or changing a
+scope default preserves existing tokens, common state and locators. Existing
+objects keep their user-selected list/calendar; a default selects destinations
+only for new identities. Reactivation resumes those same objects.
+
+### Reconciliation and recovery order
+
+1. Register/reconnect the localhost owner and obtain its current context. Foreground
+   permission/destination selection remains in the native app.
+2. Fetch work. The server first recovers exact note edits, source imports, generated
+   cooking views and explicit resolutions, then refreshes sources. Polling never
+   runs prep inference. Missing/stale/unmigrated source data requires an explicit
+   normal source refresh/save and is unavailable in the meantime.
+3. If `retry_requests` is nonempty, resend that exact request ID and observation
+   array with the current matching context and `complete:true`. The server permits
+   at most one unfinished request and rejects new IDs until it finishes. Completed
+   retries are inert; changed UUID payloads are 409. Semantic drift becomes a
+   visible conflict and finishes that observation, so the request is not permanently
+   stuck. IO failures retain durable progress for retry.
+4. **After replay, fetch fresh server work AND fresh Apple observations again before
+   applying any outbound operation.** Apple edits made during downtime must not be
+   overwritten by operations derived from an old replay. Work returns no operations
+   while retry work remains. Native operations run in one serialized writer service.
+5. Submit a complete bounded observation array. All incoming identities, generations,
+   revisions and field shapes validate before any import. Recoverable multi-note
+   imports are journaled per item (not a cross-file atomic transaction). Invalid or
+   truncated batches never partially import or imply absence. The shared Python
+   merge engine owns field decisions; the Swift adapter does not add a second merge.
+6. Before each returned operation, freshly verify unique ownership and expected hash.
+   Drift returns `changed` and a **new full Observation** through the observations
+   endpoint, rather than overwriting. Permission/save failure returns `failed`.
+   Neither advances common state. `saved` requires the final locator, all saved
+   fields and the title/fields hash; `deleted` requires null locator, `{}` fields,
+   and null hash. Ack operation UUID must match the path.
+7. After writes or source imports, repeat the fresh work/Apple observation pass.
+   Once every active scope is readable and converged with no pending work or
+   conflicts, POST `/sync/complete`. Partial, stale and unavailable passes cannot
+   record success.
+
+An already committed acknowledgement can be retried with the same payload under
+the same owner generation even after later item/scope revisions. It returns no
+additional delivery count and does not change `last_success`. Changed payloads
+remain rejected.
+
+If a save completes in Apple after its server operation was superseded, retain
+that saved acknowledgement and the original item identity. Fetch fresh work and
+verify the same generation's unique owned marker with a fresh Apple observation,
+even if active work no longer includes the item. The saved ack must match the
+original operation title/fields/hash; the current Apple title and fields may have
+changed. POST `/recover-saved` to record the receipt, link only the observed
+locator, and open `recovery`, `retirement`, or `retained_generation` review
+according to the current source state. No old save is imported into the newer
+source. A verified moved/reidentified object may have a different locator from
+the saved ack; an unreadable or missing result cannot establish recovery.
+Transient/lost responses retry the exact proof. A definitive 409 discards only
+that observation proof, retaining the saved acknowledgement for a fresh scan.
+Uncertain deletion keeps its acknowledgement pending for explicit review; no
+fresh scan invents deletion proof.
+
+The protocol maps confirmed missing reminders to suppression and confirmed missing
+cooking events to unscheduling only. The current native adapter never confirms a
+missing Calendar event from failed lookup: public EventKit lacks global tombstones,
+so that case stays unavailable for review. Reminder absence needs prior in-process
+ownership/visibility evidence and a complete readable local scan; a cold restart
+cannot manufacture that evidence. Neither path logs cooking or changes inventory. Restore
+requires the current suppressed item revision and creates a new token/generation.
+Explicit restore retains its displayed due choice; normal retirement/reappearance
+starts fresh per-generation metadata. A reappearing source whose old incomplete
+Apple object still has a locator gets `retained_generation` recovery and cannot
+create a duplicate until the old object is explicitly detached or removed.
+Suppressed exports are terminal for ordinary work and successful-pass coverage;
+they do not need an Apple observation until explicit restore or owned cleanup.
+Regenerated shopping demand after a retired historical row starts incomplete.
+
+Generated v3 shopping snapshots must keep the target text in the row's ingredient bucket, and conflict markers must use the declared amount/identity
+values. Invalid metadata makes the source unavailable before any conflict rows
+are published; it never offers an unsafe Keep KitchenOS choice.
+
+Explicit shopping activation prepares a missing or unmigrated note through the
+existing pantry-aware generator and canonical save writer. It never confirms
+pantry spending. Ordinary work/status reads leave missing and legacy notes
+untouched and report them unavailable until an explicit activation or normal save.
+
+### Explicit choices and deletion
+
+- Ordinary field/recovery conflicts with a valid present observation and
+  matching current source revision support Keep choices only while the item
+  and scope are active. Archived or inactive items offer manual separation;
+  reactivation can expose the other choices. A later Apple observation
+  refreshes an open recovery conflict's evidence and revision before import.
+  Active choices are
+  `keep_kitchenos` (reserve a verified outbound update), `keep_apple` (import the
+  selected field/full recovery snapshot), or `keep_manual` (detach the Apple object,
+  leave it untouched, and suppress the source export). Unsupported shapes accept
+  detachment; they are never coerced. A pending Keep KitchenOS correction survives
+  a fresh scan of the same Apple evidence; newer Apple edits require review again.
+  Common values advance only after acknowledgement or verified equality.
+  `restore` applies only to a suppressed source;
+  the dedicated restore endpoint is the normal UI action.
+- Shopping conflict detail includes optional `shopping_demand` evidence:
+  `{state:"active",text:"3 lime"}` identifies the generated acceptance target;
+  `{state:"removed",text:null}` identifies demand that disappeared. `source.title`
+  retains the visible edited row. Reading this evidence never regenerates the note.
+  The generated target participates in the source revision, so a changed target
+  invalidates a choice presented earlier even when the edited row text is unchanged.
+  Each row has one open shopping source conflict: regeneration updates its evidence
+  and revision, including amount-to-ingredient changes. Superseded duplicate records
+  are closed without changing the note or Apple object. Missing, nonstring, empty
+  or multiline generated snapshot text makes the source unavailable instead of
+  publishing an unusable acceptance target; malformed metadata is never repaired
+  implicitly by reading it.
+  Older conflict records without this evidence offer only manual separation until
+  a refresh records the current target.
+- `shopping_amount_changed`: for active demand, `keep_kitchenos` accepts the shown
+  generated amount, reopens its checkbox and removes the explicit amount conflict.
+  For removed demand, it removes the exact shopping row and retires its Apple link;
+  the UI labels this **Remove item from shopping list**. `keep_manual`
+  keeps the visible line under a genuinely new manual row ID and detaches the old
+  Apple object. An ingredient identity edit uses the same choices, but
+  `keep_kitchenos` restores the recorded original ingredient. These edits use the
+  adapter's exact hash and durable note journal; the service never edits encoded
+  metadata directly. Apple text is never sent to an LLM.
+- `retirement`: a removed source has an Apple title or supported field changed since
+  the acknowledged common snapshot. Automatic deletion is blocked; `keep_manual`
+  separates the object, or explicit remove-owned can delete it after fresh review.
+  Completed reminders remain history without deletion. Completion first observed
+  after source retirement freezes that journal generation as history and cancels
+  pending mutations. Later Apple reopening cannot resume deletion; reappearing
+  source demand receives a new incomplete generation without a retained-item block.
+- `retired_unavailable`: a linked retired item cannot be verified in Apple, including
+  an uncertain-missing EventKit lookup. The marker and locator stay attached while
+  review is open; no Apple operation or cook-ledger mutation is inferred. The only
+  conflict choice is `keep_manual` (**Keep Apple item separate**), which requires
+  the presented conflict revision and unchanged item revision, generation, and
+  locator. It moves the link to history and clears the bridge locator. The Apple
+  object may still exist and is neither changed nor deleted. A fresh complete
+  pass can then advance `last_success`. If an earlier `retirement` edit review
+  exists for the same link, detachment closes that obsolete review too. A later
+  present observation cannot resume deletion while separation review is open;
+  choosing either retirement review checks the same current-link evidence.
+- `retained_generation`: `keep_manual` leaves the old Apple object as a manual copy,
+  clears only its bridge locator and unblocks the new generation. Alternatively,
+  invoke remove-owned with the retained item's token and **its own** expected
+  revision plus a freshly verified present observation. The returned cleanup UUID
+  and callback can clear only that retained row, never the replacement generation.
+- Remove-owned uses a nonempty bounded list with no duplicate tokens. Selection
+  alone is insufficient: the native service must freshly verify each object's unique
+  ownership, then submit its matching generation/revision and observed hash inputs.
+  The server binds the entire cleanup request UUID/payload and reserves all operations
+  in one short transaction. Existing Apple objects are preserved until each verified
+  per-object delete completes. Ordinary old-generation callbacks remain rejected.
+
+`/api/prep/reminders` is token-gated too. In native mode its optional `week` (default
+current ISO week) queues the configured prep scope and returns the native sender
+fields plus `{list:"Prep",scope:"today"|"ahead"}`. Native sync follows the selected
+week's structured task membership. With no native configuration, the prior today/
+ahead AppleScript behavior remains and adds `{queued:0,delivered:sent}`.
+`shopping_list.py` similarly saves the canonical shopping note and queues its native
+scope; native `--clear` is rejected. Paused/offline native mode never invokes the
+legacy fallback. Shopping-confirm and task-done now use the same token gate as
+these sender paths. Existing MCP send calls preserve the full JSON response.
+A native sender's `queued` counts that scope's durable pending operations, source
+patches, resolutions and unfinished observation requests containing its tokens;
+already synchronized items contribute zero. Requests without item tokens cannot
+be attributed to a selected scope and remain visible in the global status.
+Sending an archived scope returns 409; reactivate it explicitly in the Mac app.
+
 ### Gateway client identity
 
 Protected routes preserve bearer authentication through Caddy. Only an immediate
 loopback socket may supply `X-Forwarded-For`; the nearest forwarded hop determines
 the local exemption. Direct remote callers cannot spoof it. Local clients without
 forwarding remain exempt. `KITCHENOS_API_TOKEN` is still optional for standalone
-use, but shared-gateway activation requires the unauthenticated protected-route
-probe to return 401, so production must configure it. Reviewed API releases expose
+use, but shared-gateway activation requires a configured token and probes the
+selected auth mode: 401 when required, 200 when explicitly open. Reviewed API releases expose
 a non-secret `X-KitchenOS-Release` SHA on `/health` for deployment verification;
 the health JSON remains unchanged.
 
+### Cooking availability
+
+`POST /api/cooking-availability` accepts exactly `{days: {"YYYY-MM-DD": "good|possible|busy|unknown"}}` (up to 35 dates), replacing the singleton snapshot in `data/kitchenos.db`. An empty days object clears it. No event titles, notes, or calendar IDs are accepted. `GET /api/cooking-availability/<week>` returns all seven ISO dates, `fresh`, and `synced_at`; absent dates and snapshots six hours old return `unknown`. Both routes use the existing token gate. Availability uploads never create, delete, move, or mark meals cooked.
+
+### Detailed planning calendar
+
+The server Mac publishes `POST /api/planning-calendar/snapshot` with version 1,
+a SHA256 `selection_id`, offset-aware `generated_at`, IANA `timezone`, ISO
+`coverage_start`/exclusive `coverage_end` (up to 35 days), and `events`.
+Each event has only opaque `id`, `title` (300 characters), offset-aware `start`
+and exclusive `end`, boolean `all_day`, and `role` (`firm`/`flexible`).
+Snapshots are bounded to 5,000 occurrences and 2 MiB; invalid uploads are atomic.
+`{"version":1,"clear":true}` clears details and all occurrence choices.
+
+`GET /api/planning-calendar/<week>` returns freshness, sync time, revision,
+coverage, events, choices and per-day coverage. Titles and choices are omitted
+once either generation or receipt is six hours old. Legacy daily uploads never
+refresh this snapshot. `PUT /api/planning-calendar/occurrences/<id>` accepts
+`{"choice":"blocking"|"background","revision":"<current revision>"}`.
+Missing, stale or changed occurrences return 409. Every route uses the token gate.
+Calendar contents remain in local SQLite; they are not passed to model prompts,
+logs or generated vault notes.
+
+`GET /api/planning-calendar/<week>?duration_minutes=90` also returns `schedules`
+and per-day `windows`, `covered`, and `unresolved_all_day_ids`. Duration is an
+integer from 15 through 360, in 15-minute steps. Openings start between noon and
+midnight in the snapshot timezone. Firm commitments and cooking blocks exclude
+openings; flexible overlaps rank after clear openings. Unclassified all-day
+occurrences make openings conditional. Uncovered dates have no suggestions.
+
+`POST /api/cooks/<id>/schedule` takes `date`, `meal`, offset-aware `start`, IANA
+`timezone`, `duration_minutes`, and `servings_to_eat`, plus optional boolean
+`expected_unplaced`. Servings must be positive and finite for a first placement;
+null is accepted only with `expected_unplaced:false` for an already anchored cook.
+The placement precondition is checked in the ledger transaction. It returns
+`cook` and `schedule`. It rejects cross-week, already cooked and bundle rows.
+A first placement and cooking reservation commit atomically; retries preserve
+serving counts. Existing home servings move with the cook; leftovers stay put.
+Generic date/meal changes remove the reservation; deletion cascades. Scheduling
+never sets `cooked_at`, consumes inventory or changes recipe scale.
+
+The detailed endpoint accepts optional `exclude_cook_id` when suggesting a new
+time for an existing cook; its old reservation stays visible but does not block
+its own replacement. Responses include `duration_minutes` so the UI never shows
+openings calculated for a previous duration. Recipe details expose a derived
+`cooking_duration` (`minutes`, `source`); unambiguous numeric/unit strings are
+accepted, while arbitrary prose retains the planning estimate.
+
+Clearing preserves only a timestamp barrier (no titles or calendar IDs), rejecting
+delayed pre-clear uploads. Equal-generation uploads must be identical. The native
+publisher emits fractional-second generation times to distinguish rapid updates.
+
+## Siri browser handoff
+
+`POST /api/browser-handoffs` accepts exactly one descriptor:
+
+```json
+{"kind":"recipe","name":"Rice & Beans"}
+```
+
+or `{"kind":"meal_plan","date":"2026-10-16"}`. Recipe names are canonical
+saved identities, not display labels. A date is a real Gregorian civil date;
+the server derives its ISO week. No URL, origin, credential, or extra field is
+accepted from the caller. Success returns `handoff_path` in the exact shape
+`/browser/open#code=<opaque-code>` and `expires_at` as Unix seconds. Invalid
+input is 400, a missing recipe is 404, and exhausted capacity is 429.
+
+The bootstrap removes its fragment before making any request, then posts
+`{"code":"<opaque-code>"}` to `/api/browser-handoffs/exchange` as same-origin
+JSON. Success returns `redirect_path` and `expires_at` (Unix seconds). For the
+examples above the paths are `/recipe/Rice%20%26%20Beans` and
+`/meal-planner?week=2026-W42&date=2026-10-16&view=calendar`. Codes expire after
+60 seconds, are consumed atomically once, and invalid/expired/replayed codes
+receive a generic 401. A full session store returns 429 without consuming the
+code. Each process-local store is capped at 1,024 entries and retains only
+hashed code/session identifiers.
+
+The host-only `kitchenos_view` cookie is HttpOnly, SameSite=Strict, Path=/,
+Max-Age=86400; HTTPS adds Secure. The authorization lasts 900 seconds and is
+bound to the origin (including port) and current API-token fingerprint.
+Behind the existing gateway, forwarded HTTPS is accepted only from an immediate
+loopback peer at the configured canonical authority; arbitrary forwarded headers
+from remote clients cannot select the handoff origin.
+Restarting the API or rotating its token invalidates existing grants. The existing HTTPS gateway uses a Secure cookie. Direct private HTTP
+connections remain supported without Secure; no public hosting is introduced. A fresh Siri handoff can renew an expired session.
+Responses use private/no-store caching and vary by Cookie and Authorization;
+the bootstrap suppresses referrers and loads no third-party resources.
+
+Viewing sessions allow only GET/HEAD recipe/planner data, the two page shells,
+and their static/image resources. They cannot save servings, add meals, reorder
+cards, schedule cooks, classify Calendar events, or trigger legacy refresh and
+reprocessing actions. Local scaling, filtering, previews, and date/week
+navigation remain available. Expiry displays a new-handoff message and stops
+refreshes. Clients without a viewing cookie retain their existing auth rules.
+
+### Complete day content
+
+`GET /api/week-board/<week>` adds `planned_meals`: a read-only union of cook
+anchors and slot placements, including leftovers from other weeks. Rows carry
+`date`, `meal`, canonical `recipe`, `cook_id`, `bundle_id`, `bundle_name`,
+`anchor`, and `count`. A placement at its own cook's anchor is represented once;
+a cook anchor without allocated servings has count zero. Rendering these rows
+never creates a cook, placement, or plan file.
+
+`GET /api/meal-plan/<week>` retains the existing `days` fields for native clients
+and adds a flat `planned_meals` list with every legacy Markdown link in each
+meal slot. Each row carries `date`, `meal`, and the same serialized entry fields
+as `days`, including `name`, `kind`, `servings`, and plate member metadata where
+available. `parse_meal_plan(..., all_entries=True)` is an opt-in read mode; the
+default parser and mutation/import behavior still return the first entry.
+The calendar combines these projections by canonical identity and slot, keeping
+plate members visible without duplicating generated Markdown entries.
 
 ## Dislike warnings
 

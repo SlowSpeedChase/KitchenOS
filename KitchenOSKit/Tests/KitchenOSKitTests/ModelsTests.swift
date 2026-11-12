@@ -9,7 +9,15 @@ final class ModelsTests: XCTestCase {
         """.data(using: .utf8)!
         let recipes = try JSONDecoder().decode([RecipeSummary].self, from: json)
         XCTAssertEqual(recipes.first?.name, "Butter Chicken")
+        XCTAssertNil(recipes.first?.displayName)
         XCTAssertEqual(recipes.first?.ingredientItems, ["chicken thighs", "cream"])
+    }
+
+    func testDecodeRecipeSummaryDisplayNamePreservesIdentity() throws {
+        let data = Data(#"{"name":"Chicken Caldo A","display_name":"Caldo A"}"#.utf8)
+        let recipe = try JSONDecoder().decode(RecipeSummary.self, from: data)
+        XCTAssertEqual(recipe.name, "Chicken Caldo A")
+        XCTAssertEqual(recipe.displayName, "Caldo A")
     }
 
     func testDecodeMealPlanWithNullSlots() throws {
