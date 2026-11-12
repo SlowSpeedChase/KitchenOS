@@ -19,6 +19,8 @@ def _visible(page) -> int:
 def _open(page, live_server):
     page.goto(live_server.url("/meal-planner"), wait_until="domcontentloaded")
     page.wait_for_selector(".recipe-card")
+    # Init records the active view in the URL; settle it before tests compare URLs.
+    page.wait_for_function("new URLSearchParams(location.search).has('view')")
 
 
 class TestParseServings:

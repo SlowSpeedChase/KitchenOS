@@ -4,10 +4,14 @@ import CoreSpotlight
 
 @main
 struct KitchenOSSiriApp: App {
+    #if os(macOS)
+    @NSApplicationDelegateAdaptor(KitchenOSAppDelegate.self) private var appDelegate
+    #endif
     @StateObject private var router = RecipeRouter.shared
 
     var body: some Scene {
         WindowGroup {
+            NativeNavigationHost {
             #if os(macOS)
             // Mac: the native sidebar app with the full feature surface.
             AppShell()
@@ -39,6 +43,7 @@ struct KitchenOSSiriApp: App {
                 }
             }
             #endif
+            }
         }
     }
 }

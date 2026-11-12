@@ -276,25 +276,29 @@ def find_recent_duplicate(recipe: str, week: str, date, meal,
 def get_cook(cook_id: int) -> Optional[dict]:
     conn = inventory_db.connect()
     try:
-        row = conn.execute("SELECT * FROM cooks WHERE id = ?", (cook_id,)).fetchone()
-        if row is None:
-            return None
-        cook = _row_to_dict(row)
-        # SQLite has no bool: round-trip 0/1 back to True/False while keeping
-        # NULL as None, so "not judged yet" stays distinct from "never again".
-        if cook.get("make_again") is not None:
-            cook["make_again"] = bool(cook["make_again"])
-        placements = [
-            _row_to_dict(p) for p in conn.execute(
-                "SELECT * FROM placements WHERE cook_id = ? ORDER BY id", (cook_id,)
-            ).fetchall()
-        ]
-        cook["placements"] = placements
-        cook["unassigned"] = round(
-            float(cook["servings_produced"]) - sum(p["count"] for p in placements), 3)
-        return cook
+        return _get_cook_in_txn(conn, cook_id)
     finally:
         conn.close()
+
+
+def _get_cook_in_txn(conn, cook_id: int) -> Optional[dict]:
+    row = conn.execute("SELECT * FROM cooks WHERE id = ?", (cook_id,)).fetchone()
+    if row is None:
+        return None
+    cook = _row_to_dict(row)
+    # SQLite has no bool: round-trip 0/1 back to True/False while keeping
+    # NULL as None, so "not judged yet" stays distinct from "never again".
+    if cook.get("make_again") is not None:
+        cook["make_again"] = bool(cook["make_again"])
+    placements = [
+        _row_to_dict(p) for p in conn.execute(
+            "SELECT * FROM placements WHERE cook_id = ? ORDER BY id", (cook_id,)
+        ).fetchall()
+    ]
+    cook["placements"] = placements
+    cook["unassigned"] = round(
+        float(cook["servings_produced"]) - sum(p["count"] for p in placements), 3)
+    return cook
 
 
 def update_cook(cook_id: int, **fields) -> dict:
@@ -319,6 +323,9 @@ def update_cook(cook_id: int, **fields) -> dict:
                     raise OverplacementError(
                         f"cook {cook_id}: {placed} servings already placed;"
                         f" cannot shrink to {new_cap}")
+            current = conn.execute("SELECT date, meal FROM cooks WHERE id=?", (cook_id,)).fetchone()
+            if current and any(k in fields and fields[k] != current[k] for k in ("date", "meal")):
+                conn.execute("DELETE FROM cook_schedule WHERE cook_id=?", (cook_id,))
             sets = ", ".join(f"{k} = ?" for k in fields)
             conn.execute(f"UPDATE cooks SET {sets} WHERE id = ?",
                          (*fields.values(), cook_id))
@@ -466,6 +473,7 @@ def _move_cook_in_txn(conn, cook_id: int, date: str, meal: str) -> None:
     old_date, old_meal = row["date"], row["meal"]
     if (old_date, old_meal) == (date, meal):
         return
+    conn.execute("DELETE FROM cook_schedule WHERE cook_id=?", (cook_id,))
     conn.execute("UPDATE cooks SET date = ?, meal = ? WHERE id = ?",
                  (date, meal, cook_id))
     # `IS` rather than `=` so a NULL old anchor matches nothing instead of
@@ -922,3 +930,128 @@ def week_board(week: str, recipes_dir) -> dict:
         "freezer": freezer_contents(),
         "day_totals": day_totals(week, recipes_dir),
     }
+
+
+def schedules_for_week(week: str) -> list[dict]:
+    conn = inventory_db.connect()
+    try:
+        return [dict(r) for r in conn.execute(
+            'SELECT s.*, c.recipe, c.date, c.meal FROM cook_schedule s JOIN cooks c ON c.id=s.cook_id WHERE c.week=?', (week,))]
+    finally:
+        conn.close()
+
+
+def schedule_cook(cook_id: int, *, date: str, meal: str, start: str,
+                  timezone: str, duration_minutes: int, servings_to_eat: float | None,
+                  expected_unplaced: bool | None = None,
+                  conn: sqlite3.Connection | None = None) -> dict:
+    """Reserve time and first serving atomically; retries never eat twice.
+
+    Borrowed conn must hold BEGIN IMMEDIATE; its owner commits then calls
+    drain_schedule_views. Owned calls drain after commit; IO errors leave work
+    durable and propagate rather than claiming the generated view is current.
+    """
+    import math
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    from lib.cooking_windows import valid_duration
+    from lib.planning_calendar import timestamp, iso_date
+    _validate_placement('slot', date, meal)
+    valid_duration(duration_minutes)
+    if expected_unplaced is not None and type(expected_unplaced) is not bool:
+        raise ValueError('Expected placement must be a boolean')
+    # Native callers preserve an omitted count as null, never a guessed serving.
+    # That is legal only for an anchored cook whose state is fenced below.
+    if not (servings_to_eat is None and expected_unplaced is False):
+        if type(servings_to_eat) not in (int, float) or not math.isfinite(servings_to_eat) or servings_to_eat <= 0:
+            raise ValueError('Servings must be a finite positive number')
+    try:
+        zone = ZoneInfo(timezone)
+    except (ValueError, TypeError, ZoneInfoNotFoundError):
+        raise ValueError('Choose a valid timezone') from None
+    instant = timestamp(start)
+    local = instant.astimezone(zone)
+    if instant.utcoffset() != local.utcoffset() or local.date() != iso_date(date):
+        raise ValueError('Cooking time must match the date and timezone')
+    if local.minute % 15 or local.second or local.microsecond:
+        raise ValueError('Choose a start in 15-minute steps')
+    end = local + timedelta(minutes=duration_minutes)
+    midnight = datetime.combine(local.date()+timedelta(days=1), datetime.min.time(), zone)
+    if end > midnight:
+        raise ValueError('Cooking must finish by midnight')
+    borrowed = conn is not None
+    with inventory_db.write_transaction(conn) as tx:
+        row = tx.execute('SELECT * FROM cooks WHERE id=?', (cook_id,)).fetchone()
+        if row is None:
+            raise ValueError('Cook not found')
+        if row['bundle_id'] or row['cooked_at']:
+            raise ValueError('Choose an uncooked single recipe')
+        unplaced = row['date'] is None or row['meal'] is None
+        if expected_unplaced is not None and unplaced != expected_unplaced:
+            raise ValueError('Cook placement changed; choose the cook again')
+        _move_cook_in_txn(tx, cook_id, date, meal)
+        if unplaced:
+            _check_capacity(tx, cook_id, float(servings_to_eat))
+            _merge_or_insert(tx, cook_id, 'slot', date, meal, float(servings_to_eat))
+        tx.execute('INSERT INTO cook_schedule(cook_id,start,timezone,duration_minutes) VALUES (?,?,?,?) '
+                   'ON CONFLICT(cook_id) DO UPDATE SET start=excluded.start,timezone=excluded.timezone,duration_minutes=excluded.duration_minutes',
+                   (cook_id, local.isoformat(), timezone, duration_minutes))
+        _queue_schedule_view(tx, row['week'])
+        result = {'cook': _get_cook_in_txn(tx, cook_id),
+                  'schedule': dict(cook_id=cook_id, start=local.isoformat(), timezone=timezone,
+                                   duration_minutes=duration_minutes)}
+    if not borrowed:
+        drain_schedule_views()
+    return result
+
+
+def unschedule_cook(cook_id: int, *, conn: sqlite3.Connection | None = None) -> dict:
+    """Remove only preparation time. Cook, placement and inventory rows survive.
+
+    Borrowers own commit/rollback and must drain_schedule_views after commit.
+    A missing cook is a validation error; a missing schedule is an inert retry.
+    """
+    borrowed = conn is not None
+    with inventory_db.write_transaction(conn) as tx:
+        cook = _get_cook_in_txn(tx, cook_id)
+        if cook is None:
+            raise ValueError('Cook not found')
+        if tx.execute('DELETE FROM cook_schedule WHERE cook_id=?', (cook_id,)).rowcount:
+            _queue_schedule_view(tx, cook['week'])
+    if not borrowed:
+        drain_schedule_views()
+    return cook
+
+
+def _queue_schedule_view(conn, week):
+    conn.execute('INSERT INTO pending_schedule_views(week, revision) VALUES(?, 1) '
+                 'ON CONFLICT(week) DO UPDATE SET revision=revision+1', (week,))
+
+
+def drain_schedule_views() -> None:
+    """Render committed DB rows, then acknowledge only the captured revision.
+
+    Call only after the outer transaction commits. IO errors propagate and leave
+    the coalesced week job durable for retry. A newer mutation is never cleared
+    by an older renderer; no DB transaction spans filesystem work.
+    """
+    from lib import paths, week_view
+    from lib.note_mutation import mutation_lock
+    conn = inventory_db.connect()
+    try:
+        weeks = [r['week'] for r in conn.execute('SELECT week FROM pending_schedule_views')]
+    finally:
+        conn.close()
+    for week in weeks:
+        with mutation_lock(paths.meal_plans_dir() / f'{week}.md'):
+            while True:
+                conn = inventory_db.connect()
+                try:
+                    row = conn.execute('SELECT revision FROM pending_schedule_views WHERE week=?', (week,)).fetchone()
+                finally:
+                    conn.close()
+                if row is None:
+                    break
+                week_view.write_week_markdown(week)
+                with inventory_db.write_transaction() as tx:
+                    tx.execute('DELETE FROM pending_schedule_views WHERE week=? AND revision=?', (week, row['revision']))

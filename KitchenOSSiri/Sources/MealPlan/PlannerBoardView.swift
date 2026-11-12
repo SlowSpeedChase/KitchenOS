@@ -4,7 +4,9 @@ import KitchenOSKit
 /// Drag-and-drop weekly planner: drag a recipe from the palette onto a day/slot.
 /// Native replacement for the web `meal_planner.html` board.
 struct PlannerBoardView: View {
+    @StateObject private var availability = CookingAvailabilityModel()
     @State private var weekAnchor = Date()
+    @State private var showPlanningCalendar = false
     @State private var plan: MealPlan?
     @State private var recipes: [RecipeSummary] = []
     @State private var paletteSearch = ""
@@ -30,12 +32,15 @@ struct PlannerBoardView: View {
         .overlay { if isLoading { ProgressView() } }
         .toolbar {
             ToolbarItemGroup {
+                Button("Plan with calendar") { showPlanningCalendar = true }
                 Button { shiftWeek(-1) } label: { Image(systemName: "chevron.left") }
                 Text(weekID).font(.callout.monospaced())
                 Button { shiftWeek(1) } label: { Image(systemName: "chevron.right") }
             }
         }
+        .sheet(isPresented: $showPlanningCalendar, onDismiss: { Task { await load() } }) { PlanningCalendarSheet(week: weekID) }
         .task(id: weekID) { await load() }
+        .task(id: weekID) { await availability.follow(week: weekID) }
         .task { await loadRecipes() }
     }
 
@@ -59,6 +64,7 @@ struct PlannerBoardView: View {
                     ForEach(Array(plan.days.enumerated()), id: \.offset) { dayIndex, day in
                         VStack(alignment: .leading, spacing: 4) {
                             Text("\(day.day) · \(day.date)").font(.headline)
+                            Text((availability.days[day.date] ?? .unknown).label).font(.caption)
                             HStack(spacing: 8) {
                                 ForEach(MealSlot.allCases, id: \.self) { meal in
                                     slotTile(dayIndex: dayIndex, day: day, meal: meal)

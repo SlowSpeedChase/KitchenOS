@@ -84,7 +84,7 @@ before writing. Needs `ANTHROPIC_API_KEY`; costs well under $1 for ~240 recipes.
 .venv/bin/python shopping_list.py                 # auto-detect current week
 .venv/bin/python shopping_list.py --week 2026-W03
 .venv/bin/python shopping_list.py --dry-run
-.venv/bin/python shopping_list.py --clear          # clear existing items first
+.venv/bin/python shopping_list.py --clear          # legacy mode only: clears that list
 ```
 
 Or via API (same endpoint the Obsidian button calls):
@@ -97,7 +97,16 @@ curl -X POST http://localhost:5001/send-to-reminders \
   -H "Content-Type: application/json" -d '{"week": "2026-W04"}'
 ```
 
+In configured native mode, these senders queue the selected scope and report
+queued versus delivered. They never fall back to AppleScript while the owner is
+paused, disconnected or offline, and `--clear` is rejected. Legacy exports remain
+unowned: native sync does not adopt reminders by matching their titles.
+
 ### Sync calendar
+
+This is the legacy ICS publishing path. Subscribing to the same meals through ICS
+and exporting them natively can show duplicate representations. Existing
+subscriptions are not removed automatically; review them before enabling both.
 
 ```bash
 .venv/bin/python sync_calendar.py
@@ -528,7 +537,7 @@ checkout. The deployer uses `git archive`; dirty and untracked files are exclude
 
 Prepare a private external environment file (mode `0600`) without printing it.
 Preserve the existing API token and all unrelated credentials/settings. It must set
-`KITCHENOS_API_TOKEN` to a nonempty value, and explicit absolute paths for
+`KITCHENOS_API_TOKEN` to a nonempty value (retain it for native clients), and explicit absolute paths for
 `KITCHENOS_DB`, `KITCHENOS_VAULT`, `KITCHENOS_STORAGE_TABLE`, and
 `KITCHENOS_ITEM_ALIASES` to the existing data.
 These paths must exist outside the release runtime. Preserve the current storage
@@ -559,7 +568,7 @@ Activation checks the release's private configuration, backs up the installed
 `com.kitchenos.api` plist and its load state, then stops only that job and installs
 the release-specific named `KitchenOS · API` shim. It requires `/health` to return
 HTTP 200 with the exact `X-KitchenOS-Release` SHA and a forwarded remote
-`GET /api/recipes` to return HTTP 401 without sending a token. A stale process,
+`GET /api/recipes` to return HTTP 401 without sending a token. When the owner explicitly sets `KITCHENOS_AUTH_MODE=open` in the private environment, the probe instead requires HTTP 200: ordinary browsers may read and change KitchenOS without a token or Siri session, including browsers carrying expired viewing cookies. Keep network reachability limited to the intended users. Restart the API after changing this setting. A stale process,
 missing token, or partial bootstrap fails acceptance and restores the previous
 plist/load state. After each stop, the deployer waits for launchd to report the job
 fully removed before loading either the reviewed or rollback plist. The journal and
@@ -1091,11 +1100,195 @@ xcrun devicectl device install app --device AC76BD14-9BDF-50F9-9087-3E7229EBF38D
 # macOS: build -destination 'platform=macOS' then `open` the .app
 ```
 
-**Free-team caveat:** signed apps **expire after ~7 days** — reinstall via
-the same `xcodebuild` + `devicectl` steps above when the app stops
-launching. First launch on the iPad after a fresh install may require
+**iOS free-team caveat:** device provisioning typically requires renewal after
+about seven days; reinstall via the same `xcodebuild` + `devicectl` steps above
+when needed. Do not infer a Mac signing lifetime from this iOS limitation; verify
+the actual Mac bundle's signature, entitlements and launch persistence separately. First launch on the iPad after a fresh install may require
 trusting the developer certificate: Settings → General → VPN & Device
 Management → trust developer.
+
+### Mac Apple integration
+
+**Delivery status:** all five Mac actions passed separate Xcode 27
+`AppIntentsTesting` runs against the signed, distinct test app and isolated
+port-5051 API. The user completed the password prompt locally; only Apple-signed
+`com.apple.dt.Xcode-Helper` was enabled in Device Control and Data Access. The
+signed test bundle reports `TeamIdentifier=XZJ6358HHF` and contains all five
+discoverable action records. All five appeared in the live Shortcuts library on
+the earlier ad-hoc installation; that library search has not been repeated on the
+current signed build. One shopping action also reached the API through Shortcuts.
+
+The isolated test exposed a cooking history/reschedule bug, fixed in reviewed
+`4bb7260`: an eligible uncooked scheduled cook starts a new active export ahead
+of inherited history; cooked history stays frozen. Recorded verification is
+4,601 Python tests passed (1 skipped, 137 deselected, nine unchanged warnings).
+The preceding 172 Swift tests and unsigned macOS/iOS Simulator builds remain the
+native checkpoint; they were not rerun for this Python-only fix.
+
+Action-method passes prove invocation. After adding the missing temporary prep
+fixture and restarting only the isolated API from the reviewed fix, background
+sync created and acknowledged prep generation 2 and cooking generation 4 in the
+exact dedicated destinations. These exports were not created inside the original
+action methods. Bridge locators/observations and freshly refreshed native Settings
+confirm active exports and zero queued/conflict/unavailable counts. A later
+EventKit read-back independently observed all three current exports as present,
+without issues, in their exact destinations. The current prep/calendar items
+were not visually rechecked in Apple apps. Production port
+5001, production deployment, Siri, iPhone and personal-device acceptance remain
+outside this run. See the [isolated Mac mini acceptance
+report](../.superpowers/sdd/2026-10-08-mac-apple-integration/device-acceptance-2026-10-22.md)
+for exact evidence, historical checkpoints and remaining limits.
+
+**Set up one owner and explicit weeks:**
+
+1. On the server Mac, use its local KitchenOS API in native app settings. Configure
+   `KITCHENOS_API_TOKEN` and the app credential for remote clients as appropriate.
+   Bearer access does not authorize a remote Apple writer: ownership, observations,
+   work, acknowledgement and owned cleanup also require actual localhost access.
+2. Open **Settings → Apple integration → Connect Apple integration**. Connection
+   records the owner and reads status; it does not activate or publish history.
+3. Under **Send a week**, select shopping, prep or cooking. Use the foreground
+   **Allow Reminders access** / **Allow Calendar access** button. Full access is
+   required for reconciliation. Denying one domain leaves the other available.
+4. Choose an exact writable destination, or **Create destination**. Shopping and
+   prep lists are separate selections; cooking has a calendar. IDs are stored,
+   so a rename remains the same destination. Missing/read-only selections require
+   a new explicit choice; there is no automatic substitute.
+5. Choose **Week containing** (shown as a date range), then send shopping/prep or
+   sync the cooking calendar for that week. Explicit shopping activation generates
+   a missing list with pantry credit and migrates legacy row IDs through the normal
+   save flow, without spending inventory. Resolve malformed notes before retrying.
+   Explicitly refresh stale prep tasks from the plan. Polling never generates or
+   migrates shopping notes or runs task inference. Cooking exports only
+   eligible uncooked, single-recipe cooks with valid timed schedules.
+
+**Read the result:** created/updated/removed counts reflect acknowledged Apple
+operations; queued means work remains. Unavailable can mean permission loss,
+missing/read-only destination, incomplete store visibility, offline server, or a
+missing/stale source. It does not mean the source was deleted. Check connection,
+permission, destination and source, then **Sync now**. Reports show conflicts and
+last success. **Last successful sync** advances after a complete fresh pass with
+all active scopes readable, no remaining work and no conflicts, including a pass
+that needed no writes. Reading status or finishing only part of a pass does not
+advance it. An aggregate success count across active weeks does not certify one
+selected item. A synchronized week's send can report zero queued; archived weeks
+require explicit reactivation in the Mac app before sending. Shopping completion
+records purchase progress without changing inventory, purchases, trips or cooking history.
+
+**Review conflicts:** Settings shows recorded KitchenOS and Apple values and
+only the choices currently supported. Keep KitchenOS or Keep Apple resolves a
+supported field conflict. Keep Apple item separate detaches without deleting.
+For a shopping conflict, compare **Edited list item** with **Generated demand**.
+When generated demand is active, **Accept quantity and reopen** replaces the edited
+amount with the displayed generated amount and reopens the checkbox. When demand
+is **No longer needed**, **Remove item from shopping list** removes that row and
+retires its Apple link; unchanged incomplete reminders may be removed, while
+completed reminders stay as history. **Keep as a separate manual shopping item**
+preserves the edited text and completion under a new identity. Hand-edited amounts
+and completed checkboxes remain preserved until that explicit review. Malformed
+generated demand or conflict metadata leaves the shopping source unavailable for
+manual correction; it cannot transfer a new ingredient onto an old linked ID.
+Retiring a source removes only an unchanged, incomplete Apple object; concurrent
+Apple edits remain for separation or explicit owned-item removal. A completion
+observed after retirement freezes the old reminder as history and closes its
+obsolete retirement conflict, while other conflicts remain for review. Reopening
+it later cannot resume deletion, and reappearing demand gets a new incomplete
+export. Unsupported Calendar edits (cross-week, all-day, recurring or invalid
+15-minute time/duration) need correction or separation; they never silently move
+the ledger. Due overrides change reminder timing, not meal dates or instructions.
+
+**Lifecycle and ownership:** **Pause sync** suspends writes; **Resume sync**
+reconciles. **Archive this week's sync** stops that scope while preserving Apple
+items. **Disconnect** preserves source/Apple data and invalidates the old owner
+context; pending operations must first settle. To replace an owner, stop the old
+writer, finish its pending work and disconnect before connecting the replacement.
+An owner generation cannot fence a write already in flight to EventKit. Existing
+markers recover links; matching titles never establish ownership.
+
+The app must remain running with the API. Closing its last window keeps its
+coordinator alive; quitting or sleeping delays sync until launch/wake. Launch at
+login is optional. iOS displays status and linked source views and is not another
+writer. After changing the configured server, restart the Mac app before writing
+against the new server. Native mode remains configured after disconnect, so legacy
+senders still queue rather than falling back to AppleScript.
+
+Saving the two availability calendars or tapping **Refresh availability**
+reconciles already active native scopes before the busy snapshot. It does not
+activate an archived week. Only currently linked cooking tokens are excluded
+from external busy time; a Keep Manual or archived Apple event remains busy.
+Disconnected or paused native sync performs no Apple writes, while the
+availability refresh can still report the existing Apple calendars.
+
+**Use Mac Shortcuts:** add an action from KitchenOS in the Mac action library,
+choose its parameters, save a named shortcut, then run it. The five actions are
+Send Shopping List to Reminders, Send Prep Tasks to Reminders, Sync Cooking
+Calendar, Schedule Cooking, and Sync KitchenOS. The first three activate the
+chosen week/domain; Sync KitchenOS touches already active scopes. Schedule Cooking
+uses an existing cook ID and saves its ledger schedule; first placement needs
+servings, while existing portions stay unchanged. It syncs only when that cooking
+week is already active. Setup needs continue in the foreground and require rerun.
+No automatic Mac phrases are registered. All five actions appeared in the live
+Mac library on the earlier ad-hoc installation. The current signed package has
+all five metadata records, and a named shopping shortcut reached the isolated
+API on that build. All five signed-app `AppIntentsTesting` methods subsequently
+passed; later EventKit read-back found the three current exports present without
+issues in their exact test destinations. The other four actions have not been run
+as named shortcuts inside the Shortcuts app. All-five live action-library search
+on the current signed build and direct Apple UI verification of the current prep
+and cooking exports remain pending.
+
+**Recovery limits:** an interrupted first Apple save is recovered by marker when
+found. Calendar recovery scans finite windows plus known identifiers; an event
+moved beyond all recovery windows before its first acknowledgement may be
+exported twice. Previously linked unlocatable Calendar events remain unavailable,
+so deleting an event in Calendar is not reliably recognized as unscheduling by the
+current adapter. Use KitchenOS's reservation removal when explicit unscheduling
+is needed. A reminder deletion also needs prior in-process visibility evidence;
+a cold restart cannot prove absence. EventKit has no atomic hash-checked save or
+remote sync-completeness guarantee. External note editors do not share the server
+lock: an edit between hash check and replacement can be lost if never observed.
+Avoid editing the same linked field simultaneously while resolving an issue.
+If a source changes while an Apple save is finishing, the bridge retains the save
+proof and verifies the same owned marker after fresh work, including when the
+source has become archived or history and when Apple fields have changed.
+Successful recovery shows a conflict for review and preserves the newer
+KitchenOS source and the current Apple values. A note edit on an incomplete
+retired item also requires review; EventKit rechecks notes before any deletion.
+Suppressed exports are terminal until explicitly restored or cleaned up.
+Lost server
+responses retry the same proof; a rejected stale observation triggers a new scan
+on the next sync while preserving the saved acknowledgement. Missing/unreadable
+objects remain pending instead of being adopted. A crash after Apple deletion but
+before acknowledgement can require manual review; the bridge will not invent
+deletion proof.
+
+**Remaining dedicated acceptance and cleanup:** continue only with the
+separately named test shopping/prep lists and test cooking calendar. The isolated
+run covered all five action invocations, completion/reopening, prep due clear/date
+handling, same-week Calendar move/resize, explicit unschedule, restart replay and
+last-window sync. Current prep generation 2 and cooking generation 4 still need
+direct Apple-app visual verification. Signed-build live library search, Siri,
+iPhone/personal-device acceptance, denied permissions, missing destinations,
+foreign same-title items, identifier churn, provider persistence, preservation of
+alarms/user notes, and sleep/wake/quit behavior remain acceptance work. The distinct
+test shortcut remains; cleanup has not been claimed.
+Record results before using **Remove
+owned Apple item** on individually selected test exports. Cleanup rechecks exact
+ownership/revision/hash; never clear a whole list/calendar or delete foreign items.
+A changed object needs fresh review/selection. Archive alone does not remove it.
+
+**Rollback for a separately authorized rollout:** pause and stop the native writer
+before restoring a prior app/API pair. Preserve the current DB with SQLite's backup
+API and copy vault/source notes and the app bundle to timestamped backups; copying
+only a live `.db` can omit WAL state. Keep integration journals/markers for recovery,
+and do not drop tables or switch to legacy senders to work around pending work.
+If restoring an older DB snapshot is necessary, restore a consistent vault snapshot
+and review Apple objects before re-enabling a writer, since Apple is not part of the
+backup transaction. Mac deployment belongs at `~/Applications/KitchenOS Native.app`;
+preserve the separate Safari app at `~/Applications/KitchenOS.app`. Verify the chosen
+bundle's actual signature/entitlements and deployment floor before any future
+installation. API library changes need the normal production restart at that
+future deployment boundary; no restart is part of this delivery.
 
 ---
 
@@ -1167,3 +1360,94 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - [ ] Mark completed features as done in `docs/ROADMAP.md` (move to
       "Completed" or remove)
 - [ ] Add any new ideas discovered during implementation
+
+### Connect cooking opportunities to Apple Calendar
+
+On the Mac running the KitchenOS server (with its connection set to localhost), open **Settings → Cooking opportunities → Connect Calendar** and approve Apple's Calendar access prompt. Select the intended iCloud calendar under **Commitments** and **Time Blocking** under **Flexible**, then choose **Save calendars and refresh**. Select two distinct calendars; source names distinguish duplicate titles. Reading events requires Apple's full-access permission. The availability reader does not modify events in the selected source calendars. Separately, an explicitly activated native cooking scope publishes owned cooking events to its chosen destination calendar, as described under **Mac Apple integration**.
+
+Keep that Mac's KitchenOS app open for automatic five-minute updates. It publishes date/status summaries for the next 35 days alongside a detailed planning snapshot containing event titles and times, stored locally on the KitchenOS server. Calendar syncing is available only on macOS with a localhost connection; iPhones, iPads, and remote Macs display the server's results. The web and native planners refresh labels every minute while active. After six hours without a successful sync, availability becomes unknown. Missing calendars or revoked permission clear the summary on the next successful server contact; if offline, the six-hour expiry still applies. Disconnect clears the server snapshot and retries while the app stays open if offline.
+
+Noon to local midnight is the cooking window, using the syncing device's timezone. Morning-only events, free events, cancelled events, and declined invitations are ignored. Busy all-day events count. A commitment wins over a flexible block. These labels are suggestions; they do not prevent placing a meal or automatically reschedule cooks.
+
+### Using calendar meal planning
+
+Open Meal Planner and choose **Calendar**, or **Plan with calendar** in the native
+Meal Plan/Planner Board. Keep KitchenOS Native open on the server Mac for calendar
+sync every five minutes. The selected iCloud calendar contains commitments;
+Time Blocking is flexible. Names and times stay on the local KitchenOS server.
+All-day events start with **Needs your choice**: choose **Blocks cooking** or
+**Background information** for that occurrence. A new occurrence needs its own
+choice. Saving different calendars or disconnecting clears stored details and
+choices; failed clears retry on the next sync. After six hours, event details are
+hidden until refreshed. Meal scheduling still works manually while disconnected.
+
+Choose an unscheduled meal, review an opening, adjust date/time/duration/servings,
+and choose **Schedule meal**. Missing recipe timing uses an editable 90-minute
+planning estimate. Reservations stay within the displayed week. Existing meals
+can be selected to reserve or revise their cooking time; serving amounts and
+leftovers remain unchanged. Scheduled time is stored in the KitchenOS ledger.
+When that week’s native cooking scope is explicitly active and the bridge can
+sync, eligible uncooked single-recipe schedules export as owned events to its
+chosen Apple Calendar destination. Without an active scope, saving a reservation
+does not publish an Apple event.
+
+Deploy Python/template/static changes together and restart `com.kitchenos.api`.
+Build and install the native target as `~/Applications/KitchenOS Native.app`;
+`~/Applications/KitchenOS.app` is a separate Safari web app. Back up the app and
+SQLite with SQLite's backup API before replacement. Native app and API must both
+be updated for detailed sync. The first install never chooses an all-day meaning,
+schedules an existing real meal, or activates publication automatically. Choose
+the destination and explicitly activate a cooking week through **Sync Cooking
+Calendar** when you want its eligible schedules exported.
+
+### Siri opens a recipe or meal-plan day in the browser
+
+Update the API, templates, static files, and native app together. Run the Swift
+suite, Python suite, and explicit `tests/e2e/test_siri_web_navigation.py`,
+`test_planning_calendar.py`, and `test_planner_touch.py` browser tests before
+release. Build both macOS and iOS targets; builds alone do not verify Siri's
+foreground continuation or the device's default browser.
+
+Install the native Mac product at `~/Applications/KitchenOS Native.app` after
+backing it up. Preserve the separate Safari app at `~/Applications/KitchenOS.app`.
+Install the signed iOS product using the procedure above. Stage and activate
+the reviewed API commit using the separate-release procedure in section 2;
+activation restarts only `com.kitchenos.api`. Do not deploy from the dirty main
+checkout or replace the active release in place. Existing
+viewing grants end on restart or token rotation; ask Siri to open the page
+again to obtain a fresh grant.
+
+Use the Ask KitchenOS shortcut, for example:
+
+- “Show the recipe for Rice & Beans.”
+- “Find a chicken recipe and show it.”
+- “Open Friday's meal plan.”
+- “Show tomorrow's meals.”
+
+An ordinary question still receives a spoken answer. A bare weekday means
+that day in the current Monday–Sunday ISO week; “Friday next week” selects the
+following week. Ambiguous “next Friday” requires clarification. “Open that”
+in a new invocation has no remembered recipe and requires a named target.
+A combined add-and-show request opens only after the existing write
+confirmation succeeds.
+
+The resulting browser session is labeled for viewing and lasts 15 minutes.
+Local recipe scaling and navigation work; saved edits are disabled. The cookie
+remains for 24 hours to keep expired sessions restricted. Do not clear it as an
+expiry workaround. `/browser/open` needs a short-lived fragment and is not a
+bookmark; bookmark the ordinary recipe or planner URL instead. Such a bookmark
+does not renew expired viewing access.
+
+The configured API origin must be a root HTTP(S) URL without credentials,
+query, fragment, or proxy prefix. The existing canonical HTTPS gateway is preserved and uses Secure cookies.
+Direct private HTTP connections still work without Secure. Phones use the
+existing LAN/Tailscale gateway path and the configured native credential.
+If a handoff fails, check API reachability and native connection settings, then
+request a fresh handoff. Do not paste a bearer token into a browser URL.
+
+On physical devices verify a named recipe, a selected recipe from a search,
+a weekday, tomorrow across a week boundary, and an empty day. Confirm content
+is visible, default-browser dispatch works, and locked-device behavior is
+acceptable. Verify expired/replayed codes and ambiguous targets without
+creating or changing real meals. Record physical checks separately from
+unit/browser tests and build results.

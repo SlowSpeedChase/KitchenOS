@@ -77,7 +77,9 @@ loopback HTTP. `lib/web_origin.py` resolves every generated public URL from
 origin. When `KITCHENOS_API_TOKEN` is set,
 remote (non-localhost) callers of the Siri-facing endpoints (`/api/recipes`,
 `/api/recipes/<name>`, `/api/meal-plan/<week>`, `/api/suggest-meal`) must
-send `Authorization: Bearer <token>`; localhost is always exempt.
+send `Authorization: Bearer <token>`. Existing localhost exemptions remain,
+except that the global browser-view guard applies first when a Siri handoff
+cookie is present.
 
 The iOS default is the canonical HTTPS origin. `KitchenOSConfig.resolved`
 persists an upgrade only for the exact retired defaults
@@ -182,6 +184,30 @@ next regeneration.
   commit and are serialized so a slower writer cannot publish an older view afterward.
   The public post-commit refresh boundary catches and logs every ordinary exception
   so a durable write cannot become retryable because its derived view failed.
+
+## Durable Apple sync foundation
+
+`lib/apple_integration/` keeps native sync state in the same SQLite database:
+
+| Module | Public boundary |
+|---|---|
+| `models.py` | Version-one snake_case wire dataclasses, strict `from_dict`/`to_dict`, `canonical_hash`, `validate_fields`, and `validate_observations`; typed `InvalidPayload`, `RevisionConflict`, `OwnershipConflict`, and `SourceUnavailable` errors. |
+| `merge.py` | `merge_fields(common, source, apple)` produces separate source/Apple patches and conflicts. No common snapshot plus an existing marker requires recovery. |
+| `store.py` | `get_due_override`/`set_due_override` distinguish unset and explicitly cleared due preferences. `reserve_source_patch`, `pending_source_patches`, `finish_source_patch`, and `conflict_source_patch` journal interrupted source imports. `register_owner`, `activate_scope`/`update_scope`, `refresh_source`, `reserve_operation`, and `acknowledge` enforce owner, scope, generation, and revision checks. `get_item`, `list_items`, and `pending_operations` read persisted work; `set_title_override` and `set_suppressed` preserve preferences independently of source content. |
+
+`inventory_db._SCHEMA` creates `apple_bridge`, `apple_scopes`, `apple_items`,
+`apple_operations`, `apple_conflicts`, `apple_file_edits`, `apple_source_patches`, and
+`apple_sync_passes`. Reservations have
+unique operation UUIDs and remain pending until acknowledged. An identical
+reservation reuses its UUID; an identical acknowledgement is inert. Source,
+common, and pending payloads remain separate. Retired generations remain stored
+for stale-callback rejection, while history items are detached from later edits.
+The file-edit journal retains before/after text and hashes for recovery.
+
+All mutating store helpers accept an optional `conn` borrowed from
+`inventory_db.write_transaction`; the caller retains commit/rollback ownership.
+No transaction spans EventKit or a network call, and this layer never changes
+inventory or sends Apple content to an LLM.
 
 ## Receipt → inventory
 
@@ -339,7 +365,12 @@ in `docs/setup/`.
   do-ahead/dependency flags, cached in a `<week>.tasks.json` sidecar. The
   meal-planner UI surfaces today's tasks plus a "Get ahead" section for
   upcoming do-ahead items, with `done` state stable across plan edits via
-  hashed task IDs.
+  hashed task IDs. `mark_task_done` accepts optional `expected_hash` and
+  `operation_id` for exact-file compare/retry while preserving existing callers.
+  Newly generated sidecars record `plan_hash`: freshness requires both the
+  existing sidecar/plan mtime rule and source-hash equality, so an intervening
+  meal-plan edit cannot certify old tasks as current. Legacy sidecars retain
+  the mtime-only rule until explicitly regenerated.
 - **Meal-bundle macros** — a meal (`vault/Meals/<Name>.meal.md`) is a named set
   of sub-recipes, each with a fractional `servings` share, bound to a slot.
   `lib/meal_nutrition.py` rolls its calories/macros up from its sub-recipes'
@@ -382,3 +413,242 @@ in `docs/setup/`.
   (worst coverage/confidence first), live deterministic recompute with USDA
   candidates, and human match pinning that the engine's cache honors on the
   next recompute.
+
+
+### Calendar availability and meal planning
+
+The Mac bridge coordinator uses one EventKit adapter to publish both daily
+cooking opportunities and a bounded detailed snapshot from two selected calendars.
+Only currently linked cooking tokens from a settled reconciliation are excluded
+from busy time. `cooking_availability` and `planning_calendar` retain their
+six-hour expiry; `cooking_windows` derives openings in the source IANA timezone.
+Detailed titles remain in local SQLite and never enter model prompts.
+
+`static/planning-calendar.js` combines the snapshot with ledger and legacy meal
+projections, and schedules only through the ledger API. The native plan screens
+open this route through `PlanningCalendarWebView`; `PlanningWebPolicy` confines
+credential injection to same-origin API fetches with redirect refusal. Native
+cook focus retains exact ledger identity; read-only browser sessions do not open
+the schedule editor. The coordinator owns refresh lifecycle, including after the
+last window closes, so a second window-bound calendar loop is not started.
+
+### Calendar cooking writeback
+
+`lib/apple_integration/cooking.py` exposes `collect(week)`,
+`apply(item, patch, operation_id, *, conn=None)`, and `recover_pending()`.
+Logical IDs are `cook:<id>`. Content revisions include the cook, schedule and
+placements; writeback rechecks that revision under the same `BEGIN IMMEDIATE`
+transaction as the ledger and sync-journal changes. `schedule_cook(..., conn=None)`
+and `unschedule_cook(id, *, conn=None)` share the ledger's existing move/capacity
+rules. Deletion uses exactly `{'unscheduled': True}` as adapter lifecycle control,
+never as a wire field, and removes only `cook_schedule`: cook rows, servings,
+scale, cooked state and inventory remain intact. Cooked exports become history;
+removed schedules retire. The DELETE `/api/cooks/<id>/schedule` route uses this
+same unschedule authority.
+
+`pending_schedule_views` coalesces work by week and increments its revision in
+the ledger transaction. `serving_ledger.drain_schedule_views()` serializes each
+known week-note path, renders committed DB state outside the transaction, and
+clears only its captured revision. `week_view.write_week_markdown` takes that
+same reentrant lock across its complete read/render/write, including ordinary API
+regeneration, so an older renderer cannot overwrite an acknowledged Calendar
+view. A concurrent scheduled move triggers another render. IO failure propagates with durable work retained. Owned calls drain before
+returning; borrowed callers **must commit first, then call `recover_pending()` or
+`drain_schedule_views()`** before declaring success. Recovery performs no Apple,
+network or inference work. Source patches commit as applied together with the
+ledger; only derived Markdown is pending after a crash. The bridge service must
+recover before collecting/exporting and report a recovery failure as queued work,
+never as synchronized. Exact finished operation retries verify the current source
+and generation before returning their recorded result.
+
+
+### Shopping note identity and recoverable imports
+
+| Module | Public boundary |
+|---|---|
+| `lib/note_mutation.py` | `content_hash`, `mutation_lock(path)`, `mutate_note(path, expected_hash, transform, operation_id)`, and `recover_note_edits` preserve exact UTF-8 before/after images for known week notes and prep sidecars under the configured vault. The public reentrant file lock spans read/merge/write and nested journal edits without releasing the outer advisory lock. Thread locks and filesystem `flock` serialize cooperating processes; unique sibling temporary files are fsynced and atomically replaced after a final content check. |
+| `lib/shopping_note.py` | `ShoppingRow`/`ShoppingDocument`, `read_shopping_note`, `parse_document`, `generated_identity`, `save_shopping_note`, `set_completed`, and `strip_item_marker` implement validated `gen:`/`manual:` row identities. Generated IDs use normalized ingredient plus aggregator bucket before display formatting. Both shopping API save endpoints call this writer; reads never migrate implicitly. |
+| `lib/apple_integration/shopping.py` | `prepare_activation`, `collect`, `apply`, and `recover_pending` expose Markdown membership/title/quantity/completion and SQLite due overrides. Import completion changes only the exact marked row and never calls pantry spending. Missing, unmarked, malformed, or duplicate-ID notes fail closed. Generated demand must retain its ingredient identity, and invalid conflict markers fail before publishing any conflict. |
+| `lib/apple_integration/prep.py` | `collect`, `apply`, and `recover_pending` sync exact stable task IDs from fresh `YYYY-Www.tasks.json` sidecars. Polling never invokes inference; missing/stale/unsafe data requests refresh instead of retiring reminders. Completion/undo use the same recoverable writer and per-week lock as regeneration; classification runs outside it, then re-reads current done flags. Due overrides are isolated to the current export generation and never change plan placement or task IDs. |
+
+The v3 encoded note metadata holds row identity snapshots and unresolved amount
+change evidence; v1/v2 generated-item provenance remains readable for explicit
+migration. A checked quantity change keeps its checked state and raises
+`shopping_amount_changed`. An identity edit such as flour to eggs preserves the
+note bytes and blocks export/import as `shopping_identity_changed`. Identical
+manual rows have independent random IDs. Inventory matches remain plain bullets.
+Checked rows leaving generation remain visible history; journaled completed
+history (including acknowledged completion) is retained when rows are removed.
+Suppression belongs to an export generation and survives normal source refresh.
+If the same generated demand reappears after retirement, its new generation
+starts incomplete; the old completion stays in history.
+
+Due overrides use `apple_items.due_override`: SQL NULL means unset, JSON null
+means explicitly cleared. The setter checks the latest generation and expected
+revision; replacement generations start unset. The adapter includes effective
+due in its content revision. Call `collect` then `refresh_source` after changing
+an override to update the source payload; the metadata setter itself only
+advances the journal revision.
+
+The service must run adapter `recover_pending()` **before source refresh**.
+A source import reserves `apple_source_patches` before file work, uses the same
+operation ID for `apple_file_edits`, then commits due metadata and the source
+patch result in one short SQLite transaction. An interrupted import may resume
+only against its recorded before/after image and unchanged generation/revision.
+Drift remains a conflict; a pending reservation is never a synchronized result.
+No DB transaction is held across file replacement or external Apple work.
+
+Advisory locks cannot stop a non-cooperating editor between the last hash check
+and rename. The journal can recover only bytes the process actually observed;
+it does not claim to recover an unseen external edit in that interval.
+
+## Native bridge service and HTTP boundary
+
+| Module | Public boundary |
+|---|---|
+| `lib/apple_integration/service.py` | `activate`, `update_scope`, `work`, `observe`, `acknowledge`, `recover_saved`, `complete_sync`, `resolve_conflict`, `restore`, `remove_owned`, `register_owner`, `disconnect`, `settings`, `status`, `item_details`, `conflict_detail`, `link`, `configured`, and `enqueue` compose source adapters with the shared merge/journal. Recovery precedes source refresh; no DB transaction spans file or native/network work. |
+| `lib/apple_integration/routes.py` | `register_routes(app, require_token, is_local_client)` installs the version-one API, strict envelopes, complete batch limits and gateway-aware local writer gate independently of bearer/open-access auth. Exact contracts and native retry order are in `docs/API.md`. |
+| `lib/apple_integration/shopping.py` | `resolve(item, choice, operation_id)` performs amount/ingredient-identity conflict edits with exact note hashes and recoverable images. `keep_manual` assigns a new row identity; it never transfers an edited ingredient onto the old generated ID. |
+| `lib/apple_integration/store.py` | `reserve_cleanup` is the explicit bounded-removal path for retained generations. Ordinary callbacks reject replaced generations; cleanup acknowledgements can affect only their specifically reserved old row. Scope destination is a default for new items; archive/reactivation preserves existing identities. |
+
+`apple_requests` stores the exact owner-bound request payload, per-token progress
+and terminal response. At most one observation request remains unfinished; restart
+work exposes its exact typed retry envelope and withholds outbound operations until
+replay completes. Semantic source drift becomes a visible conflict, while IO stays
+retryable. Native clients must fetch fresh Apple/server state again after replay.
+`apple_resolutions` separately journals explicit conflict choices, allowing the
+service to finish a split file/DB resolution before normal source refresh.
+`apple_sync_passes` stores one owner-bound receipt per completed, converged scan;
+reads and individual write acknowledgements do not manufacture sync success.
+
+Narrow migrations add owner connection/settings/permission reports and last
+success, item `last_observation`/`common_title`, and an explicit retained-cleanup
+operation flag. A verified common title distinguishes a generated title change
+from the user's display override. Locators follow moved Apple objects; configured
+defaults never move existing objects back. A retained incomplete old object blocks
+replacement export until explicit detach/removal; completed history stays detached.
+
+Send-to-Reminders, prep send and the CLI call `configured`/`enqueue`. Once native
+mode is configured, paused/disconnected owners cannot trigger AppleScript fallback.
+Completion only changes the exact source checkbox/task; Calendar absence only
+unschedules. No Apple content reaches prompts or application logs. Native ownership
+and last-moment hash verification remain EventKit responsibilities, not assumptions
+that a locator or authenticated HTTP body can prove by itself.
+
+### Native writer, lifecycle and source navigation
+
+`KitchenOSKit/AppleIntegration` defines DTOs, authenticated transport, the
+`AppleItemStore`/`AppleIntegrationAPI` boundaries, the serialized
+`AppleIntegrationService`, lifecycle scheduler and read/control models. The Mac
+app's `EventKitAppleItemStore` owns one lazily created EventKit store on a serial
+worker. EventKit objects never cross that worker; value DTOs do. The shared
+`AppleIntegrationCoordinator` is the entry point for buttons, five Mac App Intents,
+notifications and periodic reconciliation. An explicit command queue spans
+suspension points; actor isolation alone would permit overlapping commands.
+
+iOS uses the shared source/navigation/status clients and compiles without the
+EventKit writer. `AppRouter` presents exact `kitchenos-native://item/<UUID>` links
+through authenticated link lookup. Shopping reads saved IDs and mutates completion
+through the note journal; prep reads saved fresh tasks without inference; cooking
+focuses the exact ledger ID. Deep-link navigation itself has no domain write.
+`PlannedCookEntity` also resolves by ledger ID, and Schedule Cooking uses the
+transactional schedule API with a placement-state precondition.
+
+The coordinator starts with the Mac app, survives closing its last window, and
+stops at quit. Launch, wake/activation, source changes, a 300-second cadence and a
+250ms EventKit notification debounce trigger reconciliation. Sleeping/offline or
+quit means delayed sync. Transient retry backoff is bounded at 30 seconds; retries
+read current state. One domain's unavailable store can be reported while healthy
+domains finish, subject to the global unfinished-observation replay fence.
+Changing the configured server requires restarting the Mac app before another
+writer is constructed. No Apple content is sent to an LLM.
+
+Native recovery replays the exact pending observation UUID/payload/context,
+then rereads server work and Apple objects before admitting outbound operations.
+A successful Apple mutation awaiting HTTP acknowledgement retains its exact proof
+and original item identity in memory and retries that acknowledgement before
+another write. Superseded saves can be linked to a fresh uniquely owned Apple
+object even after Apple values change or the source becomes history/archived;
+the receipt opens explicit review without importing the old save. After a process
+crash, a first saved object can be recovered by marker and its exact pending
+journal. Lost deletion proof cannot be reconstructed from uncertain Calendar
+absence and needs review. Connect is setup only and bypasses proof flushing;
+pause/resume may preserve and later unblock it.
+
+### Public EventKit limits
+
+Identifiers locate objects; exact ownership markers authorize them. Search uses
+item/external IDs and readable destinations, with finite Calendar windows around
+today and known event starts. Previously linked, unlocatable Calendar objects stay
+unavailable. A never-linked first save moved beyond those windows before its lost
+acknowledgement is recovered can be duplicated; the adapter cannot prove global
+absence. Reminder deletion evidence is limited to prior in-process ownership and
+unchanged visible local-store coverage, not remote account sync completeness.
+
+The final ownership/hash check precedes each save/delete, but public EventKit has
+no atomic compare-and-swap. A concurrent Apple edit can occur in that gap.
+Note-only user edits are included in retirement observations and checked again
+immediately before delete; exact ownership-marker-only notes remain eligible.
+Likewise, external editors do not share note locks and may write between the final
+hash check and atomic replacement; journals recover only observed bytes. Timed
+civil reminder values cannot distinguish both occurrences of a repeated DST hour.
+Provider persistence, alarms/unmanaged fields, real permissions and lifecycle
+behavior require dedicated-destination acceptance beyond automated fixtures.
+
+Only uniquely marked tokens still linked to active cooking work are excluded
+from external busy snapshots, because the ledger already contributes those
+intervals. Keep Manual detaches a token, so its Apple event becomes external
+busy time; archived events are also counted conservatively. Exact copied
+single markers on foreign events may still exclude them when their token is
+currently linked, but confer no write authority. Ambiguous multi-marker events
+are included as busy. A copied single marker on a second event can still hide
+that event until marker ambiguity is discovered in a sync scan.
+
+An unresolved or failed sync sends an empty exclusion set, conservatively
+counting marked events as busy; unrelated shopping work can therefore make
+availability temporarily pessimistic. Archive invalidates cached exclusions
+until a fresh pass.
+
+Legacy ICS and AppleScript exports are unowned representations and are never
+adopted by title; native scopes cannot fall back to another writer when
+paused/offline.
+
+### Siri navigation to the web
+
+The voice-only `OpenWebDestinationTool` records a typed `WebDestination` in
+invocation-local state. `RecipeNavigationResolver` preserves canonical recipe
+identity and rejects ambiguous matches; `WebDayResolver` resolves civil dates
+in the caller's local time zone. `AskKitchenOSIntent` consumes the selection
+once and hands it to `OpenKitchenOSWebIntent`, a foreground continuation.
+The authenticated `KitchenOSClient` mints a one-use code and `WebBrowserOpener`
+launches the configured origin in the device's default browser. Model output
+never supplies a URL or credential. Native chat and Spotlight's
+`OpenRecipeIntent` retain their existing navigation.
+
+`lib/browser_handoff.py` owns bounded, locked, process-local stores containing
+only hashed identifiers. `api_server.py` validates typed destinations, builds
+canonical redirect paths, and checks marked browser requests against an exact
+endpoint/method allowlist before route-specific or loopback exemptions.
+`browser_open.html` and `browser-handoff.js` remove/exchange the fragment;
+`browser-view.js` displays the server-derived viewing state and handles expiry.
+The 24-hour restriction marker deliberately outlives the 15-minute grant.
+The handoff introduces no persistent credential or domain-data table. The
+calendar prerequisite retains its existing local planning tables. Gateway
+origin recovery is restricted to the existing loopback proxy and configured
+canonical HTTPS authority.
+
+Planner URL state carries an authoritative civil `date`, with its ISO `week`
+derived from it. Calendar and Grid preserve that selection and bring the
+actual day's meal content into view once; background refresh does not steal
+focus. Browser handoffs authorize viewing, with write controls disabled in
+addition to server enforcement. This is a narrow continuation channel, not a
+replacement for authentication of every existing web route.
+
+The focused meal list reads `serving_ledger.planned_meals_for_week` through the
+existing board response and the meal-plan API's additive all-entry projection.
+This includes cook anchors, local/cross-week leftovers, and all legacy recipe
+or plate links without importing legacy notes during navigation. Calendar
+viewing places meals before the timeline; touch Grid sheets retain read-only
+recipe and plate-member links. Existing recipe-review metadata (`reviewed`,
+`review_status`) remains declared in the optional recipe schema so validation
+accepts already-reviewed notes without rewriting the vault.

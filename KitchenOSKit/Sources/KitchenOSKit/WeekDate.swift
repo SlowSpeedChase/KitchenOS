@@ -13,6 +13,15 @@ public enum WeekDate {
         weekID(for: now, calendar: calendar)
     }
 
+    public static func date(forWeekID week: String) -> Date? {
+        guard week.range(of: #"^[0-9]{4}-W[0-9]{2}$"#, options: .regularExpression) != nil,
+              let year = Int(week.prefix(4)), year > 0, let number = Int(week.suffix(2)) else { return nil }
+        let calendar = isoCalendar()
+        guard let date = calendar.date(from: DateComponents(weekday: 2, weekOfYear: number, yearForWeekOfYear: year)),
+              weekID(for: date, calendar: calendar) == week else { return nil }
+        return date
+    }
+
     public static func isoCalendar() -> Calendar {
         var cal = Calendar(identifier: .iso8601)
         cal.timeZone = .current

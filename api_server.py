@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Simple API server for iOS Shortcuts integration."""
 
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, g, has_request_context
 from markupsafe import escape
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from youtube_transcript_api import YouTubeTranscriptApi
 from googleapiclient.discovery import build
 import functools
 import ipaddress
+import hashlib
+import hmac
+import json
 import math
 import os
 import re
@@ -25,8 +28,6 @@ from lib.shopping_list_generator import (
     format_qty as shopping_list_format_qty,
     generate_shopping_list,
     parse_shopping_list_file,
-    extract_manual_items,
-    extract_legacy_manual_items,
     SHOPPING_LISTS_PATH,
 )
 from lib.web_origin import web_origin
@@ -44,19 +45,17 @@ from lib import recipe_refresh, nutrition_quality
 # import, so importing it lazily inside a route would record the time of that
 # request and report every stale server as fresh. See lib/boot.py.
 from lib import boot  # noqa: F401  (imported for its import-time side effect)
-from templates.shopping_list_template import generate_shopping_list_markdown
 from templates.recipe_template import format_recipe_markdown
 from templates.meal_plan_template import (
     format_week_heading,
-    format_week_range,
     generate_meal_plan_markdown,
 )
-from lib.meal_plan_index import regenerate_index
 from lib.ingredient_validator import validate_ingredients
 from lib.ingredient_cleaner import clean_ingredient_list
 from lib.seasonality import match_ingredients_to_seasonal, get_peak_months
 from lib.nutrition_engine import calculate_recipe_nutrition
 from lib import cook_sweep, meal_loader, pantry as pantry_module, paths, task_extractor
+from lib.browser_handoff import BrowserHandoffStore, CapacityExceeded, COOKIE_TTL
 from lib.safe_paths import contained_markdown, parse_iso_week, shopping_list_path
 from lib.serving_ledger import MEALS as SLOT_VOCAB
 from recipe_sources import parse_recipe_from_text
@@ -90,24 +89,188 @@ def _local_client():
     return forwarded is None or _loopback(forwarded.rsplit(",", 1)[-1].strip())
 
 
-def require_token(view):
-    """Require a bearer token for non-localhost callers when KITCHENOS_API_TOKEN is set.
+browser_handoff_store = BrowserHandoffStore()
+_VIEW_DATA_ENDPOINTS = frozenset({
+    "api_recipe_detail", "api_recipes", "api_meal_plan_get", "api_week_board",
+    "api_meals_list", "api_macro_targets", "api_use_it_up",
+    "get_cooking_availability", "get_planning_calendar",
+})
+_VIEW_PAGE_ENDPOINTS = frozenset({"recipe_detail_page", "meal_planner"})
+_VIEW_BOOTSTRAP_ENDPOINTS = frozenset({"browser_open_page", "static"})
 
-    No-op when the env var is unset. Direct localhost (Mac app, local browser UI) is
-    exempt; Caddy-forwarded remote clients retain authentication and must send
-    Authorization: Bearer <token>.
+
+def _open_access():
+    """Explicit owner opt-out of token and browser-session gates."""
+    return os.environ.get("KITCHENOS_AUTH_MODE") == "open"
+
+
+def _valid_explicit_bearer():
+    """One bearer rule shared by the existing decorator and viewing guard."""
+    token = os.environ.get("KITCHENOS_API_TOKEN")
+    supplied = request.headers.get("Authorization", "")
+    return bool(token and hmac.compare_digest(supplied.encode(), f"Bearer {token}".encode()))
+
+
+def _browser_origin():
+    """Recover HTTPS only through the existing, narrowly trusted local gateway.
+
+    Caddy preserves Host and supplies one external host/scheme pair. Require
+    both hosts and the scheme to exactly match the validated configured origin;
+    arbitrary LAN callers and forwarded header chains cannot assert HTTPS.
+    Direct HTTP(S) origins keep their existing behavior. This does not change
+    the separate nearest-hop client authorization rule in _local_client().
     """
+    direct_origin = request.host_url.rstrip('/')
+    if not _loopback(request.remote_addr or ""):
+        return direct_origin
+    try:
+        configured = web_origin()
+    except ValueError:
+        return direct_origin
+    origin = urlsplit(configured)
+    if (origin.scheme == 'https'
+            and request.headers.get('X-Forwarded-Proto') == 'https'
+            and request.headers.get('X-Forwarded-Host') == origin.netloc
+            and request.host == origin.netloc):
+        return configured
+    return direct_origin
+
+
+def _token_fingerprint():
+    return hashlib.sha256(os.environ.get("KITCHENOS_API_TOKEN", "").encode()).hexdigest()
+
+
+@app.before_request
+def restrict_browser_view():
+    """Apply the marker before loopback exemptions or legacy ungated handlers."""
+    if _open_access() or "kitchenos_view" not in request.cookies or _valid_explicit_bearer():
+        return None
+    g.browser_view_marked = True
+    g.browser_view_grant = browser_handoff_store.authorize(
+        request.cookies.get("kitchenos_view"), _browser_origin(), _token_fingerprint())
+    if request.endpoint == "exchange_browser_handoff":
+        return None  # Its one-use code and same-origin checks authorize renewal.
+    safe = request.method in ("GET", "HEAD")
+    if safe and request.endpoint in (_VIEW_BOOTSTRAP_ENDPOINTS | _VIEW_PAGE_ENDPOINTS):
+        return None
+    if g.browser_view_grant is None:
+        return jsonify(error="browser_session_expired"), 401
+    if safe and request.endpoint in (_VIEW_DATA_ENDPOINTS | {"serve_recipe_image"}):
+        return None
+    return jsonify(error="read_only_browser_session"), 403
+
+
+@app.after_request
+def protect_browser_response(response):
+    if (getattr(g, "browser_view_marked", False) or _valid_explicit_bearer()
+            or request.endpoint in (_VIEW_DATA_ENDPOINTS | _VIEW_PAGE_ENDPOINTS
+                | {"browser_open_page", "create_browser_handoff", "exchange_browser_handoff", "serve_recipe_image"})):
+        response.headers['Cache-Control'] = 'no-store'
+        response.vary.add('Cookie')
+        response.vary.add('Authorization')
+    if request.endpoint == 'browser_open_page':
+        response.headers['Referrer-Policy'] = 'no-referrer'
+    return response
+
+
+def require_token(view):
+    """Gate remote API callers; a marked browser is governed by the global guard."""
     @functools.wraps(view)
     def wrapper(*args, **kwargs):
-        token = os.environ.get("KITCHENOS_API_TOKEN")
-        if not token:
+        if _open_access():
             return view(*args, **kwargs)
-        if _local_client():
+        if getattr(g, "browser_view_grant", None) and request.endpoint in _VIEW_DATA_ENDPOINTS:
             return view(*args, **kwargs)
-        if request.headers.get("Authorization", "") == f"Bearer {token}":
+        if _valid_explicit_bearer():
+            return view(*args, **kwargs)
+        if not os.environ.get("KITCHENOS_API_TOKEN") or _local_client():
             return view(*args, **kwargs)
         return jsonify({"error": "Unauthorized"}), 401
     return wrapper
+
+
+def _browser_view_config():
+    grant = getattr(g, "browser_view_grant", None)
+    marked = getattr(g, "browser_view_marked", False)
+    return {"state": "expired" if marked and grant is None else "active",
+            "readOnly": marked, "expires_at": grant.expires_at if grant else None}
+
+
+def _inject_browser_view_config(html):
+    config = json.dumps(_browser_view_config()).replace('<', '\\u003c')
+    return html.replace('</head>', '<script type="application/json" id="browser-view-config">'
+                        + config + '</script>\n</head>', 1)
+
+
+def _handoff_destination(data):
+    if not isinstance(data, dict):
+        raise ValueError('Invalid destination')
+    if data.get('kind') == 'recipe' and set(data) == {'kind', 'name'}:
+        name = data['name']
+        if (not isinstance(name, str) or not name.strip() or name in ('.', '..')
+                or any(c in name for c in '/\\\x00') or any(ord(c) < 32 for c in name)):
+            raise ValueError('Invalid recipe name')
+        path = contained_markdown(_resolve_recipes_dir(), name + '.md')
+        if not path.is_file():
+            raise FileNotFoundError('Recipe not found')
+        return '/recipe/' + quote(name, safe='')
+    if data.get('kind') == 'meal_plan' and set(data) == {'kind', 'date'}:
+        value = data['date']
+        if not isinstance(value, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', value):
+            raise ValueError('Invalid date')
+        day = date.fromisoformat(value)
+        iso = day.isocalendar()
+        return f'/meal-planner?week={iso.year:04d}-W{iso.week:02d}&date={value}&view=calendar'
+    raise ValueError('Invalid destination')
+
+
+@app.route('/api/browser-handoffs', methods=['POST'])
+@require_token
+def create_browser_handoff():
+    try:
+        destination = _handoff_destination(request.get_json(silent=True))
+        issued = browser_handoff_store.issue(destination, _browser_origin(), _token_fingerprint())
+    except ValueError:
+        return jsonify(error='Invalid destination'), 400
+    except FileNotFoundError:
+        return jsonify(error='Recipe not found'), 404
+    except CapacityExceeded:
+        return jsonify(error='Browser handoff capacity reached'), 429
+    return jsonify(handoff_path='/browser/open#code=' + issued.code, expires_at=issued.expires_at)
+
+
+@app.route('/api/browser-handoffs/exchange', methods=['POST'])
+def exchange_browser_handoff():
+    if (request.headers.get('Origin') != _browser_origin() or not request.is_json
+            or request.headers.get('Sec-Fetch-Site') not in (None, 'same-origin')):
+        return jsonify(error='Same-origin JSON request required'), 403
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or set(data) != {'code'}:
+        return jsonify(error='Invalid browser handoff'), 401
+    try:
+        grant = browser_handoff_store.exchange(data['code'], _browser_origin(), _token_fingerprint())
+    except CapacityExceeded:
+        return jsonify(error='Browser handoff capacity reached'), 429
+    if grant is None:
+        return jsonify(error='Invalid browser handoff'), 401
+    response = jsonify(redirect_path=grant.redirect_path, expires_at=grant.expires_at)
+    response.set_cookie('kitchenos_view', grant.session_id, max_age=COOKIE_TTL,
+                        httponly=True, samesite='Strict', secure=_browser_origin().startswith('https://'), path='/')
+    return response
+
+
+@app.route('/browser/open', methods=['GET'])
+def browser_open_page():
+    # No shared chrome or third-party resources on the fragment-bearing page.
+    return Path(app.root_path, 'templates', 'browser_open.html').read_text(), 200, {'Content-Type': 'text/html'}
+
+
+from lib.cooking_availability import register_routes as register_calendar_routes
+register_calendar_routes(app, require_token)
+from lib.planning_calendar import register_routes as register_planning_calendar_routes
+register_planning_calendar_routes(app, require_token)
+from lib.apple_integration.routes import register_routes as register_apple_routes
+register_apple_routes(app, require_token, _local_client)
 
 
 _recipe_cache = {"data": None, "timestamp": 0}
@@ -277,6 +440,10 @@ def _serve_page(
         html = html.replace(old, new)
     if template_filename != 'home.html' and 'href="/"' not in html:
         html = _inject_after_body(html, _home_link_html())
+    if template_filename in ('recipe_detail.html', 'meal_planner.html') and has_request_context():
+        html = _inject_browser_view_config(html)
+        if _browser_view_config()['state'] == 'expired':
+            return html
     return _inject_after_body(html, _stale_banner_html())
 
 
@@ -722,6 +889,7 @@ def _annotate_stock(ingredients: list[dict]) -> list[dict]:
 @require_token
 def api_recipe_detail(name):
     """Return full recipe details as JSON."""
+    from lib.cooking_windows import recipe_duration
     recipes_dir = _resolve_recipes_dir()
     filepath = (recipes_dir / f"{name}.md").resolve()
     if not filepath.is_relative_to(recipes_dir.resolve()):
@@ -760,6 +928,7 @@ def api_recipe_detail(name):
             "dish_type": fm.get('dish_type'),
             "difficulty": fm.get('difficulty'),
             "servings": fm.get('servings'),
+            "cooking_duration": recipe_duration(fm),
             "prep_time": fm.get('prep_time'),
             "cook_time": fm.get('cook_time'),
             "total_time": fm.get('total_time'),
@@ -789,6 +958,8 @@ def api_recipe_detail(name):
 @app.route('/recipe/<name>', methods=['GET'])
 def recipe_detail_page(name):
     """Serve the interactive recipe detail page with live ingredient scaling."""
+    if _browser_view_config()["state"] == "expired":
+        return _serve_page('recipe_detail.html'), 200, {'Content-Type': 'text/html'}
     recipes_dir = _resolve_recipes_dir()
     filepath = (recipes_dir / f"{name}.md").resolve()
     if not filepath.is_relative_to(recipes_dir.resolve()) or not filepath.exists():
@@ -879,6 +1050,8 @@ def recipe_card_page(name):
     from lib import recipe_grid, serving_ledger
     from lib.recipe_parser import parse_recipe_file, parse_recipe_body
 
+    if _browser_view_config()["state"] == "expired":
+        return _serve_page('recipe_detail.html'), 200, {'Content-Type': 'text/html'}
     recipes_dir = _resolve_recipes_dir()
     filepath = (recipes_dir / f"{name}.md").resolve()
     if not filepath.is_relative_to(recipes_dir.resolve()) or not filepath.exists():
@@ -1004,46 +1177,22 @@ def generate_shopping_list_endpoint():
     if not result['success']:
         return jsonify(result), 400
 
-    generated_purchase_items = result.get('purchase_items', result['items'])
-
-    # Check for existing manual items before overwriting
-    manual_items = []
-    filename = filepath.name
-    if filepath.exists():
-        existing_result = parse_shopping_list_file(week)
-        if existing_result['success']:
-            previous_generated = existing_result.get('generated_items')
-            if previous_generated is None:
-                legacy_candidates = extract_manual_items(
-                    existing_result['items'], generated_purchase_items)
-                manual_items = extract_legacy_manual_items(
-                    legacy_candidates, result.get('lines') or [])
-            else:
-                manual_candidates = extract_manual_items(
-                    existing_result['items'], previous_generated)
-                if (existing_result.get('generated_items_version') or 1) < 2:
-                    manual_items = extract_legacy_manual_items(
-                        manual_candidates, result.get('lines') or [])
-                else:
-                    manual_items = manual_candidates
-
-    # Combine generated items with manual items
-    all_items = generated_purchase_items + manual_items
-
-    # Inventory matches are informational only — they carry no checkbox, so they
-    # never reach Reminders or come back as manual items. Generation is read-only;
-    # the user verifies each matched product and amount before shopping.
+    from lib.shopping_note import save_shopping_note
+    from lib.apple_integration.models import RevisionConflict
     lines = result.get('lines') or []
     inventory_matches = result.get('inventory_matches', []) if use_pantry else []
-    markdown = generate_shopping_list_markdown(
-        week, all_items, inventory_matches=inventory_matches,
-        generated_items=generated_purchase_items)
-
-    # Ensure Shopping Lists folder exists
-    SHOPPING_LISTS_PATH.mkdir(parents=True, exist_ok=True)
-
-    # Write file
-    filepath.write_text(markdown, encoding='utf-8')
+    try:
+        document = save_shopping_note(
+            week, lines, inventory_matches,
+            selected_items=None if lines else result.get('purchase_items', result['items']))
+    except RevisionConflict as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 409
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    filename = filepath.name
+    all_items = document.rows
+    generated_purchase_items = [row for row in document.rows if row.kind == 'gen']
+    manual_items = [row for row in document.rows if row.kind == 'manual']
 
     return jsonify({
         'success': True,
@@ -1062,6 +1211,7 @@ def generate_shopping_list_endpoint():
 
 
 @app.route('/send-to-reminders', methods=['POST'])
+@require_token
 def send_to_reminders_endpoint():
     """Send this week's unchecked shopping-list items to Apple Reminders.
 
@@ -1082,6 +1232,14 @@ def send_to_reminders_endpoint():
     except ValueError as exc:
         return jsonify({'success': False, 'error': str(exc)}), 400
 
+    from lib.apple_integration import service as apple_service
+    try:
+        queued = apple_service.enqueue('shopping', week)
+    except (apple_service.RevisionConflict, apple_service.SourceUnavailable) as exc:
+        return jsonify(success=False, error=str(exc), queued=0, delivered=0), 409
+    if queued is not None:
+        return jsonify(queued)
+
     # Parse shopping list
     result = parse_shopping_list_file(week)
 
@@ -1092,6 +1250,7 @@ def send_to_reminders_endpoint():
         return jsonify({
             'success': True,
             'items_sent': 0,
+            'queued': 0, 'delivered': 0,
             'items_skipped': result['skipped'],
             'message': 'No unchecked items to send'
         })
@@ -1104,6 +1263,7 @@ def send_to_reminders_endpoint():
         return jsonify({
             'success': True,
             'items_sent': sent,
+            'queued': 0, 'delivered': sent,
             'items_skipped': result['skipped']
         })
     except Exception as e:
@@ -1335,10 +1495,30 @@ def api_meal_plan_get(week):
         # 06:00 agent), which is where `regenerate_index` now happens too.
         content = generate_meal_plan_markdown(year, week_num)
 
-    parsed = parse_meal_plan(content, year, week_num)
+    parsed = parse_meal_plan(content, year, week_num, all_entries=True)
 
     days = []
+    planned_meals = []
     macro_cache: dict = {}
+
+    def serialize_entry(entry):
+        # One serializer keeps the legacy day fields and complete viewing list
+        # consistent, including a plate's canonical member identities.
+        slot_json = {"name": entry.name, "servings": entry.servings, "kind": entry.kind}
+        if entry.kind == "meal":
+            meal_def = meal_loader.load_meal(entry.name)
+            if meal_def is not None:
+                slot_json["sub_recipes"] = [
+                    {"recipe": sub.recipe, "servings": sub.servings}
+                    for sub in meal_def.sub_recipes
+                ]
+                # The planner loads its meal index concurrently, so include
+                # the plate metadata here. Nutrition remains per 1x bundle.
+                slot_json["slot"] = meal_def.slot
+                slot_json["nutrition"] = meal_nutrition(
+                    meal_def, OBSIDIAN_RECIPES_PATH, macro_cache=macro_cache)
+        return slot_json
+
     for day_data in parsed:
         day_json = {
             "day": day_data["day"],
@@ -1346,29 +1526,14 @@ def api_meal_plan_get(week):
             "breakfast": None, "lunch": None, "snack": None, "dinner": None,
         }
         for meal in ("breakfast", "lunch", "snack", "dinner"):
-            entry = day_data[meal]
-            if entry is not None:
-                # servings is a float (fractional multipliers, e.g. 1.5); JSON numbers are JS-native
-                slot_json = {"name": entry.name, "servings": entry.servings, "kind": entry.kind}
-                if entry.kind == "meal":
-                    meal_def = meal_loader.load_meal(entry.name)
-                    if meal_def is not None:
-                        slot_json["sub_recipes"] = [
-                            {"recipe": s.recipe, "servings": s.servings}
-                            for s in meal_def.sub_recipes
-                        ]
-                        # Shipped here, not left to the client's /api/meals fetch:
-                        # the planner loads meals and the plan concurrently, so a
-                        # card built from the plan can't count on the meal index
-                        # being populated yet. `nutrition` is per 1x the bundle —
-                        # the card scales it by its own servings multiplier.
-                        slot_json["slot"] = meal_def.slot
-                        slot_json["nutrition"] = meal_nutrition(
-                            meal_def, OBSIDIAN_RECIPES_PATH, macro_cache=macro_cache)
-                day_json[meal] = slot_json
+            for entry in day_data[meal]:
+                slot_json = serialize_entry(entry)
+                if day_json[meal] is None:
+                    day_json[meal] = slot_json
+                planned_meals.append({"date": day_json["date"], "meal": meal, **slot_json})
         days.append(day_json)
 
-    return jsonify({"week": week, "days": days})
+    return jsonify({"week": week, "days": days, "planned_meals": planned_meals})
 
 
 @app.route('/api/meal-plan/<week>', methods=['PUT'])
@@ -1702,6 +1867,18 @@ def _apply_cook_patch(cook_id, data) -> tuple:
     return before, updated, consumption
 
 
+@app.get('/api/cooks/<int:cook_id>')
+@require_token
+@_ledger_error
+def api_cook_get(cook_id):
+    """Resolve a persisted native cook identity without reconstructing its title."""
+    from lib import serving_ledger
+    cook = serving_ledger.get_cook(cook_id)
+    if cook is None:
+        return jsonify(error='Cook not found'), 404
+    return jsonify(cook)
+
+
 @app.route('/api/cooks/<int:cook_id>', methods=['PATCH'])
 @require_token
 @_ledger_error
@@ -1863,6 +2040,34 @@ def api_bundle_delete(bundle_id):
     _regen_weeks(*affected)
     _sync_cook_history(*[c["recipe"] for c in removed])
     return jsonify({"status": "deleted", "cooks": len(removed)})
+
+
+@app.post('/api/cooks/<int:cook_id>/schedule')
+@require_token
+@_ledger_error
+def api_cook_schedule(cook_id):
+    from lib import serving_ledger
+    data = request.get_json(silent=True)
+    required = {'date','meal','start','timezone','duration_minutes','servings_to_eat'}
+    if not isinstance(data, dict) or not required <= set(data) or set(data) - required - {'expected_unplaced'}:
+        return jsonify(error='Choose date, meal, time, timezone, duration and servings'), 400
+    if 'expected_unplaced' in data and type(data['expected_unplaced']) is not bool:
+        return jsonify(error='Expected placement must be a boolean'), 400
+    if serving_ledger.get_cook(cook_id) is None:
+        return jsonify(error='Cook not found'), 404
+    saved = serving_ledger.schedule_cook(cook_id, **data)
+    _regen_weeks(saved['cook']['week'])
+    return jsonify(saved)
+
+
+@app.delete('/api/cooks/<int:cook_id>/schedule')
+@require_token
+@_ledger_error
+def api_cook_unschedule(cook_id):
+    from lib import serving_ledger
+    if serving_ledger.get_cook(cook_id) is None:
+        return jsonify(error='Cook not found'), 404
+    return jsonify(cook=serving_ledger.unschedule_cook(cook_id), schedule=None)
 
 
 @app.route('/api/cooks/<int:cook_id>/move', methods=['POST'])
@@ -2821,6 +3026,86 @@ def api_pantry_put():
     return jsonify({"status": "saved", "count": len(items)})
 
 
+# ----- Saved native source views (never infer or spend inventory) -----
+
+def _saved_shopping_payload(week):
+    from lib.shopping_note import read_shopping_note
+    document = read_shopping_note(week)
+    return {"week": week, "content_hash": document.content_hash,
+            "rows": [{"id": row.id, "text": row.text, "completed": row.completed,
+                      "issue": document.issues.get(row.id) or ("identity_missing" if not row.id else None)}
+                     for row in document.rows]}
+
+
+@app.route('/api/shopping-list/saved/<week>', methods=['GET'])
+@require_token
+def api_saved_shopping_get(week):
+    from lib.apple_integration.models import RevisionConflict
+    try:
+        return jsonify(_saved_shopping_payload(parse_iso_week(week)))
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    except FileNotFoundError:
+        return jsonify(error="No saved shopping list for this week"), 404
+    except RevisionConflict as exc:
+        return jsonify(error=str(exc)), 409
+    except (OSError, UnicodeError):
+        return jsonify(error="Saved shopping list is unavailable"), 503
+
+
+@app.route('/api/shopping-list/saved/<week>/completion', methods=['POST'])
+@require_token
+def api_saved_shopping_completion(week):
+    from uuid import UUID
+    from lib import paths
+    from lib.shopping_note import set_completed
+    from lib.note_mutation import mutate_note
+    from lib.apple_integration.models import RevisionConflict
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or set(data) != {'row_id', 'completed', 'expected_hash', 'operation_id'}:
+        return jsonify(error="row_id, completed, expected_hash and operation_id required"), 400
+    try:
+        week = parse_iso_week(week)
+        if (type(data['completed']) is not bool or not isinstance(data['row_id'], str)
+                or not re.fullmatch(r'(gen|manual):[A-Za-z0-9_-]{1,64}', data['row_id'])
+                or not isinstance(data['expected_hash'], str)
+                or not re.fullmatch(r'[a-f0-9]{64}', data['expected_hash'])
+                or not isinstance(data['operation_id'], str)):
+            raise ValueError('Invalid saved shopping update')
+        operation = str(UUID(data['operation_id']))
+        path = shopping_list_path(paths.shopping_lists_dir(), week)
+        if not path.is_file():
+            return jsonify(error="No saved shopping list for this week"), 404
+        mutate_note(path, data['expected_hash'],
+                    lambda text: set_completed(text, data['row_id'], data['completed']), operation)
+        return jsonify(_saved_shopping_payload(week))
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    except RevisionConflict as exc:
+        return jsonify(error=str(exc)), 409
+    except (OSError, UnicodeError):
+        return jsonify(error="Saved shopping list is unavailable"), 503
+
+
+@app.route('/api/tasks/<week>/saved', methods=['GET'])
+@require_token
+def api_saved_tasks_get(week):
+    from lib.apple_integration import prep
+    from lib.apple_integration.models import SourceUnavailable, RevisionConflict
+    try:
+        week = parse_iso_week(week)
+        payload, _ = prep._read(week)
+        return jsonify(payload)
+    except FileNotFoundError:
+        return jsonify(error="No saved prep tasks for this week"), 404
+    except (SourceUnavailable, RevisionConflict):
+        return jsonify(error="Saved prep tasks need an explicit refresh in KitchenOS"), 409
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    except (OSError, UnicodeError):
+        return jsonify(error="Saved prep tasks are unavailable"), 503
+
+
 # ----- Pantry-aware shopping list flow -----
 
 @app.route('/api/shopping-list/preview', methods=['POST'])
@@ -2837,6 +3122,7 @@ def api_shopping_list_preview():
 
 
 @app.route('/api/shopping-list/confirm', methods=['POST'])
+@require_token
 def api_shopping_list_confirm():
     data = request.get_json(force=True, silent=True) or {}
     week = data.get("week")
@@ -2854,18 +3140,26 @@ def api_shopping_list_confirm():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
-    SHOPPING_LISTS_PATH.mkdir(parents=True, exist_ok=True)
-    markdown = generate_shopping_list_markdown(
-        week, items, inventory_matches=inventory_matches)
+    from lib.shopping_note import save_shopping_note
+    from lib.apple_integration.models import RevisionConflict
+    # Structured demand assigns generated IDs before rendering. A selection
+    # without matching generation evidence is a distinct manual row.
+    generated = generate_shopping_list(week, pantry=pantry_module.load_pantry())
+    lines = generated.get('lines', []) if generated.get('success') else []
+    try:
+        document = save_shopping_note(week, lines, inventory_matches, selected_items=items)
+    except RevisionConflict as exc:
+        return jsonify({'error': str(exc)}), 409
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
     filename = out_path.name
-    out_path.write_text(markdown, encoding="utf-8")
 
     if decisions:
         pantry = pantry_module.load_pantry()
         updated = pantry_module.apply_decisions(decisions, pantry)
         pantry_module.save_pantry(updated)
 
-    return jsonify({"status": "saved", "filename": filename, "items": len(items)})
+    return jsonify({"status": "saved", "filename": filename, "items": len(document.rows)})
 
 
 # ----- Cross-recipe prep tasks -----
@@ -2880,6 +3174,7 @@ def api_tasks_get(week):
 
 
 @app.route('/api/tasks/<week>/<task_id>/done', methods=['POST'])
+@require_token
 def api_task_mark_done(week, task_id):
     if not re.match(r'^\d{4}-W\d{2}$', week):
         return jsonify({"error": "Invalid week format. Expected YYYY-WNN"}), 400
@@ -3877,18 +4172,28 @@ def api_prep_to_reminders():
     data = request.get_json(force=True, silent=True) or {}
     scope = "ahead" if data.get("scope") == "ahead" else "today"
 
+    from lib.apple_integration import service as apple_service
+    from datetime import date
+    week = data.get('week') or date.today().strftime('%G-W%V')
+    try:
+        queued = apple_service.enqueue('prep', week)
+    except (apple_service.InvalidPayload, apple_service.RevisionConflict, apple_service.SourceUnavailable) as exc:
+        return jsonify(error=str(exc), queued=0, delivered=0), 409
+    if queued is not None:
+        return jsonify({**queued, 'list': 'Prep', 'scope': scope})
+
     prep = kitchen_today.prep_tasks()
     items = [
         f"{t['text']} — {t['recipe']}" if t.get("recipe") else t.get("text", "")
         for t in prep[scope] if not t.get("done") and t.get("text")
     ]
     if not items:
-        return jsonify({"sent": 0, "list": "Prep", "scope": scope})
+        return jsonify({"sent": 0, "list": "Prep", "scope": scope, "queued": 0, "delivered": 0})
     try:
         sent = add_to_reminders(items, "Prep")
     except Exception as exc:
         return jsonify({"error": str(exc)}), 502
-    return jsonify({"sent": sent, "list": "Prep", "scope": scope})
+    return jsonify({"sent": sent, "list": "Prep", "scope": scope, "queued": 0, "delivered": sent})
 
 
 @app.route('/', methods=['GET'])

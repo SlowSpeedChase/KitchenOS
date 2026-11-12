@@ -36,6 +36,17 @@ struct SettingsView: View {
                 }
             }
 
+            #if os(macOS)
+            CookingCalendarSettings()
+            #else
+            Section("Cooking opportunities") {
+                Text("Connect Calendar in KitchenOS Settings on the Mac running your server. Cooking opportunities will appear in your plan here.")
+                    .font(.caption)
+            }
+            #endif
+
+            AppleIntegrationSettingsView()
+
             Section("Obsidian") {
                 TextField("Vault name", text: $obsidianVault)
                     .textFieldStyle(.roundedBorder)

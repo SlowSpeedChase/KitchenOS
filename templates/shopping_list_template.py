@@ -13,7 +13,8 @@ def generate_shopping_list_markdown(week: str, items: list[str],
                                     on_hand: list[str] | None = None,
                                     check_pantry: list[str] | None = None,
                                     inventory_matches: list[str] | None = None,
-                                    generated_items: list[str] | None = None) -> str:
+                                    generated_items: list[str] | None = None,
+                                    shopping_rows=None, shopping_metadata: str | None = None) -> str:
     """Generate shopping list markdown.
 
     Args:
@@ -28,6 +29,8 @@ def generate_shopping_list_markdown(week: str, items: list[str],
         generated_items: Items produced from recipes, excluding preserved manual
             additions. Stored as encoded metadata so a later regeneration can
             distinguish provenance even when inventory removes a generated item.
+        shopping_rows: Validated ShoppingRow records from the row-aware writer.
+        shopping_metadata: Encoded v3 identity snapshots from that writer.
 
     Returns:
         Formatted markdown string
@@ -51,11 +54,18 @@ def generate_shopping_list_markdown(week: str, items: list[str],
         ).decode("ascii")
         lines.extend(["", f"<!-- kitchenos-generated-items-v2:{payload} -->"])
 
+    if shopping_metadata is not None:
+        lines.extend(["", f"<!-- kitchenos-shopping-v3:{shopping_metadata} -->"])
+
     lines.extend(["", "## Need to purchase", ""])
 
     # Add checklist items
     for item in items:
         lines.append(f"- [ ] {item}")
+
+    for row in shopping_rows or []:
+        checked = "x" if row.completed else " "
+        lines.append(f"- [{checked}] {row.text} <!-- kitchenos-item:{row.id} -->")
 
     all_inventory_matches = list(inventory_matches or [])
     all_inventory_matches.extend(on_hand or [])
