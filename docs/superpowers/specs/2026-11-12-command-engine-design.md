@@ -53,10 +53,20 @@ What the failures were:
   and never once asked a question when the command was nonsense.
 - **Label-picking** got every date right (code resolves them). All five misses were a choice
   between look-alike labels — `plan_cook` vs `move_cook`, `inventory_add` vs `shopping_add`.
-- One call took 105 s. Cause not confirmed; a cold model load is the likely one.
+- **Latency on this machine is not dependable.** In the label-picking run, qwen2.5:3b had
+  one 105 s call; mistral:7b timed out on its warm-up and never ran; granite4.1:8b had a
+  92 s median and timed out on 6 of 16 commands (it scored 9/16, with only one wrong
+  answer among the ten that returned). The same granite model had a 3.4 s median an hour
+  earlier. Cause not confirmed — model swapping in 16 GB, or another KitchenOS job using
+  Ollama at the same time, are the candidates. Whatever the cause, it is why the user,
+  not a model, is the last tier, and why the decider should be the smallest model that
+  passes the scorecard.
 
-Not measured: qwen3.5:9b and gemma4:12b (runs did not finish), larger models under the
-label-picking approach, and the iPad's on-device Apple model (needs a device build).
+Not measured: qwen3.5:9b and gemma4:12b (runs did not finish); a clean label-picking
+score for any model larger than 3b; and the iPad's on-device Apple model (needs a device build).
+
+**To settle before picking the default model:** rerun the scorecard with nothing else
+using Ollama, and find out what was competing for it.
 
 ## Architecture
 
