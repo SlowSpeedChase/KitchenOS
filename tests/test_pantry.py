@@ -186,7 +186,6 @@ def test_split_no_match_returns_full_to_buy():
     ("demand", "pantry_name", "amount", "unit"),
     [
         ("bone-in chicken breast", "Canned chicken breast", "1", "whole"),
-        ("garlic", "Garlic powder", "4", "clove"),
         ("onion", "caramelized onions", "2", "whole"),
         ("potatoes", "diced fried potatoes", "1", "whole"),
         ("banana", "frozen bananas", "5", "whole"),
@@ -720,3 +719,153 @@ class TestStockForIngredients:
         """
         pantry = [{"item": "Paprika", "amount": "0.5", "unit": "tsp"}]
         assert pantry_module.stock_for_ingredients(["paprika"], pantry)[0] is not None
+
+
+def test_split_descriptor_variant_is_review_not_credit():
+    pantry = [{"item": "extra virgin olive oil", "amount": "500", "unit": "ml"}]
+    out = split_against_pantry("extra-virgin olive oil", "2", "tbsp", pantry)
+    assert out["status"] == "review"
+    assert out["from_pantry"] is None
+    assert "another name" in out["warning"]
+
+
+def test_identity_only_match_is_never_credited():
+    pantry = [{"item": "lemon juice", "amount": "1", "unit": "ea"}]
+    out = split_against_pantry("freshly squeezed lemon juice", "1", "whole", pantry)
+    assert out["status"] == "review"
+    assert out["from_pantry"] is None
+    pantry = [{"item": "extra virgin olive oil", "amount": "500", "unit": "ml"}]
+    out = split_against_pantry("extra-virgin olive oil", "1", "cup", pantry)
+    assert out["status"] == "review"
+
+
+def test_exact_name_match_still_credits():
+    pantry = [{"item": "olive oil", "amount": "500", "unit": "ml"}]
+    out = split_against_pantry("olive oil", "2", "tbsp", pantry)
+    assert out["status"] == "credited"
+
+
+def test_split_head_mismatch_is_a_plain_buy_not_review():
+    pantry = [{"item": "Garlic powder", "amount": "1", "unit": "ct"}]
+    out = split_against_pantry("garlic cloves", "5", "", pantry)
+    assert out["status"] == "buy"
+    assert out["matched_inventory"] is None
+    assert out["warning"] is None
+
+
+def test_split_salt_does_not_match_black_beans():
+    pantry = [{"item": "Kosher salt", "amount": "1", "unit": "ct"}]
+    out = split_against_pantry("no-salt-added black beans", "2", "cans", pantry)
+    assert out["status"] == "buy"
+    assert out["matched_inventory"] is None
+
+
+def test_split_same_head_related_item_still_reviews():
+    # caramelized onions are onions, but not the raw onion asked for
+    pantry = [{"item": "caramelized onions", "amount": "1", "unit": "ct"}]
+    out = split_against_pantry("onion", "1", "", pantry)
+    assert out["status"] == "review"
+    assert out["matched_inventory"]["item"] == "caramelized onions"
+
+
+@pytest.mark.parametrize(
+    ("demand", "pantry_name", "amount", "unit"),
+    [
+        ("parmesan cheese", "parmesan", "1", "cup"),
+        ("cheddar cheese", "shredded cheddar", "1", "cup"),
+        ("egg yolks", "egg", "2", ""),
+    ],
+)
+def test_same_food_rewording_stays_in_review(demand, pantry_name, amount, unit):
+    pantry = [{"item": pantry_name, "amount": "1", "unit": "ct"}]
+    out = split_against_pantry(demand, amount, unit, pantry)
+    assert out["status"] == "review"
+    assert out["matched_inventory"] == pantry[0]
+
+
+@pytest.mark.parametrize(
+    ("demand", "pantry_name", "amount", "unit"),
+    [
+        ("garlic", "Garlic powder", "4", "clove"),
+        ("dill pickles", "dill", "4", "whole"),
+        ("no-salt-added black beans", "Kosher salt", "2", "cans"),
+    ],
+)
+def test_different_food_is_plain_buy(demand, pantry_name, amount, unit):
+    pantry = [{"item": pantry_name, "amount": "1", "unit": "ct"}]
+    out = split_against_pantry(demand, amount, unit, pantry)
+    assert out["status"] == "buy"
+    assert out["matched_inventory"] is None
+    assert out["warning"] is None
+
+
+@pytest.mark.parametrize("amount, unit", [
+    ("1", "tsp"), ("2", "tbsp"), ("3", "tbsp"), ("15", "g"), ("1", "pinch"),
+])
+def test_small_ask_against_owned_package_is_on_hand(amount, unit):
+    pantry = [{"item": "Kosher salt", "amount": "1", "unit": "ct"}]
+    out = split_against_pantry("salt", amount, unit, pantry)
+    assert out["status"] == "on_hand"
+    assert out["from_pantry"] is None   # never a decrement, never a pull
+    assert out["to_buy"] is None
+    assert out["warning"] is None
+
+
+@pytest.mark.parametrize("amount, unit", [("10.33", "tbsp"), ("1", "cup"), ("40", "g")])
+def test_large_ask_against_package_still_reviews(amount, unit):
+    pantry = [{"item": "Olive oil", "amount": "1", "unit": "ct"}]
+    out = split_against_pantry("olive oil", amount, unit, pantry)
+    assert out["status"] == "review"
+    assert "package quantity is unknown" in out["warning"]
+
+
+def test_small_ask_needs_exact_identity_not_related():
+    pantry = [{"item": "Smoked paprika", "amount": "1", "unit": "ct"}]
+    out = split_against_pantry("paprika", "1", "tsp", pantry)
+    assert out["status"] != "on_hand"
+
+
+def test_small_ask_against_measured_row_is_not_on_hand():
+    # a measured row is compared by quantity as before, never assumed
+    pantry = [{"item": "sesame oil", "amount": "1", "unit": "oz"}]
+    out = split_against_pantry("sesame oil", "1.5", "tsp", pantry)
+    assert out["status"] != "on_hand"
+
+
+def test_unitless_count_against_package_is_not_on_hand():
+    pantry = [{"item": "Garlic powder", "amount": "1", "unit": "ct"}]
+    out = split_against_pantry("garlic powder", "1", "", pantry)
+    assert out["status"] != "on_hand"
+
+
+def test_apply_decisions_ignores_on_hand_lines():
+    """Decisions are built (shopping_list.prompt_pantry_decisions and the
+    planner confirm) only from lines with a truthy from_pantry. An on_hand
+    line has none, so the built list is empty, and applying it leaves the
+    row untouched."""
+    import copy
+    pantry = [{"item": "Kosher salt", "amount": "1", "unit": "ct"}]
+    out = split_against_pantry("salt", "1", "tsp", pantry)
+    assert out["status"] == "on_hand"
+    assert out["from_pantry"] is None
+    lines = [out]
+    decisions = [
+        {"item": ln["matched_inventory"]["item"],
+         "amount": ln["from_pantry"]["amount"], "unit": ln["from_pantry"]["unit"]}
+        for ln in lines if ln.get("from_pantry")
+    ]
+    assert decisions == []
+    work = copy.deepcopy(pantry)
+    result = pantry_module.apply_decisions(decisions, work)
+    assert result == pantry
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_exact_name_row_wins_over_identity_sibling(reverse):
+    pantry = [{"item": "Celtic sea salt", "amount": "2", "unit": "cup"},
+              {"item": "salt", "amount": "3", "unit": "cup"}]
+    if reverse:
+        pantry.reverse()
+    out = split_against_pantry("salt", "1", "cup", pantry)
+    assert out["status"] == "credited"
+    assert out["matched_inventory"]["item"] == "salt"

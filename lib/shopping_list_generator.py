@@ -17,6 +17,7 @@ from lib.recipe_parser import (
 from lib.ingredient_aggregator import aggregate_ingredients, format_ingredient, parse_amount_to_float, format_amount
 from lib.ingredient_normalizer import normalize_name
 from lib.ingredient_parser import parse_ingredient_best
+from lib.shopping_identity import shopping_identity
 from lib import meal_loader, paths
 from lib.meal_plan_parser import sub_multiplier
 from lib.safe_paths import shopping_list_path
@@ -175,7 +176,7 @@ def compute_lines(aggregated: list[dict], pantry: Optional[list[dict]] = None) -
             "to_buy": {amount, unit} | None,        # what still needs purchasing
             "display": str,                         # full formatted ingredient
             "warning": str | None,                  # cross-family mismatch, etc.
-            "status": "buy" | "credited" | "review" | "excluded",
+            "status": "buy" | "credited" | "review" | "on_hand" | "excluded",
             "matched_inventory": dict | None,
         }
 
@@ -308,10 +309,17 @@ def _inventory_match_note(line: dict) -> Optional[str]:
     matched_qty = format_qty(matched.get("amount"), matched.get("unit"))
     warning = (line.get("warning") or "").lower()
     to_buy = line.get("to_buy")
+    if line.get("status") == "on_hand":
+        return (
+            f"{needed_text} → {matched.get('item', 'inventory item')} "
+            f"({matched_qty}) — assumed on hand"
+        )
     if line.get("status") == "credited" and to_buy:
         suffix = f"exact match; {_fmt_qty(to_buy)} still needed"
     elif line.get("status") == "credited":
         suffix = "exact match; enough recorded"
+    elif "another name" in warning:
+        suffix = "same food, other name; verify amount"
     elif "related item" in warning:
         suffix = "related item; verify amount and form"
     elif "package quantity is unknown" in warning:
@@ -343,12 +351,25 @@ def shopping_sections(lines: list[dict]) -> dict[str, list[str]]:
 
     Any inventory candidate belongs in the verification section, regardless of
     whether its quantity was creditable. Only lines with no candidate become
-    purchase checkboxes (and therefore Reminders items).
+    purchase checkboxes (and therefore Reminders items). Lines assumed covered
+    by an owned container (`on_hand`) collapse into one closing plain bullet,
+    so a week of salt, oil and spices reads as one line instead of forty.
     """
     purchase: list[str] = []
     inventory_matches: list[str] = []
+    on_hand: dict[str, str] = {}
     for line in lines:
-        if line.get("status") == "excluded":
+        status = line.get("status")
+        if status == "excluded":
+            continue
+        if status == "on_hand":
+            name = line.get("item", "")
+            key = shopping_identity(name)
+            if name and key not in on_hand:
+                row = (line.get("matched_inventory") or {}).get("item") or ""
+                same = (shopping_identity(row) == key
+                        and row.strip().lower() == name.strip().lower())
+                on_hand[key] = name if (same or not row) else f"{name} ({row})"
             continue
 
         matched = line.get("matched_inventory")
@@ -364,6 +385,11 @@ def shopping_sections(lines: list[dict]) -> dict[str, list[str]]:
                 "item": line.get("item", ""),
             }))
 
+    if on_hand:
+        inventory_matches.append(
+            "Assumed on hand — small amounts from packages you have: "
+            + ", ".join(sorted(on_hand.values(), key=str.lower))
+        )
     return {"purchase": purchase, "inventory_matches": inventory_matches}
 
 

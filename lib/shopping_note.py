@@ -196,15 +196,10 @@ def save_shopping_note(
         )
     ):
         raise ValueError("Selected items must be single-line text")
-    inventory_matches = [
-        note
-        for match in inventory_matches
-        for note in (
-            shopping_sections([match])["inventory_matches"]
-            if isinstance(match, dict)
-            else [match]
-        )
-    ]
+    dict_matches = [m for m in inventory_matches if isinstance(m, dict)]
+    inventory_matches = [m for m in inventory_matches if not isinstance(m, dict)]
+    if dict_matches:
+        inventory_matches += shopping_sections(dict_matches)["inventory_matches"]
     if any(not isinstance(x, str) or "\n" in x for x in inventory_matches):
         raise ValueError("Inventory matches must be single-line text")
 

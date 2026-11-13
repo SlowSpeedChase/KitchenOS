@@ -30,6 +30,7 @@ from lib.ingredient_aggregator import (
     unit_compatibility,
 )
 from lib.ingredient_normalizer import normalize_name
+from lib.shopping_identity import shopping_identity
 from lib.use_it_up import _covers, _ingredient_phrase, _phrase
 
 
@@ -194,6 +195,51 @@ def find_match(item_name: str, pantry: list[dict]) -> Optional[dict]:
     return None
 
 
+# A matched row whose head is one of these is a different product made from
+# the demand's food (garlic -> garlic powder, dill -> dill pickles).
+_DERIVED_FORM_HEADS = {"powder", "salt", "pickle", "extract", "flake", "seasoning"}
+
+
+def _different_food(item: str, matched: str) -> bool:
+    """Whether a broad match names a different food, so it's a plain buy."""
+    from lib.fdc_local import query_head
+    d_head, d_qual = query_head(_match_text(item))
+    m_head, m_qual = query_head(matched)
+    if not d_head or not m_head or d_head == m_head:
+        return False
+    if m_head in _DERIVED_FORM_HEADS or d_head in _DERIVED_FORM_HEADS:
+        return True
+    # One side's head named in the other's qualifier: same food, other wording
+    # ("parmesan" / "parmesan cheese", "cheddar cheese" / "sharp cheddar").
+    return not (d_head == m_qual or m_head == d_qual)
+
+
+# Units that mean "one container exists", not a measured amount.
+_PACKAGE_UNITS = {"ct", "ea", "each", "pkg", "package", "jar", "bottle",
+                  "can", "bag", "box", "container", "tub", "tin"}
+_TRACE_UNITS = {"pinch", "pinches", "dash", "dashes", "smidgen"}
+# The most a recipe line may ask of an owned container before a person
+# should look: three tablespoons, or thirty grams.
+_SMALL_VOLUME_BASE = convert_to_base_unit(3, "tbsp", "volume")
+_SMALL_WEIGHT_BASE = convert_to_base_unit(30, "g", "weight")
+
+
+def _is_small_ask(amount, unit: str) -> bool:
+    """Whether a demand is small enough that an owned container covers it."""
+    unit = (unit or "").lower().strip()
+    if unit in _TRACE_UNITS:
+        return True
+    n = parse_amount_to_float(amount)
+    if n is None:
+        return False
+    family = get_unit_family(unit)
+    if family == "volume":
+        return convert_to_base_unit(n, unit, family) <= _SMALL_VOLUME_BASE
+    if family == "weight":
+        return convert_to_base_unit(n, unit, family) <= _SMALL_WEIGHT_BASE
+    return False
+
+
 def split_against_pantry(item: str, amount, unit: str, pantry: list[dict]) -> dict:
     """Split a recipe-demand line against the pantry.
 
@@ -201,28 +247,36 @@ def split_against_pantry(item: str, amount, unit: str, pantry: list[dict]) -> di
         from_pantry: {"amount": str, "unit": str} | None
         to_buy:     {"amount": str, "unit": str} | None
         warning:    str | None — set when the candidate cannot be credited
-        status:     "buy" | "credited" | "review"
+        status:     "buy" | "credited" | "review" | "on_hand"
         matched_inventory: the candidate inventory row, if any
 
     The pantry inventory is NOT mutated. Use `apply_decisions()` for that.
     """
     needed = {"amount": amount, "unit": unit}
-    item_identity = normalize_name(item)
+    item_identity = shopping_identity(item)
+    # Two passes so the result never depends on row order: an exact-name row
+    # wins over an identity sibling ("salt" over "Celtic sea salt").
+    item_exact = normalize_name(item)
     pantry_entry = next(
         (entry for entry in pantry
-         if normalize_name(entry.get("item") or "") == item_identity),
+         if normalize_name(entry.get("item") or "") == item_exact),
+        None,
+    ) or next(
+        (entry for entry in pantry
+         if shopping_identity(entry.get("item") or "") == item_identity),
         None,
     )
     if pantry_entry is None:
         pantry_entry = find_match(item, pantry)
+    buy = {
+        "from_pantry": None,
+        "to_buy": needed,
+        "warning": None,
+        "status": "buy",
+        "matched_inventory": None,
+    }
     if pantry_entry is None:
-        return {
-            "from_pantry": None,
-            "to_buy": needed,
-            "warning": None,
-            "status": "buy",
-            "matched_inventory": None,
-        }
+        return buy
 
     matched = pantry_entry.get("item") or "inventory item"
     p_unit = pantry_entry.get("unit") or ""
@@ -234,7 +288,14 @@ def split_against_pantry(item: str, amount, unit: str, pantry: list[dict]) -> di
     # shopping credit has the opposite risk profile: a merely-related product
     # may be useful for suggestions, but must not remove the ingredient needed
     # to execute the plan.
-    if normalize_name(item) != normalize_name(matched):
+    if shopping_identity(item) != shopping_identity(matched):
+        # Broad match (shopping identity differs). If the head noun also
+        # differs it names a different food (garlic -> Garlic powder, black
+        # beans -> Kosher salt): listing it under "verify" was a third of every
+        # list, so it is simply a purchase. Otherwise it is a related item to
+        # verify, never a credit.
+        if _different_food(item, matched):
+            return buy
         return {
             "from_pantry": None,
             "to_buy": needed,
@@ -243,11 +304,41 @@ def split_against_pantry(item: str, amount, unit: str, pantry: list[dict]) -> di
             "matched_inventory": pantry_entry,
         }
 
+    p_unit_norm = p_unit.lower().strip()
+    unit_norm = (unit or "").lower().strip()
+    # A pinch of salt against a box of salt: the box covers it. Assumed, not
+    # credited. from_pantry stays None so neither apply_decisions nor the
+    # cooking packet's pull allocation ever treats a container as spendable
+    # by the teaspoon.
+    if p_unit_norm in _PACKAGE_UNITS and _is_small_ask(amount, unit_norm):
+        return {
+            "from_pantry": None,
+            "to_buy": None,
+            "warning": None,
+            "status": "on_hand",
+            "matched_inventory": pantry_entry,
+        }
+
+    # An identity-only match ("freshly squeezed lemon juice" vs "lemon juice")
+    # is the same food under another name. It may be assumed on hand (above,
+    # where nothing is spent) but must never be credited: credit is what the
+    # planner's confirm turns into a deleted inventory row.
+    exact = normalize_name(item) == normalize_name(matched)
+    if not exact:
+        return {
+            "from_pantry": None,
+            "to_buy": needed,
+            "warning": (
+                f"inventory has {match_label}, the same food under another "
+                "name; not credited"
+            ),
+            "status": "review",
+            "matched_inventory": pantry_entry,
+        }
+
     # Receipt and conversational ingest use `ct` as “one package exists.” It
     # cannot prove the number of eggs, cloves, leaves, grams, or tablespoons
     # left inside that package.
-    p_unit_norm = p_unit.lower().strip()
-    unit_norm = (unit or "").lower().strip()
     if p_unit_norm == "ct" and unit_norm != "ct":
         return {
             "from_pantry": None,

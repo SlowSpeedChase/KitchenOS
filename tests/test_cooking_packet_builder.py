@@ -6,7 +6,7 @@ import sqlite3
 import pytest
 
 from lib import inventory_db, serving_ledger
-from lib.cooking_packet_builder import allocate_pull_sources, build_week_draft
+from lib.cooking_packet_builder import _settle_line, allocate_pull_sources, build_week_draft
 from lib.cooking_packet_store import _validate_generated
 
 WEEK = "2026-W40"
@@ -549,3 +549,19 @@ def test_pull_partition_uses_confirmed_stages_and_keeps_unknowns_later(stage, re
                               'finish_after_cooking', 'serve_separately'}:
         assert packet[expected][0]['needs_review'] and packet[expected][0]['stage_reason']
     _validate_generated(WEEK, packet)
+
+
+def test_settle_keeps_on_hand_lines_off_the_buy_list():
+    line = {"status": "on_hand", "needed": {"amount": "1", "unit": "tsp"},
+            "from_pantry": None, "to_buy": None, "warning": None}
+    _settle_line(line, 0.0)
+    assert line["status"] == "on_hand"
+    assert line["to_buy"] is None
+
+
+def test_settle_uncredited_line_still_buys():
+    line = {"status": "buy", "needed": {"amount": "2", "unit": ""},
+            "from_pantry": None, "to_buy": None, "warning": None}
+    _settle_line(line, 0.0)
+    assert line["status"] == "buy"
+    assert line["to_buy"] == {"amount": "2", "unit": ""}
