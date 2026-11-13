@@ -29,6 +29,7 @@ from lib.ingredient_aggregator import (
     parse_amount_to_float,
     unit_compatibility,
 )
+from lib.ingredient_normalizer import normalize_name
 from lib.shopping_identity import shopping_identity
 from lib.use_it_up import _covers, _ingredient_phrase, _phrase
 
@@ -281,9 +282,11 @@ def split_against_pantry(item: str, amount, unit: str, pantry: list[dict]) -> di
     # may be useful for suggestions, but must not remove the ingredient needed
     # to execute the plan.
     if shopping_identity(item) != shopping_identity(matched):
-        # A broad match whose head noun differs names a different food
-        # (garlic -> Garlic powder, black beans -> Kosher salt). Listing it
-        # under "verify" was a third of every list; it is simply a purchase.
+        # Broad match (shopping identity differs). If the head noun also
+        # differs it names a different food (garlic -> Garlic powder, black
+        # beans -> Kosher salt): listing it under "verify" was a third of every
+        # list, so it is simply a purchase. Otherwise it is a related item to
+        # verify, never a credit.
         if _different_food(item, matched):
             return buy
         return {
@@ -306,6 +309,23 @@ def split_against_pantry(item: str, amount, unit: str, pantry: list[dict]) -> di
             "to_buy": None,
             "warning": None,
             "status": "on_hand",
+            "matched_inventory": pantry_entry,
+        }
+
+    # An identity-only match ("freshly squeezed lemon juice" vs "lemon juice")
+    # is the same food under another name. It may be assumed on hand (above,
+    # where nothing is spent) but must never be credited: credit is what the
+    # planner's confirm turns into a deleted inventory row.
+    exact = normalize_name(item) == normalize_name(matched)
+    if not exact:
+        return {
+            "from_pantry": None,
+            "to_buy": needed,
+            "warning": (
+                f"inventory has {match_label}, the same food under another "
+                "name; not credited"
+            ),
+            "status": "review",
             "matched_inventory": pantry_entry,
         }
 

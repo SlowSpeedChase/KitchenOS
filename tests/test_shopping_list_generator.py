@@ -797,3 +797,13 @@ def test_on_hand_lines_summarised_in_one_plain_bullet_and_never_purchased():
     assert len(summary) == 1
     assert "salt" in summary[0] and "ground cumin" in summary[0]
     assert not any(n.lstrip().startswith("- [") for n in sections["inventory_matches"])
+
+
+def test_match_note_for_identity_only_review_says_other_name():
+    from lib.shopping_list_generator import _inventory_match_note
+    from lib.pantry import split_against_pantry
+    pantry = [{"item": "lemon juice", "amount": "1", "unit": "ea"}]
+    line = {"item": "freshly squeezed lemon juice",
+            "needed": {"amount": "1", "unit": "whole"},
+            **split_against_pantry("freshly squeezed lemon juice", "1", "whole", pantry)}
+    assert "same food, other name; verify amount" in _inventory_match_note(line)

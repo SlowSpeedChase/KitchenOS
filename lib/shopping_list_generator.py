@@ -312,6 +312,8 @@ def _inventory_match_note(line: dict) -> Optional[str]:
         suffix = f"exact match; {_fmt_qty(to_buy)} still needed"
     elif line.get("status") == "credited":
         suffix = "exact match; enough recorded"
+    elif "another name" in warning:
+        suffix = "same food, other name; verify amount"
     elif "related item" in warning:
         suffix = "related item; verify amount and form"
     elif "package quantity is unknown" in warning:

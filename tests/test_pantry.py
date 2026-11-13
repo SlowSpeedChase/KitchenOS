@@ -721,11 +721,28 @@ class TestStockForIngredients:
         assert pantry_module.stock_for_ingredients(["paprika"], pantry)[0] is not None
 
 
-def test_split_credits_descriptor_variants_as_same_food():
+def test_split_descriptor_variant_is_review_not_credit():
     pantry = [{"item": "extra virgin olive oil", "amount": "500", "unit": "ml"}]
     out = split_against_pantry("extra-virgin olive oil", "2", "tbsp", pantry)
+    assert out["status"] == "review"
+    assert out["from_pantry"] is None
+    assert "another name" in out["warning"]
+
+
+def test_identity_only_match_is_never_credited():
+    pantry = [{"item": "lemon juice", "amount": "1", "unit": "ea"}]
+    out = split_against_pantry("freshly squeezed lemon juice", "1", "whole", pantry)
+    assert out["status"] == "review"
+    assert out["from_pantry"] is None
+    pantry = [{"item": "extra virgin olive oil", "amount": "500", "unit": "ml"}]
+    out = split_against_pantry("extra-virgin olive oil", "1", "cup", pantry)
+    assert out["status"] == "review"
+
+
+def test_exact_name_match_still_credits():
+    pantry = [{"item": "olive oil", "amount": "500", "unit": "ml"}]
+    out = split_against_pantry("olive oil", "2", "tbsp", pantry)
     assert out["status"] == "credited"
-    assert out["to_buy"] is None
 
 
 def test_split_head_mismatch_is_a_plain_buy_not_review():
@@ -822,6 +839,22 @@ def test_unitless_count_against_package_is_not_on_hand():
 
 
 def test_apply_decisions_ignores_on_hand_lines():
+    """Decisions are built (shopping_list.prompt_pantry_decisions and the
+    planner confirm) only from lines with a truthy from_pantry. An on_hand
+    line has none, so the built list is empty, and applying it leaves the
+    row untouched."""
+    import copy
     pantry = [{"item": "Kosher salt", "amount": "1", "unit": "ct"}]
     out = split_against_pantry("salt", "1", "tsp", pantry)
-    assert out["from_pantry"] is None   # so no decision can be built from it
+    assert out["status"] == "on_hand"
+    assert out["from_pantry"] is None
+    lines = [out]
+    decisions = [
+        {"item": l["matched_inventory"]["item"],
+         "amount": l["from_pantry"]["amount"], "unit": l["from_pantry"]["unit"]}
+        for l in lines if l.get("from_pantry")
+    ]
+    assert decisions == []
+    work = copy.deepcopy(pantry)
+    result = pantry_module.apply_decisions(decisions, work)
+    assert result == pantry
