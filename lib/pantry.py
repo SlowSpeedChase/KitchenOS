@@ -30,6 +30,7 @@ from lib.ingredient_aggregator import (
     unit_compatibility,
 )
 from lib.ingredient_normalizer import normalize_name
+from lib.shopping_identity import shopping_identity
 from lib.use_it_up import _covers, _ingredient_phrase, _phrase
 
 
@@ -207,22 +208,23 @@ def split_against_pantry(item: str, amount, unit: str, pantry: list[dict]) -> di
     The pantry inventory is NOT mutated. Use `apply_decisions()` for that.
     """
     needed = {"amount": amount, "unit": unit}
-    item_identity = normalize_name(item)
+    item_identity = shopping_identity(item)
     pantry_entry = next(
         (entry for entry in pantry
-         if normalize_name(entry.get("item") or "") == item_identity),
+         if shopping_identity(entry.get("item") or "") == item_identity),
         None,
     )
     if pantry_entry is None:
         pantry_entry = find_match(item, pantry)
+    buy = {
+        "from_pantry": None,
+        "to_buy": needed,
+        "warning": None,
+        "status": "buy",
+        "matched_inventory": None,
+    }
     if pantry_entry is None:
-        return {
-            "from_pantry": None,
-            "to_buy": needed,
-            "warning": None,
-            "status": "buy",
-            "matched_inventory": None,
-        }
+        return buy
 
     matched = pantry_entry.get("item") or "inventory item"
     p_unit = pantry_entry.get("unit") or ""
@@ -234,7 +236,15 @@ def split_against_pantry(item: str, amount, unit: str, pantry: list[dict]) -> di
     # shopping credit has the opposite risk profile: a merely-related product
     # may be useful for suggestions, but must not remove the ingredient needed
     # to execute the plan.
-    if normalize_name(item) != normalize_name(matched):
+    if shopping_identity(item) != shopping_identity(matched):
+        # A broad match whose head noun differs names a different food
+        # (garlic -> Garlic powder, black beans -> Kosher salt). Listing it
+        # under "verify" was a third of every list; it is simply a purchase.
+        from lib.fdc_local import query_head
+        demand_head, _ = query_head(_match_text(item))
+        matched_head, _ = query_head(matched)
+        if demand_head and matched_head and demand_head != matched_head:
+            return buy
         return {
             "from_pantry": None,
             "to_buy": needed,

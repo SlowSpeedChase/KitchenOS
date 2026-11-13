@@ -186,7 +186,6 @@ def test_split_no_match_returns_full_to_buy():
     ("demand", "pantry_name", "amount", "unit"),
     [
         ("bone-in chicken breast", "Canned chicken breast", "1", "whole"),
-        ("garlic", "Garlic powder", "4", "clove"),
         ("onion", "caramelized onions", "2", "whole"),
         ("potatoes", "diced fried potatoes", "1", "whole"),
         ("banana", "frozen bananas", "5", "whole"),
@@ -720,3 +719,33 @@ class TestStockForIngredients:
         """
         pantry = [{"item": "Paprika", "amount": "0.5", "unit": "tsp"}]
         assert pantry_module.stock_for_ingredients(["paprika"], pantry)[0] is not None
+
+
+def test_split_credits_descriptor_variants_as_same_food():
+    pantry = [{"item": "extra virgin olive oil", "amount": "500", "unit": "ml"}]
+    out = split_against_pantry("extra-virgin olive oil", "2", "tbsp", pantry)
+    assert out["status"] == "credited"
+    assert out["to_buy"] is None
+
+
+def test_split_head_mismatch_is_a_plain_buy_not_review():
+    pantry = [{"item": "Garlic powder", "amount": "1", "unit": "ct"}]
+    out = split_against_pantry("garlic cloves", "5", "", pantry)
+    assert out["status"] == "buy"
+    assert out["matched_inventory"] is None
+    assert out["warning"] is None
+
+
+def test_split_salt_does_not_match_black_beans():
+    pantry = [{"item": "Kosher salt", "amount": "1", "unit": "ct"}]
+    out = split_against_pantry("no-salt-added black beans", "2", "cans", pantry)
+    assert out["status"] == "buy"
+    assert out["matched_inventory"] is None
+
+
+def test_split_same_head_related_item_still_reviews():
+    # caramelized onions are onions, but not the raw onion asked for
+    pantry = [{"item": "caramelized onions", "amount": "1", "unit": "ct"}]
+    out = split_against_pantry("onion", "1", "", pantry)
+    assert out["status"] == "review"
+    assert out["matched_inventory"]["item"] == "caramelized onions"
