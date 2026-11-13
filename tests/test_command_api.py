@@ -129,3 +129,37 @@ def test_context_validate_returns_only_known_keys(gold_kitchen):
     assert command_context.validate({"screen": "recipe", "recipe": "Chicken Caldo A"}) == {
         "screen": "recipe", "recipe": "Chicken Caldo A"}
     assert command_context.validate(None) == {"screen": "other"}
+
+
+def test_done_carries_href_for_navigation(client):
+    body = _say(client, "open the planner", {"screen": "home"})
+    assert body["status"] == "done"
+    assert body["href"] == "/meal-planner"
+
+
+def test_done_without_navigation_has_null_href(client):
+    case = next(c for c in CASES if c["expect"]["status"] == "done"
+                and all(a["type"] != "open_page" for a in c["expect"].get("actions", [])))
+    body = _say(client, case["say"], case["context"])
+    assert body["status"] == "done"
+    assert body["href"] is None
+
+
+def test_warm_returns_immediately_and_skips_under_no_llm(client, monkeypatch):
+    called = []
+    monkeypatch.setattr("lib.command.decider.warm", lambda: called.append(1))
+    resp = client.post("/api/command/warm")
+    assert resp.status_code == 202
+    assert resp.get_json() == {"status": "skipped"}
+    assert called == []
+
+
+def test_warm_starts_a_background_load(client, monkeypatch):
+    monkeypatch.delenv("KITCHENOS_NO_LLM")
+    started = []
+    monkeypatch.setattr(api_server, "_start_background",
+                        lambda fn: started.append(fn))
+    resp = client.post("/api/command/warm")
+    assert resp.status_code == 202
+    assert resp.get_json() == {"status": "warming"}
+    assert len(started) == 1

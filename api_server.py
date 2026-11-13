@@ -2345,9 +2345,11 @@ def _command_respond(command_id, text, context, answers, confirmed):
 
     _regen_weeks(*result.weeks)
     _sync_cook_history(*result.recipes)
+    from lib.command.destinations import href_for
     payload = {"status": "done", "command_id": command_id,
                "undo": executor.undoable(result.undo), "lines": result.lines,
-               "warnings": result.warnings, "navigate": result.navigate, "actions": actions}
+               "warnings": result.warnings, "navigate": result.navigate,
+               "href": href_for(result.navigate), "actions": actions}
     command_log.update(command_id, status="done", answers=answers, plan=actions,
                        response=payload, undo=result.undo)
     return payload
@@ -2424,6 +2426,23 @@ def api_command_undo(command_id):
     _regen_weeks(*command["undo"].get("weeks", []))
     _sync_cook_history(*command["undo"].get("recipes", []))
     return jsonify({"status": "undone"})
+
+
+def _start_background(fn):
+    """Run fn on a daemon thread. A seam so tests can observe it without threads."""
+    threading.Thread(target=fn, daemon=True).start()
+
+
+@app.route('/api/command/warm', methods=['POST'])
+@require_token
+def api_command_warm():
+    """Load the decider model when the command bar opens. Never waits, never errors."""
+    from lib import llm_gate
+    from lib.command import decider
+    if not llm_gate.allowed():
+        return jsonify({"status": "skipped"}), 202
+    _start_background(decider.warm)
+    return jsonify({"status": "warming"}), 202
 
 
 @app.route('/api/placements', methods=['POST'])
