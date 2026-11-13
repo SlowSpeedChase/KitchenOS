@@ -30,6 +30,13 @@ def test_same_food_shares_identity(a, b):
     ("dried oregano", "oregano"),     # dried vs fresh herbs differ
     ("garlic", "garlic powder"),
     ("smoked paprika", "paprika"),
+    ("ground ginger", "ginger"),
+    ("ground ginger", "fresh ginger"),
+    ("ground mustard", "mustard"),
+    ("ground chuck", "chuck"),
+    ("ground coffee", "coffee"),
+    ("fresh mozzarella", "mozzarella"),
+    ("pink salt", "salt"),
 ])
 def test_different_foods_stay_distinct(a, b):
     assert shopping_identity(a) != shopping_identity(b)
