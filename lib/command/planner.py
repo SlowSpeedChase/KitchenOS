@@ -2,6 +2,7 @@
 
 Order of authority for "which action is this phrase?":
 rule -> the user's earlier answer -> only one feasible -> decider -> ask the user.
+A plan-or-move tie skips the decider: only the user may break it.
 """
 import re
 from dataclasses import dataclass, field
@@ -126,8 +127,10 @@ def plan(text, context, kitchen: Kitchen, decider, answers=None):
                                           "Try naming a recipe and a day.")
             else:
                 choices = [Option(o, INTENTS[o].label, INTENTS[o].hint) for o in options]
-                name = decider.decide(f"Part of the command: {phrase}", choices,
-                                      f"Whole command: {text}")
+                name = None
+                if not intents.user_decides(options):
+                    name = decider.decide(f"Part of the command: {phrase}", choices,
+                                          f"Whole command: {text}")
                 if name not in options:
                     return Question(f"intent:{i}", f"What should I do with “{phrase}”?", choices)
 

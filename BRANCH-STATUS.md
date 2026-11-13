@@ -74,8 +74,6 @@ gold command set as the standing test standard. Shopping actions deferred to a f
 
 Move any blocked checklist items here with reason:
 
-- [ ] BLOCKED: Model scorecard gate (`WRONG` must be 0) - real run 2026-11-13 scored WRONG = 1 for
-  both `qwen2.5:3b` and `granite4.1:8b` on gold case `plan-or-move` once the model was warm. The gold
-  answer is "ask", but that tie is exactly what the planner hands to the decider, so any model that
-  answers scores wrong. Needs a design decision (always ask the user on a plan/move tie, or change
-  the gold expectation). `DEFAULT_MODEL` unchanged. Cold-load is 54-79 s against a 20 s decider timeout.
+- None. (2026-11-13: the scorecard's WRONG = 1 on `plan-or-move` was resolved by sending that tie
+  to the user only — `intents.user_decides`. Cold model load, 54-79 s against a 20 s decider timeout,
+  remains an open latency question, not a correctness one.)

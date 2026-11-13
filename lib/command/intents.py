@@ -54,6 +54,11 @@ _ADD_VERB = re.compile(r"\b(add|got|bought|picked up|grabbed|have)\b")
 _PAGE_WORD = re.compile(r"\b(planner|meal plan|inventory|home)\b")
 _SCREEN_HIDES = {"inventory": {"plan_cook", "move_cook"}}
 
+#: Ties only the user may break. "Put this on Friday" for a recipe already on
+#: the plan reads equally well as a second cook or a move, and nothing in the
+#: sentence tells a model which — both local models tried simply picked one.
+_USER_ONLY_TIES = [{"plan_cook", "move_cook"}]
+
 
 def rule_for(phrase: str):
     low = phrase.lower().replace("’", "'")
@@ -111,6 +116,11 @@ def candidates(f: Facts, screen: str) -> list:
     hidden = _SCREEN_HIDES.get(screen, set()) if f.any.how != "exact" else set()
     return [i.name for i in INTENTS.values()
             if i.open and i.name not in hidden and feasible(i.name, f)]
+
+
+def user_decides(options) -> bool:
+    """True when this set of candidates must go to the user, never to a model."""
+    return any(tie <= set(options) for tie in _USER_ONLY_TIES)
 
 
 def why_not(name: str, f: Facts) -> str:

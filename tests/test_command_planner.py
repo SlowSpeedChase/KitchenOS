@@ -46,11 +46,12 @@ def test_no_model_is_called_when_rules_and_feasibility_decide(gold_kitchen):
     assert d.calls == []
 
 
-def test_decider_breaks_a_plan_or_move_tie(gold_kitchen):
+def test_a_plan_or_move_tie_goes_to_the_user_never_to_a_model(gold_kitchen):
     d = ScriptedDecider({"x": "move_cook"})
     outcome = _plan("put this on friday", {"screen": "recipe", "recipe": "Miso Salmon Bowls"}, d)
-    assert [a.type for a in outcome.actions] == ["move_cook"]
-    assert d.calls[0][1] == ["plan_cook", "move_cook"]
+    assert isinstance(outcome, Question) and outcome.key == "intent:0"
+    assert [o.id for o in outcome.options] == ["plan_cook", "move_cook"]
+    assert d.calls == []
 
 
 def test_an_answer_resolves_the_question_it_was_asked(gold_kitchen):

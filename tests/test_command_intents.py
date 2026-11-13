@@ -59,6 +59,12 @@ def test_open_candidates_tie_only_when_both_could_run():
     assert intents.candidates(_facts("put this on friday", any_=caldo), "recipe") == ["plan_cook"]
 
 
+def test_only_the_user_breaks_a_plan_or_move_tie():
+    assert intents.user_decides(["plan_cook", "move_cook"])
+    assert not intents.user_decides(["plan_cook"])
+    assert not intents.user_decides(["plan_cook", "inventory_add"])
+
+
 def test_inventory_add_needs_an_add_verb_and_no_day():
     assert intents.candidates(_facts("add two cans of chickpeas"), "home") == ["inventory_add"]
     assert intents.candidates(_facts("put that thing on whenever"), "home") == []
