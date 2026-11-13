@@ -26,6 +26,7 @@ Templates: [`templates/DESIGN-DOC-TEMPLATE.md`](../../templates/DESIGN-DOC-TEMPL
 
 | Date | Doc | Notes |
 |---|---|---|
+| 2026-11-13 | [tell-it bar](../superpowers/specs/2026-11-13-tell-it-bar-design.md) | Piece 2 of the command-engine program: a floating mic button on every `_serve_page` page that sends the sentence plus a page-declared screen context to `/api/command`, renders done/ask/confirm/failed with Undo. Voice = iPad keyboard dictation. Adds `href` to the response and `POST /api/command/warm`. |
 | 2026-08-02 | [daily-driver audit](2026-08-02-daily-driver-audit.md) — Phases 2-5 | End-to-end audit of every stage against "make this a daily driver". **Phase 0 (unblock) and Phase 1 (stop lying) are shipped** — see Done. Phase 2 (close the loops) is the next branch: suggest is dead on any board week (`meal_planner.html:5070`), `/prep` blocks for 25s because `llm_gate`'s budget is a *per-attempt* SDK timeout with `max_retries=2` unset, and cooking records nothing (`/api/cook` never writes the `cooks` ledger — there is a pre-existing failing e2e test pinning exactly that). Phases 3-5: fix the nutrition numbers, make the shopping list true, retire the legacy week model. Decisions already taken: assume planned = cooked; retire legacy writes; keep composite meals (which now means making them ledger-native — **shipped 2026-08-03**, see Done); freeze the native app; collapse nav. Note `meal_planner.html:5070` below is stale — that block was deleted; `suggestMeal` is now `:5173`. |
 
 ## In Progress
