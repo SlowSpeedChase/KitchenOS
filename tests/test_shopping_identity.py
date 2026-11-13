@@ -8,8 +8,6 @@ from lib.shopping_identity import shopping_identity
     ("extra-virgin olive oil", "extra virgin olive oil"),
     ("ground cinnamon", "Cinnamon"),
     ("ground allspice", "Allspice"),
-    ("fresh thyme", "Thyme"),
-    ("fresh parsley", "parsley"),
     ("freshly squeezed lemon juice", "lemon juice"),
     ("pure maple syrup", "maple syrup"),
     ("salt", "Kosher salt"),
@@ -41,6 +39,11 @@ def test_same_food_shares_identity(a, b):
     ("pure vanilla extract", "vanilla extract"),
     ("freshly ground coffee", "coffee"),
     ("freshly grated ginger", "ginger"),
+    ("fresh thyme", "Thyme"),         # fresh herb is not the dried jar
+    ("fresh parsley", "parsley"),
+    ("flaky sea salt", "salt"),
+    ("himalayan salt", "salt"),
+    ("cheese such as gruyere", "cheese"),
 ])
 def test_different_foods_stay_distinct(a, b):
     assert shopping_identity(a) != shopping_identity(b)

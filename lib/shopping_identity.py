@@ -35,9 +35,13 @@ _DESCRIPTOR_SAFE = {
     "parmesan", "parmesan cheese",
 }
 # Words that may precede "salt" and still mean plain salt.
-_PLAIN_SALT_WORDS = {"kosher", "sea", "table", "fine", "flaky", "coarse",
-                     "celtic", "diamond", "crystal", "morton", "himalayan",
-                     "iodized", "flake"}
+# Flaky/flake and pink/himalayan salts are different products to buy.
+_PLAIN_SALT_WORDS = {"kosher", "sea", "table", "fine", "coarse",
+                     "celtic", "diamond", "crystal", "morton", "iodized"}
+# A bare "fresh" herb is not the dried jar in the cupboard.
+_LEAFY_HERBS = {"parsley", "thyme", "basil", "cilantro", "dill", "rosemary",
+                "sage", "mint", "chives", "tarragon"}
+_BARE_FRESH = re.compile(r"^fresh\s+")
 
 
 def shopping_identity(name: str | None) -> str:
@@ -45,10 +49,14 @@ def shopping_identity(name: str | None) -> str:
     if not s:
         return ""
     s = re.sub(r"\s+", " ", s.replace("-", " ")).strip()
-    s = _SUCH_AS.sub("", s)
+    stripped = _SUCH_AS.sub("", s)
+    if stripped.endswith("salt"):
+        s = stripped
     while True:
         candidate = _PREFIX.sub("", s, count=1)
         if candidate == s or candidate not in _DESCRIPTOR_SAFE:
+            break
+        if _BARE_FRESH.match(s) and candidate in _LEAFY_HERBS:
             break
         s = candidate
     words = s.split()
