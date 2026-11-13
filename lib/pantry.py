@@ -195,6 +195,25 @@ def find_match(item_name: str, pantry: list[dict]) -> Optional[dict]:
     return None
 
 
+# A matched row whose head is one of these is a different product made from
+# the demand's food (garlic -> garlic powder, dill -> dill pickles).
+_DERIVED_FORM_HEADS = {"powder", "salt", "pickle", "extract", "flake", "seasoning"}
+
+
+def _different_food(item: str, matched: str) -> bool:
+    """Whether a broad match names a different food, so it's a plain buy."""
+    from lib.fdc_local import query_head
+    d_head, d_qual = query_head(_match_text(item))
+    m_head, m_qual = query_head(matched)
+    if not d_head or not m_head or d_head == m_head:
+        return False
+    if m_head in _DERIVED_FORM_HEADS or d_head in _DERIVED_FORM_HEADS:
+        return True
+    # One side's head named in the other's qualifier: same food, other wording
+    # ("parmesan" / "parmesan cheese", "cheddar cheese" / "sharp cheddar").
+    return not (d_head == m_qual or m_head == d_qual)
+
+
 def split_against_pantry(item: str, amount, unit: str, pantry: list[dict]) -> dict:
     """Split a recipe-demand line against the pantry.
 
@@ -240,10 +259,7 @@ def split_against_pantry(item: str, amount, unit: str, pantry: list[dict]) -> di
         # A broad match whose head noun differs names a different food
         # (garlic -> Garlic powder, black beans -> Kosher salt). Listing it
         # under "verify" was a third of every list; it is simply a purchase.
-        from lib.fdc_local import query_head
-        demand_head, _ = query_head(_match_text(item))
-        matched_head, _ = query_head(matched)
-        if demand_head and matched_head and demand_head != matched_head:
+        if _different_food(item, matched):
             return buy
         return {
             "from_pantry": None,

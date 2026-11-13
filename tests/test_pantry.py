@@ -749,3 +749,34 @@ def test_split_same_head_related_item_still_reviews():
     out = split_against_pantry("onion", "1", "", pantry)
     assert out["status"] == "review"
     assert out["matched_inventory"]["item"] == "caramelized onions"
+
+
+@pytest.mark.parametrize(
+    ("demand", "pantry_name", "amount", "unit"),
+    [
+        ("parmesan cheese", "parmesan", "1", "cup"),
+        ("cheddar cheese", "shredded cheddar", "1", "cup"),
+        ("egg yolks", "egg", "2", ""),
+    ],
+)
+def test_same_food_rewording_stays_in_review(demand, pantry_name, amount, unit):
+    pantry = [{"item": pantry_name, "amount": "1", "unit": "ct"}]
+    out = split_against_pantry(demand, amount, unit, pantry)
+    assert out["status"] == "review"
+    assert out["matched_inventory"] == pantry[0]
+
+
+@pytest.mark.parametrize(
+    ("demand", "pantry_name", "amount", "unit"),
+    [
+        ("garlic", "Garlic powder", "4", "clove"),
+        ("dill pickles", "dill", "4", "whole"),
+        ("no-salt-added black beans", "Kosher salt", "2", "cans"),
+    ],
+)
+def test_different_food_is_plain_buy(demand, pantry_name, amount, unit):
+    pantry = [{"item": pantry_name, "amount": "1", "unit": "ct"}]
+    out = split_against_pantry(demand, amount, unit, pantry)
+    assert out["status"] == "buy"
+    assert out["matched_inventory"] is None
+    assert out["warning"] is None
