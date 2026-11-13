@@ -858,3 +858,14 @@ def test_apply_decisions_ignores_on_hand_lines():
     work = copy.deepcopy(pantry)
     result = pantry_module.apply_decisions(decisions, work)
     assert result == pantry
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_exact_name_row_wins_over_identity_sibling(reverse):
+    pantry = [{"item": "Celtic sea salt", "amount": "2", "unit": "cup"},
+              {"item": "salt", "amount": "3", "unit": "cup"}]
+    if reverse:
+        pantry.reverse()
+    out = split_against_pantry("salt", "1", "cup", pantry)
+    assert out["status"] == "credited"
+    assert out["matched_inventory"]["item"] == "salt"

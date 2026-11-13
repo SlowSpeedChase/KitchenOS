@@ -254,7 +254,14 @@ def split_against_pantry(item: str, amount, unit: str, pantry: list[dict]) -> di
     """
     needed = {"amount": amount, "unit": unit}
     item_identity = shopping_identity(item)
+    # Two passes so the result never depends on row order: an exact-name row
+    # wins over an identity sibling ("salt" over "Celtic sea salt").
+    item_exact = normalize_name(item)
     pantry_entry = next(
+        (entry for entry in pantry
+         if normalize_name(entry.get("item") or "") == item_exact),
+        None,
+    ) or next(
         (entry for entry in pantry
          if shopping_identity(entry.get("item") or "") == item_identity),
         None,
