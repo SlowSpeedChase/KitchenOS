@@ -147,3 +147,10 @@ def _no_background_packet_jobs(request, monkeypatch):
     cooking_packet_jobs.clear_operations()
     yield
     cooking_packet_jobs.clear_operations()
+
+
+@pytest.fixture
+def gold_kitchen(tmp_vault, tmp_db):
+    """The fixed fake kitchen, built into this test's temp vault and DB."""
+    from tests.gold import kitchen
+    return kitchen.build()
