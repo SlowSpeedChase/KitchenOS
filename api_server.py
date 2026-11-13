@@ -430,6 +430,20 @@ def _stale_banner_html() -> str:
     return html
 
 
+#: Pages that never get the command bar: printouts (nothing to tap) and the
+#: Siri handoff page (it exists only to redirect). Read-only browser sessions
+#: are skipped at request time in _serve_page — they cannot write anyway.
+COMMAND_BAR_SKIP = frozenset({
+    "print_week.html", "print_cooking_packet.html", "recipe_card.html",
+    "browser_open.html",
+})
+
+
+def _command_bar_html() -> str:
+    return ('<link rel="stylesheet" href="/static/command-bar.css">'
+            '<script src="/static/command-bar.js" defer></script>')
+
+
 def _serve_page(
     template_filename: str,
     extra_replacements: list[tuple[str, str]] | None = None,
@@ -444,7 +458,12 @@ def _serve_page(
         html = _inject_browser_view_config(html)
         if _browser_view_config()['state'] == 'expired':
             return html
-    return _inject_after_body(html, _stale_banner_html())
+    html = _inject_after_body(html, _stale_banner_html())
+    read_only = has_request_context() and _browser_view_config()['readOnly']
+    if template_filename not in COMMAND_BAR_SKIP and not read_only:
+        html = html.replace('</body>', _command_bar_html() + '</body>', 1) \
+            if '</body>' in html else html + _command_bar_html()
+    return html
 
 
 def success_page(message: str, filename: str) -> str:

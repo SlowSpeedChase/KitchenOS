@@ -117,3 +117,29 @@ def test_the_stale_banner_never_escapes_the_page():
                               banner)
     assert "&lt;!DOCTYPE" not in page and "<body>" in page
     assert "GRID" in page
+
+
+from api_server import COMMAND_BAR_SKIP
+
+BAR = '<script src="/static/command-bar.js" defer></script>'
+
+
+@pytest.mark.parametrize("template", TEMPLATES)
+def test_every_page_gets_the_command_bar_except_print_and_handoff(template):
+    html = _serve_page(template)
+    expected = 0 if template in COMMAND_BAR_SKIP else 1
+    assert html.count(BAR) == expected
+
+
+def test_skip_list_names_real_templates():
+    assert COMMAND_BAR_SKIP <= set(TEMPLATES)
+    assert {"print_week.html", "print_cooking_packet.html", "recipe_card.html",
+            "browser_open.html"} == COMMAND_BAR_SKIP
+
+
+def test_read_only_browser_session_gets_no_bar(monkeypatch):
+    import api_server
+    monkeypatch.setattr(api_server, "_browser_view_config",
+                        lambda: {"state": "active", "readOnly": True, "expires_at": None})
+    with app.test_request_context("/"):
+        assert BAR not in _serve_page("home.html")
