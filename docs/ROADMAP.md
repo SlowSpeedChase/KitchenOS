@@ -14,6 +14,12 @@ tier that shipped since and corrects two stale statuses.
 
 ## Done / Shipped
 
+**2026-11-12 — Unmerged work landed** (PRs #86, #88–#94; see `docs/plans/INDEX.md` Done
+and `docs/plans/2026-11-10-landing-log.md`). Mac Apple integration + calendar cook
+scheduling + Siri browser handoff (#90), OpenAI-first receipt parsing (#91), weekly
+cooking packet tasks 0–6 (#92; tasks 7–9 open), iOS 27 new-Siri slice 1 (#93; slice 2
+parked), Anthropic-credit health check (#94), plus density, schema and recipe-link fixes.
+
 **2026-09-26 — Canonical HTTPS home gateway (implementation branch).** Generated
 web, recipe, inventory, nutrition, plan/print, and bookmark links share
 `lib/web_origin.py` and `KITCHENOS_WEB_BASE_URL` (legacy `KITCHENOS_API_BASE`
@@ -96,14 +102,9 @@ Genuinely open items surfaced by the superpowers specs/plans — struck items sh
   manual Settings button. **Background reindex cadence is still open** — there
   is no periodic/BG trigger yet; freshness remains "last run with the Mac
   reachable" until the on-phone store lands (slice 2). See the spec above.
-- **`AppShell` `ComingSoonView` fallback** (`KitchenOSSiri/Sources/Shell/AppShell.swift`):
-  a placeholder view still exists for any `SidebarSection` the `detail(for:)`
-  switch doesn't explicitly handle. As of this audit every current section
-  (Search, Recipes, Meals, Nutrition, Meal Plan, Planner Board, Shopping List,
-  Tasks, Inventory, Pantry, Receipts, Extraction (macOS), System Health,
-  Settings) routes to a real screen — so this is currently dead code / a safety
-  net, not an active gap. Worth removing or re-purposing next time a new section
-  is added rather than leaving it as a silent fallback.
+- ~~**`AppShell` `ComingSoonView` fallback**~~ **REMOVED 2026-11-12** — `detail(for:)` is now an
+  exhaustive switch (iOS shows a "runs on the Mac" notice for Extraction), so a new
+  `SidebarSection` without a screen is a compile error instead of a silent placeholder.
 
 ## Native inventory: zone + shelf layout (next concrete step)
 

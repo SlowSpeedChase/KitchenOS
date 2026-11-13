@@ -7,9 +7,9 @@ beyond invariants and primary commands, follow the pointers in "Where things liv
 
 **KitchenOS** is a home-kitchen system built around a YouTube/Instagram/web-to-Obsidian
 recipe extraction pipeline, backed by a native iOS/macOS app (Siri/App Intents) and a
-hybrid AI stack: local Ollama for extraction, seasonal matching, and receipt parsing;
-Claude (API) as the load-bearing model for meal suggestions and receipt parsing when a key
-is configured. It captures cooking videos and recipe pages, extracts structured recipe
+hybrid AI stack: local Ollama for extraction and seasonal matching (and the last-resort
+receipt parser); OpenAI for receipt parsing when a key is configured; Claude (API) as the
+load-bearing model for meal suggestions. It captures cooking videos and recipe pages, extracts structured recipe
 data, tracks pantry inventory from receipts, and generates meal plans, shopping lists, and
 a nutrition dashboard — all stored as markdown in an Obsidian vault plus one SQLite
 database for anything that needs to be queried or mutated.
@@ -26,8 +26,9 @@ database for anything that needs to be queried or mutated.
 
 Constraints that change how code is written:
 - **Python 3.11** — full f-string support including backslashes. Always run via `.venv/bin/python`.
-- **Ollama required** for extraction, seasonal matching, and receipt parsing (Ollama fallback when Claude isn't configured/available).
-- **Claude (Anthropic API) is load-bearing**, not optional-nice-to-have, for receipt parsing (when `ANTHROPIC_API_KEY` is set) and meal suggestions.
+- **Ollama required** for extraction and seasonal matching, and is the receipt parser of last resort.
+- **Automatic receipts prefer OpenAI** (`OPENAI_API_KEY`, `gpt-5.4`; override with `KITCHENOS_RECEIPT_MODEL`), then Claude when `ANTHROPIC_API_KEY` is set, then Ollama — chosen by which keys are configured (`lib/receipt_parser.py`). A provider's API error propagates rather than silently switching providers.
+- **Claude (Anthropic API) is load-bearing**, not optional-nice-to-have, for meal suggestions.
 - **Single DB truth**: inventory and price history live only in `data/kitchenos.db`; never reintroduce a parallel JSON/markdown source of truth for that data.
 
 ## Key Paths & Non-Negotiable Invariants
@@ -115,10 +116,11 @@ Names only — `.env.example` is the authoritative reference for descriptions, d
 which are optional:
 
 - `KITCHENOS_VAULT` — Obsidian vault path
-- `ANTHROPIC_API_KEY` — Claude API (receipt parsing, meal suggestions)
+- `ANTHROPIC_API_KEY` — Claude API (meal suggestions; receipt parsing when no OpenAI key)
 - `USDA_FDC_API_KEY` — USDA FoodData Central (nutrition engine)
 - `GMAIL_ADDRESS` / `GMAIL_APP_PASSWORD` (+ `_2` for the CSA-newsletter account) — receipt/CSA email ingest
-- `OPENAI_API_KEY` — Whisper transcript fallback
+- `OPENAI_API_KEY` — preferred receipt parser, and the Whisper transcript fallback
+- `KITCHENOS_RECEIPT_MODEL` — overrides the OpenAI receipt model (default `gpt-5.4`)
 - `YOUTUBE_API_KEY` — YouTube Data API
 - `KITCHENOS_API_TOKEN` — bearer token gating remote (non-localhost) calls to the Siri-facing API routes; see `docs/API.md` for the exact gated-route list
 - `KITCHENOS_NO_LLM` — set to a truthy value to refuse every LLM tier, Claude and Ollama alike, for the whole process. Test infrastructure only: the e2e harness sets it so a browser test cannot race a model. Unset in normal operation; empty or `0`/`false` means enabled.
