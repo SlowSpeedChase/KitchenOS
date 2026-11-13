@@ -1375,3 +1375,41 @@ def test_grouped_ingredient_sections_are_stock_checked_too(client, tmp_path, mon
     items = {i["item"]: i["in_stock"]
              for i in client.get('/api/recipes/Stock Test').get_json()["ingredients"]}
     assert items == {"chicken thighs": True, "saffron": False}
+
+
+def test_confirm_without_inventory_matches_key_uses_generated_sections(
+        client, tmp_vault, tmp_path, monkeypatch):
+    """iOS omits inventory_matches; the note must still get the on-hand bullet."""
+    import api_server
+    from lib import pantry as pantry_module
+
+    lists = _plan_and_recipe(tmp_path, monkeypatch, [
+        {"amount": "1", "unit": "tsp", "item": "salt"},
+    ])
+    monkeypatch.setattr(api_server, "SHOPPING_LISTS_PATH", lists)
+    monkeypatch.setattr(pantry_module, "load_pantry", lambda: [
+        {"item": "Kosher salt", "amount": "1", "unit": "ct"},
+    ])
+
+    response = client.post('/api/shopping-list/confirm', json={
+        "week": "2026-W31", "items_to_buy": [], "decisions": [],
+    })
+    assert response.status_code == 200
+    written = (lists / "2026-W31.md").read_text()
+    assert "Assumed on hand — " in written
+    assert "- [ ] Assumed" not in written
+
+
+def test_save_shopping_note_summarises_on_hand_dicts_once(tmp_path, monkeypatch):
+    from lib import paths
+    from lib.shopping_note import save_shopping_note
+
+    monkeypatch.setenv("KITCHENOS_VAULT", str(tmp_path))
+    paths.shopping_lists_dir().mkdir(parents=True, exist_ok=True)
+    def oh(item):
+        return {"item": item, "status": "on_hand", "from_pantry": None,
+                "to_buy": None, "needed": {"amount": "1", "unit": "tsp"},
+                "matched_inventory": {"item": "Kosher salt", "amount": "1", "unit": "ct"}}
+    save_shopping_note("2026-W31", [], [oh("pepper"), oh("salt")])
+    written = (paths.shopping_lists_dir() / "2026-W31.md").read_text()
+    assert written.count("Assumed on hand — ") == 1

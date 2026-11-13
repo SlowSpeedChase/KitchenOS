@@ -3266,6 +3266,9 @@ def api_shopping_list_confirm():
     data = request.get_json(force=True, silent=True) or {}
     week = data.get("week")
     items = data.get("items_to_buy")
+    # A client that omits the key (the iOS app) gets the freshly generated
+    # sections; the planner sends its own list and keeps it.
+    has_matches_key = "inventory_matches" in data
     inventory_matches = data.get("inventory_matches") or []
     decisions = data.get("decisions") or []
     if not isinstance(items, list):
@@ -3285,6 +3288,8 @@ def api_shopping_list_confirm():
     # without matching generation evidence is a distinct manual row.
     generated = generate_shopping_list(week, pantry=pantry_module.load_pantry())
     lines = generated.get('lines', []) if generated.get('success') else []
+    if not has_matches_key:
+        inventory_matches = generated.get('inventory_matches', []) if generated.get('success') else []
     try:
         document = save_shopping_note(week, lines, inventory_matches, selected_items=items)
     except RevisionConflict as exc:
