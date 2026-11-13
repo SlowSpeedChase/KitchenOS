@@ -592,6 +592,17 @@ sortby.onchange = () => {
 };
 document.getElementById('refresh').onclick = load;
 load();
+
+// Keep the floating tell-it button above the bulk bar while it is showing.
+function syncDockOffset() {
+  const root = document.documentElement.style;
+  if (bulkbar.hidden) root.removeProperty('--ko-dock-offset');
+  else root.setProperty('--ko-dock-offset', bulkbar.offsetHeight + 'px');
+}
+new MutationObserver(syncDockOffset).observe(bulkbar, {attributes: true, attributeFilter: ['hidden']});
+if (window.ResizeObserver) new ResizeObserver(syncDockOffset).observe(bulkbar);
+syncDockOffset();
 </script>
+<script>window.kitchenosContext = () => ({screen: 'inventory'});</script>
 </body>
 </html>

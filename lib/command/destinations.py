@@ -10,7 +10,7 @@ from urllib.parse import quote
 from lib import paths
 from lib.safe_paths import contained_markdown
 
-_FIXED = {"planner": "/meal-planner", "home": "/"}
+_FIXED = {"planner": "/meal-planner", "home": "/", "inventory": "/review"}
 
 
 def href_for(navigate) -> str | None:

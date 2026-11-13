@@ -155,7 +155,6 @@ CONTEXT_OTHER = {
     "prep.html": "today's tasks; no command acts on prep steps",
     "receipt_paste.html": "a paste form",
     "recent.html": "a list of new recipes",
-    "review.html": "recipe review queue",
     "system_health.html": "operator page",
     "cooking_packet.html": "a printable week view",
 }

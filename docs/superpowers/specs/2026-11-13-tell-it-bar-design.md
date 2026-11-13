@@ -63,11 +63,11 @@ The bar calls it at send time. A page with no hook sends `{screen: "other"}`. Th
 | `/` home | `{screen: "home"}` |
 | `/cook-now` | `{screen: "cook-now"}` |
 | `/current/shopping-list` (note view) | `{screen: "shopping", week}` |
+| `/review` (Inventory Review) | `{screen: "inventory"}` |
 | everything else | `{screen: "other"}` |
 
-There is no inventory web page — inventory is a native-app screen — so `inventory` is
-not a web context in v1, and `href_for({"page": "inventory"})` returns `None`: the Done
-card shows the line and the bar stays put.
+`/review` (Inventory Review) is the inventory page: it states `{screen: "inventory"}`, and
+`href_for({"page": "inventory"})` returns `/review`.
 
 An `ask` with an **empty** `options` list means "say it differently" (per `docs/API.md`):
 the sheet shows the question and keeps the sentence editable, with no buttons.

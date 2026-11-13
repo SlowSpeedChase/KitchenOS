@@ -39,11 +39,10 @@ def test_bad_day_is_none():
 def test_fixed_pages():
     assert href_for({"page": "planner"}) == "/meal-planner"
     assert href_for({"page": "home"}) == "/"
+    assert href_for({"page": "inventory"}) == "/review"
 
 
 def test_no_web_page_is_none():
-    # Inventory is a native-app screen; there is no web page to go to.
-    assert href_for({"page": "inventory"}) is None
     assert href_for({"page": "https://evil.example"}) is None
     assert href_for(None) is None
     assert href_for("recipe") is None
