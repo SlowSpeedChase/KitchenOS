@@ -135,6 +135,25 @@ def test_prompt_context_is_bounded(vault):
     assert len(ctx) <= 200
 
 
+def test_default_cap_carries_a_realistic_note_whole():
+    """The real note is ~10k chars; the old 4000 default dropped its back half
+    (leftovers, proven wins, dairy, shopping) from every prompt, silently."""
+    sections = [f"## Section {i}\n\n" + ("- a real preference line\n" * 18)
+                for i in range(25)]
+    body = "\n".join(sections) + "\n## Last section\n\n- the end marker\n"
+    assert len(body) > 10_000
+    ctx = prof.Profile(prose=body).prompt_context()
+    assert "the end marker" in ctx
+
+
+def test_truncation_is_logged(caplog):
+    """A cut must be visible; the old cap dropped half the note with no trace."""
+    body = "\n\n".join(f"para {i} " + "x" * 80 for i in range(10))
+    with caplog.at_level("WARNING", logger="lib.profile"):
+        prof.Profile(prose=body).prompt_context(max_chars=300)
+    assert "truncated" in caplog.text
+
+
 # --- dislikes: the one structural consumer of "Vegetables built into meals" ---
 
 def _profile(body: str):

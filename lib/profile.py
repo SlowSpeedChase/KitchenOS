@@ -16,6 +16,7 @@ and an exact-match parser would silently start returning nothing.
 """
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +25,15 @@ from typing import Optional
 from lib import paths
 
 PROFILE_FILENAME = "My Meal System.md"
+
+logger = logging.getLogger(__name__)
+
+# Characters of note prose sent with each LLM prompt. The real note is ~10k
+# chars (~2.5k tokens) and growing; the old 4000 limit cut its whole back half
+# (leftovers, proven wins, dairy, shopping) from every suggestion, unnoticed.
+# Sized to carry the note whole with headroom while keeping a mistral:7b
+# fit-assessment prompt inside Ollama's default context window.
+PROMPT_CONTEXT_MAX_CHARS = 16_000
 
 # Health shorthand used throughout the note: [heart] = helps lower LDL,
 # [steady] = keeps blood sugar level.
@@ -81,19 +91,25 @@ class Profile:
     def all_buffer_foods(self) -> list[str]:
         return [item for items in self.buffer_menu.values() for item in items]
 
-    def prompt_context(self, max_chars: int = 4000) -> str:
+    def prompt_context(self, max_chars: int = PROMPT_CONTEXT_MAX_CHARS) -> str:
         """The profile as prompt text, truncated at a paragraph boundary.
 
         Bounded because this rides along with every suggestion request; an
         unbounded personal note would quietly inflate the cost and latency of
-        every call as it grows.
+        every call as it grows. A cut is logged, because a silent one once hid
+        half the note from every prompt.
         """
         text = self.prose.strip()
         if len(text) <= max_chars:
             return text
         cut = text[:max_chars]
         boundary = cut.rfind("\n\n")
-        return cut[:boundary] if boundary > max_chars // 2 else cut
+        kept = cut[:boundary] if boundary > max_chars // 2 else cut
+        logger.warning(
+            "%s truncated for prompts: %d of %d chars kept; raise "
+            "PROMPT_CONTEXT_MAX_CHARS or trim the note",
+            PROFILE_FILENAME, len(kept), len(text))
+        return kept
 
 
 def _strip_frontmatter(content: str) -> tuple[str, dict]:
