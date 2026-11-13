@@ -46,25 +46,17 @@ struct AppShell: View {
         case .shoppingList: ShoppingListView()
         case .systemHealth: SystemHealthView()
         case .settings: SettingsView()
-        #if os(macOS)
-        case .extraction: ExtractionView()
-        #endif
-        default:
-            ComingSoonView(section: section)
+        case .extraction:
+            #if os(macOS)
+            ExtractionView()
+            #else
+            ContentUnavailableView(
+                section.title,
+                systemImage: section.systemImage,
+                description: Text("Recipe extraction runs on the Mac.")
+            )
+            .navigationTitle(section.title)
+            #endif
         }
-    }
-}
-
-/// Placeholder for sections whose native screens land in later phases.
-struct ComingSoonView: View {
-    let section: SidebarSection
-
-    var body: some View {
-        ContentUnavailableView(
-            section.title,
-            systemImage: section.systemImage,
-            description: Text("This screen is coming soon.")
-        )
-        .navigationTitle(section.title)
     }
 }
