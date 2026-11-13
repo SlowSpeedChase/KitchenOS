@@ -2294,6 +2294,138 @@ def api_freezer():
     })
 
 
+#: Seconds within which the same sentence on the same screen is one command.
+COMMAND_DEDUPE_WINDOW_S = 5.0
+COMMAND_MAX_CHARS = 500
+
+
+def _command_today():
+    """The kitchen's "today". A function so tests can freeze the clock."""
+    from datetime import date as _date
+    return _date.today()
+
+
+def _command_respond(command_id, text, context, answers, confirmed):
+    """Plan the command and, if nothing is in the way, run it. Returns the payload."""
+    from lib.command import decider, executor, log as command_log, planner
+    from lib.command.resolve import Kitchen
+
+    kitchen = Kitchen.load(_command_today(),
+                           extra_weeks=[context["week"]] if context.get("week") else [])
+    outcome = planner.plan(text, context, kitchen, decider.default(), answers)
+
+    if isinstance(outcome, planner.Failure):
+        payload = {"status": "failed", "reason": outcome.reason}
+        command_log.update(command_id, status="failed", answers=answers, response=payload)
+        return payload
+
+    if isinstance(outcome, planner.Question):
+        payload = {"status": "ask", "command_id": command_id, "key": outcome.key,
+                   "question": outcome.text,
+                   "options": [{"id": o.id, "label": o.label} for o in outcome.options]}
+        command_log.update(command_id, status="ask", answers=answers, response=payload)
+        return payload
+
+    actions = [a.to_json() for a in outcome.actions]
+    if outcome.confirm and not confirmed:
+        payload = {"status": "confirm", "command_id": command_id,
+                   "lines": outcome.confirm, "actions": actions}
+        command_log.update(command_id, status="confirm", answers=answers,
+                           plan=actions, response=payload)
+        return payload
+
+    # A hand-edited legacy week must be converted before its first ledger row lands.
+    _import_legacy_if_first_write(*planner.weeks_touched(outcome))
+    result = executor.run(outcome, kitchen)
+    if not result.ok:
+        payload = {"status": "failed", "reason": result.error}
+        command_log.update(command_id, status="failed", answers=answers,
+                           plan=actions, response=payload)
+        return payload
+
+    _regen_weeks(*result.weeks)
+    _sync_cook_history(*result.recipes)
+    payload = {"status": "done", "command_id": command_id,
+               "undo": executor.undoable(result.undo), "lines": result.lines,
+               "warnings": result.warnings, "navigate": result.navigate, "actions": actions}
+    command_log.update(command_id, status="done", answers=answers, plan=actions,
+                       response=payload, undo=result.undo)
+    return payload
+
+
+@app.route('/api/command', methods=['POST'])
+@require_token
+def api_command():
+    """Run one spoken or typed command. Body: {text, context}. See docs/API.md."""
+    from lib.command import context as command_context, log as command_log
+
+    data = request.get_json(force=True, silent=True) or {}
+    text = data.get('text')
+    if not isinstance(text, str) or not text.strip() or len(text) > COMMAND_MAX_CHARS:
+        return jsonify({"error": f"'text' is required (1-{COMMAND_MAX_CHARS} characters)"}), 400
+    text = text.strip()
+    try:
+        context = command_context.validate(data.get('context'))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    repeat = command_log.recent_duplicate(text, context, COMMAND_DEDUPE_WINDOW_S)
+    if repeat is not None:
+        return jsonify(repeat["response"])
+    command_id = command_log.create(text, context)
+    return jsonify(_command_respond(command_id, text, context, {}, False))
+
+
+@app.route('/api/command/<int:command_id>/answer', methods=['POST'])
+@require_token
+def api_command_answer(command_id):
+    """Answer a paused command. Body: {option: <id>} for ask, {confirm: bool} for confirm."""
+    from lib.command import log as command_log
+
+    command = command_log.get(command_id)
+    if command is None:
+        return jsonify({"error": "command not found"}), 404
+    if command["status"] not in ("ask", "confirm"):
+        return jsonify({"error": "this command is not waiting for an answer"}), 409
+    data = request.get_json(force=True, silent=True) or {}
+    answers = dict(command["answers"])
+
+    if command["status"] == "confirm":
+        if data.get("confirm") is not True:
+            payload = {"status": "failed", "reason": "Cancelled."}
+            command_log.update(command_id, status="failed", response=payload)
+            return jsonify(payload)
+        return jsonify(_command_respond(command_id, command["text"], command["context"],
+                                        answers, True))
+
+    offered = [o["id"] for o in command["response"]["options"]]
+    if data.get("option") not in offered:
+        return jsonify({"error": "'option' must be one of the offered ids"}), 400
+    answers[command["response"]["key"]] = data["option"]
+    return jsonify(_command_respond(command_id, command["text"], command["context"],
+                                    answers, False))
+
+
+@app.route('/api/command/<int:command_id>/undo', methods=['POST'])
+@require_token
+def api_command_undo(command_id):
+    """Reverse a finished command. Refused if what it touched has changed since."""
+    from lib.command import executor, log as command_log
+
+    command = command_log.get(command_id)
+    if command is None:
+        return jsonify({"error": "command not found"}), 404
+    if command["status"] != "done" or not executor.undoable(command["undo"]):
+        return jsonify({"error": "Nothing to undo."}), 409
+    ok, reason = executor.undo(command["undo"])
+    if not ok:
+        return jsonify({"status": "refused", "reason": reason}), 409
+    command_log.update(command_id, status="undone")
+    _regen_weeks(*command["undo"].get("weeks", []))
+    _sync_cook_history(*command["undo"].get("recipes", []))
+    return jsonify({"status": "undone"})
+
+
 @app.route('/api/placements', methods=['POST'])
 @require_token
 @_ledger_error
