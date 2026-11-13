@@ -352,6 +352,56 @@ _CODE_GLOBS = ("api_server.py", "lib/*.py", "templates/*.html")
 _FRESHNESS_GRACE_S = 5
 
 
+def check_api_billing(failure_logs: list) -> dict:
+    """Is the Anthropic API reachable, or are credits exhausted?
+
+    Receipt parsing and meal suggestions both call Claude. When the API key's
+    credit balance hits zero every call 400s, but the error was classified as
+    "unknown" and buried in the failure table — nothing on the page said "your
+    API key is out of credits".
+
+    Checks both the ``api_billing`` category (from the classify_error fix) and
+    the raw failure files for the billing error text (catches pre-fix logs
+    whose category is still "unknown").
+    """
+    if not failure_logs:
+        return _check("api_billing", "Anthropic API credits", OK,
+                      "no recent failures to check", "", "")
+
+    cat_hits = sum(
+        log.get("categories", {}).get("api_billing", 0)
+        for log in failure_logs if isinstance(log, dict)
+    )
+
+    if not cat_hits:
+        try:
+            import json
+            failures_dir = Path(__file__).resolve().parent.parent / "failures"
+            if failures_dir.exists():
+                raw_files = sorted(failures_dir.glob("*.json"),
+                                   key=lambda f: f.stat().st_mtime, reverse=True)
+                for f in raw_files[:10]:
+                    data = json.loads(f.read_text(encoding="utf-8"))
+                    for failure in data.get("failures", []):
+                        err = str(failure.get("error", "")).lower()
+                        if "credit balance" in err or "purchase credits" in err:
+                            cat_hits += 1
+        except Exception:
+            pass
+
+    if not cat_hits:
+        return _check("api_billing", "Anthropic API credits", OK,
+                      "no billing errors in recent failure logs", "", "")
+    return _check(
+        "api_billing", "Anthropic API credits", FAILING,
+        f"{cat_hits} billing failure(s) in recent logs",
+        "Receipt parsing and meal suggestions are silently failing. "
+        "Every ingest attempt burns time and logs a retry that will never succeed.",
+        "Top up credits at console.anthropic.com, or check that ANTHROPIC_API_KEY "
+        "in .env points to an account with a positive balance.",
+    )
+
+
 def check_server_freshness(boot_time: float | None = None,
                            code_root: Path | None = None) -> dict:
     """Is the running API executing the code that is currently on disk?
@@ -438,6 +488,7 @@ def run_all(recipes_dir=None, meal_plans_dir=None, week=None,
     for fn in (
         lambda: check_share_sheet_capture(),
         lambda: check_capture_queue(run_logs or []),
+        lambda: check_api_billing(failure_logs or []),
         lambda: check_instagram_cookies(failure_logs or []),
         lambda: check_nutrition_plausibility(recipes_dir),
         lambda: check_inventory_consumption(),
