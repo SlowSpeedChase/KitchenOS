@@ -214,6 +214,32 @@ def _different_food(item: str, matched: str) -> bool:
     return not (d_head == m_qual or m_head == d_qual)
 
 
+# Units that mean "one container exists", not a measured amount.
+_PACKAGE_UNITS = {"ct", "ea", "each", "pkg", "package", "jar", "bottle",
+                  "can", "bag", "box", "container", "tub", "tin"}
+_TRACE_UNITS = {"pinch", "pinches", "dash", "dashes", "smidgen"}
+# The most a recipe line may ask of an owned container before a person
+# should look: three tablespoons, or thirty grams.
+_SMALL_VOLUME_BASE = convert_to_base_unit(3, "tbsp", "volume")
+_SMALL_WEIGHT_BASE = convert_to_base_unit(30, "g", "weight")
+
+
+def _is_small_ask(amount, unit: str) -> bool:
+    """Whether a demand is small enough that an owned container covers it."""
+    unit = (unit or "").lower().strip()
+    if unit in _TRACE_UNITS:
+        return True
+    n = parse_amount_to_float(amount)
+    if n is None:
+        return False
+    family = get_unit_family(unit)
+    if family == "volume":
+        return convert_to_base_unit(n, unit, family) <= _SMALL_VOLUME_BASE
+    if family == "weight":
+        return convert_to_base_unit(n, unit, family) <= _SMALL_WEIGHT_BASE
+    return False
+
+
 def split_against_pantry(item: str, amount, unit: str, pantry: list[dict]) -> dict:
     """Split a recipe-demand line against the pantry.
 
@@ -221,7 +247,7 @@ def split_against_pantry(item: str, amount, unit: str, pantry: list[dict]) -> di
         from_pantry: {"amount": str, "unit": str} | None
         to_buy:     {"amount": str, "unit": str} | None
         warning:    str | None — set when the candidate cannot be credited
-        status:     "buy" | "credited" | "review"
+        status:     "buy" | "credited" | "review" | "on_hand"
         matched_inventory: the candidate inventory row, if any
 
     The pantry inventory is NOT mutated. Use `apply_decisions()` for that.
@@ -269,11 +295,24 @@ def split_against_pantry(item: str, amount, unit: str, pantry: list[dict]) -> di
             "matched_inventory": pantry_entry,
         }
 
+    p_unit_norm = p_unit.lower().strip()
+    unit_norm = (unit or "").lower().strip()
+    # A pinch of salt against a box of salt: the box covers it. Assumed, not
+    # credited. from_pantry stays None so neither apply_decisions nor the
+    # cooking packet's pull allocation ever treats a container as spendable
+    # by the teaspoon.
+    if p_unit_norm in _PACKAGE_UNITS and _is_small_ask(amount, unit_norm):
+        return {
+            "from_pantry": None,
+            "to_buy": None,
+            "warning": None,
+            "status": "on_hand",
+            "matched_inventory": pantry_entry,
+        }
+
     # Receipt and conversational ingest use `ct` as “one package exists.” It
     # cannot prove the number of eggs, cloves, leaves, grams, or tablespoons
     # left inside that package.
-    p_unit_norm = p_unit.lower().strip()
-    unit_norm = (unit or "").lower().strip()
     if p_unit_norm == "ct" and unit_norm != "ct":
         return {
             "from_pantry": None,

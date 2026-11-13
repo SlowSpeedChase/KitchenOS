@@ -175,7 +175,7 @@ def compute_lines(aggregated: list[dict], pantry: Optional[list[dict]] = None) -
             "to_buy": {amount, unit} | None,        # what still needs purchasing
             "display": str,                         # full formatted ingredient
             "warning": str | None,                  # cross-family mismatch, etc.
-            "status": "buy" | "credited" | "review" | "excluded",
+            "status": "buy" | "credited" | "review" | "on_hand" | "excluded",
             "matched_inventory": dict | None,
         }
 
@@ -343,12 +343,21 @@ def shopping_sections(lines: list[dict]) -> dict[str, list[str]]:
 
     Any inventory candidate belongs in the verification section, regardless of
     whether its quantity was creditable. Only lines with no candidate become
-    purchase checkboxes (and therefore Reminders items).
+    purchase checkboxes (and therefore Reminders items). Lines assumed covered
+    by an owned container (`on_hand`) collapse into one closing plain bullet,
+    so a week of salt, oil and spices reads as one line instead of forty.
     """
     purchase: list[str] = []
     inventory_matches: list[str] = []
+    on_hand: list[str] = []
     for line in lines:
-        if line.get("status") == "excluded":
+        status = line.get("status")
+        if status == "excluded":
+            continue
+        if status == "on_hand":
+            name = line.get("item", "")
+            if name and name not in on_hand:
+                on_hand.append(name)
             continue
 
         matched = line.get("matched_inventory")
@@ -364,6 +373,11 @@ def shopping_sections(lines: list[dict]) -> dict[str, list[str]]:
                 "item": line.get("item", ""),
             }))
 
+    if on_hand:
+        inventory_matches.append(
+            "Assumed on hand — small amounts from packages you have: "
+            + ", ".join(sorted(on_hand, key=str.lower))
+        )
     return {"purchase": purchase, "inventory_matches": inventory_matches}
 
 

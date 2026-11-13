@@ -780,3 +780,51 @@ def test_different_food_is_plain_buy(demand, pantry_name, amount, unit):
     assert out["status"] == "buy"
     assert out["matched_inventory"] is None
     assert out["warning"] is None
+
+
+import pytest as _pytest
+
+
+@_pytest.mark.parametrize("amount, unit", [
+    ("1", "tsp"), ("2", "tbsp"), ("3", "tbsp"), ("15", "g"), ("1", "pinch"),
+])
+def test_small_ask_against_owned_package_is_on_hand(amount, unit):
+    pantry = [{"item": "Kosher salt", "amount": "1", "unit": "ct"}]
+    out = split_against_pantry("salt", amount, unit, pantry)
+    assert out["status"] == "on_hand"
+    assert out["from_pantry"] is None   # never a decrement, never a pull
+    assert out["to_buy"] is None
+    assert out["warning"] is None
+
+
+@_pytest.mark.parametrize("amount, unit", [("10.33", "tbsp"), ("1", "cup"), ("40", "g")])
+def test_large_ask_against_package_still_reviews(amount, unit):
+    pantry = [{"item": "Olive oil", "amount": "1", "unit": "ct"}]
+    out = split_against_pantry("olive oil", amount, unit, pantry)
+    assert out["status"] == "review"
+    assert "package quantity is unknown" in out["warning"]
+
+
+def test_small_ask_needs_exact_identity_not_related():
+    pantry = [{"item": "Smoked paprika", "amount": "1", "unit": "ct"}]
+    out = split_against_pantry("paprika", "1", "tsp", pantry)
+    assert out["status"] != "on_hand"
+
+
+def test_small_ask_against_measured_row_is_not_on_hand():
+    # a measured row is compared by quantity as before, never assumed
+    pantry = [{"item": "sesame oil", "amount": "1", "unit": "oz"}]
+    out = split_against_pantry("sesame oil", "1.5", "tsp", pantry)
+    assert out["status"] != "on_hand"
+
+
+def test_unitless_count_against_package_is_not_on_hand():
+    pantry = [{"item": "Garlic powder", "amount": "1", "unit": "ct"}]
+    out = split_against_pantry("garlic powder", "1", "", pantry)
+    assert out["status"] != "on_hand"
+
+
+def test_apply_decisions_ignores_on_hand_lines():
+    pantry = [{"item": "Kosher salt", "amount": "1", "unit": "ct"}]
+    out = split_against_pantry("salt", "1", "tsp", pantry)
+    assert out["from_pantry"] is None   # so no decision can be built from it

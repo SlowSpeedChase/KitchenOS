@@ -777,3 +777,24 @@ def test_extract_ingredient_table_keeps_grouped_sections():
     section = extract_ingredient_table(body)
     assert "paprika" in section
     assert "Cook." not in section
+
+
+from lib.shopping_list_generator import compute_lines, shopping_sections
+
+
+def test_on_hand_lines_summarised_in_one_plain_bullet_and_never_purchased():
+    pantry = [
+        {"item": "Kosher salt", "amount": "1", "unit": "ct"},
+        {"item": "Ground cumin", "amount": "1", "unit": "ct"},
+    ]
+    lines = compute_lines([
+        {"amount": "1", "unit": "tsp", "item": "salt"},
+        {"amount": "0.5", "unit": "tsp", "item": "ground cumin"},
+        {"amount": "2", "unit": "", "item": "carrots"},
+    ], pantry=pantry)
+    sections = shopping_sections(lines)
+    assert sections["purchase"] == ["2 carrots"]
+    summary = [n for n in sections["inventory_matches"] if n.startswith("Assumed on hand — ")]
+    assert len(summary) == 1
+    assert "salt" in summary[0] and "ground cumin" in summary[0]
+    assert not any(n.lstrip().startswith("- [") for n in sections["inventory_matches"])
