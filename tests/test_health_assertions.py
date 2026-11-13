@@ -245,3 +245,33 @@ class TestServerFreshness:
         assert jitter["status"] == ha.OK
         real = ha.check_server_freshness(boot_time=1000 - 60, code_root=root)
         assert real["status"] == ha.FAILING
+
+
+class TestApiBilling:
+    @pytest.fixture(autouse=True)
+    def _no_real_failures_dir(self, tmp_path, monkeypatch):
+        # The check falls back to <repo>/failures/*.json; never read the real one.
+        (tmp_path / "lib").mkdir()
+        monkeypatch.setattr(ha, "__file__", str(tmp_path / "lib" / "health_assertions.py"))
+        return tmp_path
+
+    def test_no_logs_is_ok(self):
+        assert ha.check_api_billing([])["status"] == ha.OK
+
+    def test_category_hits_fail(self):
+        logs = [{"categories": {"api_billing": 2}}, {"categories": {"network": 1}}]
+        result = ha.check_api_billing(logs)
+        assert result["status"] == ha.FAILING
+        assert "2 billing" in result["detail"]
+
+    def test_pre_fix_raw_failure_text_is_caught(self, _no_real_failures_dir):
+        import json
+        d = _no_real_failures_dir / "failures"
+        d.mkdir()
+        (d / "f.json").write_text(json.dumps({"failures": [
+            {"error": "Your credit balance is too low to access the Anthropic API"}]}))
+        result = ha.check_api_billing([{"categories": {"unknown": 1}}])
+        assert result["status"] == ha.FAILING
+
+    def test_unrelated_failures_are_ok(self):
+        assert ha.check_api_billing([{"categories": {"network": 3}}])["status"] == ha.OK

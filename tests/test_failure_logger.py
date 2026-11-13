@@ -185,3 +185,15 @@ def test_classify_error_missing_json_ld_is_still_parsing():
     assert classify_error(
         "No structured recipe (JSON-LD) found on page", Exception
     ) == "parsing"
+
+
+class TestApiBillingClassification:
+    def test_anthropic_credit_error_is_api_billing(self):
+        from lib.failure_logger import classify_error
+        msg = "Error code: 400 - Your credit balance is too low to access the Anthropic API."
+        assert classify_error(msg) == "api_billing"
+
+    def test_rate_limit_is_not_billing(self):
+        # A throttle is transient; calling it "out of credits" is a false alarm.
+        from lib.failure_logger import classify_error
+        assert classify_error("rate_limit_error: slow down") != "api_billing"
