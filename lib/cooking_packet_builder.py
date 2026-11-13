@@ -91,7 +91,7 @@ def allocate_pull_sources(lines: list[dict], inventory_rows: list[dict]) -> list
     remaining = {row["id"]: _quantity(row.get("quantity", row.get("amount"))) for row in rows}
     pulls = []
     for ordinal, line in enumerate(lines):
-        if line.get("status") == "excluded":
+        if line.get("status") in ("excluded", "on_hand"):
             continue
         item = line.get("item") or ""
         needed = line.get("needed") or {}
@@ -260,6 +260,24 @@ def _read_week_sources(week: str, inventory_rows: list[dict] | None) -> tuple[li
         conn.close()
 
 
+def _settle_line(line: dict, credited: float) -> None:
+    """Re-derive a line's status from the stock actually pulled for it.
+
+    `excluded` (water, ice) and `on_hand` (a pinch from an owned container)
+    have no pulls by design; re-deriving them would put them back on the
+    packet's shopping list.
+    """
+    if line.get("status") in ("excluded", "on_hand"):
+        return
+    needed_amount = _quantity(line["needed"]["amount"])
+    unit = line["needed"]["unit"]
+    line["from_pantry"] = {"amount": credited, "unit": unit} if credited else None
+    to_buy = max(0.0, needed_amount - credited)
+    line["to_buy"] = {"amount": to_buy if credited else line["needed"]["amount"],
+                      "unit": unit} if to_buy > 1e-12 else None
+    line["status"] = "credited" if credited else "review" if line.get("warning") else "buy"
+
+
 def build_week_draft(week: str, recipes_dir: Path, *, inventory_rows: list[dict] | None = None,
                      now: datetime | None = None) -> dict:
     """Build a deterministic draft, including every cook regardless of placement."""
@@ -383,14 +401,7 @@ def build_week_draft(week: str, recipes_dir: Path, *, inventory_rows: list[dict]
         line["source_inventory_row_ids"] = inventory_ids
         for pull in pulls:
             pull["line_id"] = line["item_id"]
-        if line.get("status") != "excluded":
-            needed_amount = _quantity(line["needed"]["amount"])
-            unit = line["needed"]["unit"]
-            line["from_pantry"] = {"amount": credited, "unit": unit} if credited else None
-            to_buy = max(0.0, needed_amount - credited)
-            line["to_buy"] = {"amount": to_buy if credited else line["needed"]["amount"],
-                              "unit": unit} if to_buy > 1e-12 else None
-            line["status"] = "credited" if credited else "review" if line.get("warning") else "buy"
+        _settle_line(line, credited)
         line["done"] = False
         if line.get("warning"):
             packet["warnings"].append({"item_id": _id("warning", line["item_id"], "inventory_match"),
