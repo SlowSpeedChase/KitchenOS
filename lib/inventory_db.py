@@ -217,6 +217,19 @@ CREATE TABLE IF NOT EXISTS placements (
     meal TEXT,
     count REAL NOT NULL DEFAULT 1.0
 );
+-- One row per spoken/typed command (lib/command). `undo` holds before/after
+-- snapshots of every row the command touched; see lib/command/executor.py.
+CREATE TABLE IF NOT EXISTS command_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    text TEXT NOT NULL,
+    context TEXT NOT NULL,
+    answers TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'new',
+    plan TEXT,
+    response TEXT,
+    undo TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 CREATE TABLE IF NOT EXISTS cook_schedule (
     cook_id INTEGER PRIMARY KEY REFERENCES cooks(id) ON DELETE CASCADE,
     start TEXT NOT NULL,
@@ -713,6 +726,16 @@ def replace_inventory_rows(rows: list[dict]) -> None:
     """Overwrite the inventory table with ``rows`` atomically."""
     with write_transaction() as conn:
         _replace_inventory_rows(conn, rows)
+
+
+def inventory_rows_in(conn: sqlite3.Connection) -> list[dict]:
+    """Every inventory row, read on a caller's connection (so, in its transaction)."""
+    return _fetch_inventory_rows(conn)
+
+
+def replace_inventory_rows_in(conn: sqlite3.Connection, rows: list[dict]) -> None:
+    """Overwrite the inventory table on a caller's connection. Caller commits."""
+    _replace_inventory_rows(conn, rows)
 
 
 def mutate_inventory_rows(
