@@ -807,3 +807,33 @@ def test_match_note_for_identity_only_review_says_other_name():
             "needed": {"amount": "1", "unit": "whole"},
             **split_against_pantry("freshly squeezed lemon juice", "1", "whole", pantry)}
     assert "same food, other name; verify amount" in _inventory_match_note(line)
+
+
+def _on_hand_line(item, row="Kosher salt"):
+    return {"item": item, "status": "on_hand", "from_pantry": None, "to_buy": None,
+            "needed": {"amount": "1", "unit": "tsp"},
+            "matched_inventory": {"item": row, "amount": "1", "unit": "ct"}}
+
+
+def test_on_hand_match_note_says_assumed_on_hand():
+    from lib.shopping_list_generator import _inventory_match_note
+    note = _inventory_match_note(_on_hand_line("salt"))
+    assert note.endswith("— assumed on hand")
+    assert "Kosher salt (1 ct)" in note
+
+
+def test_on_hand_summary_dedupes_by_identity():
+    from lib.shopping_list_generator import shopping_sections
+    out = shopping_sections([_on_hand_line("salt"), _on_hand_line("kosher salt"),
+                             _on_hand_line("sea salt")])["inventory_matches"]
+    assert len(out) == 1
+    assert out[0].endswith("salt (Kosher salt)")  # first-seen wins
+    assert "sea salt" not in out[0]
+
+
+def test_on_hand_summary_shows_row_when_names_differ():
+    from lib.shopping_list_generator import shopping_sections
+    out = shopping_sections([_on_hand_line("salt")])["inventory_matches"][0]
+    assert out.endswith("salt (Kosher salt)")
+    same = shopping_sections([_on_hand_line("Kosher salt")])["inventory_matches"][0]
+    assert same.endswith("Kosher salt")

@@ -17,6 +17,7 @@ from lib.recipe_parser import (
 from lib.ingredient_aggregator import aggregate_ingredients, format_ingredient, parse_amount_to_float, format_amount
 from lib.ingredient_normalizer import normalize_name
 from lib.ingredient_parser import parse_ingredient_best
+from lib.shopping_identity import shopping_identity
 from lib import meal_loader, paths
 from lib.meal_plan_parser import sub_multiplier
 from lib.safe_paths import shopping_list_path
@@ -308,6 +309,11 @@ def _inventory_match_note(line: dict) -> Optional[str]:
     matched_qty = format_qty(matched.get("amount"), matched.get("unit"))
     warning = (line.get("warning") or "").lower()
     to_buy = line.get("to_buy")
+    if line.get("status") == "on_hand":
+        return (
+            f"{needed_text} → {matched.get('item', 'inventory item')} "
+            f"({matched_qty}) — assumed on hand"
+        )
     if line.get("status") == "credited" and to_buy:
         suffix = f"exact match; {_fmt_qty(to_buy)} still needed"
     elif line.get("status") == "credited":
@@ -351,15 +357,19 @@ def shopping_sections(lines: list[dict]) -> dict[str, list[str]]:
     """
     purchase: list[str] = []
     inventory_matches: list[str] = []
-    on_hand: list[str] = []
+    on_hand: dict[str, str] = {}
     for line in lines:
         status = line.get("status")
         if status == "excluded":
             continue
         if status == "on_hand":
             name = line.get("item", "")
-            if name and name not in on_hand:
-                on_hand.append(name)
+            key = shopping_identity(name)
+            if name and key not in on_hand:
+                row = (line.get("matched_inventory") or {}).get("item") or ""
+                same = (shopping_identity(row) == key
+                        and row.strip().lower() == name.strip().lower())
+                on_hand[key] = name if (same or not row) else f"{name} ({row})"
             continue
 
         matched = line.get("matched_inventory")
@@ -378,7 +388,7 @@ def shopping_sections(lines: list[dict]) -> dict[str, list[str]]:
     if on_hand:
         inventory_matches.append(
             "Assumed on hand — small amounts from packages you have: "
-            + ", ".join(sorted(on_hand, key=str.lower))
+            + ", ".join(sorted(on_hand.values(), key=str.lower))
         )
     return {"purchase": purchase, "inventory_matches": inventory_matches}
 
