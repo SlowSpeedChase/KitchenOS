@@ -503,6 +503,15 @@ Two guards worth knowing before you widen its scope:
 
 ---
 
+### Score local models on the gold command set
+
+    .venv/bin/python scripts/score_command_models.py qwen2.5:3b granite4.1:8b
+
+Run before changing `lib/command/decider.DEFAULT_MODEL` or any prompt in that file. The
+`WRONG` column must be 0. Run it while nothing else is using Ollama.
+
+---
+
 ## 2. LaunchAgents (all 9)
 
 All 9 agents use the labels below. The API can be deployed through the reviewed

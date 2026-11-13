@@ -115,6 +115,22 @@ over a private tailnet from devices that may have no route to the internet.
 
 For the full route list and per-route contracts, see `docs/API.md`.
 
+### Command engine (`lib/command/`)
+
+Sentence + screen context → typed actions → ledger/inventory, with Undo.
+
+| Module | Role |
+|--------|------|
+| `phrases.py`, `slots.py` | Split the sentence; extract dates, meals, numbers, places. No model. |
+| `resolve.py` | `Kitchen` snapshot; words → real recipes, cooks, freezer and inventory rows. |
+| `intents.py` | The closed action list, rules, and feasibility. |
+| `decider.py` | The only model call: one typed choice. `None` means "ask the user". |
+| `planner.py` | Runs the pipeline; returns `Plan`, `Question` or `Failure`. Changes nothing. |
+| `executor.py`, `log.py` | Run a plan through existing ledger/inventory functions; snapshot rows; undo. |
+
+The gold kitchen (`tests/gold/`) and `scripts/score_command_models.py` are the standard every
+change is run through.
+
 ## Background services
 
 Nine LaunchAgents (`ops/com.kitchenos.*.plist`) run the recurring jobs, each
