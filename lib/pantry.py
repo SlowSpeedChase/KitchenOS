@@ -29,7 +29,6 @@ from lib.ingredient_aggregator import (
     parse_amount_to_float,
     unit_compatibility,
 )
-from lib.ingredient_normalizer import normalize_name
 from lib.shopping_identity import shopping_identity
 from lib.use_it_up import _covers, _ingredient_phrase, _phrase
 

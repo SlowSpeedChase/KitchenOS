@@ -782,10 +782,7 @@ def test_different_food_is_plain_buy(demand, pantry_name, amount, unit):
     assert out["warning"] is None
 
 
-import pytest as _pytest
-
-
-@_pytest.mark.parametrize("amount, unit", [
+@pytest.mark.parametrize("amount, unit", [
     ("1", "tsp"), ("2", "tbsp"), ("3", "tbsp"), ("15", "g"), ("1", "pinch"),
 ])
 def test_small_ask_against_owned_package_is_on_hand(amount, unit):
@@ -797,7 +794,7 @@ def test_small_ask_against_owned_package_is_on_hand(amount, unit):
     assert out["warning"] is None
 
 
-@_pytest.mark.parametrize("amount, unit", [("10.33", "tbsp"), ("1", "cup"), ("40", "g")])
+@pytest.mark.parametrize("amount, unit", [("10.33", "tbsp"), ("1", "cup"), ("40", "g")])
 def test_large_ask_against_package_still_reviews(amount, unit):
     pantry = [{"item": "Olive oil", "amount": "1", "unit": "ct"}]
     out = split_against_pantry("olive oil", amount, unit, pantry)

@@ -6,7 +6,7 @@ import sqlite3
 import pytest
 
 from lib import inventory_db, serving_ledger
-from lib.cooking_packet_builder import allocate_pull_sources, build_week_draft
+from lib.cooking_packet_builder import _settle_line, allocate_pull_sources, build_week_draft
 from lib.cooking_packet_store import _validate_generated
 
 WEEK = "2026-W40"
@@ -549,9 +549,6 @@ def test_pull_partition_uses_confirmed_stages_and_keeps_unknowns_later(stage, re
                               'finish_after_cooking', 'serve_separately'}:
         assert packet[expected][0]['needs_review'] and packet[expected][0]['stage_reason']
     _validate_generated(WEEK, packet)
-
-
-from lib.cooking_packet_builder import _settle_line
 
 
 def test_settle_keeps_on_hand_lines_off_the_buy_list():

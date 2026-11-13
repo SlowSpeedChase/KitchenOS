@@ -17,6 +17,8 @@ from lib.shopping_list_generator import (
     MEAL_PLANS_PATH,
     RECIPES_PATH,
     SHOPPING_LISTS_PATH,
+    compute_lines,
+    shopping_sections,
 )
 
 
@@ -777,9 +779,6 @@ def test_extract_ingredient_table_keeps_grouped_sections():
     section = extract_ingredient_table(body)
     assert "paprika" in section
     assert "Cook." not in section
-
-
-from lib.shopping_list_generator import compute_lines, shopping_sections
 
 
 def test_on_hand_lines_summarised_in_one_plain_bullet_and_never_purchased():
