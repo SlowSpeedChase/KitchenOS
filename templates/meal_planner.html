@@ -1473,6 +1473,7 @@
                declared later in the stylesheet and would win a class-only tie.
                Sits above the shelf rather than on top of it. */
             :root { --ko-dock-offset: calc(var(--shelf-h) + 56px); }
+            body.shelf-collapsed { --ko-dock-offset: calc(var(--shelf-collapsed-h) + 56px); }
             div.panel-dock {
                 bottom: calc(var(--shelf-h) + 12px);
                 right: 16px;
@@ -2229,7 +2230,10 @@
             return ctx;
         };
         // A command changed something: refetch the board in place instead of reloading.
+        // Calendar view (planningCalendar mounted) and a not-yet-loaded week are not
+        // refreshed by loadWeekBoard, so there the bar's own reload must run.
         window.addEventListener('kitchenos:changed', event => {
+            if (planningCalendar || !currentWeek) return;
             event.preventDefault();
             loadWeekBoard(currentWeek);
         });
@@ -4986,6 +4990,17 @@
             document.getElementById('shelf-handle-hint').textContent =
                 collapsed ? 'tap to open' : 'drag to resize';
         }
+
+        // The tell-it button is a child of <body>, outside .app, so mirror the
+        // collapsed state onto body for the --ko-dock-offset rule. An observer
+        // covers every place that flips the class, not just setShelfCollapsed.
+        (function mirrorShelfCollapsed() {
+            const app = document.querySelector('.app');
+            const sync = () => document.body.classList.toggle(
+                'shelf-collapsed', app.classList.contains('shelf-collapsed'));
+            sync();
+            new MutationObserver(sync).observe(app, {attributes: true, attributeFilter: ['class']});
+        })();
 
         function setShelfCollapsed(collapsed) {
             document.querySelector('.app').classList.toggle('shelf-collapsed', collapsed);
