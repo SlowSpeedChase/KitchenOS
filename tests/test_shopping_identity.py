@@ -15,6 +15,7 @@ from lib.shopping_identity import shopping_identity
     ("salt", "Kosher salt"),
     ("sea salt", "Celtic sea salt"),
     ("kosher salt such as diamond crystal", "Diamond Crystal kosher salt"),
+    ("fresh ground black pepper", "black pepper"),
     ("fine sea salt", "salt"),
 ])
 def test_same_food_shares_identity(a, b):
@@ -37,6 +38,9 @@ def test_same_food_shares_identity(a, b):
     ("ground coffee", "coffee"),
     ("fresh mozzarella", "mozzarella"),
     ("pink salt", "salt"),
+    ("pure vanilla extract", "vanilla extract"),
+    ("freshly ground coffee", "coffee"),
+    ("freshly grated ginger", "ginger"),
 ])
 def test_different_foods_stay_distinct(a, b):
     assert shopping_identity(a) != shopping_identity(b)
