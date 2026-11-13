@@ -35,7 +35,8 @@ responses. It adds **no** wording rules, no model calls, and no new write paths.
 `_serve_page` already injects global chrome (the home link, the stale-code banner), so a
 newly registered page opts in for free. It adds the bar after the stale banner **unless**:
 
-- the template is a print page (`print_week.html`, `print_cooking_packet.html`), or
+- the template is a print page (`print_week.html`, `print_cooking_packet.html`,
+  `recipe_card.html`), or
   `browser_open.html` (the Siri handoff page); or
 - the request is a read-only browser-view session (`_browser_view_config()['readOnly']`) —
   those cannot write, so a bar would only ever fail.
@@ -61,9 +62,15 @@ The bar calls it at send time. A page with no hook sends `{screen: "other"}`. Th
 | `/meal-planner` (board and calendar) | `{screen: "planner", week, date?}` |
 | `/` home | `{screen: "home"}` |
 | `/cook-now` | `{screen: "cook-now"}` |
-| inventory note view | `{screen: "inventory"}` |
-| shopping-list note view | `{screen: "shopping"}` |
-| everything else | `{screen: "other"}` (no hook) |
+| `/current/shopping-list` (note view) | `{screen: "shopping", week}` |
+| everything else | `{screen: "other"}` |
+
+There is no inventory web page — inventory is a native-app screen — so `inventory` is
+not a web context in v1, and `href_for({"page": "inventory"})` returns `None`: the Done
+card shows the line and the bar stays put.
+
+An `ask` with an **empty** `options` list means "say it differently" (per `docs/API.md`):
+the sheet shows the question and keeps the sentence editable, with no buttons.
 
 ### The sheet
 
@@ -92,7 +99,8 @@ whatever comes back until a terminal `done` or `failed`.
    with `/` and same-origin. It never builds a URL itself.
 2. **Otherwise** → the bar dispatches `kitchenos:changed` on `window` with the response.
    If a listener calls `event.preventDefault()`, it has refreshed in place; if not, the
-   bar reloads the page. In v1 only the planner listens (it refetches its week board).
+   bar reloads the page **when the sheet closes** — not at once, which would wipe the
+   Done card and its Undo. In v1 only the planner listens (it refetches its week board).
 
 API changes, both additive: the `/api/command` (and `/answer`) response gains `href`
 alongside the existing `navigate`, and `POST /api/command/warm` is new. Both are
