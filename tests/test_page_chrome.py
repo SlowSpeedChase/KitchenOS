@@ -175,3 +175,23 @@ def test_shopping_note_states_its_week(monkeypatch):
         html = api_server._render_note_page("Shopping Lists", "2026-W47", "Shopping list",
                                             "<p>none</p>", screen="shopping")
     assert '{"screen": "shopping", "week": "2026-W47"}' in html
+
+
+def test_bar_goes_before_the_last_body_close_not_the_first():
+    """Body text that happens to contain the literal tag must not receive the bar."""
+    html = _serve_page("note_view.html", [("<!--BODY-->", "<pre></body></pre>")])
+    assert html.count("</body>") >= 2
+    assert html.rindex(BAR) > html.index("</body>")
+    assert html.count(BAR) == 1
+
+
+@pytest.mark.parametrize("week", ["2026-W00", "2026-W99", "2025-W53"])
+def test_current_week_rejects_weeks_that_do_not_exist(week):
+    import api_server
+    assert api_server._current_week(week) is None
+
+
+def test_current_week_keeps_a_real_week():
+    import api_server
+    assert api_server._current_week("2026-W47") == "2026-W47"
+    assert api_server._current_week("2026-W53") == "2026-W53"

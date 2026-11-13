@@ -42,6 +42,9 @@
   // Set when a change happened on a page that can't refresh itself. The reload
   // waits for the sheet to close so the Done card and its Undo stay visible.
   let reloadOnClose = false;
+  // Set when a done both changed something and opened a page: the navigation
+  // waits for the sheet to close so Undo stays reachable. Wins over a reload.
+  let navigateOnClose = null;
   // Bumped on every close, so a response that lands after its sheet closed is
   // recognised as late rather than drawn into a sheet the user dismissed.
   let generation = 0;
@@ -84,11 +87,14 @@
     } catch (_) {
       return unreachable;
     }
-    if (resp.status === 401) {
-      return {status: 'failed', transport: true, reason: 'Session expired — reopen this page from the app.'};
-    }
     let data = null;
     try { data = await resp.json(); } catch (_) { /* fall through */ }
+    if (resp.status === 401) {
+      const expired = data && data.error === 'browser_session_expired';
+      return {status: 'failed', transport: true, reason: expired
+        ? 'Session expired — reopen this page from the app.'
+        : 'KitchenOS needs you to sign in from the app first.'};
+    }
     if (resp.status >= 500 || !data) return unreachable;
     if (data.error) return {status: 'failed', reason: data.error};
     return data;
@@ -98,6 +104,11 @@
   const announce = (data) => window.dispatchEvent(
     new CustomEvent('kitchenos:changed', {detail: data, cancelable: true}));
   const isChange = (data) => data.status === 'done' || data.status === 'undone';
+  // Only a same-origin path the server sent; the bar never builds one.
+  const safeHref = (data) => {
+    const href = typeof data.href === 'string' ? data.href : null;
+    return href && href.startsWith('/') && !href.startsWith('//') ? href : null;
+  };
 
   function render(data) {
     if (data.status === 'done') {
@@ -112,12 +123,14 @@
       nodes.push(actions);
       show(...nodes);
       input.value = '';
-      const href = typeof data.href === 'string' ? data.href : null;
-      if (href && href.startsWith('/') && !href.startsWith('//')) location.assign(href);
+      const href = safeHref(data);
+      if (href && !data.undo) { location.assign(href); return; }  // pure navigation
+      if (href) navigateOnClose = href;  // a change too: keep Undo until close
       else reloadOnClose = announce(data);  // true = nobody refreshed in place
       return;
     }
     if (data.status === 'undone') {
+      navigateOnClose = null;  // the change is gone; stay put
       show(el('p', {}, 'Undone.'));
       reloadOnClose = announce(data);
       return;
@@ -159,7 +172,8 @@
     setBusy(true);
     const data = await call(path, body);
     if (mine !== generation) {
-      if (isChange(data) && announce(data)) location.reload();
+      if (data.status === 'done' && safeHref(data)) location.assign(safeHref(data));
+      else if (isChange(data) && announce(data)) location.reload();
       return null;
     }
     setBusy(false);
@@ -217,6 +231,13 @@
     backdrop.hidden = true;
     result.replaceChildren();
     fab.setAttribute('aria-expanded', 'false');
+    if (navigateOnClose) {
+      const href = navigateOnClose;
+      navigateOnClose = null;
+      reloadOnClose = false;
+      location.assign(href);
+      return;
+    }
     if (reloadOnClose) { reloadOnClose = false; location.reload(); return; }
     fab.focus();
   }

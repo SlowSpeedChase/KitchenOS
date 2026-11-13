@@ -14,7 +14,7 @@ tier that shipped since and corrects two stale statuses.
 
 ## Done / Shipped
 
-**2026-11 — "Tell it" bar.** A floating mic button on every web page sends the sentence plus the page's screen to /api/command, with Undo. See docs/superpowers/specs/2026-11-13-tell-it-bar-design.md.
+**2026-11 — "Tell it" bar.** A floating mic button on every interactive web page sends the sentence plus the page's screen to /api/command, with Undo. See docs/superpowers/specs/2026-11-13-tell-it-bar-design.md.
 
 **2026-11 — Command engine and gold-standard kitchen (branch `command-engine`).** `POST /api/command`
 turns a sentence plus screen context into ledger and inventory actions with one Undo. Covers meal

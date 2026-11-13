@@ -96,7 +96,11 @@ whatever comes back until a terminal `done` or `failed`.
 
 1. **`navigate` present** → the route has already turned it into `href` via
    `destinations.href_for`. The bar follows it only if it is a relative path starting
-   with `/` and same-origin. It never builds a URL itself.
+   with `/` and same-origin. It never builds a URL itself. A `done` that also changed
+   something (it has Undo) navigates **when the sheet closes**, so Undo stays reachable;
+   a successful Undo cancels that navigation. A pure navigation (no Undo) goes at once,
+   and a late `done` that arrives after the sheet closed follows its `href` instead of
+   reloading.
 2. **Otherwise** → the bar dispatches `kitchenos:changed` on `window` with the response.
    If a listener calls `event.preventDefault()`, it has refreshed in place; if not, the
    bar reloads the page **when the sheet closes** — not at once, which would wipe the

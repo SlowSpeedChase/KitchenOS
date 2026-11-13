@@ -461,8 +461,10 @@ def _serve_page(
     html = _inject_after_body(html, _stale_banner_html())
     read_only = has_request_context() and _browser_view_config()['readOnly']
     if template_filename not in COMMAND_BAR_SKIP and not read_only:
-        html = html.replace('</body>', _command_bar_html() + '</body>', 1) \
-            if '</body>' in html else html + _command_bar_html()
+        # The LAST </body>: body text can contain the literal tag (a <pre> of HTML).
+        end = html.lower().rfind('</body>')
+        html = html[:end] + _command_bar_html() + html[end:] if end >= 0 \
+            else html + _command_bar_html()
     return html
 
 
@@ -3071,7 +3073,12 @@ def meal_planner():
 def _current_week(explicit: str | None = None) -> str | None:
     """The requested week, or the current ISO week. None if malformed."""
     if explicit:
-        return explicit if re.match(r'^\d{4}-W\d{2}$', explicit) else None
+        try:
+            # A real ISO week, not just the shape: 2026-W00 would make every
+            # command on the page a 400.
+            return parse_iso_week(explicit)
+        except ValueError:
+            return None
     iso = date.today().isocalendar()
     return f"{iso[0]}-W{iso[1]:02d}"
 

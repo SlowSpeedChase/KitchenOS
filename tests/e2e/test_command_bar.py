@@ -230,3 +230,49 @@ def test_button_stays_clear_of_the_inventory_bulk_bar(live_server, page, page_er
     # And the kebab is really clickable — nothing intercepts it.
     page.locator("#bulkkebab").click(trial=True, timeout=5_000)
     assert page_errors == []
+
+
+def test_a_change_that_also_opens_a_page_keeps_undo_until_close(live_server, page, page_errors):
+    """A done with Undo and an href waits for the sheet to close before it goes."""
+    name = _a_recipe(live_server)
+    friday = _next(4)
+    before = _cook_ids(live_server, friday)
+    try:
+        url = live_server.url(f"/recipe/{quote(name)}")
+        page.goto(url, wait_until="networkidle")
+        _tell(page, "put this on friday and open the planner")
+        page.wait_for_selector("#ko-tell-undo")
+        assert _cooks(live_server, name, friday)
+        # Still here, with Undo reachable.
+        page.wait_for_timeout(500)
+        assert page.url == url
+        expect(page.locator("#ko-tell-undo")).to_be_visible()
+
+        page.click("#ko-tell-close")
+        page.wait_for_url("**/meal-planner*")
+    finally:
+        _delete_new_cooks(live_server, friday, before)
+    assert page_errors == []
+
+
+def test_server_error_says_nothing_changed_and_keeps_the_sentence(live_server, page, page_errors):
+    page.route("**/api/command", lambda route: route.fulfill(
+        status=500, content_type="application/json", body='{"error": "boom"}'))
+    page.goto(live_server.url("/"), wait_until="networkidle")
+    _tell(page, "put tacos on monday")
+    expect(page.locator("#ko-tell-result")).to_contain_text(
+        "Couldn't reach KitchenOS — nothing was changed.")
+    expect(page.locator("#ko-tell-input")).to_have_value("put tacos on monday")
+    # The browser logs the faked 500 itself; anything else is a real error.
+    assert [e for e in page_errors if "status of 500" not in e] == []
+
+
+def test_server_reason_is_drawn_as_text_never_html(live_server, page, page_errors):
+    page.route("**/api/command", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body='{"status": "failed", "reason": "<b>x</b>"}'))
+    page.goto(live_server.url("/"), wait_until="networkidle")
+    _tell(page, "anything")
+    expect(page.locator("#ko-tell-result")).to_contain_text("<b>x</b>")
+    assert page.locator("#ko-tell-result b").count() == 0
+    assert page_errors == []
