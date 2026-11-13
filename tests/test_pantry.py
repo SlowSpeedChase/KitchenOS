@@ -850,9 +850,9 @@ def test_apply_decisions_ignores_on_hand_lines():
     assert out["from_pantry"] is None
     lines = [out]
     decisions = [
-        {"item": l["matched_inventory"]["item"],
-         "amount": l["from_pantry"]["amount"], "unit": l["from_pantry"]["unit"]}
-        for l in lines if l.get("from_pantry")
+        {"item": ln["matched_inventory"]["item"],
+         "amount": ln["from_pantry"]["amount"], "unit": ln["from_pantry"]["unit"]}
+        for ln in lines if ln.get("from_pantry")
     ]
     assert decisions == []
     work = copy.deepcopy(pantry)
