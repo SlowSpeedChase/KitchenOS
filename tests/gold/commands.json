@@ -1,0 +1,76 @@
+[
+  {"id": "plan-leftovers-freeze", "context": {"screen": "recipe", "recipe": "Chicken Caldo A"},
+   "say": "I want this on the meal plan for this Wednesday and to distribute the leftovers for lunch the next day and freeze the rest",
+   "expect": {"status": "done", "actions": [
+     {"type": "plan_cook", "recipe": "Chicken Caldo A", "date": "2026-11-18", "meal": "dinner"},
+     {"type": "place_leftovers", "date": "2026-11-19", "meal": "lunch"},
+     {"type": "freeze_rest"}]}},
+  {"id": "plan-simple", "context": {"screen": "recipe", "recipe": "Chicken Caldo A"},
+   "say": "put this on friday dinner",
+   "expect": {"status": "done", "actions": [
+     {"type": "plan_cook", "recipe": "Chicken Caldo A", "date": "2026-11-13", "meal": "dinner"}]}},
+  {"id": "plan-double", "context": {"screen": "recipe", "recipe": "Chicken Caldo A"},
+   "say": "add this for tomorrow lunch, double batch",
+   "expect": {"status": "done", "actions": [
+     {"type": "plan_cook", "recipe": "Chicken Caldo A", "date": "2026-11-13", "meal": "lunch", "scale": 2.0}]}},
+  {"id": "plan-default-meal", "context": {"screen": "recipe", "recipe": "Chicken Caldo A"},
+   "say": "lets do this sunday",
+   "expect": {"status": "done", "actions": [
+     {"type": "plan_cook", "recipe": "Chicken Caldo A", "date": "2026-11-15", "meal": "dinner"}]}},
+  {"id": "plan-named", "context": {"screen": "home"},
+   "say": "put butter biscuits on saturday breakfast",
+   "expect": {"status": "done", "actions": [
+     {"type": "plan_cook", "recipe": "Butter Biscuits", "date": "2026-11-14", "meal": "breakfast"}]}},
+  {"id": "which-caldo", "context": {"screen": "home"},
+   "say": "put the caldo on monday",
+   "expect": {"status": "ask", "options": ["Chicken Caldo A", "Chicken Caldo B"]}},
+  {"id": "plan-or-move", "context": {"screen": "recipe", "recipe": "Miso Salmon Bowls"},
+   "say": "put this on friday",
+   "expect": {"status": "ask", "options": ["plan_cook", "move_cook"]}},
+  {"id": "move-cook", "context": {"screen": "planner", "week": "2026-W47"},
+   "say": "move the salmon from wednesday to saturday",
+   "expect": {"status": "done", "actions": [
+     {"type": "move_cook", "recipe": "Miso Salmon Bowls", "date": "2026-11-21"}]}},
+  {"id": "remove-cook", "context": {"screen": "planner", "week": "2026-W47"},
+   "say": "take the chili off tuesday",
+   "expect": {"status": "confirm", "actions": [
+     {"type": "remove_cook", "recipe": "Black Bean Chili", "date": "2026-11-17"}]}},
+  {"id": "cooked", "context": {"screen": "recipe", "recipe": "Chicken Caldo A"},
+   "say": "I cooked this tonight",
+   "expect": {"status": "done", "actions": [{"type": "mark_cooked", "recipe": "Chicken Caldo A"}]}},
+  {"id": "thaw", "context": {"screen": "home"},
+   "say": "pull a caldo out of the freezer for friday dinner",
+   "expect": {"status": "done", "actions": [
+     {"type": "thaw", "recipe": "Chicken Caldo A", "date": "2026-11-13", "meal": "dinner"}]}},
+  {"id": "inv-out", "context": {"screen": "home"},
+   "say": "we're out of eggs",
+   "expect": {"status": "done", "actions": [{"type": "inventory_remove", "name": "eggs"}]}},
+  {"id": "inv-out-many", "context": {"screen": "home"},
+   "say": "we're out of milk",
+   "expect": {"status": "confirm", "actions": [{"type": "inventory_remove", "name": "milk"}]}},
+  {"id": "inv-add-two", "context": {"screen": "home"},
+   "say": "add two cans of chickpeas and a bag of rice",
+   "expect": {"status": "done", "actions": [
+     {"type": "inventory_add", "item": "chickpeas", "quantity": 2.0, "unit": "can"},
+     {"type": "inventory_add", "item": "rice", "quantity": 1.0, "unit": "bag"}]}},
+  {"id": "inv-move", "context": {"screen": "home"},
+   "say": "move the bread to the freezer",
+   "expect": {"status": "done", "actions": [
+     {"type": "inventory_move", "name": "bread", "location": "freezer"}]}},
+  {"id": "open-day", "context": {"screen": "home"},
+   "say": "open saturday",
+   "expect": {"status": "done", "actions": [{"type": "open_page", "page": "day", "date": "2026-11-14"}]}},
+  {"id": "open-recipe", "context": {"screen": "home"},
+   "say": "show me the black bean chili",
+   "expect": {"status": "done", "actions": [
+     {"type": "open_page", "page": "recipe", "recipe": "Black Bean Chili"}]}},
+  {"id": "unclear", "context": {"screen": "home"},
+   "say": "put that thing on whenever",
+   "expect": {"status": "ask", "options": []}},
+  {"id": "shop-make-send", "context": {"screen": "home"},
+   "say": "make the shopping list for next week and send it to reminders",
+   "expect": {"status": "failed"}},
+  {"id": "shop-add", "context": {"screen": "home"},
+   "say": "add olive oil to the shopping list",
+   "expect": {"status": "failed"}}
+]
