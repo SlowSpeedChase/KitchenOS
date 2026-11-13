@@ -143,3 +143,36 @@ def test_read_only_browser_session_gets_no_bar(monkeypatch):
                         lambda: {"state": "active", "readOnly": True, "expires_at": None})
     with app.test_request_context("/"):
         assert BAR not in _serve_page("home.html")
+
+
+#: Templates that deliberately send {screen: "other"}: the engine has no screen
+#: for them, so stating none is the decision. A new template must either set
+#: window.kitchenosContext or be listed here with a reason.
+CONTEXT_OTHER = {
+    "meal_calendar.html": "read-only agenda list; commands here act on no particular week",
+    "nutrition_review.html": "fixes food matches; no command acts on it",
+    "plan_week.html": "the weekly front door; planner commands run from the planner",
+    "prep.html": "today's tasks; no command acts on prep steps",
+    "receipt_paste.html": "a paste form",
+    "recent.html": "a list of new recipes",
+    "review.html": "recipe review queue",
+    "system_health.html": "operator page",
+    "cooking_packet.html": "a printable week view",
+}
+
+
+@pytest.mark.parametrize("template", sorted(set(TEMPLATES) - COMMAND_BAR_SKIP))
+def test_every_bar_page_states_its_context_or_says_why_not(template):
+    source = (REPO / "templates" / template).read_text()
+    assert ("window.kitchenosContext" in source) != (template in CONTEXT_OTHER), (
+        f"{template}: set window.kitchenosContext in the template, or add it to "
+        "CONTEXT_OTHER with a reason — not both."
+    )
+
+
+def test_shopping_note_states_its_week(monkeypatch):
+    import api_server
+    with app.test_request_context("/current/shopping-list"):
+        html = api_server._render_note_page("Shopping Lists", "2026-W47", "Shopping list",
+                                            "<p>none</p>", screen="shopping")
+    assert '{"screen": "shopping", "week": "2026-W47"}' in html

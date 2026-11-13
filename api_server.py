@@ -3076,7 +3076,8 @@ def _current_week(explicit: str | None = None) -> str | None:
     return f"{iso[0]}-W{iso[1]:02d}"
 
 
-def _render_note_page(subdir: str, week: str, title: str, empty_html: str) -> str:
+def _render_note_page(subdir: str, week: str, title: str, empty_html: str,
+                      screen: str = "other") -> str:
     """Serve one generated vault note as a phone-readable page.
 
     These two routes used to 302 to ``obsidian://open?vault=…``, which from a
@@ -3098,6 +3099,9 @@ def _render_note_page(subdir: str, week: str, title: str, empty_html: str) -> st
         ('<!--SUB-->', format_week_heading(week)),
         ('<!--BODY-->', body),
         ('<!--OBSIDIAN-->', obsidian),
+        ('/*KO_CONTEXT*/{"screen": "other"}',
+         json.dumps({"screen": screen, "week": week} if screen != "other"
+                    else {"screen": "other"}).replace('<', '\\u003c')),
     ])
 
 
@@ -3127,7 +3131,8 @@ def current_shopping_list_page():
         return error_page("Invalid week format (expected YYYY-WNN)"), 400
     empty = ('<p class="empty">No shopping list for this week yet.</p>'
              f'<button class="gen" data-week="{week}">Generate shopping list</button>')
-    return _render_note_page('Shopping Lists', week, 'Shopping list', empty), 200, \
+    return _render_note_page('Shopping Lists', week, 'Shopping list', empty,
+                             screen="shopping"), 200, \
         {'Content-Type': 'text/html'}
 
 

@@ -48,6 +48,11 @@
                shelf is proportional so it degrades rather than breaking. */
             --shelf-h: 44dvh;
             --shelf-collapsed-h: 52px;
+            /* Lifts the tell-it bar's button clear of the bottom-right
+               .panel-dock. The dock's height is auto (it grows with its open
+               panels), so this is the collapsed Use It Up header (~44px) plus a
+               gap — the closest honest fixed value. Shelf mode adds the shelf. */
+            --ko-dock-offset: 56px;
         }
 
         * {
@@ -1467,6 +1472,7 @@
             /* div.panel-dock: outrank the base .panel-dock rule, which is
                declared later in the stylesheet and would win a class-only tie.
                Sits above the shelf rather than on top of it. */
+            :root { --ko-dock-offset: calc(var(--shelf-h) + 56px); }
             div.panel-dock {
                 bottom: calc(var(--shelf-h) + 12px);
                 right: 16px;
@@ -2215,6 +2221,18 @@
             if (!calendar) {gridFocusPending=Boolean(selectedDate);focusGridDate();}
         }
         let currentWeek = '';
+        // The tell-it bar asks what's on screen at send time; the week changes without a reload.
+        window.kitchenosContext = () => {
+            const ctx = {screen: 'planner'};
+            if (currentWeek) ctx.week = currentWeek;
+            if (selectedDate) ctx.date = selectedDate;
+            return ctx;
+        };
+        // A command changed something: refetch the board in place instead of reloading.
+        window.addEventListener('kitchenos:changed', event => {
+            event.preventDefault();
+            loadWeekBoard(currentWeek);
+        });
         let dayDates = {};       // { Monday: '2026-02-23', ... }
         let allRecipes = [];
         let allMeals = [];
