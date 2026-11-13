@@ -128,6 +128,15 @@ Sentence + screen context → typed actions → ledger/inventory, with Undo.
 | `planner.py` | Runs the pipeline; returns `Plan`, `Question` or `Failure`. Changes nothing. |
 | `executor.py`, `log.py` | Run a plan through existing ledger/inventory functions; snapshot rows; undo. |
 
+The "tell it" bar is `static/command-bar.js`, injected by `_serve_page` into every page except
+`COMMAND_BAR_SKIP` and read-only sessions. Pages state their screen through
+`window.kitchenosContext` (`/review` states `{screen: "inventory"}`); the bar sends that with the
+sentence and decides nothing itself. `lib/command/destinations.href_for` is the only map from a
+typed navigate destination to a path. A page that can refresh in place listens for
+`kitchenos:changed` and calls `preventDefault()` (the planner does so only in board view);
+otherwise the bar reloads when its sheet closes, so the Done card and Undo stay visible. Pages with
+a fixed bottom bar set `--ko-dock-offset` while it is visible so the button clears it.
+
 The gold kitchen (`tests/gold/`) and `scripts/score_command_models.py` are the standard every
 change is run through.
 

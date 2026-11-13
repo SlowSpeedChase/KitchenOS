@@ -14,10 +14,12 @@ tier that shipped since and corrects two stale statuses.
 
 ## Done / Shipped
 
+**2026-11 — "Tell it" bar.** A floating mic button on every web page sends the sentence plus the page's screen to /api/command, with Undo. See docs/superpowers/specs/2026-11-13-tell-it-bar-design.md.
+
 **2026-11 — Command engine and gold-standard kitchen (branch `command-engine`).** `POST /api/command`
 turns a sentence plus screen context into ledger and inventory actions with one Undo. Covers meal
 plan, leftovers, freezer, cooking, inventory and navigation. **Still open:** the three shopping
-actions, the in-page "tell it" bar, Siri and app-shell wiring, the touch pass, and signing
+actions, Siri and app-shell wiring, the touch pass, and signing
 automation — see `docs/superpowers/specs/2026-11-12-command-engine-design.md`.
 
 **2026-11-12 — Unmerged work landed** (PRs #86, #88–#94; see `docs/plans/INDEX.md` Done
