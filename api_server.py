@@ -430,6 +430,20 @@ def _stale_banner_html() -> str:
     return html
 
 
+#: Pages that never get the command bar: printouts (nothing to tap) and the
+#: Siri handoff page (it exists only to redirect). Read-only browser sessions
+#: are skipped at request time in _serve_page — they cannot write anyway.
+COMMAND_BAR_SKIP = frozenset({
+    "print_week.html", "print_cooking_packet.html", "recipe_card.html",
+    "browser_open.html",
+})
+
+
+def _command_bar_html() -> str:
+    return ('<link rel="stylesheet" href="/static/command-bar.css">'
+            '<script src="/static/command-bar.js" defer></script>')
+
+
 def _serve_page(
     template_filename: str,
     extra_replacements: list[tuple[str, str]] | None = None,
@@ -444,7 +458,14 @@ def _serve_page(
         html = _inject_browser_view_config(html)
         if _browser_view_config()['state'] == 'expired':
             return html
-    return _inject_after_body(html, _stale_banner_html())
+    html = _inject_after_body(html, _stale_banner_html())
+    read_only = has_request_context() and _browser_view_config()['readOnly']
+    if template_filename not in COMMAND_BAR_SKIP and not read_only:
+        # The LAST </body>: body text can contain the literal tag (a <pre> of HTML).
+        end = html.lower().rfind('</body>')
+        html = html[:end] + _command_bar_html() + html[end:] if end >= 0 \
+            else html + _command_bar_html()
+    return html
 
 
 def success_page(message: str, filename: str) -> str:
@@ -2345,9 +2366,11 @@ def _command_respond(command_id, text, context, answers, confirmed):
 
     _regen_weeks(*result.weeks)
     _sync_cook_history(*result.recipes)
+    from lib.command.destinations import href_for
     payload = {"status": "done", "command_id": command_id,
                "undo": executor.undoable(result.undo), "lines": result.lines,
-               "warnings": result.warnings, "navigate": result.navigate, "actions": actions}
+               "warnings": result.warnings, "navigate": result.navigate,
+               "href": href_for(result.navigate), "actions": actions}
     command_log.update(command_id, status="done", answers=answers, plan=actions,
                        response=payload, undo=result.undo)
     return payload
@@ -2424,6 +2447,23 @@ def api_command_undo(command_id):
     _regen_weeks(*command["undo"].get("weeks", []))
     _sync_cook_history(*command["undo"].get("recipes", []))
     return jsonify({"status": "undone"})
+
+
+def _start_background(fn):
+    """Run fn on a daemon thread. A seam so tests can observe it without threads."""
+    threading.Thread(target=fn, daemon=True).start()
+
+
+@app.route('/api/command/warm', methods=['POST'])
+@require_token
+def api_command_warm():
+    """Load the decider model when the command bar opens. Never waits, never errors."""
+    from lib import llm_gate
+    from lib.command import decider
+    if not llm_gate.allowed():
+        return jsonify({"status": "skipped"}), 202
+    _start_background(decider.warm)
+    return jsonify({"status": "warming"}), 202
 
 
 @app.route('/api/placements', methods=['POST'])
@@ -3033,12 +3073,18 @@ def meal_planner():
 def _current_week(explicit: str | None = None) -> str | None:
     """The requested week, or the current ISO week. None if malformed."""
     if explicit:
-        return explicit if re.match(r'^\d{4}-W\d{2}$', explicit) else None
+        try:
+            # A real ISO week, not just the shape: 2026-W00 would make every
+            # command on the page a 400.
+            return parse_iso_week(explicit)
+        except ValueError:
+            return None
     iso = date.today().isocalendar()
     return f"{iso[0]}-W{iso[1]:02d}"
 
 
-def _render_note_page(subdir: str, week: str, title: str, empty_html: str) -> str:
+def _render_note_page(subdir: str, week: str, title: str, empty_html: str,
+                      screen: str = "other") -> str:
     """Serve one generated vault note as a phone-readable page.
 
     These two routes used to 302 to ``obsidian://open?vault=…``, which from a
@@ -3060,6 +3106,9 @@ def _render_note_page(subdir: str, week: str, title: str, empty_html: str) -> st
         ('<!--SUB-->', format_week_heading(week)),
         ('<!--BODY-->', body),
         ('<!--OBSIDIAN-->', obsidian),
+        ('/*KO_CONTEXT*/{"screen": "other"}',
+         json.dumps({"screen": screen, "week": week} if screen != "other"
+                    else {"screen": "other"}).replace('<', '\\u003c')),
     ])
 
 
@@ -3089,7 +3138,8 @@ def current_shopping_list_page():
         return error_page("Invalid week format (expected YYYY-WNN)"), 400
     empty = ('<p class="empty">No shopping list for this week yet.</p>'
              f'<button class="gen" data-week="{week}">Generate shopping list</button>')
-    return _render_note_page('Shopping Lists', week, 'Shopping list', empty), 200, \
+    return _render_note_page('Shopping Lists', week, 'Shopping list', empty,
+                             screen="shopping"), 200, \
         {'Content-Type': 'text/html'}
 
 

@@ -117,3 +117,81 @@ def test_the_stale_banner_never_escapes_the_page():
                               banner)
     assert "&lt;!DOCTYPE" not in page and "<body>" in page
     assert "GRID" in page
+
+
+from api_server import COMMAND_BAR_SKIP
+
+BAR = '<script src="/static/command-bar.js" defer></script>'
+
+
+@pytest.mark.parametrize("template", TEMPLATES)
+def test_every_page_gets_the_command_bar_except_print_and_handoff(template):
+    html = _serve_page(template)
+    expected = 0 if template in COMMAND_BAR_SKIP else 1
+    assert html.count(BAR) == expected
+
+
+def test_skip_list_names_real_templates():
+    assert COMMAND_BAR_SKIP <= set(TEMPLATES)
+    assert {"print_week.html", "print_cooking_packet.html", "recipe_card.html",
+            "browser_open.html"} == COMMAND_BAR_SKIP
+
+
+def test_read_only_browser_session_gets_no_bar(monkeypatch):
+    import api_server
+    monkeypatch.setattr(api_server, "_browser_view_config",
+                        lambda: {"state": "active", "readOnly": True, "expires_at": None})
+    with app.test_request_context("/"):
+        assert BAR not in _serve_page("home.html")
+
+
+#: Templates that deliberately send {screen: "other"}: the engine has no screen
+#: for them, so stating none is the decision. A new template must either set
+#: window.kitchenosContext or be listed here with a reason.
+CONTEXT_OTHER = {
+    "meal_calendar.html": "read-only agenda list; commands here act on no particular week",
+    "nutrition_review.html": "fixes food matches; no command acts on it",
+    "plan_week.html": "the weekly front door; planner commands run from the planner",
+    "prep.html": "today's tasks; no command acts on prep steps",
+    "receipt_paste.html": "a paste form",
+    "recent.html": "a list of new recipes",
+    "system_health.html": "operator page",
+    "cooking_packet.html": "a printable week view",
+}
+
+
+@pytest.mark.parametrize("template", sorted(set(TEMPLATES) - COMMAND_BAR_SKIP))
+def test_every_bar_page_states_its_context_or_says_why_not(template):
+    source = (REPO / "templates" / template).read_text()
+    assert ("window.kitchenosContext" in source) != (template in CONTEXT_OTHER), (
+        f"{template}: set window.kitchenosContext in the template, or add it to "
+        "CONTEXT_OTHER with a reason — not both."
+    )
+
+
+def test_shopping_note_states_its_week(monkeypatch):
+    import api_server
+    with app.test_request_context("/current/shopping-list"):
+        html = api_server._render_note_page("Shopping Lists", "2026-W47", "Shopping list",
+                                            "<p>none</p>", screen="shopping")
+    assert '{"screen": "shopping", "week": "2026-W47"}' in html
+
+
+def test_bar_goes_before_the_last_body_close_not_the_first():
+    """Body text that happens to contain the literal tag must not receive the bar."""
+    html = _serve_page("note_view.html", [("<!--BODY-->", "<pre></body></pre>")])
+    assert html.count("</body>") >= 2
+    assert html.rindex(BAR) > html.index("</body>")
+    assert html.count(BAR) == 1
+
+
+@pytest.mark.parametrize("week", ["2026-W00", "2026-W99", "2025-W53"])
+def test_current_week_rejects_weeks_that_do_not_exist(week):
+    import api_server
+    assert api_server._current_week(week) is None
+
+
+def test_current_week_keeps_a_real_week():
+    import api_server
+    assert api_server._current_week("2026-W47") == "2026-W47"
+    assert api_server._current_week("2026-W53") == "2026-W53"

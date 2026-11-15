@@ -1,0 +1,36 @@
+/* The "tell it" command bar. Tokens come from tokens.css; fallbacks are its light-mode values. */
+#ko-tell-button {
+  position: fixed; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom) + var(--ko-dock-offset, 0px));
+  z-index: 2147482000; width: 56px; height: 56px; border-radius: 50%;
+  border: none; background: var(--app-kitchenos, #d1663b); color: var(--text-on-accent, #fffdf9);
+  font-size: 24px; box-shadow: 0 2px 8px rgba(0,0,0,.25); cursor: pointer;
+}
+#ko-tell-button:focus-visible { outline: 3px solid var(--text, #1a1a1a); outline-offset: 3px; }
+#ko-tell-backdrop { position: fixed; inset: 0; z-index: 2147482001; background: rgba(0,0,0,.3); }
+#ko-tell-sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 2147482002;
+  max-height: 70vh; overflow-y: auto; box-sizing: border-box;
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+  background: var(--surface, #fffdf9); color: var(--text, #1a1a1a);
+  border-top: 1px solid var(--line, #ece1d3); border-radius: 16px 16px 0 0;
+  font: 16px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+#ko-tell-sheet[hidden], #ko-tell-backdrop[hidden] { display: none; }
+.ko-tell-row { display: flex; gap: 8px; align-items: center; }
+#ko-tell-input {
+  flex: 1; min-height: 44px; font-size: 16px; /* 16px stops iOS zooming on focus */
+  padding: 0 12px; border: 1px solid var(--line, #ece1d3); border-radius: 10px;
+  background: var(--bg, #f4ede3); color: var(--text, #1a1a1a);
+}
+.ko-tell-btn {
+  min-height: 44px; min-width: 44px; padding: 0 14px; border-radius: 10px;
+  border: 1px solid var(--line, #ece1d3); background: var(--bg, #f4ede3); color: var(--text, #1a1a1a);
+  font: inherit; cursor: pointer;
+}
+.ko-tell-btn.primary { background: var(--app-kitchenos, #d1663b); color: var(--text-on-accent, #fffdf9); border-color: transparent; }
+.ko-tell-btn:disabled { opacity: .5; cursor: default; }
+#ko-tell-result { margin-top: 12px; }
+#ko-tell-result:empty { display: none; }
+#ko-tell-result ul { margin: 0 0 8px; padding-left: 1.2em; }
+.ko-tell-warning { color: var(--alert, #c0392b); }
+.ko-tell-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }

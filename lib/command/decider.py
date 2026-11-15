@@ -75,3 +75,18 @@ class OllamaDecider:
 
 def default():
     return OllamaDecider()
+
+
+def warm(model: str = DEFAULT_MODEL) -> None:
+    """Ask Ollama to load the decider model so the first command isn't a cold load.
+
+    Called off-request from a background thread. Never raises: a warm-up that
+    fails just means the first command pays the load, which it did anyway.
+    """
+    if not llm_gate.allowed():
+        return
+    try:
+        requests.post(OLLAMA_CHAT_URL.replace("/api/chat", "/api/generate"),
+                      json={"model": model, "keep_alive": "30m"}, timeout=60)
+    except requests.RequestException:
+        pass

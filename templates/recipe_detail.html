@@ -360,6 +360,7 @@
         const recipeName = decodeURIComponent(
             window.location.pathname.replace(/^\/recipe\//, '')
         );
+        window.kitchenosContext = () => ({screen: 'recipe', recipe: recipeName});
 
         let recipeData = null;
 
