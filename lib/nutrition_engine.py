@@ -62,6 +62,25 @@ DOMINANT_LINE_FRACTION = 0.5            # one line > 50% of recipe grams
 # as unresolved rather than letting an absurd weight pollute the recipe.
 MAX_INGREDIENT_GRAMS = 11000.0
 
+# Frying medium: oil a recipe fries in is mostly left in the pan, not eaten.
+# Counting all of it made Chick-Fil-A-style nuggets 4,556 kcal a serving (8 cups
+# of peanut oil, 16,128 kcal) and Tofu 65 7,017 kcal of deep-frying oil. A line
+# is a frying medium when it says so, or when it is a vat no recipe eats (2 cups
+# of oil is ~435 g). What fried food keeps is an estimate — USDA retention work
+# puts it at roughly a tenth of the oil for battered/breaded foods — so the line
+# is marked for review rather than presented as measured.
+FRYING_ABSORBED_FRACTION = 0.10
+FRYING_VAT_GRAMS = 400.0
+_FRYING_TEXT = re.compile(r"\b(deep[- ]?fr\w*|frying|for fry\w*|shallow[- ]?fry\w*)\b", re.I)
+_FAT_WORDS = re.compile(r"\b(oil|shortening|lard|tallow|ghee)\b", re.I)
+
+
+def _is_frying_medium(item: str, record: dict, grams: float) -> bool:
+    desc = str((record or {}).get("description", ""))
+    if not (_FAT_WORDS.search(item or "") or _FAT_WORDS.search(desc)):
+        return False
+    return bool(_FRYING_TEXT.search(item or "")) or grams >= FRYING_VAT_GRAMS
+
 
 @dataclass
 class IngredientNutrition:
@@ -353,6 +372,12 @@ def _resolve_grams(amount, unit, item, record, *, use_cache: bool, portion_provi
         try:
             conn = inventory_db.read_conn()
             g_per = fdc_local.ledger_grams(conn, units._normalize_item(item), unit)
+            # The band is checked when a row is written, so a row written before
+            # the band tightened would otherwise count forever. Re-check on read,
+            # with this record's kcal: a stale row is skipped, not trusted.
+            if g_per and not fdc_local.validate_portion_grams(
+                    item, unit, g_per, (record or {}).get("per_100g") or {})[0]:
+                g_per = None
             if g_per:
                 qty = units.parse_amount_to_float(amount) or 1.0
                 return units.GramResult(qty * g_per, "ledger", CONFIDENCE_LEDGER, True,
@@ -548,13 +573,20 @@ def calculate_recipe_nutrition(
             if not is_negligible:
                 unmatched.append(item)
         else:
-            factor = gr.grams / 100.0
+            eaten_g = gr.grams
+            frying = _is_frying_medium(item, record, gr.grams)
+            if frying:
+                eaten_g = gr.grams * FRYING_ABSORBED_FRACTION
+            factor = eaten_g / 100.0
             contribution = {k: float(per_100g.get(k, 0) or 0) * factor for k in _EMPTY_CONTRIB}
             for k in total:
                 total[k] += contribution[k]
-            line_review = gr.needs_review or food_conf < REVIEW_CONFIDENCE
+            line_review = gr.needs_review or food_conf < REVIEW_CONFIDENCE or frying
             line_conf = min(food_conf, gr.confidence)
             note = gr.note
+            if frying:
+                note = (f"frying medium — {FRYING_ABSORBED_FRACTION:.0%} of "
+                        f"{gr.grams:.0f} g counted as absorbed")
             any_resolved = True
             sources.add(record["source"])
             if not is_negligible:
