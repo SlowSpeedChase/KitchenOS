@@ -49,6 +49,14 @@ class TestEggIsAWholeRawEgg:
         assert fdc_local.score_candidate("oregano", cand, ("oregano", ""), False, gate) == \
             fdc_local.score_candidate("oregano", cand, ("oregano", ""), False)
 
+    def test_a_different_food_does_not_open_the_gate(self):
+        # Every potato-wedge record is frozen; "Potato flour" lacks the word but
+        # is not a wedge, so frozen wedges must not be penalised for it.
+        rows = [(900010, SR, "Potato wedges, frozen", 129.0),
+                (900011, SR, "Potato flour", 357.0)]
+        r = fdc_local.resolve_local(_store(rows), "potato wedges")
+        assert r["description"] == "Potato wedges, frozen", r["description"]
+
     def test_only_a_dried_record_still_resolves(self):
         # The state penalty fires only when some candidate lacks the word.
         rows = [(323793, FND, "Egg, white, dried", 376.0)]

@@ -32,6 +32,7 @@ Templates: [`templates/DESIGN-DOC-TEMPLATE.md`](../../templates/DESIGN-DOC-TEMPL
 
 | Date | Doc | Branch | Notes |
 |---|---|---|---|
+| 2026-11-15 | [nutrition-numbers plan (E2)](../superpowers/plans/2026-11-15-nutrition-numbers.md) | `feat/nutrition-numbers` | Audit Phase 3 items 16–18: eggs resolve as whole raw egg, peppercorns as black pepper, portion ledger re-banded and checked on read, fryer oil counts 10%. Live corpus (offline re-derive): implausible **79 → 67**, 16 recipes become plausible, 4 drop below the 50 kcal floor (package guesses now unresolved — undercount, flagged). Item 19 (corpus cleanup, `needs_review` re-derivation) and the vault `backfill_nutrition.py --force` re-derive are not done yet. |
 
 ## Done
 
