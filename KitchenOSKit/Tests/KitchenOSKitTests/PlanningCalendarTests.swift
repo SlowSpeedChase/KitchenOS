@@ -57,7 +57,7 @@ extension PlanningCalendarTests {
     func testCompatibilityAvailabilityUsesTheSameFilteredDetailedSnapshotAndExpires() throws {
         let format = ISO8601DateFormatter(); let now = format.date(from: "2026-10-09T12:00:00Z")!
         let event = try PlanningCalendarEvent(calendarID: "firm", eventID: "meeting", title: "Meeting",
-            start: format.date(from: "2026-10-09T18:00:00Z")!, end: format.date(from: "2026-10-09T19:00:00Z")!,
+            start: format.date(from: "2026-10-09T17:00:00Z")!, end: format.date(from: "2026-10-10T02:00:00Z")!,
             allDay: false, flexible: false, timezone: TimeZone(identifier: "America/Chicago")!)
         let snapshot = try PlanningCalendarSnapshot(firmID: "firm", flexibleID: "flex", generatedAt: now,
             timezone: "America/Chicago", coverageStart: "2026-10-09", coverageEnd: "2026-10-11", events: [event])

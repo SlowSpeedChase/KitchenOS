@@ -164,11 +164,24 @@
 
     // What the recipe needs, split by whether it is in the kitchen. `in_stock`
     // is true / false / null from the server; null means it could not tell.
+    // Stock checks for the shown week, fetched in the background when the week
+    // draws so tapping a meal shows them at once. Reset on every redraw so a
+    // refresh (or a change from the command bar) never shows stale stock.
+    let ingredientChecks = new Map();
+    function ingredientCheck(recipe) {
+        if (!ingredientChecks.has(recipe)) {
+            const pending = getJSON(`/api/recipes/${encodeURIComponent(recipe)}`);
+            pending.catch(() => ingredientChecks.delete(recipe));  // retry on next tap
+            ingredientChecks.set(recipe, pending);
+        }
+        return ingredientChecks.get(recipe);
+    }
+
     async function loadIngredients(recipe, box) {
         box.replaceChildren(el('p', 'note', 'Checking ingredients…'));
         let data;
         try {
-            data = await getJSON(`/api/recipes/${encodeURIComponent(recipe)}`);
+            data = await ingredientCheck(recipe);
         } catch (err) {
             box.replaceChildren(el('p', 'note bad', 'Couldn’t load the ingredients.'));
             return;
@@ -246,6 +259,9 @@
             week.appendChild(day);
         }
         $('meals-body').replaceChildren(week);
+        ingredientChecks = new Map();
+        new Set((board.planned_meals || []).filter(p => !p.bundle_id).map(p => p.recipe))
+            .forEach(recipe => ingredientCheck(recipe).catch(() => {}));
     }
 
     // ---- meals: month ----
