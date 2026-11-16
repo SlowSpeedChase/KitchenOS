@@ -10,6 +10,19 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-15-ipad-dashboard-chat-trmnl-design.md`, Piece 1 only. Pieces 2 (chat) and 3 (TRMNL) get their own plans.
 
+## Low-cost execution rules
+
+This plan is written to be executed mechanically by a smaller model in one session.
+
+- **Every code block is final. Copy it; do not redesign, rename or "improve" it.**
+- **Do not explore the repository.** Everything needed is in this file. Open another file only when a step names it.
+- **Do not re-read a file you just wrote**, and do not print file contents back.
+- Run only the commands a step lists, and append `2>&1 | tail -15` to every pytest command.
+- Do Tasks 1–6 in order in a single session. **Skip Task 7** — the reviewer does it.
+- When a test fails: read the last 15 lines, make one targeted fix, re-run. After two failed
+  fixes on the same test, stop and report the test name, the output and what you tried.
+- Final report: at most 10 lines — commits made, pass/fail counts per task, anything skipped.
+
 ## Global Constraints
 
 - Work in the worktree `.worktrees/ipad-dashboard` on a new branch `feat/ipad-dashboard-home` cut from `spec/ipad-dashboard`. Never edit the main checkout.
