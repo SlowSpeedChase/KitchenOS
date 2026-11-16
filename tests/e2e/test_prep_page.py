@@ -71,15 +71,6 @@ class TestTicking:
 
 
 class TestHomePage:
-    def test_the_home_page_carries_a_prep_card(self, live_server, page, page_errors):
-        _open(page, live_server, "/")
-        # Scoped to the live-state card: /prep is also in the collapsed
-        # "All pages" registry below, so a bare href match finds two.
-        card = page.locator('.today-card[href="/prep"]')
-        assert card.count() == 1
-        assert card.inner_text().strip(), "the card states a fact, not just a label"
-        assert page_errors == []
-
     def test_the_home_page_stays_fast(self, live_server, page):
         """The card reads the task sidecar only when fresh. Calling
         `extract_tasks` here instead would regenerate it with an LLM pass —

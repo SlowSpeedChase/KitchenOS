@@ -4524,25 +4524,19 @@ def api_prep_to_reminders():
 
 @app.route('/', methods=['GET'])
 def home_page():
-    """The web home page: live 'Kitchen Today' cards over the full page registry.
+    """The web home page: meals, groceries and inventory on one screen.
 
-    The cards lead because the home page's job is recall — a list of page names
-    can't remind you a feature exists, but "6 recipes need nothing you don't
-    have" does. The registry is still here in full, folded into 'All pages', so
-    nothing becomes unreachable.
+    The shell renders with no data in it — each column fetches its own — so this
+    route never waits on anything slower than the verdict lookup. The full page
+    registry stays reachable from the header's popover, so nothing is orphaned.
     """
     from lib import kitchen_today, web_dashboard
 
     today = date.today()
-    kicker = f"KitchenOS · {today.strftime('%a %b %-d')}"
     return _serve_page('home.html', [
-        ('<!--KICKER-->', kicker),
-        # Above the cards: it is one line, it disappears when there is nothing
-        # to ask, and it is the only thing on this page that asks the reader for
-        # something rather than telling them something.
+        ('<!--TODAY_HEADING-->', today.strftime('%A, %b %-d')),
         ('<!--VERDICT-->',
          kitchen_today.render_verdict_html(kitchen_today.verdict_prompt(today))),
-        ('<!--TODAY-->', kitchen_today.render_html()),
         ('<!--SECTIONS-->', web_dashboard.render_html()),
     ])
 
