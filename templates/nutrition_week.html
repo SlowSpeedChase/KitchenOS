@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Nutrition this week — KitchenOS</title>
+    <meta name="theme-color" content="#f4ede3" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#0f1116" media="(prefers-color-scheme: dark)">
+    <link rel="stylesheet" href="/static/tokens.css">
+    <link rel="stylesheet" href="/static/kitchenos.css">
+    <style>
+        :root { --accent: var(--app-kitchenos); }
+        * { box-sizing: border-box; }
+        body {
+            font-family: var(--font-body);
+            margin: 0; padding: 20px 16px calc(32px + env(safe-area-inset-bottom));
+            background: var(--bg);
+            background-image: var(--dots);
+            background-size: var(--dot-size) var(--dot-size);
+            color: var(--ink);
+        }
+        .wrap { max-width: 720px; margin: 0 auto; }
+        h1 { font-family: var(--font-display); font-size: 26px; margin: 0 0 10px; }
+        .weeknav { display: flex; justify-content: space-between; align-items: center;
+                   gap: 8px; font-size: 14px; margin: 0 0 12px; }
+        .weeknav a { color: var(--accent); text-decoration: none; padding: 10px 0; }
+        .weeknav .cur { font-weight: 700; text-align: center; }
+        .lead { font-size: 15px; color: var(--muted); margin: 0 0 14px; }
+        .scroll { overflow-x: auto; margin: 0 0 18px; }
+        table.nutri { width: 100%; min-width: 520px; border-collapse: collapse; font-size: 14px;
+                      font-variant-numeric: tabular-nums; }
+        .nutri th, .nutri td { padding: 9px 6px; text-align: left; vertical-align: top;
+                               border-bottom: 1px solid var(--line); }
+        .nutri thead th { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase;
+                          letter-spacing: .08em; color: var(--muted); }
+        .nutri .day { font-weight: 700; width: 3.2rem; }
+        .nutri .v { font-weight: 600; }
+        .nutri .t { color: var(--muted); }
+        .nutri .bar { display: block; height: 5px; border-radius: 3px; margin: 5px 0 3px;
+                      background: color-mix(in srgb, var(--ink) 10%, var(--bg)); overflow: hidden; }
+        .nutri .bar span { display: block; height: 100%; background: var(--muted); }
+        .nutri .on .bar span { background: var(--done); }
+        .nutri .under .bar span, .nutri .over .bar span { background: var(--warning); }
+        .nutri .s { font-size: 12px; color: var(--muted); }
+        .nutri .none { color: var(--muted); }
+        .nutri tr.note td { font-size: 12.5px; color: var(--muted); padding-top: 0; }
+        .nutri tfoot th, .nutri tfoot td { border-top: 2px solid var(--line); border-bottom: 0; }
+        .warnings { font-size: 13px; color: var(--muted); padding-left: 18px; }
+        .empty-week { font-size: 15px; background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+                      border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--surface));
+                      border-radius: 10px; padding: 14px; margin: 0 0 18px; }
+        .links { display: flex; flex-wrap: wrap; gap: 10px; }
+        a.go { display: inline-block; color: inherit; text-decoration: none; font-weight: 600;
+               border: 1px solid var(--accent); border-radius: 10px; padding: 11px 16px; }
+        a.go:focus-visible, .weeknav a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <!--CENTER-->
+    </div>
+</body>
+</html>

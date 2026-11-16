@@ -11,7 +11,6 @@ from lib import web_dashboard as wd
 # not pages a human would ever bookmark. Every entry needs a reason; if you find
 # yourself adding a real page here, put it in SECTIONS instead.
 NOT_BOOKMARKABLE = {
-    "/cooking-packet": "requires ?week=; opened from a selected week",
     "/print/cooking-packet": "requires ?week=; prints the selected saved packet",
     "/print/week.pdf": "a PDF, not a page; opened by the print button on /print/week",
     "/print/cooking-packet.pdf": "a PDF, not a page; opened by the print button on /print/cooking-packet",

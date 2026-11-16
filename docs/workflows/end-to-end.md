@@ -49,7 +49,7 @@ Plus repo data/config:
 
 ## 1. Capture — getting recipes into the vault
 
-Five entry points, all converge on `extract_recipe.py` (or `import_crouton.py` for legacy imports). Output is always a recipe markdown file in `Recipes/`.
+Six entry points, all converge on `extract_recipe.py` (or `import_crouton.py` for legacy imports). Output is always a recipe markdown file in `Recipes/`.
 
 ### 1a. iOS Share Sheet → API
 - On iPhone, share a YouTube URL to the **KitchenOS Shortcut**.
@@ -77,6 +77,10 @@ Five entry points, all converge on `extract_recipe.py` (or `import_crouton.py` f
 - The native `KitchenOSSiri` app (iOS 27 / macOS 27 — `KitchenOSKit` + `KitchenOSSiri`) is a first-class capture *and* query surface, not just a Shortcut wrapper. Its own **Extraction** screens let you capture a recipe directly in-app, and its registered `AppShortcutsProvider` exposes Siri/App Intents for hands-free capture and lookup ("find recipes with chicken," "what's for dinner Tuesday," "add X to Thursday's dinner").
 - Every intent routes through the shared `KitchenOSClient` to the same Flask API (Tailscale hostname on iOS, localhost on macOS), with a bearer token attached automatically when `KITCHENOS_API_TOKEN` is configured. Write-capable intents require an explicit Siri confirmation before mutating the meal plan.
 - Full intent table and backing endpoints: `docs/API.md` § 3.
+
+### 1f. Add-a-recipe web page
+- Open `/add-recipe`, paste a cooking-video link, tap **Add recipe**. The page posts to the same `/extract` endpoint as the Shortcut and shows the saved recipe as a link when it finishes (usually a minute or two, up to five — keep the page open). A failure leaves the link in the box.
+- For several at once, the Reminders list (1b) is still the better door.
 
 ### What extraction actually does
 For each URL: fetch metadata + transcript + first comment → try recipe-link in description → try description-as-recipe → try comment → try creator's website → fall back to Ollama (`mistral:7b`) on the transcript. Then validate ingredients, match against the seasonal calendar, look up nutrition (USDA FoodData Central, with Open Food Facts as a fallback for branded/packaged items), download a hero image, render the template. The recipe markdown gets three Obsidian Buttons baked into the body: **Reprocess** (`/reprocess`), **Refresh template** (`/refresh`), and **Add to Meal Plan** (`/add-to-meal-plan` — see Stage 2c).
@@ -173,6 +177,7 @@ Calendar reminders for prep ride along with the meal-plan calendar (Stage 5).
 
 - **Calendar** — `com.kitchenos.calendar-sync` runs daily at 6:05 AM, regenerating `meal_calendar.ics` from every meal plan. Apple Calendar (or Obsidian Full Calendar plugin) subscribes to `https://chases-mac-mini.taila69703.ts.net/calendar.ics`.
 - **Print the whole week** — open `/print/week` (defaults to the current week; `?week=` for another) for a one-page fridge packet: the plan grid with each day's macros vs your targets, the consolidated shopping list, and the do-ahead prep. Recipe names link to their grid cards. Read-only (prep comes from the cached tasks sidecar; `?tasks=1` regenerates). It reads whichever week model owns the week (ledger cooks or the markdown plan), branching off the shopping-list generator's `source`.
+- **Cooking packet** — `/cooking-packet` opens this week's packet (a bare URL redirects to the current week; `?week=` picks another). Its print view, `/print/cooking-packet`, still needs an explicit `?week=`.
 - **Printable grid card** — open `/recipe-card/<name>` for a one-page, print-ready "grid" view (ingredients with gram weights on the left; a staircase of merged cells on the right showing what combines with what, in order). Tap **Print** for a fridge/binder card. The step grouping is AI-inferred (cached in a `<recipe>.grid.json` sidecar; `?force=1` recomputes) and marked for review — the recipe's own steps are never changed.
 - **Re-render or re-extract** — the per-recipe buttons:
   - **Refresh template** (`/refresh`) — re-renders from existing extracted data. Use after editing the template.
@@ -198,6 +203,7 @@ Not part of the linear cook flow, but feeds back into Stage 3 eventually.
 - `com.kitchenos.dashboard-update` runs daily (6:15 AM) and rewrites the single `Nutrition Dashboard.md` at the vault root: per-day calorie/macro totals from the recipes on that week's plan, weighted by servings multipliers and meal expansion.
 - Targets come from `My Macros.md` in the vault (parsed by `lib/macro_targets.py`).
 - Manual rebuild: `.venv/bin/python generate_nutrition_dashboard.py --week 2026-W18`.
+- **As a web page:** `/nutrition` (defaults to the week you are in; `?week=` for another) shows each day's calories, protein, carbs and fat against the same targets, plus the week's average over planned days. It is built on demand from the same week packet as `/plan-week` and `/print/week`, so it is current the moment the plan changes — the vault note waits for 06:15. Unplanned days read "Nothing planned" and are left out of the average.
 
 ---
 
