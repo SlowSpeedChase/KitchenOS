@@ -48,6 +48,7 @@ from lib import boot  # noqa: F401  (imported for its import-time side effect)
 from templates.recipe_template import format_recipe_markdown
 from templates.meal_plan_template import (
     format_week_heading,
+    format_week_range,
     generate_meal_plan_markdown,
 )
 from lib.ingredient_validator import validate_ingredients
@@ -1251,6 +1252,88 @@ def recipe_card_page(name):
         ('<!--GRID-->', grid_html),
     ])
     return html, 200, {'Content-Type': 'text/html'}
+
+
+# ---- Print → PDF --------------------------------------------------------------
+# Every print button opens one of these instead of calling window.print(), so
+# printing works the same from the iPad, the phone and the Mac: the device's PDF
+# viewer always has Print. Each route validates its input and checks the page
+# has something to print *before* launching Chromium, then renders the real
+# print page over loopback (lib/print_pdf.py) so one stylesheet stays the
+# authority for both preview and paper. Only the page's own options pass
+# through to the loopback URL.
+
+def _pdf_disposition(filename: str) -> str:
+    ascii_name = re.sub(r'[^A-Za-z0-9 ._,()-]+', '', filename).strip() or 'KitchenOS.pdf'
+    return f'inline; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(filename)}'
+
+
+def _print_pdf_response(page_path: str, params: dict, filename: str):
+    from urllib.parse import urlencode
+    from flask import Response
+    from lib import print_pdf
+
+    port = request.environ.get('SERVER_PORT') or os.getenv('PORT', '5000')
+    query = urlencode({k: v for k, v in params.items() if v})
+    url = f"http://127.0.0.1:{port}{page_path}" + (f"?{query}" if query else "")
+    try:
+        data = print_pdf.render_pdf(url)
+    except print_pdf.PdfSourceError as exc:
+        status = exc.status if 400 <= exc.status < 600 else 502
+        return error_page("The print page couldn't be built, so there's no PDF to open."), status
+    except print_pdf.PdfError as exc:
+        app.logger.warning("PDF render failed for %s: %s", page_path, exc)
+        return error_page("Couldn't build the PDF right now. Try again in a moment."), 503
+    response = Response(data, mimetype='application/pdf')
+    response.headers['Content-Disposition'] = _pdf_disposition(filename)
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
+def _truthy_arg(name):
+    return '1' if request.args.get(name) in ('1', 'true', 'yes') else None
+
+
+@app.route('/print/week.pdf', methods=['GET'])
+def print_week_pdf():
+    week = request.args.get('week')
+    if not week:
+        iso = date.today().isocalendar()
+        week = f"{iso[0]}-W{iso[1]:02d}"
+    if not re.match(r'^\d{4}-W\d{2}$', week):
+        return error_page(f"Invalid week format: {week} (expected YYYY-WNN)"), 400
+    if not (paths.vault_root() / "Meal Plans" / f"{week}.md").exists():
+        return error_page("No meal plan for that week yet — plan a week first."), 404
+    return _print_pdf_response(
+        '/print/week',
+        {'week': week, 'recipes': _truthy_arg('recipes'), 'tasks': _truthy_arg('tasks')},
+        f"KitchenOS week {format_week_range(week)}.pdf")
+
+
+@app.route('/print/cooking-packet.pdf', methods=['GET'])
+def print_cooking_packet_pdf():
+    from lib import cooking_packet_store as store
+    try:
+        week = _packet_page_week()
+    except ValueError:
+        return error_page('Choose a valid week (YYYY-Www) to print a cooking packet.'), 400
+    if store.get_packet(week) is None:
+        return error_page('No cooking packet has been saved for this week.'), 404
+    return _print_pdf_response(
+        '/print/cooking-packet', {'week': week},
+        f"Cooking packet {format_week_range(week)}.pdf")
+
+
+@app.route('/recipe-card/<name>.pdf', methods=['GET'])
+def recipe_card_pdf(name):
+    try:
+        path = contained_markdown(_resolve_recipes_dir(), name + '.md')
+    except ValueError:
+        return error_page(f"Recipe not found: {name}"), 404
+    if not path.is_file():
+        return error_page(f"Recipe not found: {name}"), 404
+    return _print_pdf_response(
+        '/recipe-card/' + quote(name, safe=''), {}, f"{name}.pdf")
 
 
 @app.route('/images/<path:filename>', methods=['GET'])

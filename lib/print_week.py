@@ -50,11 +50,13 @@ def _markdown_week(week: str, vault_path: Path) -> tuple[list[dict], dict, list[
     dash = nutrition_dashboard.compute_dashboard(week, vault_path)  # may raise FileNotFoundError
     content = (vault_path / "Meal Plans" / f"{week}.md").read_text(encoding="utf-8")
     year, week_num = int(week[:4]), int(week.split("-W")[1])
-    parsed = parse_meal_plan(content, year, week_num)
+    # all_entries: the default parse keeps only a slot's FIRST entry, which
+    # printed one of two planned breakfasts while the macros counted both.
+    parsed = parse_meal_plan(content, year, week_num, all_entries=True)
 
     days = []
     for drec, pday in zip(dash["days"], parsed):
-        slots = {m: ([_entry_slot(pday.get(m))] if _entry_slot(pday.get(m)) else [])
+        slots = {m: [s for s in map(_entry_slot, pday.get(m) or []) if s]
                  for m in _MEALS}
         macros = None
         if drec["has_meals"]:
