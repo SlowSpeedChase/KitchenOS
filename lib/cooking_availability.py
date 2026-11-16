@@ -1,6 +1,6 @@
 """Bounded calendar availability snapshot; no event details are stored."""
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 import json
 import re
 from lib import inventory_db
@@ -51,16 +51,44 @@ def week_status(week, *, now=None):
         < timedelta(hours=6)
     )
     stored = json.loads(row["days_json"]) if fresh else {}
-    return {
-        "days": {
-            (monday + timedelta(days=i)).isoformat(): stored.get(
-                (monday + timedelta(days=i)).isoformat(), "unknown"
-            )
-            for i in range(7)
-        },
-        "synced_at": row["synced_at"] if row else None,
-        "fresh": fresh,
+    days = {
+        (monday + timedelta(days=i)).isoformat(): stored.get(
+            (monday + timedelta(days=i)).isoformat(), "unknown"
+        )
+        for i in range(7)
     }
+    synced_at = row["synced_at"] if row else None
+    # The detailed calendar knows what the summary cannot: all-day choices
+    # (blocks cooking / background) and exact free windows. When it is fresh,
+    # its windows decide the label for every day it covers.
+    from lib import planning_calendar
+
+    detail = planning_calendar.read_week(week, now=now)
+    if detail["fresh"]:
+        for day, info in detail["days"].items():
+            if info["covered"]:
+                days[day] = label_from_windows(day, info["windows"])
+        fresh = True
+        synced_at = detail["synced_at"]
+    return {"days": days, "synced_at": synced_at, "fresh": fresh}
+
+
+# Cooking has to finish by 9:30 pm local to count for the day.
+COOK_BY = time(21, 30)
+
+
+def label_from_windows(day, windows):
+    """good: a free window that is clear of Time Blocking and of undecided
+    all-day events. possible: only windows that overlap Time Blocking or
+    depend on an undecided all-day event. busy: no window."""
+    usable = []
+    for w in windows:
+        end = datetime.fromisoformat(w["end"])
+        if end.date().isoformat() == day and end.time() <= COOK_BY:
+            usable.append(w)
+    if any(not w["overlaps_flexible"] and not w["unresolved_all_day_ids"] for w in usable):
+        return "good"
+    return "possible" if usable else "busy"
 
 
 def register_routes(app, require_token):
