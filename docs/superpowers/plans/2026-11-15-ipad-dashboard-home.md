@@ -10,6 +10,11 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-15-ipad-dashboard-chat-trmnl-design.md`, Piece 1 only. Pieces 2 (chat) and 3 (TRMNL) get their own plans.
 
+> **Status: executed, then superseded in part.** Tasks 1–6 were built from this plan. The layout
+> was then changed to a full-page calendar at Chase's request (commit "feat(home): full-page
+> interactive calendar"); see the revision note in the spec. The code in the repository, not
+> the code blocks below, is current.
+
 ## Low-cost execution rules
 
 This plan is written to be executed mechanically by a smaller model in one session.

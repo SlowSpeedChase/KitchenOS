@@ -14,6 +14,12 @@ tier that shipped since and corrects two stale statuses.
 
 ## Done / Shipped
 
+**2026-11 — iPad calendar home.** `/` is now a full-page meal calendar (week or month). Meals
+drag between days, every day has Add meal, and Could make / On hand / To buy open as popovers
+from the header. The Kitchen Today cards left the home page. **Still open:** the chat bar
+(Piece 2) and meals on TRMNL (Piece 3) — see
+`docs/superpowers/specs/2026-11-15-ipad-dashboard-chat-trmnl-design.md`.
+
 **2026-11 — "Tell it" bar.** A floating mic button on every interactive web page sends the sentence plus the page's screen to /api/command, with Undo. See docs/superpowers/specs/2026-11-13-tell-it-bar-design.md.
 
 **2026-11 — Command engine and gold-standard kitchen (branch `command-engine`).** `POST /api/command`

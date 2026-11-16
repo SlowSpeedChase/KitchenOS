@@ -111,6 +111,10 @@ details.meal > summary::-webkit-details-marker { display: none; }
 .month .num { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
 .month .dish { font-size: 13px; line-height: 1.25; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 
+/* Two dinners in one cell get a line each, so neither is cut off mid-word. */
+.month button.cell { overflow: hidden; }
+.month .dish ~ .dish, .month .dish:has(~ .dish) { -webkit-line-clamp: 1; }
+
 /* ---- To buy ---- */
 .buy-row { display: flex; align-items: center; gap: 12px; min-height: 44px; font-size: 16px; overflow-wrap: anywhere; }
 .buy-row input { width: 22px; height: 22px; flex: none; accent-color: var(--app-kitchenos); }

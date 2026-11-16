@@ -49,6 +49,24 @@ never for *finding*.
 
 ## Piece 1 — Dashboard home
 
+> **Revised November 15, 2026, after Chase used the first build.** He cares most about what is
+> planned and what he could make, and less about what to buy, and asked for the calendar to be
+> the whole page. What shipped therefore differs from the three-column layout described below:
+>
+> - **The calendar fills the page**: seven day columns in Week, a full grid in Month.
+> - **Meals drag between days** (through the ledger move endpoints). A day-picker inside the
+>   expanded meal does the same move without a drag. Month cells are not draggable; tapping one
+>   opens its week.
+> - **Every day has "Add meal"**, which opens **Could make** with that day chosen. Could make
+>   ranks dinners by how much is already on hand (`/api/cook-now`), flags the ones that use
+>   expiring food, and plans one with a single tap.
+> - **Could make, On hand and To buy are header buttons** that open native popovers. On hand
+>   and To buy show a live count on the button. None of them holds a column.
+> - The grocery list is flat (the saved list has no aisle data) and its inventory-match lines
+>   are reached through "Full list".
+>
+> The text below is kept as the record of the original decision.
+
 ### Layout
 
 Landscape iPad, one screen, no page scroll. Each column scrolls on its own only if its
