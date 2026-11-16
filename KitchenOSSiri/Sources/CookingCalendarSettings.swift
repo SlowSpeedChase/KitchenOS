@@ -126,7 +126,7 @@ struct CookingCalendarSettings: View {
 
     var body: some View {
         Section("Cooking opportunities") {
-            Text("From noon onward: commitments mean keep food easy; Time Blocking means cooking may still fit.")
+            Text("A day is good when noon to 9:30 pm has a free 90-minute window. If the only free window overlaps Time Blocking, cooking may still fit. If commitments leave no window, keep food easy.")
                 .font(.caption)
             Button("Connect Calendar") { Task { await sync.connect() } }
             if !sync.calendars.isEmpty {
