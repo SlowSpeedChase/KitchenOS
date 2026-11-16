@@ -162,9 +162,20 @@ _BULK_SUBSTANCES = (
     "oil", "water", "flour", "honey", "syrup", "mayo", "mayonnaise", "sauce",
     "milk", "cream", "juice", "vinegar", "broth", "stock", "yogurt", "sugar",
     "salt", "powder", "mustard", "ketchup", "butter", "granola", "rice",
+    # Added 2026-11-15 from the live ledger: each held a package-sized guess
+    # (mozzarella 340 g, cocoa powder 250 g, oil spray 280 g, pie dough 500 g).
+    "cheese", "cocoa", "chocolate", "dough", "dressing", "spray",
 )
-# A recipe line that states no amount should not out-weigh a main protein.
-_MAX_WHOLE_BULK_GRAMS = 300.0
+# A line that states no amount is a dollop, a drizzle, a stick — not the
+# package. 300 g let every package guess through: Ollama answers round numbers,
+# so "protein powder | whole | 300" sat exactly on the old ceiling, and butter,
+# parmesan and yogurt sat at 200-250 g beneath it. 120 g still admits a stick
+# of butter (113 g). Inclusive: a guess AT the ceiling is the round-number case.
+_MAX_WHOLE_BULK_GRAMS = 120.0
+# The largest common retail can is 28 oz (794 g). Above it is a guessed #10
+# catering can or a package weight, never "1 can" in a home recipe.
+_MAX_CAN_GRAMS = 800.0
+_CAN_UNITS = {"can", "cans", "tin", "tins"}
 
 
 def ensure_schema(conn) -> None:
@@ -185,10 +196,12 @@ def validate_portion_grams(item: str, unit: str, grams_per_unit: float,
         return False, "non-numeric grams"
     if g <= 0:
         return False, "grams must be > 0"
-    if g > _MAX_PORTION_GRAMS:
+    if g >= _MAX_PORTION_GRAMS:
         return False, f"gram weight {g:.0f} implausibly large"
     u = (unit or "").strip().lower()
-    if u == "whole" and g > _MAX_WHOLE_BULK_GRAMS:
+    if u in _CAN_UNITS and g >= _MAX_CAN_GRAMS:
+        return False, f"{g:.0f} g is larger than any retail can"
+    if u == "whole" and g >= _MAX_WHOLE_BULK_GRAMS:
         low = (item or "").lower()
         hit = next((w for w in _BULK_SUBSTANCES
                     if re.search(rf"\b{re.escape(w)}\b", low)), None)
@@ -364,7 +377,7 @@ _RANK_BONUS = {0: 1.0, 1: 0.7, 2: 0.5}
 
 
 def score_candidate(query_norm: str, cand: dict, q_head=("", ""),
-                    fresh: bool = False) -> float:
+                    fresh: bool = False, state_gate: frozenset = frozenset()) -> float:
     """Legible ranking that replaces USDA's opaque one. Higher = better.
 
     coverage rewards matching the query; length_penalty punishes padded records
@@ -422,9 +435,22 @@ def score_candidate(query_norm: str, cand: dict, q_head=("", ""),
         dry_penalty = 2.0  # "ears fresh corn" is not "Corn, dried (Navajo)"
     elif fresh and re.search(r"\b(raw|fresh)\b", (cand.get("description") or "").lower()):
         dry_penalty = -0.5  # ...and a record that says raw beats "Corn bran, crude"
+    desc = cand.get("description") or ""
+    # A spice is dried by default ("1 tsp oregano" is the jar), so a Spices,
+    # record is never penalised for saying so.
+    state_penalty = 0.0
+    if state_gate and not desc.startswith("Spices,"):
+        state_penalty = _STATE_PENALTY * len(_state_words(desc) & state_gate)
+    part_penalty = 0.0
+    fields = [f.strip().lower() for f in desc.split(",")]
+    # Same gate as state: on a line with no head noun the whole-egg record
+    # that wins is "Egg, whole, dried" — no better, so leave it alone.
+    if state_gate and len(fields) > 1 and fields[1] in _PART_FIELDS.get(normalize_food_name(fields[0]), ()) \
+            and fields[1] not in q:
+        part_penalty = _PART_PENALTY
     return (coverage * 2 + exact + head_bonus + rank_bonus
             - length_penalty - none_penalty + bm_bonus
-            - identity_penalty - dry_penalty)
+            - identity_penalty - dry_penalty - state_penalty - part_penalty)
 
 
 def _cand_head(cand: dict) -> set:
@@ -458,16 +484,91 @@ def _available_head(q_head: tuple, cands: list) -> tuple:
     return h, qual
 
 
+# Words naming a processed STATE of a food. "raw" and "fresh" are stopwords, so
+# a bare "eggs" could not tell "Egg, whole, raw, fresh" from "Egg, white, dried"
+# and the Foundation rank bonus picked the dried white: 79.9 g protein per 100 g
+# instead of 12.6, on 51 lines in 49 recipes. A candidate carrying a state word
+# the line never said is penalised — "dried egg white powder" still says it.
+# "powder" is deliberately absent: confectioners' sugar IS the powdered record.
+_STATE_WORDS = {"dried", "dehydrated", "frozen", "pasteurized", "freeze"}
+_STATE_PENALTY = 1.0
+# Parts FDC files as a food's second field: "Egg, white, raw". A line that
+# never says "white" or "yolk" means the whole egg; a bonus for a "whole"
+# second field did the same for eggs but also sent harissa to "Cranberry sauce,
+# whole" and bittersweet chocolate to "Chocolate milk, whole".
+# Keyed by head: "white" is a part of an egg but a VARIETY of bread, rice and
+# sugar, and penalising it there sent white bread to whole-wheat.
+_PART_FIELDS = {"egg": {"white", "yolk"}}
+_PART_PENALTY = 0.5
+
+# Spellings with no FDC record of their own. "black peppercorns" recalled
+# "Black Russian" (a cocktail) on the shared word "black", then borrowed the
+# 100 g piece weight: 30 "whole" peppercorns weighed 3 kg, 8,370 kcal.
+_QUERY_ALIASES = ((re.compile(r"\b(?:black\s+)?pepper\s?corns?\b"), "black pepper"),)
+
+
+def _alias(item: str) -> str:
+    text = item or ""
+    for pat, repl in _QUERY_ALIASES:
+        text = pat.sub(repl, text, count=1) if pat.search(text.lower()) else text
+    return text
+
+
+_DRY_STATES = {"dried", "dehydrated", "freeze"}
+
+
+def _state_words(text: str) -> set:
+    words = {w for w in re.findall(r"[a-z]+", (text or "").lower()) if w in _STATE_WORDS}
+    # One state, three spellings: a line saying "dried onion flakes" has said
+    # what "Onions, dehydrated flakes" says.
+    return words | _DRY_STATES if words & _DRY_STATES else words
+
+
+def _state_gate(item: str, query_norm: str, cands: list, head: str = "") -> frozenset:
+    """State words to penalise: absent from the line, and absent from SOME
+    candidate that is still the same food — one carrying every query word. A
+    store holding only "Egg, white, dried" keeps it, because a rule no candidate
+    can satisfy only reshuffles the wrong answers; and "Potato flour" lacking
+    "frozen" must not count against every frozen potato wedge, since it is not
+    a potato wedge at all."""
+    said = _state_words(item)
+    if not head:
+        # No head noun ("thai chiles (or 1 serrano pepper)") means no way to
+        # say which records are the same food; penalising state there only
+        # traded sun-dried chiles for "Chiles rellenos, cheese-filled", and
+        # borrowing a head from the records sent sea salt to sea cucumber.
+        return frozenset()
+    q = set(query_norm.split())
+    # Same food: the record's whole head is words the line used. "Potato
+    # wedges, frozen" (potato wedge) qualifies for "potato wedges"; "Potato
+    # flour" and "Chiles rellenos" do not, so they cannot open the gate.
+    family = [c for c in cands if head in _cand_head(c)]
+    names = [set((c.get("name_norm") or "").split()) for c in family]
+    # ...and carries every query word that food's records know: "Potato, raw"
+    # lacks "wedge", which the wedge records do carry. Words no record of the
+    # food knows ("beaten", "wraps") are ignored, or nothing would qualify.
+    known = {t for t in q if any(t in n for n in names)}
+    same_food = [c for c, n in zip(family, names)
+                 if _cand_head(c) <= q and known <= n]
+    gate = set()
+    for w in _STATE_WORDS - said:
+        if any(w not in _state_words(c.get("description")) for c in same_food):
+            gate.add(w)
+    return frozenset(gate)
+
+
 def resolve_local(conn, item: str):
     """Resolve an ingredient to a local FDC record dict, or None. Shape matches the
     live engine's record: source/source_id/description/per_100g/portions/density."""
+    item = _alias(item)
     qn, cands = search_candidates(conn, item)
     if not cands:
         return None
     q_head = _available_head(query_head(item), cands)
     # "fresh" is a stopword (it carries no identity) but it does rule out dried.
     fresh = bool(re.search(r"\bfresh\b", (item or "").lower()))
-    best = max(cands, key=lambda c: score_candidate(qn, c, q_head, fresh))
+    gate = _state_gate(item, qn, cands, q_head[0])
+    best = max(cands, key=lambda c: score_candidate(qn, c, q_head, fresh, gate))
     # Portions are pooled across every record with the same description:
     # Foundation and SR Legacy often both carry a food, Foundation outranks SR,
     # and Foundation's copy usually ships no household portions at all — so
