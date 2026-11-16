@@ -7,172 +7,53 @@
     <meta name="theme-color" content="#f4ede3" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f1116" media="(prefers-color-scheme: dark)">
     <!-- Deliberately NOT apple-mobile-web-app-capable: standalone mode strips
-         Safari's chrome, and this page's whole job is launching you into other
-         pages — without the back button you'd be stranded on every one. -->
+         Safari's chrome, and every link here leads to a page that needs Back. -->
     <title>KitchenOS</title>
     <link rel="stylesheet" href="/static/tokens.css">
     <link rel="stylesheet" href="/static/kitchenos.css">
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-
-        body {
-            font-family: var(--font-body);
-            background: var(--bg);
-            background-image: var(--dots);
-            background-size: var(--dot-size) var(--dot-size);
-            color: var(--ink);
-            min-height: 100vh;
-            /* Phone-first: padding scales down on narrow screens, and the page
-               is capped rather than fixed so it never scrolls sideways. */
-            padding: 20px 16px calc(32px + env(safe-area-inset-bottom));
-            max-width: 720px;
-            margin: 0 auto;
-            border-top: 3px solid var(--app-kitchenos);
-            -webkit-text-size-adjust: 100%;
-        }
-
-        header { margin-bottom: 22px; }
-        .kicker {
-            font-family: var(--font-mono);
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: .12em;
-            color: var(--app-kitchenos);
-            margin-bottom: 6px;
-        }
-        h1 {
-            font-family: var(--font-display);
-            font-size: 30px;
-            font-weight: 600;
-            letter-spacing: -.01em;
-        }
-
-        /* ---- Kitchen Today: the live cards ---- */
-        .today { display: flex; flex-direction: column; gap: 10px; margin-bottom: 28px; }
-
-        .today-card {
-            display: flex;
-            align-items: center;
-            gap: 14px;
-            background: var(--surface);
-            background-image: var(--grain);
-            border: 1px solid var(--line);
-            border-radius: var(--radius);
-            box-shadow: var(--shadow);
-            /* min-height keeps every row a comfortable thumb target even if its
-               line wraps to nothing. */
-            min-height: 76px;
-            padding: 16px 18px;
-            text-decoration: none;
-            color: inherit;
-        }
-        .today-card:active { transform: scale(.995); }
-
-        /* Something has already gone off. Paired with the word "expired" in the
-           text, never colour alone. */
-        .today-card.urgent { border-color: var(--alert); }
-        .today-card.urgent .line { color: var(--alert); }
-
-        .today-card .emoji { font-size: 27px; line-height: 1; flex: none; }
-        .today-card .text { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
-        .today-card .title { font-size: 17px; font-weight: 600; }
-        .today-card .line {
-            font-size: 14px;
-            color: var(--muted);
-            /* Long recipe names must wrap, not push the page sideways. */
-            overflow-wrap: anywhere;
-        }
-        .today-card .chev { font-size: 22px; color: var(--muted); flex: none; }
-
-        /* ---- Everything else, folded away ---- */
-        details.all-pages {
-            border-top: 1px solid var(--line);
-            padding-top: 14px;
-        }
-        details.all-pages > summary {
-            font-family: var(--font-mono);
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: .1em;
-            color: var(--muted);
-            cursor: pointer;
-            /* 44px is Apple's minimum touch target — an 11px label needs the
-               height added deliberately or it lands at ~33px. */
-            display: flex;
-            align-items: center;
-            min-height: 44px;
-            padding: 0 2px;
-            list-style: none;
-        }
-        details.all-pages > summary::-webkit-details-marker { display: none; }
-        details.all-pages > summary::before { content: "▸ "; }
-        details.all-pages[open] > summary::before { content: "▾ "; }
-
-        section h2 {
-            font-family: var(--font-mono);
-            font-size: 11px;
-            font-weight: 600;
-            color: var(--muted);
-            text-transform: uppercase;
-            letter-spacing: .1em;
-            margin: 18px 0 8px;
-        }
-        .card {
-            display: flex; align-items: center; gap: 13px;
-            background: var(--surface);
-            background-image: var(--grain);
-            border: 1px solid var(--line);
-            border-radius: var(--radius-box);
-            min-height: 60px;
-            padding: 13px 15px;
-            margin-bottom: 8px;
-            text-decoration: none;
-            color: inherit;
-        }
-        .card .emoji { font-size: 22px; line-height: 1; flex: none; }
-        .card .text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-        .card .title { font-size: 15px; font-weight: 600; }
-        .card .desc { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
-
-        @media (hover: hover) {
-            .today-card:hover, .card:hover { border-color: var(--app-kitchenos); }
-        }
-        /* Shares its markup with /prep — see kitchen_today.render_verdict_html.
-           Sized for a thumb: the control it replaces was two taps deep inside a
-           sheet that only appears on touch. */
-        .verdict-ask {
-            display: flex; align-items: center; justify-content: space-between;
-            gap: 12px; flex-wrap: wrap;
-            margin: 0 0 18px; padding: 12px 16px;
-            border: 1px solid var(--border); border-radius: 10px;
-        }
-        .verdict-q { font-size: 0.95rem; }
-        .verdict-btns { display: flex; gap: 8px; }
-        .verdict-btn {
-            font-size: 1.25rem; line-height: 1;
-            min-width: 52px; min-height: 44px;
-            border: 1px solid var(--border); border-radius: 8px;
-            background: transparent; cursor: pointer;
-        }
-        .verdict-btn:active { transform: scale(0.94); }
-        .verdict-ask.answered { opacity: 0.55; }
-    </style>
+    <link rel="stylesheet" href="/static/dashboard.css">
 </head>
 <body>
-    <header>
-        <div class="kicker"><!--KICKER--></div>
-        <h1>Kitchen today</h1>
+    <header class="dash-head">
+        <div>
+            <div class="kicker">KitchenOS</div>
+            <h1><!--TODAY_HEADING--></h1>
+        </div>
+        <div class="dash-tools">
+            <div class="seg" role="group" aria-label="Calendar range">
+                <button type="button" id="view-week" aria-pressed="true">Week</button>
+                <button type="button" id="view-month" aria-pressed="false">Month</button>
+            </div>
+            <button type="button" class="menu-btn" popovertarget="all-pages">All pages</button>
+        </div>
     </header>
 
     <!--VERDICT-->
 
-    <!--TODAY-->
+    <main class="dash">
+        <section class="col" aria-labelledby="meals-label">
+            <div class="col-head">
+                <button type="button" class="nav-btn" id="meals-prev" aria-label="Earlier">&lsaquo;</button>
+                <h2 class="col-label" id="meals-label">Meals</h2>
+                <button type="button" class="nav-btn" id="meals-next" aria-label="Later">&rsaquo;</button>
+            </div>
+            <div class="col-body" id="meals-body"></div>
+        </section>
+        <section class="col" aria-labelledby="buy-label">
+            <div class="col-head"><h2 class="col-label" id="buy-label">To buy</h2></div>
+            <div class="col-body" id="buy-body"></div>
+        </section>
+        <section class="col" aria-labelledby="hand-label">
+            <div class="col-head"><h2 class="col-label" id="hand-label">On hand</h2></div>
+            <div class="col-body" id="hand-body"></div>
+        </section>
+    </main>
 
-    <details class="all-pages">
-        <summary>All pages</summary>
+    <nav id="all-pages" popover aria-label="All pages">
         <!--SECTIONS-->
-    </details>
+    </nav>
 
+    <script src="/static/dashboard.js" defer></script>
     <script>
         // One PATCH, no navigation. Mirrors /prep's handler; both exist because
         // the ask has to be wherever you already are.
@@ -190,15 +71,18 @@
                     if (!resp.ok) throw new Error('save failed');
                     ask.classList.add('answered');
                     ask.querySelector('.verdict-q').textContent =
-                        makeAgain ? 'Noted — you\u2019d make it again. \u{1F44D}'
-                                  : 'Noted — not again. \u{1F44E}';
+                        makeAgain ? 'Noted — you’d make it again.' : 'Noted — not again.';
                 } catch (err) {
                     ask.querySelectorAll('.verdict-btn').forEach(b => b.disabled = false);
-                    ask.querySelector('.verdict-q').textContent = 'Could not save that.';
+                    ask.querySelector('.verdict-q').textContent = 'Couldn’t save that. Try again.';
                 }
             });
         });
     </script>
-<script>window.kitchenosContext = () => ({screen: 'home'});</script>
+    <script>
+        // Commands are interpreted against the week on screen, not the calendar week.
+        window.kitchenosContext = () =>
+            window.koDash ? {screen: 'home', week: window.koDash.week} : {screen: 'home'};
+    </script>
 </body>
 </html>
