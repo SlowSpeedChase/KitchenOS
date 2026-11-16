@@ -99,6 +99,10 @@ button.meal.sortable-ghost { border-color: var(--app-kitchenos); border-style: d
 .meal-acts .act, .meal-acts a.act { display: flex; align-items: center; justify-content: center; text-decoration: none; min-height: 48px; font-size: 16px; }
 .meal-acts .act.primary { background: var(--app-kitchenos); color: var(--text-on-accent); border-color: var(--app-kitchenos); }
 .meal-acts .act.danger { color: var(--alert); }
+.ings { margin-block-start: 20px; display: flex; flex-direction: column; gap: 2px; }
+.ings .grp.need { color: var(--alert); }
+.ings .grp.have { color: var(--done); }
+.ings .item .qty { text-align: end; }
 .meal-acts label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
 .meal-acts select, .plan-for select {
     font: inherit; min-height: 44px; max-width: 100%; color: var(--ink); background: var(--surface);

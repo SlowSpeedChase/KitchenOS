@@ -156,8 +156,44 @@
         if (p.anchor) button('Remove from plan', 'danger', () => request(target, { method: 'DELETE' }));
 
         const sub = [fullDay.format(day), p.meal, p.anchor ? null : 'leftover'].filter(Boolean).join(' · ');
-        body.replaceChildren(el('h2', null, p.bundle_name || p.recipe), el('p', 'sub', sub), acts);
+        const ings = el('div', 'ings');
+        body.replaceChildren(el('h2', null, p.bundle_name || p.recipe), el('p', 'sub', sub), acts, ings);
         $('meal-pop').showPopover();
+        if (!p.bundle_id) loadIngredients(p.recipe, ings);
+    }
+
+    // What the recipe needs, split by whether it is in the kitchen. `in_stock`
+    // is true / false / null from the server; null means it could not tell.
+    async function loadIngredients(recipe, box) {
+        box.replaceChildren(el('p', 'note', 'Checking ingredients…'));
+        let data;
+        try {
+            data = await getJSON(`/api/recipes/${encodeURIComponent(recipe)}`);
+        } catch (err) {
+            box.replaceChildren(el('p', 'note bad', 'Couldn’t load the ingredients.'));
+            return;
+        }
+        const all = data.ingredients || [];
+        const line = i => {
+            const row = el('div', 'item');
+            row.appendChild(el('span', null, i.item));
+            const want = [i.amount, i.unit === 'whole' ? '' : i.unit].filter(Boolean).join(' ');
+            row.appendChild(el('span', 'qty', i.in_stock && i.have ? `need ${want} · have ${i.have}` : want));
+            return row;
+        };
+        const groups = [
+            ['Need to get', 'need', all.filter(i => i.in_stock === false)],
+            ['Not sure', '', all.filter(i => i.in_stock == null)],
+            ['On hand', 'have', all.filter(i => i.in_stock === true)],
+        ];
+        const nodes = [];
+        groups.forEach(([label, cls, rows]) => {
+            if (!rows.length) return;
+            nodes.push(el('div', `grp ${cls}`.trim(), `${label} · ${rows.length}`));
+            rows.forEach(i => nodes.push(line(i)));
+        });
+        if (!nodes.length) nodes.push(el('p', 'note', 'This recipe lists no ingredients.'));
+        box.replaceChildren(...nodes);
     }
 
     function mealRow(p, monday) {

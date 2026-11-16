@@ -382,3 +382,24 @@ def test_meal_panel_marks_a_meal_cooked(live_server, page, page_errors):
     expect(page.locator(f'.day[data-date="{wednesday}"] button.meal.cooked')).to_have_count(1)
     assert requests.get(live_server.url(f"/api/cooks/{cook['id']}"), timeout=30).json()["cooked_at"]
     assert page_errors == []
+
+
+def test_meal_panel_previews_ingredients_by_whether_they_are_on_hand(live_server, page, page_errors):
+    week, wednesday = unique_week(39)
+    _cook(live_server, week, wednesday)
+    page.route("**/api/recipes/**", lambda route: route.fulfill(json={"servings": 8, "ingredients": [
+        {"item": "ricotta", "amount": "15", "unit": "oz", "in_stock": False, "have": None},
+        {"item": "lasagna noodles", "amount": "9", "unit": "whole", "in_stock": True, "have": "1 ct"},
+        {"item": "basil", "amount": "", "unit": "", "in_stock": None, "have": None},
+    ]}))
+    _open(page, live_server, week)
+    page.locator(f'.day[data-date="{wednesday}"] button.meal').click()
+    ings = page.locator("#meal-body .ings")
+    expect(ings.locator(".grp")).to_have_count(3)
+    assert [t.lower() for t in ings.locator(".grp").all_inner_texts()] == [
+        "need to get · 1", "not sure · 1", "on hand · 1"]
+    rows = ings.locator(".item").all_inner_texts()
+    assert "ricotta" in rows[0] and "15 oz" in rows[0]
+    assert "basil" in rows[1]
+    assert "lasagna noodles" in rows[2] and "have 1 ct" in rows[2]
+    assert page_errors == []
