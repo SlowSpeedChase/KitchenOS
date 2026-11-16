@@ -45,5 +45,9 @@ ruff>=0.15.0
 # YAML parsing (ingredient aliases, recipe config)
 pyyaml>=6.0
 
+# Print → PDF (lib/print_pdf.py). One-time browser download after install:
+#     .venv/bin/python -m playwright install chromium
+playwright>=1.40.0
+
 # Test-only
 pytest-mock>=3.12.0

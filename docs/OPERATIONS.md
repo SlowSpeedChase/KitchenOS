@@ -190,6 +190,20 @@ operator rollout steps, not actions performed by the code migration.
 The iOS app upgrades only exact known legacy defaults when resolving config;
 custom settings and Keychain credentials survive. macOS keeps localhost.
 
+### Print buttons → PDF
+
+Every print button opens a server-built PDF (`/print/week.pdf`, `/print/cooking-packet.pdf`,
+`/recipe-card/<name>.pdf`) so printing works the same from the iPad, the phone and the Mac.
+The API server renders it with headless Chromium through Playwright, which needs a one-time
+browser download, and a machine rebuild loses it:
+
+```bash
+.venv/bin/python -m playwright install chromium
+```
+
+If a print button lands on "Couldn't build the PDF right now", check this first; the API log
+names the Playwright error. Smoke test: `curl -s -o /dev/null -w "%{http_code} %{content_type}\n" http://localhost:5001/print/week.pdf`.
+
 ### Generate web dashboard (tailnet launcher)
 
 Writes `Dashboards/KitchenOS Web.md` — a tap-anywhere launcher for the web app

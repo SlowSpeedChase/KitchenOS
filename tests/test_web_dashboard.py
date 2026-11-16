@@ -13,6 +13,8 @@ from lib import web_dashboard as wd
 NOT_BOOKMARKABLE = {
     "/cooking-packet": "requires ?week=; opened from a selected week",
     "/print/cooking-packet": "requires ?week=; prints the selected saved packet",
+    "/print/week.pdf": "a PDF, not a page; opened by the print button on /print/week",
+    "/print/cooking-packet.pdf": "a PDF, not a page; opened by the print button on /print/cooking-packet",
     "/browser/open": "requires an ephemeral one-use fragment",
     "/health": "JSON liveness probe, not a page",
     "/calendar.ics": "ICS feed — subscribed in Calendar, not bookmarked",

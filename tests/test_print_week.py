@@ -52,6 +52,16 @@ class TestBuildWeekPacket:
         wed = next(d for d in packet["days"] if d["day"] == "Wednesday")
         assert wed["slots"]["dinner"][0]["servings"] == 2.0
 
+    def test_markdown_week_prints_every_recipe_in_a_slot(self, tmp_vault):
+        """Two breakfasts in one slot both reach the paper, not just the first."""
+        vault, recipes = _setup_markdown_week(tmp_vault)
+        (vault / "Meal Plans" / f"{WEEK}.md").write_text(
+            "## Monday (Jul 27)\n\n### breakfast\n[[Oatmeal]]\n[[Beef Bowl]] x0.5\n\n")
+        packet = print_week.build_week_packet(WEEK, vault, recipes, pantry=[])
+        monday = next(d for d in packet["days"] if d["day"] == "Monday")
+        assert [s["name"] for s in monday["slots"]["breakfast"]] == ["Oatmeal", "Beef Bowl"]
+        assert monday["slots"]["breakfast"][1]["servings"] == 0.5
+
     def test_do_ahead_reads_cached_tasks(self, tmp_vault):
         vault, recipes = _setup_markdown_week(tmp_vault)
         # Pre-write a tasks sidecar so load_cached_tasks stays LLM-free.

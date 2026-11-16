@@ -43,7 +43,10 @@
         }
         table.week-grid th { background: color-mix(in srgb, var(--rule) 14%, var(--surface)); }
         table.week-grid td.day { font-weight: 600; white-space: nowrap; }
-        table.week-grid td.macros { white-space: nowrap; font-variant-numeric: tabular-nums; }
+        table.week-grid td.macros { width: 24%; font-variant-numeric: tabular-nums; }
+        /* The "excludes …" note names whole recipes; left unwrapped it claimed
+           the page and squeezed every meal column to one word per line. */
+        table.week-grid td.macros .warn { display: block; font-size: 11px; margin-top: 2px; }
         .week-grid a { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--rule); }
         .mult { color: var(--muted); }
         .empty { color: var(--muted); }
