@@ -33,6 +33,8 @@
 
     <!--VERDICT-->
 
+    <div class="soon-strip" id="soon-strip" hidden></div>
+
     <main class="cal" aria-labelledby="meals-label">
         <div class="col-head">
             <button type="button" class="nav-btn" id="meals-prev" aria-label="Earlier">&lsaquo;</button>
@@ -42,14 +44,17 @@
         <div class="cal-body" id="meals-body"></div>
     </main>
 
-    <section id="cook-pop" class="sheet" popover aria-label="Could make">
+    <section id="cook-pop" class="sheet side" popover aria-label="Could make">
         <div class="sheet-head">
             <h2 class="col-label">Could make</h2>
             <label class="plan-for">Plan for <select id="cook-day"></select></label>
         </div>
         <div class="col-body" id="cook-body"></div>
     </section>
-    <section id="hand-pop" class="sheet" popover aria-label="On hand">
+    <section id="meal-pop" class="sheet side" popover aria-label="Meal">
+        <div class="col-body" id="meal-body"></div>
+    </section>
+    <section id="hand-pop" class="sheet side" popover aria-label="On hand">
         <div class="col-body" id="hand-body"></div>
     </section>
     <section id="buy-pop" class="sheet" popover aria-label="To buy">

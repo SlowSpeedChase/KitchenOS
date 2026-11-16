@@ -22,7 +22,7 @@ def body():
 @pytest.mark.parametrize("element_id", [
     "meals-body", "meals-label", "meals-prev", "meals-next",
     "buy-body", "buy-label", "hand-body", "hand-label", "cook-body", "cook-day",
-    "cook-open", "view-week", "view-month",
+    "cook-open", "soon-strip", "meal-body", "view-week", "view-month",
 ])
 def test_shell_carries_every_mount_point(body, element_id):
     assert f'id="{element_id}"' in body
