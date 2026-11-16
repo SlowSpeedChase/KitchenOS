@@ -54,6 +54,18 @@
         .warnings { font-size: 12px; color: var(--warning); background: var(--tint-warning);
                     border: 1px solid var(--edge-warning); border-radius: 6px; padding: 6px 10px; margin: 0 0 16px; }
         ul.checklist { list-style: none; padding: 0; margin: 0; columns: 2; font-size: 14px; }
+        /* Shopping by location: every ingredient, ☑ already have / ☐ buy. */
+        .loc { margin: 0 0 12px; }
+        /* A long section may split across pages; its heading never strands. */
+        .loc h3 { margin: 10px 0 4px; break-after: avoid; }
+        ul.shop { list-style: none; padding: 0; margin: 0; font-size: 13px; }
+        ul.shop li { display: flex; gap: 8px; align-items: baseline; padding: 3px 0;
+                     border-bottom: 1px dotted var(--done); break-inside: avoid; }
+        ul.shop .box { font-size: 15px; width: 16px; flex: none; }
+        ul.shop .what { flex: 1; }
+        ul.shop .for { color: var(--muted); font-size: 11px; text-align: right; max-width: 38%; }
+        ul.shop li.have .what { color: var(--muted); }
+        ul.shop .meta, ul.shop .warn { font-size: 11px; }
         ul.checklist li { break-inside: avoid; margin: 3px 0; }
         .checklist .meta { color: var(--muted); font-size: 12px; }
         @media print {
@@ -62,7 +74,7 @@
             .pagebreak { break-before: page; }
             section, ul.checklist li, table.week-grid tr { break-inside: avoid; }
             /* A long recipe may run past one page; let it, rather than clip. */
-            section.recipe-page { break-inside: auto; }
+            section.recipe-page, section.shopping-page { break-inside: auto; }
             ol.steps li { break-inside: avoid; }
             @page { margin: 12mm; }
         }
@@ -77,14 +89,14 @@
         <!--PACKET-->
     </div>
     <script>
-        // On/off lives in the URL (?recipes=1) so a bookmark or a reload keeps it.
+        // On by default; "off" lives in the URL (?recipes=0) so a bookmark or a reload keeps it.
         (function () {
             const box = document.getElementById('include-recipes');
             const url = new URL(location.href);
-            box.checked = ['1', 'true', 'yes'].includes(url.searchParams.get('recipes'));
+            box.checked = !['0', 'false', 'no'].includes(url.searchParams.get('recipes'));
             box.addEventListener('change', () => {
-                if (box.checked) url.searchParams.set('recipes', '1');
-                else url.searchParams.delete('recipes');
+                if (box.checked) url.searchParams.delete('recipes');
+                else url.searchParams.set('recipes', '0');
                 location.href = url.toString();
             });
         })();

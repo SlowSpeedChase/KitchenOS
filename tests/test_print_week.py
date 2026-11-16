@@ -201,9 +201,10 @@ class TestRecipePages:
             "|--------|------|------------|\n| 1 | lb | ground beef |\n| 2 | cup | rice |\n\n"
             "## Instructions\n\n1. Brown the beef.\n2. Serve over rice.\n")
 
-    def test_off_by_default(self, tmp_vault):
+    def test_can_be_turned_off(self, tmp_vault):
         vault, recipes = _setup_markdown_week(tmp_vault)
-        packet = print_week.build_week_packet(WEEK, vault, recipes, pantry=[])
+        packet = print_week.build_week_packet(WEEK, vault, recipes, pantry=[],
+                                              include_recipes=False)
         assert packet["recipes"] == []
         assert "class='recipe-page" not in print_week.render_packet_html(packet)
 
@@ -236,3 +237,119 @@ class TestRecipePages:
                                               include_recipes=True)
         packet["recipes"][0]["instructions"] = [{"step": 1, "text": "<script>x</script>"}]
         assert "<script>x" not in print_week.render_packet_html(packet)
+
+
+# ---- shopping list by location (printed, every ingredient) -----------------
+
+from lib.inventory import InventoryItem
+
+
+def _line(item, status, *, matched=None, to_buy=None, needed="1 cup"):
+    amount, _, unit = needed.partition(" ")
+    return {"item": item, "status": status, "matched_inventory": matched,
+            "to_buy": to_buy, "needed": {"amount": amount, "unit": unit},
+            "needed_display": f"{needed} {item}", "display": f"{needed} {item}"}
+
+
+class TestShoppingByLocation:
+    def _groups(self, lines, recipes, inventory, place=lambda n: "pantry", head=lambda n: ""):
+        return print_week.shopping_by_location(lines, recipes, inventory, place=place, head=head)
+
+    def test_groups_by_where_it_lives_in_kitchen_order(self):
+        lines = [
+            _line("rolled oats", "on_hand", matched={"item": "Rolled oats", "amount": "1", "unit": "ct"}),
+            _line("greek yogurt", "credited", matched={"item": "Greek yogurt", "amount": "2", "unit": "cup"}),
+            _line("blueberries", "buy", to_buy={"amount": "0.5", "unit": "cup"}),
+        ]
+        recipes = {"Oats": [{"item": "rolled oats"}, {"item": "Greek yogurt"}, {"item": "blueberries"}]}
+        inv = [InventoryItem("Rolled oats", 1, location="pantry"),
+               InventoryItem("Greek yogurt", 2, unit="cup", location="fridge")]
+        groups = self._groups(lines, recipes, inv, place=lambda n: "freezer")
+        assert [g["location"] for g in groups] == ["fridge", "freezer", "pantry"]
+        fridge, freezer, pantry = groups
+        assert fridge["items"][0]["have"] is True and fridge["label"] == "Fridge"
+        assert freezer["items"][0]["have"] is False   # not owned → predicted spot
+        assert pantry["items"][0]["recipes"] == ["Oats"]
+
+    def test_every_ingredient_appears_including_owned_ones(self):
+        lines = [_line("baking soda", "on_hand", matched={"item": "Baking soda", "amount": "1", "unit": "ct"}),
+                 _line("oat flour", "buy", to_buy={"amount": "0.75", "unit": "cup"})]
+        groups = self._groups(lines, {}, [InventoryItem("Baking soda", 1)])
+        names = [i["text"] for g in groups for i in g["items"]]
+        assert any("baking soda" in n for n in names) and any("oat flour" in n for n in names)
+
+    def test_partial_credit_is_unchecked_and_says_how_much_more(self):
+        lines = [_line("eggs", "credited", needed="6 whole",
+                       matched={"item": "Eggs", "amount": "2", "unit": "whole"},
+                       to_buy={"amount": "4", "unit": "whole"})]
+        [g] = self._groups(lines, {}, [InventoryItem("Eggs", 2, unit="whole", location="fridge")])
+        item = g["items"][0]
+        assert item["have"] is False
+        assert "4" in item["note"] and "more" in item["note"]
+
+    def test_related_item_is_not_ticked_but_names_what_you_have(self):
+        """Oat flour vs all-purpose flour: a wrong tick means you don't buy it."""
+        lines = [_line("oat flour", "review", matched={"item": "All-purpose flour", "amount": "1", "unit": "ct"})]
+        [g] = self._groups(lines, {}, [InventoryItem("All-purpose flour", 1)])
+        item = g["items"][0]
+        assert item["have"] is False and item["verify"] is True
+        assert "All-purpose flour" in item["note"]
+
+    def test_to_buy_goes_where_you_keep_that_food(self):
+        lines = [_line("greek-style yogurt", "buy", to_buy={"amount": "1", "unit": "cup"})]
+        inv = [InventoryItem("whole milk yogurt", 1, location="fridge")]
+        [g] = self._groups(lines, {}, inv, place=lambda n: "pantry",
+                           head=lambda n: "yogurt" if "yogurt" in n else "")
+        assert g["location"] == "fridge"
+
+    def test_unknown_spot_is_not_sure_rather_than_a_wrong_shelf(self):
+        lines = [_line("mozzarella", "buy", to_buy={"amount": "8", "unit": "oz"})]
+        [g] = self._groups(lines, {}, [], place=lambda n: None)
+        assert g["location"] == "other" and g["label"] == "Not sure where it goes"
+
+    def test_shared_ingredient_names_every_recipe_once(self):
+        lines = [_line("garlic", "buy", to_buy={"amount": "3", "unit": "clove"})]
+        recipes = {"B": [{"item": "Garlic"}], "A": [{"item": "garlic"}, {"item": "garlic"}]}
+        [g] = self._groups(lines, recipes, [])
+        assert g["items"][0]["recipes"] == ["A", "B"]
+
+    def test_excluded_lines_are_left_out(self):
+        assert self._groups([_line("water", "excluded")], {}, []) == []
+
+    def test_render_shows_checked_boxes_and_no_markdown_checkboxes(self):
+        packet_groups = [{"location": "fridge", "label": "Fridge", "items": [
+            {"text": "1 cup greek yogurt", "have": True, "verify": False,
+             "note": "have Greek yogurt (2 cup)", "recipes": ["Oats"]},
+            {"text": "8 oz mozzarella", "have": False, "verify": False,
+             "note": "", "recipes": ["Mini Pizzas"]}]}]
+        html = print_week.render_shopping_html(packet_groups)
+        assert "Fridge" in html and "☑" in html and "☐" in html
+        assert "Mini Pizzas" in html and "have Greek yogurt" in html
+        assert "- [ ]" not in html
+
+
+def test_full_recipes_are_included_by_default(tmp_vault):
+    vault, recipes = _setup_markdown_week(tmp_vault)
+    packet = print_week.build_week_packet(WEEK, vault, recipes, pantry=[])
+    assert packet["recipes"], "recipe pages (with steps) should print unless turned off"
+    assert "shopping_by_location" in packet
+
+
+@pytest.mark.parametrize("wanted,owned,same", [
+    ("blueberries", "frozen blueberries", True),
+    ("1/2 teaspoon fine sea salt", "Celtic sea salt", True),
+    ("extra-virgin olive oil", "extra virgin olive oil", True),
+    ("yogurt", "whole milk yogurt", True),
+    ("oat flour", "All-purpose flour", False),
+    ("pumpkin seeds", "pumpkin", False),
+    ("lemon", "lemon juice", False),
+    ("unsweetened nondairy milk", "whole milk", False),
+])
+def test_same_food(wanted, owned, same):
+    assert print_week.same_food(wanted, owned) is same
+
+
+def test_same_food_review_match_is_ticked():
+    lines = [_line("blueberries", "review", matched={"item": "frozen blueberries", "amount": "1", "unit": "ct"})]
+    [g] = print_week.shopping_by_location(lines, {}, [InventoryItem("frozen blueberries", 1, location="freezer")])
+    assert g["items"][0]["have"] is True and g["location"] == "freezer"

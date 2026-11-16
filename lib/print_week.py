@@ -18,6 +18,8 @@ and the branch signal — no second, possibly-disagreeing test.
 
 from __future__ import annotations
 
+import re
+
 from datetime import timedelta
 from html import escape
 from pathlib import Path
@@ -121,7 +123,7 @@ def _targets_dict(vault_path: Path) -> tuple[dict, list[str]]:
 def build_week_packet(week: str, vault_path: Path, recipes_dir: Path, *,
                       pantry: Optional[list[dict]] = None,
                       include_tasks: bool = False,
-                      include_recipes: bool = False) -> dict:
+                      include_recipes: bool = True) -> dict:
     """Assemble the print packet for ``week``. Pure w.r.t. the vault (no writes).
 
     Args:
@@ -131,8 +133,10 @@ def build_week_packet(week: str, vault_path: Path, recipes_dir: Path, *,
         include_tasks: when True, regenerate prep tasks if the cache is stale
             (an LLM call). Default False keeps the page read-only/fast — it uses
             only the cached sidecar and flags when none exists.
-        include_recipes: when True, append each planned recipe's ingredients
-            and steps (``packet["recipes"]``), one page per recipe.
+        include_recipes: append each planned recipe's ingredients and steps
+            (``packet["recipes"]``), one page per recipe. On by default: a
+            printed week is cooked from, and a packet without steps sends you
+            back to a screen at the stove.
     """
     from lib import shopping_list_generator, task_extractor
 
@@ -166,6 +170,12 @@ def build_week_packet(week: str, vault_path: Path, recipes_dir: Path, *,
         "days": days,
         "shopping": {"items": shop.get("items", []),
                      "warnings": shop.get("warnings", [])},
+        # Every ingredient, owned or not, grouped by where it lives. Print
+        # only: `items` stays the purchase-only contract every other consumer
+        # (Reminders, confirm, MCP) relies on.
+        "shopping_by_location": shopping_by_location(
+            shop.get("lines", []), _recipe_ingredients(shop.get("recipes", [])),
+            _inventory_rows()),
         "do_ahead": do_ahead,
         "tasks_available": tasks_payload is not None,
         "warnings": warnings,
@@ -210,6 +220,187 @@ def _recipe_pages(days: list[dict], recipes_dir: Path) -> list[dict]:
             "instructions": body.get("instructions", []),
         })
     return pages
+
+
+# ---- shopping list by location -----------------------------------------------
+
+# Kitchen-walk order: cold first (it's what you check before leaving), then
+# the cupboards. Anything else lands last.
+_LOCATION_ORDER = ("fridge", "freezer", "pantry", "counter", "other")
+_LOCATION_LABELS = {"fridge": "Fridge", "freezer": "Freezer", "pantry": "Pantry",
+                    "counter": "Counter", "other": "Not sure where it goes"}
+
+
+def _recipe_ingredients(recipe_names: list[str]) -> dict[str, list[dict]]:
+    from lib.shopping_list_generator import load_recipe_ingredients
+    out = {}
+    for name in recipe_names:
+        try:
+            ingredients, _warning = load_recipe_ingredients(name)
+        except Exception:
+            ingredients = []
+        out[name] = ingredients or []
+    return out
+
+
+def _inventory_rows():
+    try:
+        from lib.inventory import read_inventory
+        return read_inventory()
+    except Exception:
+        return []
+
+
+def _default_place(name: str) -> Optional[str]:
+    """The storage table's answer, or None when it only shrugged.
+
+    ``place_item``'s ``default`` tier is "pantry" for anything it doesn't know
+    — yogurt and mozzarella included — so a shrug is reported as unknown
+    rather than printed as a confident wrong shelf.
+    """
+    from lib.grocery_catalog import assign_category
+    from lib.storage_locations import place_item
+    placed = place_item(name, assign_category(name))
+    return None if placed.source == "default" else placed.location
+
+
+def _head(name: str) -> str:
+    return _head_pair(name)[0]
+
+
+def _head_pair(name: str) -> tuple[str, str]:
+    from lib.fdc_local import query_head
+    try:
+        head, qualifier = query_head(name)
+        return head or "", qualifier or ""
+    except Exception:
+        return "", ""
+
+
+# Words that make a different product of the same head noun. One side naming
+# one and the other not ("unsweetened nondairy milk" vs "whole milk") is a
+# different food even though both are milk.
+_PRODUCT_WORDS = frozenset({
+    "nondairy", "non-dairy", "dairy-free", "vegan", "plant", "plant-based",
+    "almond", "oat", "soy", "coconut", "rice", "cashew", "gluten-free",
+    "sugar-free", "decaf", "low-sodium", "reduced-sodium", "lite", "light",
+    "fat-free", "nonfat", "powdered", "dried", "dry", "canned", "smoked",
+})
+
+
+def same_food(wanted: str, owned: str) -> bool:
+    """True when an inventory row is the same food the recipe asks for.
+
+    Same head noun, qualifiers that don't contradict (equal, or one side
+    unqualified), and no product-changing word on only one side. Used to tick
+    a ``review`` match on paper: frozen blueberries are blueberries and
+    Celtic sea salt is sea salt, but oat flour is not all-purpose flour and
+    nondairy milk is not whole milk. A miss leaves the box unticked with a
+    note, the safe direction.
+    """
+    (h1, q1), (h2, q2) = _head_pair(wanted), _head_pair(owned)
+    if not h1 or h1 != h2 or (q1 and q2 and q1 != q2):
+        return False
+    w1 = set(re.findall(r"[a-z][a-z-]*", wanted.lower())) & _PRODUCT_WORDS
+    w2 = set(re.findall(r"[a-z][a-z-]*", owned.lower())) & _PRODUCT_WORDS
+    return w1 == w2
+
+
+def shopping_by_location(lines: list[dict], recipe_ingredients: dict[str, list[dict]],
+                         inventory, *, place=_default_place, head=_head) -> list[dict]:
+    """Every ingredient of the week, grouped by kitchen location. Pure.
+
+    ``lines`` are the generator's aggregated lines; their ``item`` is the
+    ``normalize_item_name`` key, so each recipe's raw ingredients are keyed the
+    same way to say which recipes need it. An owned item is filed where the
+    inventory says it is. Anything to buy goes where you already keep that
+    food (same head noun in inventory, majority location), else where the
+    storage table puts it, else under "Not sure where it goes".
+
+    ☑ means the inventory covers it: an exact match (``on_hand`` or a full
+    ``credited``), or a ``review`` match that ``same_food`` confirms (the
+    generator flags frozen blueberries for differing units). Any other related
+    item (oat flour against all-purpose flour, pumpkin seeds against a
+    pumpkin) stays ☐ with what you have, since a wrong tick is how you get
+    home without the oat flour. A partial credit
+    stays ☐ with how much more to buy.
+    """
+    from lib.ingredient_aggregator import format_ingredient, normalize_item_name
+
+    used_by: dict[str, set] = {}
+    for recipe, ingredients in recipe_ingredients.items():
+        for ing in ingredients:
+            key = normalize_item_name(ing.get("item", ""))
+            if key:
+                used_by.setdefault(key, set()).add(recipe)
+
+    from collections import Counter
+    where = {it.name.strip().lower(): it.location for it in inventory}
+    by_head: dict[str, Counter] = {}
+    for it in inventory:
+        h = head(it.name)
+        if h:
+            by_head.setdefault(h, Counter())[it.location] += 1
+    groups: dict[str, list[dict]] = {}
+    for line in lines:
+        status = line.get("status")
+        if status == "excluded":
+            continue
+        matched = line.get("matched_inventory") or None
+        to_buy = line.get("to_buy")
+        owned = f"{matched.get('item')} ({format_ingredient({'amount': matched.get('amount', ''), 'unit': matched.get('unit', ''), 'item': ''}).strip()})" if matched else ""
+        verify = False
+        if status == "on_hand" or (matched and status == "credited" and not to_buy):
+            have, note = True, f"have {owned}"
+        elif status == "credited" and to_buy:
+            more = format_ingredient({"amount": to_buy.get("amount", ""),
+                                      "unit": to_buy.get("unit", ""), "item": ""}).strip()
+            have, note = False, f"have {owned}; buy {more} more"
+        elif matched and same_food(line.get("item", ""), matched.get("item", "")):
+            have, note = True, f"have {owned}"
+        elif matched:
+            have, verify, note = False, True, f"you have {owned}; same thing?"
+        else:
+            have, note = False, ""
+        item = line.get("item", "")
+        location = where.get((matched.get("item") or "").strip().lower()) if matched else None
+        if not location and by_head.get(head(item)):
+            location = by_head[head(item)].most_common(1)[0][0]
+        location = location or place(item)
+        if location not in _LOCATION_LABELS:
+            location = "other"
+        groups.setdefault(location, []).append({
+            "text": line.get("needed_display") or line.get("display") or line.get("item", ""),
+            "have": have, "verify": verify, "note": note,
+            "recipes": sorted(used_by.get(line.get("item", ""), ()), key=str.lower),
+        })
+
+    return [{"location": loc, "label": _LOCATION_LABELS[loc],
+             "items": sorted(groups[loc], key=lambda i: (i["have"], i["text"].lower()))}
+            for loc in _LOCATION_ORDER if loc in groups]
+
+
+def render_shopping_html(groups: list[dict]) -> str:
+    """Location sections of ☑/☐ rows. Plain HTML, never Markdown checkboxes."""
+    if not groups:
+        return "<p class='empty'>No ingredients — nothing planned, or recipes have no ingredient tables.</p>"
+    out = []
+    for g in groups:
+        need = sum(1 for i in g["items"] if not i["have"])
+        rows = []
+        for i in g["items"]:
+            box = "☑" if i["have"] else "☐"
+            cls = "have" if i["have"] else "buy"
+            note = (f" <span class='{'warn' if i['verify'] else 'meta'}'>{escape(i['note'])}</span>"
+                    if i["note"] else "")
+            recipes = (f"<span class='for'>{escape(', '.join(i['recipes']))}</span>"
+                       if i["recipes"] else "")
+            rows.append(f"<li class='{cls}'><span class='box'>{box}</span> "
+                        f"<span class='what'>{escape(i['text'])}{note}</span>{recipes}</li>")
+        out.append(f"<div class='loc'><h3>{escape(g['label'])} "
+                   f"<span class='meta'>· {need} to buy</span></h3>"
+                   f"<ul class='shop'>{''.join(rows)}</ul></div>")
+    return "".join(out)
 
 
 # ---- rendering ------------------------------------------------------------
@@ -273,12 +464,7 @@ def render_packet_html(packet: dict, base_url: str = "") -> str:
             f"<tbody>{''.join(rows)}</tbody></table>")
 
     # Shopping list.
-    items = packet["shopping"]["items"]
-    if items:
-        shopping = "<ul class='checklist'>" + "".join(
-            f"<li>☐ {escape(i)}</li>" for i in items) + "</ul>"
-    else:
-        shopping = "<p class='empty'>No items — nothing to buy, or the list isn't generated yet.</p>"
+    shopping = render_shopping_html(packet.get("shopping_by_location") or [])
 
     # Do-ahead prep.
     if packet["do_ahead"]:
@@ -309,7 +495,7 @@ def render_packet_html(packet: dict, base_url: str = "") -> str:
         f"<strong>{t['calories']}</strong> kcal · {t['carbs']}g C · {t['fat']}g F</p>"
         f"{warnings}"
         f"<section><h2>The week</h2>{grid}</section>"
-        f"<section class='pagebreak'><h2>Shopping list</h2>{shopping}</section>"
+        f"<section class='shopping-page pagebreak'><h2>Shopping list</h2>{shopping}</section>"
         f"<section class='pagebreak'><h2>Get ahead this week</h2>{prep}</section>"
         f"{recipe_pages}"
     )
