@@ -42,7 +42,7 @@ def _week_plan(tmp_vault):
 
 def test_week_pdf_renders_the_print_page_over_loopback(client, tmp_vault, captured):
     _week_plan(tmp_vault)
-    resp = client.get("/print/week.pdf?week=2026-W31&recipes=1")
+    resp = client.get("/print/week.pdf?week=2026-W31&recipes=0")
     assert resp.status_code == 200
     assert resp.mimetype == "application/pdf"
     assert resp.data.startswith(b"%PDF")
@@ -52,7 +52,13 @@ def test_week_pdf_renders_the_print_page_over_loopback(client, tmp_vault, captur
     assert "Jul 27" in disp  # human week range, never the bare week id
     [url] = captured
     assert url.startswith("http://127.0.0.1:")
-    assert "/print/week?" in url and "week=2026-W31" in url and "recipes=1" in url
+    assert "/print/week?" in url and "week=2026-W31" in url and "recipes=0" in url
+
+
+def test_week_pdf_includes_recipes_unless_turned_off(client, tmp_vault, captured):
+    _week_plan(tmp_vault)
+    client.get("/print/week.pdf?week=2026-W31")
+    assert "recipes" not in captured[0]  # page default = full recipes
 
 
 def test_week_pdf_drops_unknown_params(client, tmp_vault, captured):

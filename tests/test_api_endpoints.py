@@ -555,7 +555,7 @@ def test_print_week_page_renders(client, tmp_vault):
 
 
 def test_print_week_recipes_toggle(client, tmp_vault):
-    """?recipes=1 appends the full recipe; without it the page has only the toggle."""
+    """Full recipes (with steps) print by default; ?recipes=0 leaves them out."""
     recipes = tmp_vault / "Recipes"; recipes.mkdir(parents=True, exist_ok=True)
     (recipes / "Beef Bowl.md").write_text(
         '---\ntitle: "Beef Bowl"\nservings: 2\n---\n# Beef Bowl\n\n## Ingredients\n\n'
@@ -564,12 +564,12 @@ def test_print_week_recipes_toggle(client, tmp_vault):
     plans = tmp_vault / "Meal Plans"; plans.mkdir(parents=True, exist_ok=True)
     (plans / "2026-W31.md").write_text("## Monday (Jul 27)\n\n### dinner\n[[Beef Bowl]]\n\n")
 
-    off = client.get('/print/week?week=2026-W31').get_data(as_text=True)
-    assert 'id="include-recipes"' in off
-    assert "Brown the beef." not in off
-
-    on = client.get('/print/week?week=2026-W31&recipes=1').get_data(as_text=True)
+    on = client.get('/print/week?week=2026-W31').get_data(as_text=True)
+    assert 'id="include-recipes"' in on
     assert "Brown the beef." in on and "ground beef" in on
+
+    off = client.get('/print/week?week=2026-W31&recipes=0').get_data(as_text=True)
+    assert "Brown the beef." not in off
 
 
 def test_print_week_invalid_week_400(client):
