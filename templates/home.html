@@ -20,6 +20,9 @@
             <h1><!--TODAY_HEADING--></h1>
         </div>
         <div class="dash-tools">
+            <button type="button" class="menu-btn accent" id="cook-open" popovertarget="cook-pop">Could make</button>
+            <button type="button" class="menu-btn" id="hand-label" popovertarget="hand-pop">On hand</button>
+            <button type="button" class="menu-btn" id="buy-label" popovertarget="buy-pop">To buy</button>
             <div class="seg" role="group" aria-label="Calendar range">
                 <button type="button" id="view-week" aria-pressed="true">Week</button>
                 <button type="button" id="view-month" aria-pressed="false">Month</button>
@@ -30,29 +33,34 @@
 
     <!--VERDICT-->
 
-    <main class="dash">
-        <section class="col" aria-labelledby="meals-label">
-            <div class="col-head">
-                <button type="button" class="nav-btn" id="meals-prev" aria-label="Earlier">&lsaquo;</button>
-                <h2 class="col-label" id="meals-label">Meals</h2>
-                <button type="button" class="nav-btn" id="meals-next" aria-label="Later">&rsaquo;</button>
-            </div>
-            <div class="col-body" id="meals-body"></div>
-        </section>
-        <section class="col" aria-labelledby="buy-label">
-            <div class="col-head"><h2 class="col-label" id="buy-label">To buy</h2></div>
-            <div class="col-body" id="buy-body"></div>
-        </section>
-        <section class="col" aria-labelledby="hand-label">
-            <div class="col-head"><h2 class="col-label" id="hand-label">On hand</h2></div>
-            <div class="col-body" id="hand-body"></div>
-        </section>
+    <main class="cal" aria-labelledby="meals-label">
+        <div class="col-head">
+            <button type="button" class="nav-btn" id="meals-prev" aria-label="Earlier">&lsaquo;</button>
+            <h2 class="col-label" id="meals-label">Meals</h2>
+            <button type="button" class="nav-btn" id="meals-next" aria-label="Later">&rsaquo;</button>
+        </div>
+        <div class="cal-body" id="meals-body"></div>
     </main>
 
-    <nav id="all-pages" popover aria-label="All pages">
+    <section id="cook-pop" class="sheet" popover aria-label="Could make">
+        <div class="sheet-head">
+            <h2 class="col-label">Could make</h2>
+            <label class="plan-for">Plan for <select id="cook-day"></select></label>
+        </div>
+        <div class="col-body" id="cook-body"></div>
+    </section>
+    <section id="hand-pop" class="sheet" popover aria-label="On hand">
+        <div class="col-body" id="hand-body"></div>
+    </section>
+    <section id="buy-pop" class="sheet" popover aria-label="To buy">
+        <div class="col-body" id="buy-body"></div>
+    </section>
+
+    <nav id="all-pages" class="sheet" popover aria-label="All pages">
         <!--SECTIONS-->
     </nav>
 
+    <script src="/static/sortable.min.js" defer></script>
     <script src="/static/dashboard.js" defer></script>
     <script>
         // One PATCH, no navigation. Mirrors /prep's handler; both exist because

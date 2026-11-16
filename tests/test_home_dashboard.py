@@ -21,14 +21,15 @@ def body():
 
 @pytest.mark.parametrize("element_id", [
     "meals-body", "meals-label", "meals-prev", "meals-next",
-    "buy-body", "buy-label", "hand-body", "view-week", "view-month",
+    "buy-body", "buy-label", "hand-body", "hand-label", "cook-body", "cook-day",
+    "cook-open", "view-week", "view-month",
 ])
 def test_shell_carries_every_mount_point(body, element_id):
     assert f'id="{element_id}"' in body
 
 
 def test_registry_lives_in_a_native_popover(body):
-    assert re.search(r'<nav id="all-pages" popover\b', body)
+    assert re.search(r'<nav id="all-pages" class="sheet" popover\b', body)
     assert 'popovertarget="all-pages"' in body
 
 

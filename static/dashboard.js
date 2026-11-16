@@ -98,12 +98,15 @@
             await postJSON(url, { date, meal: p.meal });
             refreshAll();
         } catch (err) {
-            body.appendChild(el('p', 'note bad', `Couldn’t move it. ${err.message}`));
+            await loadMeals();
+            $('meals-body').prepend(el('p', 'note bad', `Couldn’t move it. ${err.message}`));
         }
     }
 
     function mealRow(p, monday) {
         const row = el('details', 'meal');
+        if (p.anchor) row.classList.add('anchor');  // only the cook itself moves; a leftover follows its placement
+        row.planned = p;
         const summary = el('summary', null, p.bundle_name || p.recipe);
         const tags = [];
         if (p.meal !== 'dinner') tags.push(p.meal);
@@ -117,7 +120,7 @@
             open.href = `/recipe/${encodeURIComponent(p.recipe)}`;
             body.appendChild(open);
         }
-        if (p.anchor) {  // only the cook itself moves; a leftover follows its placement
+        if (p.anchor) {  // the same move as a drag, for keyboards and screen readers
             const pick = el('select');
             pick.setAttribute('aria-label', 'Move to another day');
             for (let i = 0; i < 7; i++) {
@@ -138,10 +141,9 @@
     }
 
     function renderWeek(board) {
-        const body = $('meals-body');
         const monday = mondayOf(state.week);
         const dayName = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric' });
-        const days = [];
+        const week = el('div', 'week');
         for (let i = 0; i < 7; i++) {
             const d = addDays(monday, i);
             const date = iso(d);
@@ -149,12 +151,26 @@
             day.dataset.date = date;
             if (date === todayISO) day.classList.add('today');
             day.appendChild(el('div', 'day-name', date === todayISO ? 'Today' : dayName.format(d)));
+            const slots = el('div', 'slots');
             const meals = mealsOn(board.planned_meals || [], date);
-            if (!meals.length) day.appendChild(el('div', 'open', 'Open'));
-            meals.forEach(p => day.appendChild(mealRow(p, monday)));
-            days.push(day);
+            meals.forEach(p => slots.appendChild(mealRow(p, monday)));
+            day.appendChild(slots);
+            const add = el('button', 'open', 'Add meal');
+            add.type = 'button';
+            add.addEventListener('click', () => openCook(date));
+            day.appendChild(add);
+            // Drag ends in the ledger move API and nothing else; the redraw that
+            // follows is the source of truth, so a refused move snaps back.
+            if (window.Sortable) {
+                Sortable.create(slots, {
+                    group: 'meals', draggable: 'details.meal.anchor', animation: 120,
+                    delay: 150, delayOnTouchOnly: true,
+                    onAdd: event => move(event.item.planned, date, event.item.querySelector('.meal-body')),
+                });
+            }
+            week.appendChild(day);
         }
-        body.replaceChildren(...days);
+        $('meals-body').replaceChildren(week);
     }
 
     // ---- meals: month ----
@@ -340,6 +356,8 @@
 
     function renderHand(items) {
         const nodes = [];
+        const atRisk = items.filter(i => i.expiry_status === 'expired' || i.expiry_status === 'soon').length;
+        $('hand-label').textContent = atRisk ? `On hand · ${atRisk} use soon` : 'On hand';
         const soon = items.filter(i => i.expiry_status === 'expired' || i.expiry_status === 'soon')
             .sort((a, b) => a.expires.localeCompare(b.expires));
         if (soon.length) {
@@ -376,6 +394,91 @@
             failed($('hand-body'), 'Couldn’t load the inventory.', loadHand);
         }
     }
+
+    // ---- could make ----
+    function fillCookDays(chosen) {
+        const pick = $('cook-day');
+        const monday = mondayOf(state.week);
+        const inWeek = todayISO >= iso(monday) && todayISO <= iso(addDays(monday, 6));
+        const want = chosen || (inWeek ? todayISO : iso(monday));
+        pick.replaceChildren();
+        for (let i = 0; i < 7; i++) {
+            const d = addDays(monday, i);
+            const option = el('option', null, iso(d) === todayISO ? 'Today' : longDay.format(d));
+            option.value = iso(d);
+            option.selected = iso(d) === want;
+            pick.appendChild(option);
+        }
+    }
+
+    function openCook(date) {
+        fillCookDays(date);
+        $('cook-pop').showPopover();
+    }
+
+    async function plan(recipe, button) {
+        button.disabled = true;
+        try {
+            await postJSON('/api/cooks', {
+                recipe: recipe.recipe, week: state.week, scale: 1.0,
+                servings_produced: recipe.servings || 4,
+                date: $('cook-day').value, meal: 'dinner', initial_placement_count: 1,
+            });
+            $('cook-pop').hidePopover();
+            refreshAll();
+        } catch (err) {
+            button.disabled = false;
+            button.closest('.make').after(el('p', 'note bad', `Couldn’t add it. ${err.message}`));
+        }
+    }
+
+    function renderCook(data) {
+        // Meals only: a dessert you could bake is not an answer to "what's for dinner".
+        const recipes = (data.recipes || []).filter(r => r.meal_tier === 'meal')
+            .sort((a, b) => b.score - a.score).slice(0, 12);
+        const nodes = recipes.map(r => {
+            const row = el('div', 'make');
+            const what = el('div', 'what');
+            const name = el('a', null, r.recipe);
+            name.href = `/recipe/${encodeURIComponent(r.recipe)}`;
+            what.appendChild(name);
+            const need = r.total - r.have;
+            const why = el('span', 'why', need > 0 ? `Have ${r.have} of ${r.total}` : 'Have everything');
+            if (r.minutes) why.append(` · ${r.minutes} min`);
+            if (r.at_risk) { why.append(' · '); why.appendChild(el('span', 'risk', 'uses what expires')); }
+            what.appendChild(why);
+            row.appendChild(what);
+            const add = el('button', 'act', 'Add');
+            add.type = 'button';
+            add.setAttribute('aria-label', `Add ${r.recipe}`);
+            add.addEventListener('click', () => plan(r, add));
+            row.appendChild(add);
+            return row;
+        });
+        if (!nodes.length) nodes.push(el('p', 'note', 'Nothing matches what you have right now.'));
+        const foot = el('p', 'foot');
+        const more = el('a', null, 'All of Cook Now');
+        more.href = '/cook-now';
+        foot.appendChild(more);
+        $('cook-body').replaceChildren(...nodes, foot);
+    }
+
+    async function loadCook() {
+        try {
+            renderCook(await getJSON('/api/cook-now?limit=12'));
+        } catch (err) {
+            failed($('cook-body'), 'Couldn’t load what you could make.', loadCook);
+        }
+    }
+    // Ranking the whole library is the slowest read on this page, so it waits
+    // until the sheet is opened rather than taxing every load.
+    $('cook-pop').addEventListener('toggle', event => {
+        if (event.newState !== 'open') return;
+        if (!$('cook-day').options.length) fillCookDays();
+        $('cook-body').replaceChildren(el('p', 'note', 'Checking what you have…'));
+        loadCook();
+    });
+    $('cook-open').addEventListener('click', () => fillCookDays());
 
     let lastRefresh = 0;
     function refreshAll() {

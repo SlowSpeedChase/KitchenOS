@@ -55,7 +55,7 @@ def test_week_lists_seven_days_with_the_planned_dinner(live_server, page, page_e
     expect(page.locator("#meals-body .day")).to_have_count(7)
     day = page.locator(f'#meals-body .day[data-date="{wednesday}"]')
     expect(day.locator("details.meal summary")).to_contain_text(RECIPE)
-    expect(page.locator("#meals-body .open")).to_have_count(6)
+    expect(page.locator("#meals-body button.open")).to_have_count(7)
     expect(page.locator("#meals-label")).not_to_contain_text("W")
     assert page_errors == []
 
@@ -94,8 +94,6 @@ def test_month_toggle_swaps_only_the_meals_column(live_server, page, page_errors
     expect(cells.first).to_be_visible()
     assert cells.count() in (28, 35, 42)
     expect(page.locator("#meals-body .month button.cell.today")).to_have_count(1)
-    expect(page.locator("#buy-body")).to_be_visible()
-    expect(page.locator("#hand-body")).to_be_visible()
     assert page_errors == []
 
 
@@ -112,6 +110,7 @@ def test_empty_week_offers_to_build_the_list(live_server, page, page_errors):
     week, wednesday = unique_week(25)
     _cook(live_server, week, wednesday)
     _open(page, live_server, week)
+    page.locator("#buy-label").click()
     build = page.locator("#buy-body button.act")
     expect(build).to_have_text("Build this week’s list")
     build.click()
@@ -125,11 +124,14 @@ def test_ticking_an_item_persists_across_reload(live_server, page, page_errors):
     made = requests.post(live_server.url("/generate-shopping-list"), json={"week": week}, timeout=60)
     assert made.status_code == 200, made.text
     _open(page, live_server, week)
+    page.locator("#buy-label").click()
     first = page.locator("#buy-body .buy-row").first
     name = first.inner_text().strip()
     first.locator("input").check()
     expect(page.locator("#buy-body .buy-row.done")).to_have_count(1)
     page.reload(wait_until="networkidle")
+    expect(page.locator("#buy-label")).to_contain_text("To buy · ")
+    page.locator("#buy-label").click()
     done = page.locator("#buy-body .buy-row.done")
     expect(done).to_have_count(1)
     expect(done).to_contain_text(name)
@@ -159,6 +161,8 @@ def test_on_hand_leads_with_what_expires_and_folds_staples(live_server, page, pa
     week, _ = unique_week(27)
     page.route("**/api/inventory", lambda route: route.fulfill(json=_inventory_fixture()))
     _open(page, live_server, week)
+    expect(page.locator("#hand-label")).to_have_text("On hand · 2 use soon")
+    page.locator("#hand-label").click()
     groups = page.locator("#hand-body .grp").all_inner_texts()
     assert [g.lower() for g in groups] == ["use soon", "fridge", "freezer", "pantry"]
     soon = page.locator("#hand-body .grp.soon ~ .item").all_inner_texts()
@@ -184,21 +188,24 @@ def test_a_command_refreshes_in_place_without_a_reload(live_server, page, page_e
     assert page_errors == []
 
 
-def test_landscape_ipad_shows_three_columns_without_page_scroll(live_server, page):
+def test_landscape_ipad_is_one_full_page_calendar(live_server, page):
     week, _ = unique_week(29)
     _open(page, live_server, week)
-    tops = page.evaluate("() => [...document.querySelectorAll('.col')].map(c => c.getBoundingClientRect().top)")
-    assert len(set(round(t) for t in tops)) == 1, "columns are not side by side"
+    boxes = page.evaluate(
+        "() => [...document.querySelectorAll('.week .day')].map(d => d.getBoundingClientRect().toJSON())")
+    assert len(boxes) == 7 and len({round(b["top"]) for b in boxes}) == 1, "days are not side by side"
+    assert boxes[-1]["right"] - boxes[0]["left"] > IPAD["width"] * 0.9, "the calendar does not span the page"
+    assert min(b["height"] for b in boxes) > IPAD["height"] * 0.5, "the calendar does not fill the page"
     assert page.evaluate("() => document.documentElement.scrollHeight <= window.innerHeight + 1")
     assert page.evaluate("() => document.documentElement.scrollWidth <= window.innerWidth + 1")
 
 
 @pytest.mark.parametrize("viewport", [{"width": 820, "height": 1180}, {"width": 390, "height": 844}])
-def test_narrow_screens_stack_in_reading_order(live_server, page, viewport):
+def test_narrow_screens_stack_the_days(live_server, page, viewport):
     page.set_viewport_size(viewport)
     page.goto(live_server.url("/"), wait_until="networkidle")
-    tops = page.evaluate("() => [...document.querySelectorAll('.col')].map(c => c.getBoundingClientRect().top)")
-    assert tops == sorted(tops) and len(set(round(t) for t in tops)) == 3
+    tops = page.evaluate("() => [...document.querySelectorAll('.week .day')].map(d => d.getBoundingClientRect().top)")
+    assert tops == sorted(tops) and len({round(t) for t in tops}) == 7
     assert page.evaluate("() => document.documentElement.scrollWidth <= window.innerWidth + 1")
 
 
@@ -214,9 +221,53 @@ def test_controls_are_thumb_sized(live_server, page):
 def test_all_pages_popover_opens_and_light_dismisses(live_server, page, page_errors):
     week, _ = unique_week(31)
     _open(page, live_server, week)
-    page.locator(".menu-btn").click()
+    page.locator('[popovertarget="all-pages"]').click()
     expect(page.locator("#all-pages")).to_be_visible()
     expect(page.locator('#all-pages a[href="/meal-planner"]')).to_be_visible()
     page.mouse.click(10, 400)
     expect(page.locator("#all-pages")).to_be_hidden()
+    assert page_errors == []
+
+
+def test_dragging_a_meal_to_another_day_moves_the_cook(live_server, page, page_errors):
+    week, wednesday = unique_week(32)
+    cook = _cook(live_server, week, wednesday)
+    friday = (date.fromisoformat(wednesday) + timedelta(days=2)).isoformat()
+    puts = []
+    page.on("request", lambda r: r.method == "PUT" and puts.append(r.url))
+    _open(page, live_server, week)
+    source = page.locator(f'.day[data-date="{wednesday}"] details.meal').bounding_box()
+    target = page.locator(f'.day[data-date="{friday}"] .slots').bounding_box()
+    # Sortable listens for pointer events; Playwright's drag_to() does not produce them.
+    page.mouse.move(source["x"] + source["width"] / 2, source["y"] + 12)
+    page.mouse.down()
+    page.mouse.move(target["x"] + target["width"] / 2, target["y"] + 20, steps=12)
+    page.mouse.move(target["x"] + target["width"] / 2, target["y"] + 24, steps=4)
+    page.mouse.up()
+    expect(page.locator(f'.day[data-date="{friday}"] details.meal')).to_have_count(1)
+    moved = requests.get(live_server.url(f"/api/cooks/{cook['id']}"), timeout=30).json()
+    assert moved["date"] == friday and moved["scale"] == cook["scale"]
+    assert puts == []
+    assert page_errors == []
+
+
+def test_add_meal_on_an_empty_day_plans_from_could_make(live_server, page, page_errors):
+    week, wednesday = unique_week(33)
+    page.route("**/api/cook-now**", lambda route: route.fulfill(json={"recipes": [
+        {"recipe": RECIPE, "meal_tier": "meal", "score": 0.9, "have": 9, "total": 10,
+         "minutes": 45, "at_risk": True, "servings": 8},
+        {"recipe": "Some Dessert", "meal_tier": "dessert", "score": 0.99, "have": 3, "total": 3,
+         "minutes": 10, "at_risk": False, "servings": 4},
+    ]}))
+    _open(page, live_server, week)
+    page.locator(f'.day[data-date="{wednesday}"] button.open').click()
+    expect(page.locator("#cook-pop")).to_be_visible()
+    expect(page.locator("#cook-day")).to_have_value(wednesday)
+    rows = page.locator("#cook-body .make")
+    expect(rows).to_have_count(1)
+    expect(rows).to_contain_text("Have 9 of 10")
+    expect(rows).to_contain_text("uses what expires")
+    rows.get_by_role("button", name=f"Add {RECIPE}").click()
+    expect(page.locator("#cook-pop")).to_be_hidden()
+    expect(page.locator(f'.day[data-date="{wednesday}"] details.meal summary')).to_contain_text(RECIPE)
     assert page_errors == []
