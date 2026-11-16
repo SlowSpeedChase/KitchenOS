@@ -157,6 +157,8 @@ CONTEXT_OTHER = {
     "recent.html": "a list of new recipes",
     "system_health.html": "operator page",
     "cooking_packet.html": "a printable week view",
+    "nutrition_week.html": "read-only macro totals; planner commands run from the planner",
+    "add_recipe.html": "a paste form",
 }
 
 

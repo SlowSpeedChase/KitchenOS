@@ -170,8 +170,18 @@ def test_print_missing_links_to_builder_and_requires_single_week(client):
     assert missing.status_code == 404 and 'Build cooking packet' in missing.text
     assert '/cooking-packet?week=2026-W40' in missing.text
     for path in ('/cooking-packet', '/print/cooking-packet'):
-        assert client.get(path).status_code == 400
         assert client.get(path+'?week=2026-W40&week=2026-W41').status_code == 400
+    # Printing needs a named week; there is no "current" saved packet to guess at.
+    assert client.get('/print/cooking-packet').status_code == 400
+
+
+def test_bare_builder_page_opens_the_current_week(client):
+    # What a bookmark or the cross-app home page links to. It used to answer 400.
+    from lib import plan_week
+    response = client.get('/cooking-packet')
+    assert response.status_code == 302
+    assert response.headers['Location'].endswith('/cooking-packet?week=' + plan_week.current_week())
+    assert client.get(response.headers['Location']).status_code == 200
 
 
 def test_real_builder_refresh_preserves_source_edits(client, queued, monkeypatch):

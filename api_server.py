@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Simple API server for iOS Shortcuts integration."""
 
-from flask import Flask, request, jsonify, send_file, render_template, g, has_request_context
+from flask import Flask, request, jsonify, send_file, render_template, g, has_request_context, redirect
 from markupsafe import escape
 from urllib.parse import quote, urlsplit
 from youtube_transcript_api import YouTubeTranscriptApi
@@ -1039,6 +1039,46 @@ def plan_week_page():
     return html, 200, {'Content-Type': 'text/html'}
 
 
+@app.route('/nutrition', methods=['GET'])
+def nutrition_week_page():
+    """The week's nutrition against macro targets, as a page.
+
+    The numbers otherwise live only in ``Nutrition Dashboard.md`` (Obsidian,
+    rewritten daily at 06:15). Defaults to the week you are in; ?week= overrides.
+    Read-only: built from the same packet as /plan-week and /print/week.
+    """
+    from lib import nutrition_week, plan_week, print_week
+
+    week = request.args.get('week') or plan_week.current_week()
+    if not re.match(r'^\d{4}-W\d{2}$', week):
+        return error_page(f"Invalid week format: {week} (expected YYYY-WNN)"), 400
+
+    try:
+        packet = print_week.build_week_packet(
+            week, paths.vault_root(), _resolve_recipes_dir(), include_recipes=False)
+        targets = packet["targets"]
+    except FileNotFoundError:
+        packet = None
+        targets, _ = print_week._targets_dict(paths.vault_root())
+
+    body = nutrition_week.render_nutrition_week_html(
+        week, packet, targets, web_origin(),
+        plan_week.shift_week(week, -1), plan_week.shift_week(week, 1))
+    html = _serve_page('nutrition_week.html', [('<!--CENTER-->', body)])
+    return html, 200, {'Content-Type': 'text/html'}
+
+
+@app.route('/add-recipe', methods=['GET'])
+def add_recipe_page():
+    """Paste a link, get a recipe — the browser door to POST /extract.
+
+    Extraction was reachable from the Shortcut, Reminders, Claude and the CLI,
+    but not from a web page: on a borrowed or new device there was no way in.
+    The page only renders a form; /extract does the work and keeps its own auth.
+    """
+    return _serve_page('add_recipe.html'), 200, {'Content-Type': 'text/html'}
+
+
 @app.route('/print/week', methods=['GET'])
 def print_week_page():
     """Printable one-page 'week packet': plan grid + macros vs targets +
@@ -1175,6 +1215,11 @@ def _packet_page_week():
 @app.route('/cooking-packet', methods=['GET'])
 def cooking_packet_page():
     """Render only the mobile shell; the explicit refresh API assembles data."""
+    if not request.args.getlist('week'):
+        # A bare /cooking-packet is what a bookmark or a home-page link opens. The
+        # packet you cook from is this week's, so go there rather than answer 400.
+        from lib import plan_week
+        return redirect(f"/cooking-packet?week={plan_week.current_week()}")
     try:
         week = _packet_page_week()
     except ValueError:

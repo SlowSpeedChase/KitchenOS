@@ -53,6 +53,9 @@ SECTIONS = [
             ("🥘", "Cook Now", "/cook-now",
              "what you could cook right now, ranked by how much you already "
              "have; filter by meal type to drop desserts"),
+            ("➕", "Add a recipe", "/add-recipe",
+             "paste a cooking-video link and the recipe is extracted into the "
+             "vault — the browser door to extraction"),
             ("✨", "New recipes", "/recent",
              "what the extraction pipeline has landed lately, newest first, "
              "grouped by the day it arrived"),
@@ -63,6 +66,9 @@ SECTIONS = [
              "the rendered weekly plan"),
             ("🛒", "This week's shopping list", "/current/shopping-list",
              "consolidated, inventory-aware, grouped by store aisle"),
+            ("📦", "Cooking packet", "/cooking-packet",
+             "this week's recipes as one packet to cook from; opens the current "
+             "week, with the print view one tap away"),
             ("🖨️", "Print this week", "/print/week",
              "one printable page — the week's plan, macros vs targets, shopping "
              "list, and do-ahead prep, for the fridge"),
@@ -71,6 +77,9 @@ SECTIONS = [
     (
         "Nutrition",
         [
+            ("📈", "Nutrition this week", "/nutrition",
+             "each day's calories, protein, carbs and fat against your targets, "
+             "with the week's average — the dashboard note as a page"),
             ("🥗", "Nutrition Review", "/nutrition-review",
              "fix bad USDA matches worst-coverage-first; every fix teaches the "
              "resolver vault-wide"),
