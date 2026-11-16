@@ -91,38 +91,54 @@
         return out;
     }
 
-    async function move(p, date, body) {
+    async function move(p, date) {
         const url = p.bundle_id ? `/api/bundles/${encodeURIComponent(p.bundle_id)}/move`
                                 : `/api/cooks/${p.cook_id}/move`;
         try {
             await postJSON(url, { date, meal: p.meal });
+            $('meal-pop').hidePopover();
             refreshAll();
         } catch (err) {
-            await loadMeals();
+            await loadMeals();  // a refused move snaps back
             $('meals-body').prepend(el('p', 'note bad', `Couldn’t move it. ${err.message}`));
         }
     }
 
-    function mealRow(p, monday) {
-        const row = el('details', 'meal');
-        if (p.anchor) row.classList.add('anchor');  // only the cook itself moves; a leftover follows its placement
-        row.planned = p;
-        const summary = el('summary', null, p.bundle_name || p.recipe);
-        const tags = [];
-        if (p.meal !== 'dinner') tags.push(p.meal);
-        if (!p.anchor) tags.push('leftover');
-        if (tags.length) summary.appendChild(el('span', 'tag', tags.join(' · ')));
-        row.appendChild(summary);
+    // Everything you can do to a planned meal, in one panel beside the calendar.
+    function openMeal(p, monday) {
+        const body = $('meal-body');
+        const day = new Date(`${p.date}T00:00`);
+        const fullDay = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+        const acts = el('div', 'meal-acts');
+        const target = p.bundle_id ? `/api/bundles/${encodeURIComponent(p.bundle_id)}` : `/api/cooks/${p.cook_id}`;
+        const say = message => acts.appendChild(el('p', 'note bad', message));
+        const button = (label, cls, run) => {
+            const b = el('button', `act ${cls}`.trim(), label);
+            b.type = 'button';
+            b.addEventListener('click', async () => {
+                b.disabled = true;
+                try { await run(); $('meal-pop').hidePopover(); refreshAll(); }
+                catch (err) { b.disabled = false; say(`Couldn’t do that. ${err.message}`); }
+            });
+            acts.appendChild(b);
+        };
 
-        const body = el('div', 'meal-body');
         if (!p.bundle_id) {
-            const open = el('a', null, 'Open recipe');
+            const open = el('a', 'act', 'Open recipe');
             open.href = `/recipe/${encodeURIComponent(p.recipe)}`;
-            body.appendChild(open);
+            acts.appendChild(open);
         }
-        if (p.anchor) {  // the same move as a drag, for keyboards and screen readers
+        if (p.anchor) {  // the cook itself; a leftover follows wherever its cook goes
+            if (p.cooked) {
+                acts.appendChild(el('p', 'note', 'Cooked.'));
+            } else {
+                button('Cooked it', 'primary', () => request(target, {
+                    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cooked_at: new Date().toISOString() }),
+                }));
+            }
+            const label = el('label', null, 'Move to');
             const pick = el('select');
-            pick.setAttribute('aria-label', 'Move to another day');
             for (let i = 0; i < 7; i++) {
                 const d = addDays(monday, i);
                 const option = el('option', null, longDay.format(d));
@@ -130,13 +146,68 @@
                 option.selected = iso(d) === p.date;
                 pick.appendChild(option);
             }
-            pick.addEventListener('change', () => move(p, pick.value, body));
-            body.appendChild(pick);
+            pick.addEventListener('change', () => move(p, pick.value));
+            label.appendChild(pick);
+            acts.appendChild(label);
         }
-        const edit = el('a', null, 'Edit in planner');
+        const edit = el('a', 'act', 'Servings and scale');
         edit.href = `/meal-planner?week=${state.week}`;
-        body.appendChild(edit);
-        row.appendChild(body);
+        acts.appendChild(edit);
+        if (p.anchor) button('Remove from plan', 'danger', () => request(target, { method: 'DELETE' }));
+
+        const sub = [fullDay.format(day), p.meal, p.anchor ? null : 'leftover'].filter(Boolean).join(' · ');
+        const ings = el('div', 'ings');
+        body.replaceChildren(el('h2', null, p.bundle_name || p.recipe), el('p', 'sub', sub), acts, ings);
+        $('meal-pop').showPopover();
+        if (!p.bundle_id) loadIngredients(p.recipe, ings);
+    }
+
+    // What the recipe needs, split by whether it is in the kitchen. `in_stock`
+    // is true / false / null from the server; null means it could not tell.
+    async function loadIngredients(recipe, box) {
+        box.replaceChildren(el('p', 'note', 'Checking ingredients…'));
+        let data;
+        try {
+            data = await getJSON(`/api/recipes/${encodeURIComponent(recipe)}`);
+        } catch (err) {
+            box.replaceChildren(el('p', 'note bad', 'Couldn’t load the ingredients.'));
+            return;
+        }
+        const all = data.ingredients || [];
+        const line = i => {
+            const row = el('div', 'item');
+            row.appendChild(el('span', null, i.item));
+            const want = [i.amount, i.unit === 'whole' ? '' : i.unit].filter(Boolean).join(' ');
+            row.appendChild(el('span', 'qty', i.in_stock && i.have ? `need ${want} · have ${i.have}` : want));
+            return row;
+        };
+        const groups = [
+            ['Need to get', 'need', all.filter(i => i.in_stock === false)],
+            ['Not sure', '', all.filter(i => i.in_stock == null)],
+            ['On hand', 'have', all.filter(i => i.in_stock === true)],
+        ];
+        const nodes = [];
+        groups.forEach(([label, cls, rows]) => {
+            if (!rows.length) return;
+            nodes.push(el('div', `grp ${cls}`.trim(), `${label} · ${rows.length}`));
+            rows.forEach(i => nodes.push(line(i)));
+        });
+        if (!nodes.length) nodes.push(el('p', 'note', 'This recipe lists no ingredients.'));
+        box.replaceChildren(...nodes);
+    }
+
+    function mealRow(p, monday) {
+        const row = el('button', 'meal', p.bundle_name || p.recipe);
+        row.type = 'button';
+        if (p.anchor) row.classList.add('anchor');
+        if (p.cooked) row.classList.add('cooked');
+        row.planned = p;
+        const tags = [];
+        if (p.meal !== 'dinner') tags.push(p.meal);
+        if (!p.anchor) tags.push('leftover');
+        if (p.cooked) tags.push('cooked');
+        if (tags.length) row.appendChild(el('span', 'tag', tags.join(' · ')));
+        row.addEventListener('click', () => openMeal(p, monday));
         return row;
     }
 
@@ -144,6 +215,7 @@
         const monday = mondayOf(state.week);
         const dayName = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric' });
         const week = el('div', 'week');
+        const cooked = new Set((board.cooks || []).filter(c => c.cooked_at).map(c => c.id));
         for (let i = 0; i < 7; i++) {
             const d = addDays(monday, i);
             const date = iso(d);
@@ -153,7 +225,10 @@
             day.appendChild(el('div', 'day-name', date === todayISO ? 'Today' : dayName.format(d)));
             const slots = el('div', 'slots');
             const meals = mealsOn(board.planned_meals || [], date);
-            meals.forEach(p => slots.appendChild(mealRow(p, monday)));
+            meals.forEach(p => {
+                p.cooked = cooked.has(p.cook_id);
+                slots.appendChild(mealRow(p, monday));
+            });
             day.appendChild(slots);
             const add = el('button', 'open', 'Add meal');
             add.type = 'button';
@@ -163,9 +238,9 @@
             // follows is the source of truth, so a refused move snaps back.
             if (window.Sortable) {
                 Sortable.create(slots, {
-                    group: 'meals', draggable: 'details.meal.anchor', animation: 120,
+                    group: 'meals', draggable: 'button.meal.anchor', animation: 120,
                     delay: 150, delayOnTouchOnly: true,
-                    onAdd: event => move(event.item.planned, date, event.item.querySelector('.meal-body')),
+                    onAdd: event => move(event.item.planned, date),
                 });
             }
             week.appendChild(day);
@@ -354,15 +429,114 @@
     }
     const byName = (a, b) => a.name.localeCompare(b.name);
 
-    function renderHand(items) {
+    async function act(item, verb, body, row) {
+        try {
+            await postJSON(`/api/inventory/${verb}`, { name: item.name, location: item.location, ...body });
+            refreshAll();
+        } catch (err) {
+            row.appendChild(el('p', 'note bad', `Couldn’t do that. ${err.message}`));
+        }
+    }
+
+    // The ledger needs a real yield. 4 is the server's own fallback for a recipe without one.
+    async function servingsOf(recipe) {
+        try {
+            const data = await getJSON(`/api/recipes/${encodeURIComponent(recipe)}`);
+            return Number(data.servings) > 0 ? Number(data.servings) : 4;
+        } catch (err) {
+            return 4;
+        }
+    }
+
+    async function planToday(recipe, button) {
+        button.disabled = true;
+        try {
+            await postJSON('/api/cooks', {
+                recipe, week: thisWeek, scale: 1.0, servings_produced: await servingsOf(recipe),
+                date: todayISO, meal: 'dinner', initial_placement_count: 1,
+            });
+            state.week = thisWeek;
+            window.koDash.week = thisWeek;
+            button.textContent = 'Added';
+            refreshAll();
+        } catch (err) {
+            button.disabled = false;
+            button.closest('.make').after(el('p', 'note bad', `Couldn’t add it. ${err.message}`));
+        }
+    }
+
+    // One expiring item, with the three things you can do about it and the
+    // quickest recipes that use it — so "use soon" is a decision, not a list.
+    function soonRow(item, recipes) {
+        const row = el('div', 'soon-item');
+        row.dataset.name = item.name;
+        row.appendChild(itemRow(item, expiryWord(item), item.expiry_status === 'expired' ? 'expired' : ''));
+        const acts = el('div', 'soon-acts');
+        [['Used it up', 'remove', {}], ['Freeze it', 'freeze', {}], ['Still good', 'extend', { days: 3 }]]
+            .forEach(([label, verb, body]) => {
+                const button = el('button', 'act', label);
+                button.type = 'button';
+                button.addEventListener('click', () => act(item, verb, body, row));
+                acts.appendChild(button);
+            });
+        row.appendChild(acts);
+        recipes.slice(0, 2).forEach(r => {
+            const line = el('div', 'make');
+            const what = el('div', 'what');
+            const name = el('a', null, r.display_name || r.recipe);
+            name.href = `/recipe/${encodeURIComponent(r.recipe)}`;
+            what.appendChild(name);
+            const need = r.total - r.have;
+            what.appendChild(el('span', 'why', need > 0 ? `Need ${need} more: ${(r.missing || []).slice(0, 3).join(', ')}` : 'Have everything'));
+            line.appendChild(what);
+            const add = el('button', 'act', 'Cook today');
+            add.type = 'button';
+            add.setAttribute('aria-label', `Cook ${r.recipe} today`);
+            add.addEventListener('click', () => planToday(r.recipe, add));
+            line.appendChild(add);
+            row.appendChild(line);
+        });
+        if (!recipes.length) row.appendChild(el('span', 'none', 'No recipe in the library uses this.'));
+        return row;
+    }
+
+    function renderStrip(soon) {
+        const strip = $('soon-strip');
+        strip.hidden = !soon.length;
+        if (!soon.length) return;
+        const nodes = [el('span', 'lead', 'Use soon')];
+        soon.slice(0, 5).forEach(item => {
+            const chip = el('button', 'chip', item.name);
+            chip.type = 'button';
+            if (item.expiry_status === 'expired') chip.classList.add('expired');
+            chip.append(' ');
+            chip.appendChild(el('span', 'when', expiryWord(item)));
+            chip.addEventListener('click', () => {
+                $('hand-pop').showPopover();
+                const row = [...document.querySelectorAll('#hand-body .soon-item')]
+                    .find(r => r.dataset.name === item.name);
+                if (row) row.scrollIntoView({ block: 'start' });
+            });
+            nodes.push(chip);
+        });
+        if (soon.length > 5) {
+            const more = el('button', 'chip', `${soon.length - 5} more`);
+            more.type = 'button';
+            more.addEventListener('click', () => $('hand-pop').showPopover());
+            nodes.push(more);
+        }
+        strip.replaceChildren(...nodes);
+    }
+
+    function renderHand(items, tips) {
         const nodes = [];
-        const atRisk = items.filter(i => i.expiry_status === 'expired' || i.expiry_status === 'soon').length;
-        $('hand-label').textContent = atRisk ? `On hand · ${atRisk} use soon` : 'On hand';
         const soon = items.filter(i => i.expiry_status === 'expired' || i.expiry_status === 'soon')
             .sort((a, b) => a.expires.localeCompare(b.expires));
+        $('hand-label').textContent = soon.length ? `On hand · ${soon.length} use soon` : 'On hand';
+        renderStrip(soon);
         if (soon.length) {
             nodes.push(el('div', 'grp soon', 'Use soon'));
-            soon.forEach(i => nodes.push(itemRow(i, expiryWord(i), i.expiry_status === 'expired' ? 'expired' : '')));
+            soon.forEach(i => nodes.push(soonRow(i, tips[i.name.toLowerCase()] || [])));
         }
         const rest = items.filter(i => !soon.includes(i));
         const stock = rest.filter(i => i.source !== 'staple');
@@ -381,15 +555,22 @@
         }
         if (!nodes.length) nodes.push(el('p', 'note', 'Nothing in the inventory yet.'));
         const foot = el('p', 'foot');
-        const review = el('a', null, 'Review inventory');
+        const review = el('a', null, 'Manage inventory');
         review.href = '/review';
         foot.appendChild(review);
-        $('hand-body').replaceChildren(...nodes, foot);
+        $('hand-body').replaceChildren(foot.cloneNode(true), ...nodes, foot);
     }
 
     async function loadHand() {
         try {
-            renderHand(await getJSON('/api/inventory'));
+            // The recipe tips are a nicety: without them the items and their buttons still work.
+            const [items, uses] = await Promise.all([
+                getJSON('/api/inventory'),
+                getJSON('/api/use-it-up?limit=40&per_item=2').catch(() => ({ at_risk: [] })),
+            ]);
+            const tips = {};
+            (uses.at_risk || []).forEach(a => { tips[a.name.toLowerCase()] = a.recipes || []; });
+            renderHand(items, tips);
         } catch (err) {
             failed($('hand-body'), 'Couldn’t load the inventory.', loadHand);
         }
@@ -421,7 +602,7 @@
         try {
             await postJSON('/api/cooks', {
                 recipe: recipe.recipe, week: state.week, scale: 1.0,
-                servings_produced: recipe.servings || 4,
+                servings_produced: recipe.servings > 0 ? recipe.servings : await servingsOf(recipe.recipe),
                 date: $('cook-day').value, meal: 'dinner', initial_placement_count: 1,
             });
             $('cook-pop').hidePopover();
@@ -432,28 +613,35 @@
         }
     }
 
+    const KINDS = ['Mains', 'Breakfast', 'Sides', 'Snacks', 'Desserts', 'Drinks'];
+
     function renderCook(data) {
-        // Meals only: a dessert you could bake is not an answer to "what's for dinner".
-        const recipes = (data.recipes || []).filter(r => r.meal_tier === 'meal')
-            .sort((a, b) => b.score - a.score).slice(0, 12);
-        const nodes = recipes.map(r => {
-            const row = el('div', 'make');
-            const what = el('div', 'what');
-            const name = el('a', null, r.recipe);
-            name.href = `/recipe/${encodeURIComponent(r.recipe)}`;
-            what.appendChild(name);
-            const need = r.total - r.have;
-            const why = el('span', 'why', need > 0 ? `Have ${r.have} of ${r.total}` : 'Have everything');
-            if (r.minutes) why.append(` · ${r.minutes} min`);
-            if (r.at_risk) { why.append(' · '); why.appendChild(el('span', 'risk', 'uses what expires')); }
-            what.appendChild(why);
-            row.appendChild(what);
-            const add = el('button', 'act', 'Add');
-            add.type = 'button';
-            add.setAttribute('aria-label', `Add ${r.recipe}`);
-            add.addEventListener('click', () => plan(r, add));
-            row.appendChild(add);
-            return row;
+        const nodes = [];
+        const all = data.recipes || [];
+        const kinds = [...KINDS, ...new Set(all.map(r => r.group).filter(g => !KINDS.includes(g)))];
+        kinds.forEach(kind => {
+            const recipes = all.filter(r => (r.group || 'Mains') === kind).sort((a, b) => b.score - a.score);
+            if (!recipes.length) return;
+            nodes.push(el('div', 'grp', kind));
+            recipes.forEach(r => {
+                const row = el('div', 'make');
+                const what = el('div', 'what');
+                const name = el('a', null, r.recipe);
+                name.href = `/recipe/${encodeURIComponent(r.recipe)}`;
+                what.appendChild(name);
+                const need = r.total - r.have;
+                const why = el('span', 'why', need > 0 ? `Have ${r.have} of ${r.total}` : 'Have everything');
+                if (r.minutes) why.append(` · ${r.minutes} min`);
+                if (r.at_risk) { why.append(' · '); why.appendChild(el('span', 'risk', 'uses what expires')); }
+                what.appendChild(why);
+                row.appendChild(what);
+                const add = el('button', 'act', 'Add');
+                add.type = 'button';
+                add.setAttribute('aria-label', `Add ${r.recipe}`);
+                add.addEventListener('click', () => plan(r, add));
+                row.appendChild(add);
+                nodes.push(row);
+            });
         });
         if (!nodes.length) nodes.push(el('p', 'note', 'Nothing matches what you have right now.'));
         const foot = el('p', 'foot');
@@ -465,7 +653,7 @@
 
     async function loadCook() {
         try {
-            renderCook(await getJSON('/api/cook-now?limit=12'));
+            renderCook(await getJSON('/api/cook-now?limit=6'));
         } catch (err) {
             failed($('cook-body'), 'Couldn’t load what you could make.', loadCook);
         }

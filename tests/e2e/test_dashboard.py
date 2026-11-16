@@ -54,7 +54,7 @@ def test_week_lists_seven_days_with_the_planned_dinner(live_server, page, page_e
     _open(page, live_server, week)
     expect(page.locator("#meals-body .day")).to_have_count(7)
     day = page.locator(f'#meals-body .day[data-date="{wednesday}"]')
-    expect(day.locator("details.meal summary")).to_contain_text(RECIPE)
+    expect(day.locator("button.meal")).to_contain_text(RECIPE)
     expect(page.locator("#meals-body button.open")).to_have_count(7)
     expect(page.locator("#meals-label")).not_to_contain_text("W")
     assert page_errors == []
@@ -67,10 +67,11 @@ def test_moving_a_meal_keeps_its_scale_and_never_uses_the_legacy_put(live_server
     puts = []
     page.on("request", lambda r: r.method == "PUT" and puts.append(r.url))
     _open(page, live_server, week)
-    page.locator(f'.day[data-date="{wednesday}"] details.meal summary').click()
-    page.locator(f'.day[data-date="{wednesday}"] select').select_option(friday)
-    expect(page.locator(f'.day[data-date="{friday}"] details.meal')).to_have_count(1)
-    expect(page.locator(f'.day[data-date="{wednesday}"] details.meal')).to_have_count(0)
+    page.locator(f'.day[data-date="{wednesday}"] button.meal').click()
+    expect(page.locator("#meal-body h2")).to_have_text(RECIPE)
+    page.locator("#meal-body select").select_option(friday)
+    expect(page.locator(f'.day[data-date="{friday}"] button.meal')).to_have_count(1)
+    expect(page.locator(f'.day[data-date="{wednesday}"] button.meal')).to_have_count(0)
     moved = requests.get(live_server.url(f"/api/cooks/{cook['id']}"), timeout=30).json()
     assert moved["date"] == friday
     assert moved["scale"] == cook["scale"]
@@ -160,12 +161,13 @@ def _inventory_fixture():
 def test_on_hand_leads_with_what_expires_and_folds_staples(live_server, page, page_errors):
     week, _ = unique_week(27)
     page.route("**/api/inventory", lambda route: route.fulfill(json=_inventory_fixture()))
+    page.route("**/api/use-it-up**", lambda route: route.fulfill(json={"at_risk": []}))
     _open(page, live_server, week)
     expect(page.locator("#hand-label")).to_have_text("On hand · 2 use soon")
     page.locator("#hand-label").click()
     groups = page.locator("#hand-body .grp").all_inner_texts()
     assert [g.lower() for g in groups] == ["use soon", "fridge", "freezer", "pantry"]
-    soon = page.locator("#hand-body .grp.soon ~ .item").all_inner_texts()
+    soon = page.locator("#hand-body .soon-item > .item").all_inner_texts()
     assert soon[0].lower().startswith("yogurt") and "expired" in soon[0].lower()
     assert soon[1].lower().startswith("spinach") and "2 days" in soon[1].lower()
     assert page.locator("#hand-body .item", has_text="spinach").count() == 1
@@ -183,7 +185,7 @@ def test_a_command_refreshes_in_place_without_a_reload(live_server, page, page_e
     cancelled = page.evaluate(
         "() => !document.dispatchEvent(new CustomEvent('kitchenos:changed', {cancelable: true}))")
     assert cancelled, "the dashboard must preventDefault so the command bar does not reload the page"
-    expect(page.locator(f'.day[data-date="{wednesday}"] details.meal')).to_have_count(1)
+    expect(page.locator(f'.day[data-date="{wednesday}"] button.meal')).to_have_count(1)
     assert page.evaluate("window.__stayed") is True
     assert page_errors == []
 
@@ -236,7 +238,7 @@ def test_dragging_a_meal_to_another_day_moves_the_cook(live_server, page, page_e
     puts = []
     page.on("request", lambda r: r.method == "PUT" and puts.append(r.url))
     _open(page, live_server, week)
-    source = page.locator(f'.day[data-date="{wednesday}"] details.meal').bounding_box()
+    source = page.locator(f'.day[data-date="{wednesday}"] button.meal').bounding_box()
     target = page.locator(f'.day[data-date="{friday}"] .slots').bounding_box()
     # Sortable listens for pointer events; Playwright's drag_to() does not produce them.
     page.mouse.move(source["x"] + source["width"] / 2, source["y"] + 12)
@@ -244,7 +246,7 @@ def test_dragging_a_meal_to_another_day_moves_the_cook(live_server, page, page_e
     page.mouse.move(target["x"] + target["width"] / 2, target["y"] + 20, steps=12)
     page.mouse.move(target["x"] + target["width"] / 2, target["y"] + 24, steps=4)
     page.mouse.up()
-    expect(page.locator(f'.day[data-date="{friday}"] details.meal')).to_have_count(1)
+    expect(page.locator(f'.day[data-date="{friday}"] button.meal')).to_have_count(1)
     moved = requests.get(live_server.url(f"/api/cooks/{cook['id']}"), timeout=30).json()
     assert moved["date"] == friday and moved["scale"] == cook["scale"]
     assert puts == []
@@ -255,19 +257,149 @@ def test_add_meal_on_an_empty_day_plans_from_could_make(live_server, page, page_
     week, wednesday = unique_week(33)
     page.route("**/api/cook-now**", lambda route: route.fulfill(json={"recipes": [
         {"recipe": RECIPE, "meal_tier": "meal", "score": 0.9, "have": 9, "total": 10,
-         "minutes": 45, "at_risk": True, "servings": 8},
+         "minutes": 45, "at_risk": True, "servings": 8, "group": "Mains"},
         {"recipe": "Some Dessert", "meal_tier": "dessert", "score": 0.99, "have": 3, "total": 3,
-         "minutes": 10, "at_risk": False, "servings": 4},
+         "minutes": 10, "at_risk": False, "servings": 4, "group": "Desserts"},
+        {"recipe": "Some Porridge", "meal_tier": "meal", "score": 0.5, "have": 2, "total": 3,
+         "minutes": 5, "at_risk": False, "servings": 2, "group": "Breakfast"},
     ]}))
     _open(page, live_server, week)
     page.locator(f'.day[data-date="{wednesday}"] button.open').click()
     expect(page.locator("#cook-pop")).to_be_visible()
     expect(page.locator("#cook-day")).to_have_value(wednesday)
-    rows = page.locator("#cook-body .make")
-    expect(rows).to_have_count(1)
+    expect(page.locator("#cook-body .make")).to_have_count(3)
+    assert page.locator("#cook-body .grp").all_inner_texts() == ["MAINS", "BREAKFAST", "DESSERTS"]
+    rows = page.locator("#cook-body .make").first
     expect(rows).to_contain_text("Have 9 of 10")
     expect(rows).to_contain_text("uses what expires")
     rows.get_by_role("button", name=f"Add {RECIPE}").click()
     expect(page.locator("#cook-pop")).to_be_hidden()
-    expect(page.locator(f'.day[data-date="{wednesday}"] details.meal summary')).to_contain_text(RECIPE)
+    expect(page.locator(f'.day[data-date="{wednesday}"] button.meal')).to_contain_text(RECIPE)
+    assert page_errors == []
+
+
+def _use_soon_routes(page, state):
+    """Inventory with one expiring item, backed by a tiny in-test store so the
+    page's own action buttons can be watched changing it."""
+    soon = (date.today() + timedelta(days=1)).isoformat()
+
+    def inventory(route):
+        items = [] if state.get("gone") else [{
+            "name": "spinach", "quantity": 1.0, "unit": "ct", "category": "produce",
+            "location": "freezer" if state.get("frozen") else "fridge", "source": "manual",
+            "expires": None if state.get("frozen") else soon,
+            "expiry_status": None if state.get("frozen") else "soon"}]
+        route.fulfill(json=items)
+
+    def action(route):
+        verb = route.request.url.rsplit("/", 1)[-1]
+        state.setdefault("calls", []).append((verb, route.request.post_data_json))
+        state["gone" if verb == "remove" else "frozen"] = True
+        route.fulfill(json={"status": "ok"})
+
+    page.route("**/api/inventory", inventory)
+    page.route("**/api/inventory/remove", action)
+    page.route("**/api/inventory/freeze", action)
+    page.route("**/api/use-it-up**", lambda route: route.fulfill(json={"at_risk": [{
+        "name": "spinach", "recipes": [{"recipe": RECIPE, "display_name": "Skillet Lasagna",
+                                        "have": 9, "total": 10, "missing": ["ricotta"]}]}]}))
+
+
+def test_use_soon_strip_opens_the_panel_on_that_item(live_server, page, page_errors):
+    week, _ = unique_week(34)
+    _use_soon_routes(page, {})
+    _open(page, live_server, week)
+    chip = page.locator("#soon-strip .chip")
+    expect(chip).to_have_count(1)
+    expect(chip).to_contain_text("spinach")
+    expect(chip).to_contain_text("1 day")
+    chip.click()
+    row = page.locator("#hand-body .soon-item")
+    expect(row).to_be_visible()
+    expect(row.locator(".make")).to_contain_text("Skillet Lasagna")
+    expect(row.locator(".make")).to_contain_text("Need 1 more: ricotta")
+    expect(page.locator('#hand-body a[href="/review"]').first).to_be_visible()
+    assert page_errors == []
+
+
+def test_used_it_up_removes_the_item_and_clears_the_strip(live_server, page, page_errors):
+    week, _ = unique_week(35)
+    state = {}
+    _use_soon_routes(page, state)
+    _open(page, live_server, week)
+    page.locator("#soon-strip .chip").click()
+    page.get_by_role("button", name="Used it up").click()
+    expect(page.locator("#hand-body .soon-item")).to_have_count(0)
+    expect(page.locator("#soon-strip")).to_be_hidden()
+    assert state["calls"] == [("remove", {"name": "spinach", "location": "fridge"})]
+    assert page_errors == []
+
+
+def test_freeze_it_moves_the_item_out_of_use_soon(live_server, page, page_errors):
+    week, _ = unique_week(36)
+    state = {}
+    _use_soon_routes(page, state)
+    _open(page, live_server, week)
+    page.locator("#soon-strip .chip").click()
+    page.get_by_role("button", name="Freeze it").click()
+    expect(page.locator("#hand-body .soon-item")).to_have_count(0)
+    expect(page.locator("#hand-body .grp", has_text="freezer")).to_be_visible()
+    assert state["calls"][0][0] == "freeze"
+    assert page_errors == []
+
+
+def test_cook_today_plans_the_recipe_for_tonight(live_server, page, page_errors):
+    _use_soon_routes(page, {})
+    _open(page, live_server)
+    before = page.locator(".day.today button.meal").count()
+    page.locator("#soon-strip .chip").click()
+    page.get_by_role("button", name=f"Cook {RECIPE} today").click()
+    expect(page.locator(".day.today button.meal")).to_have_count(before + 1)
+    assert page_errors == []
+
+
+def test_meal_panel_removes_a_meal_from_the_plan(live_server, page, page_errors):
+    week, wednesday = unique_week(37)
+    cook = _cook(live_server, week, wednesday)
+    _open(page, live_server, week)
+    page.locator(f'.day[data-date="{wednesday}"] button.meal').click()
+    panel = page.locator("#meal-pop")
+    expect(panel).to_be_visible()
+    expect(panel.get_by_role("link", name="Open recipe")).to_be_visible()
+    panel.get_by_role("button", name="Remove from plan").click()
+    expect(panel).to_be_hidden()
+    expect(page.locator(f'.day[data-date="{wednesday}"] button.meal')).to_have_count(0)
+    assert requests.get(live_server.url(f"/api/cooks/{cook['id']}"), timeout=30).status_code == 404
+    assert page_errors == []
+
+
+def test_meal_panel_marks_a_meal_cooked(live_server, page, page_errors):
+    week, wednesday = unique_week(38)
+    cook = _cook(live_server, week, wednesday)
+    _open(page, live_server, week)
+    page.locator(f'.day[data-date="{wednesday}"] button.meal').click()
+    page.locator("#meal-pop").get_by_role("button", name="Cooked it").click()
+    expect(page.locator(f'.day[data-date="{wednesday}"] button.meal.cooked')).to_have_count(1)
+    assert requests.get(live_server.url(f"/api/cooks/{cook['id']}"), timeout=30).json()["cooked_at"]
+    assert page_errors == []
+
+
+def test_meal_panel_previews_ingredients_by_whether_they_are_on_hand(live_server, page, page_errors):
+    week, wednesday = unique_week(39)
+    _cook(live_server, week, wednesday)
+    page.route("**/api/recipes/**", lambda route: route.fulfill(json={"servings": 8, "ingredients": [
+        {"item": "ricotta", "amount": "15", "unit": "oz", "in_stock": False, "have": None},
+        {"item": "lasagna noodles", "amount": "9", "unit": "whole", "in_stock": True, "have": "1 ct"},
+        {"item": "basil", "amount": "", "unit": "", "in_stock": None, "have": None},
+    ]}))
+    _open(page, live_server, week)
+    page.locator(f'.day[data-date="{wednesday}"] button.meal').click()
+    ings = page.locator("#meal-body .ings")
+    expect(ings.locator(".grp")).to_have_count(3)
+    assert [t.lower() for t in ings.locator(".grp").all_inner_texts()] == [
+        "need to get · 1", "not sure · 1", "on hand · 1"]
+    rows = ings.locator(".item").all_inner_texts()
+    assert "ricotta" in rows[0] and "15 oz" in rows[0]
+    assert "basil" in rows[1]
+    assert "lasagna noodles" in rows[2] and "have 1 ct" in rows[2]
     assert page_errors == []
